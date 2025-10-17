@@ -708,22 +708,29 @@ class LakebaseInstance:
 
 
 @pytest.fixture(scope="module")
-def make_lakebase_instance():
+def shared_lakebase_instance(request):
     """
-    Module-scoped fixture that creates a single lakebase instance for all tests.
+    Module-scoped fixture that creates a single lakebase instance for all tests in the module.
 
-    Uses request.getfixturevalue() to access function-scoped fixtures, avoiding scope mismatch issues.
+    Returns a factory function that tests can call to get the shared instance.
+    The instance is created lazily on first access.
     """
+    # Store the instance so we can clean it up
+    instance_holder = {"instance": None, "ws": None}
 
-    def create(ws, make_random) -> LakebaseInstance:
+    def get_instance(ws: WorkspaceClient) -> LakebaseInstance:
+        if instance_holder["instance"] is not None:
+            return instance_holder["instance"]
+
+        instance_holder["ws"] = ws
+        make_random = request.getfixturevalue("make_random")
 
         instance_name = f"dqx-test-{make_random(10).lower()}"
-        database_name = "dqx"  # does not need to be random
+        database_name = "dqx"
         catalog_name = f"dqx-test-{make_random(10).lower()}"
         capacity = "CU_2"
 
-        # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
-        # Retries are performed until the timeout is reached.
+        # Retry logic handles BadRequest exceptions
         @retried(on=[BadRequest], timeout=timedelta(minutes=10))
         def _create_database_instance():
             ws.database.create_database_instance_and_wait(
@@ -731,7 +738,6 @@ def make_lakebase_instance():
             )
 
         _create_database_instance()
-
         logger.info(f"Successfully created database instance: {instance_name}")
 
         ws.database.create_database_catalog(
@@ -744,9 +750,20 @@ def make_lakebase_instance():
         )
         logger.info(f"Successfully created database catalog: {catalog_name}")
 
-        return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
+        instance = LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
+        instance_holder["instance"] = instance
+        return instance
 
-    def delete(ws, instance: LakebaseInstance) -> None:
+    yield get_instance
+
+    delete_lakebase_instance(instance_holder)
+
+
+def delete_lakebase_instance(instance_holder):
+    if instance_holder["instance"] is not None and instance_holder["ws"] is not None:
+        instance = instance_holder["instance"]
+        ws = instance_holder["ws"]
+
         # Delete catalog first, then instance.
         @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
         def _delete_catalog():
@@ -766,8 +783,6 @@ def make_lakebase_instance():
 
         _delete_catalog()
         _delete_instance()
-
-    yield from factory("lakebase", create, delete)
 
 
 def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:

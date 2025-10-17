@@ -10,8 +10,10 @@ from tests.conftest import compare_checks
 from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHECKS as TEST_CHECKS
 
 
-def test_load_checks_when_lakebase_table_does_not_exist(ws, spark, make_lakebase_instance, lakebase_user, make_random):
-    instance = make_lakebase_instance()
+def test_load_checks_when_lakebase_table_does_not_exist(
+    ws, spark, shared_lakebase_instance, lakebase_user, make_random
+):
+    instance = shared_lakebase_instance(ws)
     dq_engine = DQEngine(ws, spark)
 
     location = _create_lakebase_location(instance.database_name, make_random)
@@ -21,8 +23,8 @@ def test_load_checks_when_lakebase_table_does_not_exist(ws, spark, make_lakebase
         dq_engine.load_checks(config=config)
 
 
-def test_save_and_load_checks_from_lakebase_table(ws, spark, make_lakebase_instance, lakebase_user, make_random):
-    instance = make_lakebase_instance()
+def test_save_and_load_checks_from_lakebase_table(ws, spark, shared_lakebase_instance, lakebase_user, make_random):
+    instance = shared_lakebase_instance(ws)
     dq_engine = DQEngine(ws, spark)
 
     location = _create_lakebase_location(instance.database_name, make_random)
@@ -35,9 +37,9 @@ def test_save_and_load_checks_from_lakebase_table(ws, spark, make_lakebase_insta
 
 
 def test_save_and_load_checks_from_lakebase_table_with_run_config(
-    ws, spark, make_lakebase_instance, lakebase_user, make_random
+    ws, spark, shared_lakebase_instance, lakebase_user, make_random
 ):
-    instance = make_lakebase_instance()
+    instance = shared_lakebase_instance(ws)
     dq_engine = DQEngine(ws, spark)
 
     location = _create_lakebase_location(instance.database_name, make_random)
@@ -62,9 +64,9 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(
 
 
 def test_save_and_load_checks_from_lakebase_table_with_output_modes(
-    ws, spark, make_lakebase_instance, lakebase_user, make_random
+    ws, spark, shared_lakebase_instance, lakebase_user, make_random
 ):
-    instance = make_lakebase_instance()
+    instance = shared_lakebase_instance(ws)
     dq_engine = DQEngine(ws, spark)
 
     location = _create_lakebase_location(instance.database_name, make_random)
@@ -114,9 +116,9 @@ def test_save_and_load_checks_from_lakebase_table_with_output_modes(
 
 
 def test_save_and_load_checks_from_lakebase_table_with_user_installation(
-    ws, spark, installation_ctx, make_lakebase_instance, lakebase_user, make_random
+    ws, spark, installation_ctx, shared_lakebase_instance, lakebase_user, make_random
 ):
-    instance = make_lakebase_instance()
+    instance = shared_lakebase_instance(ws)
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -141,11 +143,11 @@ def test_save_and_load_checks_from_lakebase_table_with_user_installation(
 
 
 def test_profiler_workflow_save_to_lakebase(
-    ws, spark, setup_workflows, make_lakebase_instance, lakebase_user, make_random
+    ws, spark, setup_workflows, shared_lakebase_instance, lakebase_user, make_random
 ):
     installation_ctx, run_config = setup_workflows()
 
-    instance = make_lakebase_instance()
+    instance = shared_lakebase_instance(ws)
 
     config = installation_ctx.config
     run_config = config.get_run_config()
