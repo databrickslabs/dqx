@@ -23,6 +23,8 @@ from databricks.labs.dqx.check_funcs import (
     is_not_null_and_is_in_list,
     is_not_null_and_not_empty_array,
     is_valid_date,
+    is_valid_json,
+    has_json_keys,
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
@@ -2725,4 +2727,164 @@ def test_col_is_equal_to(spark, set_utc_timezone):
         expected_schema,
     )
 
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_valid_json(spark):
+    schema = "a: string, b: string"
+    test_df = spark.createDataFrame(
+        [
+            ['{"key": "value"}', '{"key": value}'],
+            ['{"number": 123}', '{"number": 123}'],
+            ['{"array": [1, 2, 3]}', '{"array": [1, 2, 3}'],
+            ['Not a JSON string', 'Also not JSON'],
+            [None, None],
+            ['123', '"a string"'],
+            ['true', 'null'],
+            ['[]', '{}'],
+            ['{"a": 1,}', '{key: "value"}'],
+            ['[1, 2,', '{"a": "b"'],
+            ["{'a': 'b'}", ''],
+            [' {"a": 1} ', '{"b": 2}\n'],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(is_valid_json("a"), is_valid_json("b"))
+
+    expected_schema = "a_is_not_valid_json: string, b_is_not_valid_json: string"
+
+    expected = spark.createDataFrame(
+        [
+            [None, "Value '{\"key\": value}' in Column 'b' is not a valid JSON string"],
+            [None, None],
+            [None, "Value '{\"array\": [1, 2, 3}' in Column 'b' is not a valid JSON string"],
+            [
+                "Value 'Not a JSON string' in Column 'a' is not a valid JSON string",
+                "Value 'Also not JSON' in Column 'b' is not a valid JSON string",
+            ],
+            [None, None],
+            [None, None],
+            [None, None],
+            [None, None],
+            [
+                "Value '{\"a\": 1,}' in Column 'a' is not a valid JSON string",
+                "Value '{key: \"value\"}' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '[1, 2,' in Column 'a' is not a valid JSON string",
+                "Value '{\"a\": \"b\"' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '{'a': 'b'}' in Column 'a' is not a valid JSON string",
+                "Value '' in Column 'b' is not a valid JSON string",
+            ],
+            [None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_json_keys_require_all_true(spark):
+    schema = "a: string, b: string"
+    test_df = spark.createDataFrame(
+        [
+            ['{"key": "value", "another_key": 123}', '{"key": "value"}'],
+            ['{"number": 123}', '{"number": 123, "extra": true}'],
+            ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
+            ['{"key": "value"}', '{"missing_key": "value"}'],
+            [None, None],
+            ['Not a JSON string', '{"key": "value"}'],
+            ['{"key": "value"}', 'Not a JSON string'],
+            ['{"key": "value"}', None],
+            [None, '{"key": "value"}'],
+            ['{"nested": {"inner_key": "inner_value"}}', '{"nested": {"inner_key": "inner_value"}}'],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_json_keys("a", ["key", "another_key"]),
+        has_json_keys("b", ["key"]),
+    )
+
+    expected_schema = "a_does_not_have_json_keys: string, b_does_not_have_json_keys: string"
+
+    expected = spark.createDataFrame(
+        [
+            [None, None],
+            [
+                "Value '{\"number\": 123}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value '{\"number\": 123, \"extra\": true}' in Column 'b' is missing keys in the list: [key]",
+            ],
+            [
+                "Value '{\"array\": [1, 2, 3]}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value '{\"array\": {1, 2, 3}]' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value '{\"missing_key\": \"value\"}' in Column 'b' is missing keys in the list: [key]",
+            ],
+            [None, None],
+            ["Value 'Not a JSON string' in Column 'a' is not a valid JSON string", None],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value 'Not a JSON string' in Column 'b' is not a valid JSON string",
+            ],
+            ["Value '{\"key\": \"value\"}' in Column 'a' is missing keys in the list: [key, another_key]", None],
+            [None, None],
+            [
+                "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'b' is missing keys in the list: [key]",
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_json_keys_require_at_least_one(spark):
+    schema = "a: string, b: string"
+    required_keys = ["key", "another_key", "extra_key"]
+
+    test_data = [
+        ['{"key": 1, "another_key": 2, "extra_key": 3}', '{"key": 1, "another_key": 2, "extra_key": 3}'],
+        ['{"key": 1}', '{"key": 1}'],
+        ['{"number": 123}', '{"random_sample": 1523}'],
+        ['{}', '{}'],
+        ['{"key": "value"', '{"key": "value"'],
+        [None, 'Not a JSON string'],
+    ]
+
+    test_df = spark.createDataFrame(test_data, schema)
+
+    actual = test_df.select(
+        has_json_keys("a", required_keys, require_all=False),
+        has_json_keys("b", required_keys, require_all=False),
+    )
+
+    expected_schema = "a_does_not_have_json_keys: string, b_does_not_have_json_keys: string"
+
+    expected = spark.createDataFrame(
+        [
+            [None, None],
+            [None, None],
+            [
+                "Value '{\"number\": 123}' in Column 'a' is missing keys in the list: [key, another_key, extra_key]",
+                "Value '{\"random_sample\": 1523}' in Column 'b' is missing keys in the list: [key, another_key, extra_key]",
+            ],
+            [
+                "Value '{}' in Column 'a' is missing keys in the list: [key, another_key, extra_key]",
+                "Value '{}' in Column 'b' is missing keys in the list: [key, another_key, extra_key]",
+            ],
+            [
+                "Value '{\"key\": \"value\"' in Column 'a' is not a valid JSON string",
+                "Value '{\"key\": \"value\"' in Column 'b' is not a valid JSON string",
+            ],
+            [None, "Value 'Not a JSON string' in Column 'b' is not a valid JSON string"],
+        ],
+        expected_schema,
+    )
     assert_df_equality(actual, expected, ignore_nullable=True)

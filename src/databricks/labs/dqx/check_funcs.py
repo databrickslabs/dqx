@@ -1747,6 +1747,117 @@ def has_valid_schema(
     return condition, apply
 
 
+@register_rule("row")
+def is_valid_json(column: str | Column) -> Column:
+    """
+    Checks whether the values in the input column is a valid JSON string.
+
+    Args:
+        column: Column name (str) or Column expression to check for valid JSON.
+
+    Returns:
+        A Spark Column representing the condition for invalid JSON strings.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    return make_condition(
+        ~F.when(F.col(col_expr_str).isNotNull(), F.try_parse_json(col_expr_str).isNotNull()),
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid JSON string"),
+        ),
+        f"{col_str_norm}_is_not_valid_json",
+    )
+
+
+@register_rule("row")
+def has_json_keys(column: str | Column, keys: list[str], require_all: bool = True) -> Column:
+    """
+    Checks whether the values in the input column contain specific JSON keys.
+
+    Args:
+        column: The name of the column or the column expression to check for JSON keys.
+        keys: The list of JSON keys to check for.
+        require_all: If True, all specified keys must be present. If False, at least one key must be present.
+
+    Returns:
+        Column: A Spark Column representing the condition for missing JSON keys.
+    """
+    if not keys:
+        raise InvalidParameterError("The 'keys' parameter must be a non-empty list of strings.")
+    if any(not isinstance(k, str) for k in keys):
+        raise InvalidParameterError("All keys must be of type string.")
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    json_keys_array = F.json_object_keys(col_expr)
+    required_keys = F.array_distinct(F.array(*[F.lit(k) for k in keys]))
+
+    json_validation_error = is_valid_json(col_str_norm)
+    is_invalid_json = json_validation_error.isNotNull()
+
+    has_json_keys_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
+        F.lit(f"' in Column '{col_expr_str}' is missing keys in the list: ["),
+        F.concat_ws(", ", F.lit(keys)),
+        F.lit("]"),
+    )
+    message = F.when(is_invalid_json, json_validation_error).otherwise(has_json_keys_msg)
+
+    if require_all:
+        missing = F.array_except(required_keys, json_keys_array)
+        condition_when_valid = F.size(missing) == 0
+    else:
+        condition_when_valid = F.arrays_overlap(json_keys_array, required_keys)
+
+    condition = F.when(~is_invalid_json, condition_when_valid).otherwise(F.lit(False))
+
+    return make_condition(
+        ~condition,
+        message,
+        f"{col_str_norm}_does_not_have_json_keys",
+    )
+
+
+@register_rule("row")
+def has_valid_json_schema(column: str | Column, schema: str | types.StructType) -> Column:
+    """
+    Checks whether the values in the input column conform to a specified JSON schema.
+
+    Args:
+        column: The name of the column or the column expression to check for JSON schema conformity.
+        schema: The expected JSON schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
+
+    Returns:
+        Column: A Spark Column representing the condition for JSON schema violations.
+    """
+    _expected_schema = _get_schema(schema)
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+
+    json_validation_error = is_valid_json(col_str_norm)
+    is_invalid_json = json_validation_error.isNotNull()
+    parsed_column = F.from_json(col_expr, _expected_schema)
+
+    condition = F.when(~is_invalid_json & parsed_column.isNotNull(), F.lit(True)).otherwise(F.lit(False))
+
+    has_json_schema_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
+        F.lit(f"' in Column '{col_expr_str}' does not conform to the expected JSON schema: "),
+        F.lit(_expected_schema.simpleString()),
+    )
+
+    return make_condition(
+        ~condition,
+        F.when(is_invalid_json, json_validation_error).otherwise(has_json_schema_msg),
+        f"{col_str_norm}_has_invalid_json_schema",
+    )
+
+
 def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
     """
     Normalize the input schema into a Spark StructType schema.
