@@ -703,19 +703,17 @@ def lakebase_user():
 @dataclass
 class LakebaseInstance:
     name: str
-    catalog: str
-    location: str
+    catalog_name: str
+    database_name: str
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")  # create one instance per module only to reduce the amount of test instances
 def make_lakebase_instance(ws, make_random):
     def create() -> LakebaseInstance:
         instance_name = f"dqxtest-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
         catalog_name = f"dqxtest-{make_random(10).lower()}"
         capacity = "CU_2"
-        schema_name = "config"  # auto-created when saving checks, can be static since each test create new db
-        table_name = "checks"  # auto-created when saving checks, can be static since each test create new db
 
         # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
         # Retries are performed until the timeout is reached.
@@ -739,21 +737,17 @@ def make_lakebase_instance(ws, make_random):
         )
         logger.info(f"Successfully created database catalog: {catalog_name}")
 
-        return LakebaseInstance(
-            name=instance_name, catalog=catalog_name, location=f"{database_name}.{schema_name}.{table_name}"
-        )
+        return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
 
     def delete(instance: LakebaseInstance) -> None:
         # Delete catalog first, then instance.
         @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
         def _delete_catalog():
             try:
-                ws.database.delete_database_catalog(name=instance.catalog)
-                logger.info(f"Successfully deleted database catalog: {instance.catalog}")
+                ws.database.delete_database_catalog(name=instance.catalog_name)
+                logger.info(f"Successfully deleted database catalog: {instance.catalog_name}")
             except NotFound:
-                logger.info(f"Database catalog {instance.catalog} not found (already deleted)")
-            except Exception as e:
-                logger.warning(f"Failed to delete database catalog {instance.catalog}: {e}")
+                logger.info(f"Database catalog {instance.catalog_name} not found (already deleted)")
 
         @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
         def _delete_instance():
@@ -762,8 +756,6 @@ def make_lakebase_instance(ws, make_random):
                 logger.info(f"Successfully deleted database instance: {instance.name}")
             except NotFound:
                 logger.info(f"Database instance {instance.name} not found (already deleted)")
-            except Exception as e:
-                logger.error(f"Failed to delete database instance {instance.name}: {e}")
 
         _delete_catalog()
         _delete_instance()
