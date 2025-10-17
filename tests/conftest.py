@@ -707,8 +707,17 @@ class LakebaseInstance:
     database_name: str
 
 
-@pytest.fixture(scope="module")  # create one instance per module only to reduce the amount of test instances
-def make_lakebase_instance(ws, make_random):
+@pytest.fixture(scope="module")
+def make_lakebase_instance(request):
+    """
+    Module-scoped fixture that creates a single lakebase instance for all tests.
+
+    Uses request.getfixturevalue() to dynamically get fixtures, avoiding scope mismatch issues.
+    """
+    # Dynamically get fixtures to avoid scope mismatch
+    ws = request.getfixturevalue("ws")
+    make_random = request.getfixturevalue("make_random")
+
     def create() -> LakebaseInstance:
         instance_name = f"dqxtest-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
