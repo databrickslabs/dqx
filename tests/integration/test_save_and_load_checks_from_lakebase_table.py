@@ -1,3 +1,6 @@
+import re
+from unittest import skip
+
 import pytest
 
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
@@ -147,3 +150,17 @@ def test_profiler_workflow_save_to_lakebase(ws, spark, setup_workflows, make_lak
         )
     )
     assert checks, "Checks are missing"
+
+
+@skip("for ad-hoc cleanup only")
+def test_delete_all_leftover_lakebase_instances(ws):
+    pattern = re.compile(r"^dqxtest-[A-Za-z0-9]{10}$")
+
+    instances = []
+
+    for instance in ws.database.list_database_instances():
+        if pattern.match(instance.name):
+            instances.append(instance.name)
+
+    for instance in instances:
+        ws.database.delete_database_instance(name=instance)
