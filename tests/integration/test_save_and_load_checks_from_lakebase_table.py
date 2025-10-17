@@ -187,6 +187,6 @@ def test_delete_all_leftover_lakebase_instances(ws):
 
 
 def _create_lakebase_location(database_name, make_random):
-    table_name = f"checks-{make_random(10).lower()}"
+    table_name = f"checks_{make_random(10).lower()}"
     location = f"{database_name}.config.{table_name}"
     return location

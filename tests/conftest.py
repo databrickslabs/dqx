@@ -723,8 +723,10 @@ def make_shared_lakebase_instance():
             make_random: Random string generator from the test (function-scoped)
         """
         if instance_holder["instance"] is not None:
+            logger.info(f"Reusing existing lakebase instance: {instance_holder['instance'].name}")
             return instance_holder["instance"]
 
+        logger.info("Creating new lakebase instance (first test in module)")
         instance_holder["ws"] = ws
 
         instance_name = f"dqx-test-{make_random(10).lower()}"
@@ -754,6 +756,7 @@ def make_shared_lakebase_instance():
 
         instance = LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
         instance_holder["instance"] = instance
+        logger.info(f"Cached lakebase instance: {instance_name}")
         return instance
 
     yield get_instance
