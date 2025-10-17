@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import timedelta
 from typing import Any
 import re
@@ -25,7 +26,7 @@ from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
+from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog, DatabaseInstanceState
 
 logger = logging.getLogger(__name__)
 
@@ -726,38 +727,54 @@ def make_shared_lakebase_instance():
             logger.info(f"Reusing existing lakebase instance: {instance_holder['instance'].name}")
             return instance_holder["instance"]
 
-        logger.info("Creating new lakebase instance (first test in entire session)")
         instance_holder["ws"] = ws
 
-        instance_name = f"dqx-{make_random(10).lower()}"
+        run_id = os.environ.get("GITHUB_RUN_ID", None)  # reuse the same db for the same run
+        instance_id = run_id if run_id else make_random(10).lower()
+
+        instance_name = f"dqx-{instance_id}"
         database_name = "dqx"
-        catalog_name = f"dqx-test-{make_random(10).lower()}"
+        catalog_name = f"dqx-test-{instance_id}"
         capacity = "CU_1"
 
         # Retry logic handles BadRequest exceptions when workspace quota limit is reached
-        @retried(on=[BadRequest], timeout=timedelta(minutes=10))
-        def _create_database_instance():
+        @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=10))
+        def _create_database_instance_if_not_exists() -> None:
+            while True:
+                try:
+                    inst = ws.database.get_database_instance(name=instance_name)
+                except NotFound:
+                    break
+                if inst.state == DatabaseInstanceState.AVAILABLE:
+                    logger.info(f"Database instance {instance_name} already exists.")
+                    return
+                time.sleep(30)  # Polling interval
+
+            # Create the database instance
+            logger.info(f"Creating database instance: {instance_name}")
             ws.database.create_database_instance_and_wait(
                 database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
             )
+            logger.info(f"Successfully created database instance: {instance_name}")
 
-        _create_database_instance()
+        _create_database_instance_if_not_exists()
         logger.info(f"Successfully created database instance: {instance_name}")
 
-        ws.database.create_database_catalog(
-            DatabaseCatalog(
-                name=catalog_name,
-                database_name=database_name,
-                database_instance_name=instance_name,
-                create_database_if_not_exists=True,
+        try:
+            ws.database.get_database_catalog(name=catalog_name)
+        except NotFound:
+            ws.database.create_database_catalog(
+                DatabaseCatalog(
+                    name=catalog_name,
+                    database_name=database_name,
+                    database_instance_name=instance_name,
+                    create_database_if_not_exists=True,
+                )
             )
-        )
-        logger.info(f"Successfully created database catalog: {catalog_name}")
+            logger.info(f"Successfully created database catalog: {catalog_name}")
 
         instance = LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
         instance_holder["instance"] = instance
-        logger.info(f"CACHED lakebase instance for session: {instance_name}")
-        logger.info("All subsequent tests will reuse this instance!")
         return instance
 
     yield get_instance
