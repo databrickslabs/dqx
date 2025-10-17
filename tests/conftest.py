@@ -708,7 +708,7 @@ class LakebaseInstance:
 
 
 @pytest.fixture(scope="module")
-def shared_lakebase_instance(request):
+def shared_lakebase_instance():
     """
     Module-scoped fixture that creates a single lakebase instance for all tests in the module.
 
@@ -718,12 +718,17 @@ def shared_lakebase_instance(request):
     # Store the instance so we can clean it up
     instance_holder = {"instance": None, "ws": None}
 
-    def get_instance(ws: WorkspaceClient) -> LakebaseInstance:
+    def get_instance(ws: WorkspaceClient, make_random: Callable[[int], str]) -> LakebaseInstance:
+        """Get or create the shared lakebase instance.
+
+        Args:
+            ws: WorkspaceClient from the test (function-scoped)
+            make_random: Random string generator from the test (function-scoped)
+        """
         if instance_holder["instance"] is not None:
             return instance_holder["instance"]
 
         instance_holder["ws"] = ws
-        make_random = request.getfixturevalue("make_random")
 
         instance_name = f"dqx-test-{make_random(10).lower()}"
         database_name = "dqx"
