@@ -1,4 +1,5 @@
 import re
+from unittest import skip
 
 import pytest
 
@@ -169,6 +170,7 @@ def test_profiler_workflow_save_to_lakebase(
     assert checks, "Checks are missing"
 
 
+@skip("ad-hoc only")
 def test_delete_all_leftover_lakebase_instances(ws):
     pattern = re.compile(r"^dqxtest-[A-Za-z0-9]{10}$")
 
