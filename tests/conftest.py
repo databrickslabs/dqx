@@ -708,17 +708,14 @@ class LakebaseInstance:
 
 
 @pytest.fixture(scope="module")
-def make_lakebase_instance(request):
+def make_lakebase_instance():
     """
     Module-scoped fixture that creates a single lakebase instance for all tests.
 
     Uses request.getfixturevalue() to access function-scoped fixtures, avoiding scope mismatch issues.
     """
 
-    def create() -> LakebaseInstance:
-        # Access function-scoped fixtures
-        ws = request.getfixturevalue("ws")
-        make_random = request.getfixturevalue("make_random")
+    def create(ws, make_random) -> LakebaseInstance:
 
         instance_name = f"dqx-test-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
@@ -749,10 +746,7 @@ def make_lakebase_instance(request):
 
         return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
 
-    def delete(instance: LakebaseInstance) -> None:
-        # Access function-scoped fixture
-        ws = request.getfixturevalue("ws")
-
+    def delete(ws, instance: LakebaseInstance) -> None:
         # Delete catalog first, then instance.
         @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
         def _delete_catalog():
