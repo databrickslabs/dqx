@@ -704,13 +704,13 @@ class LakebaseInstance:
     database_name: str
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def make_shared_lakebase_instance():
     """
-    Module-scoped fixture that creates a single lakebase instance for all tests in the module.
+    Session-scoped fixture that creates a single lakebase instance for ALL tests in the entire pytest run.
 
     Returns a factory function that tests can call to get the shared instance.
-    The instance is created lazily on first access.
+    The instance is created lazily on first access and reused across all tests.
     """
     # Store the instance so we can clean it up
     instance_holder = {"instance": None, "ws": None}
@@ -726,10 +726,10 @@ def make_shared_lakebase_instance():
             logger.info(f"Reusing existing lakebase instance: {instance_holder['instance'].name}")
             return instance_holder["instance"]
 
-        logger.info("Creating new lakebase instance (first test in module)")
+        logger.info("Creating new lakebase instance (first test in entire session)")
         instance_holder["ws"] = ws
 
-        instance_name = f"dqx-test-{make_random(10).lower()}"
+        instance_name = f"dqx-{make_random(10).lower()}"
         database_name = "dqx"
         catalog_name = f"dqx-test-{make_random(10).lower()}"
         capacity = "CU_1"
@@ -756,7 +756,8 @@ def make_shared_lakebase_instance():
 
         instance = LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
         instance_holder["instance"] = instance
-        logger.info(f"Cached lakebase instance: {instance_name}")
+        logger.info(f"CACHED lakebase instance for session: {instance_name}")
+        logger.info("All subsequent tests will reuse this instance!")
         return instance
 
     yield get_instance
