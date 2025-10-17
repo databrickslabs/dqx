@@ -708,7 +708,7 @@ class LakebaseInstance:
 
 
 @pytest.fixture(scope="module")
-def shared_lakebase_instance():
+def make_shared_lakebase_instance():
     """
     Module-scoped fixture that creates a single lakebase instance for all tests in the module.
 
