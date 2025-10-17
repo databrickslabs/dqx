@@ -124,7 +124,7 @@ def test_save_and_load_checks_from_lakebase_table_with_user_installation(
     config = installation_ctx.config
     run_config = config.get_run_config()
     run_config.checks_location = _create_lakebase_location(instance.database_name, make_random)
-    installation_ctx.installation.save(installation_ctx.config)
+    installation_ctx.installation.save(config)
     product_name = installation_ctx.product_info.product_name()
 
     config = InstallationChecksStorageConfig(
@@ -159,7 +159,7 @@ def test_profiler_workflow_save_to_lakebase(
     run_config.lakebase_instance_name = instance.name
     run_config.lakebase_port = "5432"
 
-    installation_ctx.installation.save(installation_ctx.config)
+    installation_ctx.installation.save(config)
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 

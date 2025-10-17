@@ -693,7 +693,7 @@ def lakebase_user(ws):
     """
     client_id = os.environ.get("ARM_CLIENT_ID")
     if not client_id:
-        return ws.current_user.me()
+        return ws.current_user.me().user_name
     return client_id
 
 
