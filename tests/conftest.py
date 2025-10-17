@@ -720,9 +720,9 @@ def make_lakebase_instance(request):
         ws = request.getfixturevalue("ws")
         make_random = request.getfixturevalue("make_random")
 
-        instance_name = f"dqxtest-{make_random(10).lower()}"
+        instance_name = f"dqx-test-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
-        catalog_name = f"dqxtest-{make_random(10).lower()}"
+        catalog_name = f"dqx-test-{make_random(10).lower()}"
         capacity = "CU_2"
 
         # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
