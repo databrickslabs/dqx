@@ -7,7 +7,6 @@ from pyspark.sql.types import StructField, StringType, IntegerType
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from databricks.labs.dqx.llm.llm_utils import (
     get_check_function_definition,
-    load_yaml_checks_examples,
     get_column_metadata,
     create_optimizer_training_set,
 )
@@ -64,11 +63,6 @@ def test_get_check_function_definition_with_custom_check_functions_missing_speci
         )
     )
     assert not result
-
-
-def test_load_yaml_checks_examples():
-    yaml_examples = load_yaml_checks_examples()
-    assert yaml_examples
 
 
 def test_column_metadata():
