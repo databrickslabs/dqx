@@ -719,7 +719,7 @@ def make_lakebase_instance(request):
         # Access function-scoped fixtures
         ws = request.getfixturevalue("ws")
         make_random = request.getfixturevalue("make_random")
-        
+
         instance_name = f"dqxtest-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
         catalog_name = f"dqxtest-{make_random(10).lower()}"
@@ -752,7 +752,7 @@ def make_lakebase_instance(request):
     def delete(instance: LakebaseInstance) -> None:
         # Access function-scoped fixture
         ws = request.getfixturevalue("ws")
-        
+
         # Delete catalog first, then instance.
         @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
         def _delete_catalog():
