@@ -9,7 +9,7 @@ from functools import cached_property
 
 import pytest
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-from databricks.sdk.errors import BadRequest
+from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
 from databricks.sdk.retries import retried
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
@@ -744,18 +744,29 @@ def make_lakebase_instance(ws, make_random):
         )
 
     def delete(instance: LakebaseInstance) -> None:
-        try:
-            ws.database.delete_database_catalog(name=instance.catalog)
-            logger.info(f"Successfully deleted database catalog: {instance.catalog}")
-        except Exception as e:
-            logger.warning(f"Failed to delete database catalog {instance.catalog}: {e}")
+        # Delete catalog first, then instance.
+        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+        def _delete_catalog():
+            try:
+                ws.database.delete_database_catalog(name=instance.catalog)
+                logger.info(f"Successfully deleted database catalog: {instance.catalog}")
+            except NotFound:
+                logger.info(f"Database catalog {instance.catalog} not found (already deleted)")
+            except Exception as e:
+                logger.warning(f"Failed to delete database catalog {instance.catalog}: {e}")
 
-        try:
-            ws.database.delete_database_instance(name=instance.name)
-            logger.info(f"Successfully deleted database instance: {instance.name}")
-        except Exception as e:
-            logger.error(f"Failed to delete database instance {instance.name}: {e}")
-            raise
+        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+        def _delete_instance():
+            try:
+                ws.database.delete_database_instance(name=instance.name)
+                logger.info(f"Successfully deleted database instance: {instance.name}")
+            except NotFound:
+                logger.info(f"Database instance {instance.name} not found (already deleted)")
+            except Exception as e:
+                logger.error(f"Failed to delete database instance {instance.name}: {e}")
+
+        _delete_catalog()
+        _delete_instance()
 
     yield from factory("lakebase", create, delete)
 
