@@ -114,13 +114,8 @@ class DQGenerator(DQEngineBase):
             user_input=user_input, dspy_compiler=self.dspy_compiler, schema_info=schema_info
         )
 
-        # Parse the generated rules
-        try:
-            dq_rules = json.loads(prediction.quality_rules)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM generated rules: {e}")
-
         # Validate the generated rules using DQEngine
+        dq_rules = json.loads(prediction.quality_rules)
         status = DQEngine.validate_checks(dq_rules)
         if status.has_errors:
             logger.warning(f"Generated rules have validation errors: {status.errors}")

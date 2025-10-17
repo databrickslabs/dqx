@@ -149,9 +149,7 @@ class DQRuleGeneration(dspy.Module):
         if result.quality_rules:
             try:
                 # Try to parse the JSON to ensure it's valid
-                parsed_rules = json.loads(result.quality_rules)
-                # Re-serialize to ensure consistent formatting
-                result.quality_rules = json.dumps(parsed_rules, separators=(',', ':'))
+                json.loads(result.quality_rules)
             except json.JSONDecodeError as e:
                 logger.warning(f"Generated invalid JSON: {e}. Raw output: {result.quality_rules}")
                 # Return a fallback empty array if JSON is invalid
