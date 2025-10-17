@@ -778,7 +778,7 @@ def delete_lakebase_instance(instance_holder):
         @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
         def _delete_instance():
             try:
-                ws.database.delete_database_instance(name=instance.name)
+                ws.database.delete_database_instance(name=instance.name)  # async operation
                 logger.info(f"Successfully deleted database instance: {instance.name}")
             except NotFound:
                 logger.info(f"Database instance {instance.name} not found (already deleted)")
