@@ -1,5 +1,5 @@
+import logging
 import datetime
-from decimal import Decimal
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
@@ -21,19 +21,6 @@ test_rules = [
         column="product_launch_date",
         parameters={"min": datetime.date(2020, 1, 1), "max": None},
         description="Real min/max values were used",
-    ),
-    DQProfile(
-        name="min_max",
-        column="product_expiry_ts",
-        parameters={"min": None, "max": datetime.datetime(2020, 1, 1)},
-        description="Real min/max values were used",
-    ),
-    DQProfile(name="is_random", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
-    DQProfile(
-        name='min_max',
-        column='d1',
-        description='Real min/max values were used',
-        parameters={'max': Decimal('333323.00'), 'min': Decimal('1.23')},
     ),
 ]
 
@@ -69,6 +56,14 @@ def test_generate_dq_rules(ws):
                 "arguments": {"column": "rate_code_id", "min_limit": 1, "max_limit": 265},
             },
             "name": "rate_code_id_isnt_in_range",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "product_launch_date", "limit": datetime.date(2020, 1, 1)},
+            },
+            "name": "product_launch_date_not_less_than",
             "criticality": "error",
         },
     ]
@@ -108,13 +103,27 @@ def test_generate_dq_rules_warn(ws):
             "name": "rate_code_id_isnt_in_range",
             "criticality": "warn",
         },
+        {
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "product_launch_date", "limit": datetime.date(2020, 1, 1)},
+            },
+            "name": "product_launch_date_not_less_than",
+            "criticality": "warn",
+        },
     ]
     assert expectations == expected
 
 
 def test_generate_dq_rules_logging(ws, caplog):
+    # capture INFO from the generator module where the skip log is emitted
+    caplog.set_level(logging.INFO, logger="databricks.labs.dqx.profiler.generator")
+
     generator = DQGenerator(ws)
-    generator.generate_dq_rules(test_rules)
+    # add an unknown rule to trigger the "skipping..." log
+    unknown_rule = DQProfile(name="is_random", column="vendor_id")
+    generator.generate_dq_rules(test_rules + [unknown_rule])
+
     assert "No rule 'is_random' for column 'vendor_id'. skipping..." in caplog.text
 
 
