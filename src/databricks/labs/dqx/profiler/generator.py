@@ -1,8 +1,8 @@
 import logging
+import datetime
 
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 
@@ -70,49 +70,59 @@ class DQGenerator(DQEngineBase):
         Generates a data quality rule to check if a column's value is within a specified range.
 
         Args:
-                column: The name of the column to check.
-                level: The criticality level of the rule (default is "error").
-                params: Additional parameters, including the minimum and maximum values.
+            column: The name of the column to check.
+            level: The criticality level of the rule (default is "error").
+            params: Additional parameters, including the minimum and maximum values.
 
         Returns:
-                A dictionary representing the data quality rule, or None if no limits are provided.
+            A dictionary representing the data quality rule, or None if no limits are provided.
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
 
-        if not isinstance(min_limit, int) or not isinstance(max_limit, int):
-            return None  # TODO handle timestamp and dates: https://github.com/databrickslabs/dqx/issues/71
+        if min_limit is None and max_limit is None:
+            return None
 
-        if min_limit is not None and max_limit is not None:
+        def _is_num(value):
+            return isinstance(value, int)
+
+        def _is_temporal(value):
+            return isinstance(value, (datetime.date, datetime.datetime))
+
+        def _same_family(value_a, value_b):
+            # numeric with numeric OR temporal with temporal
+            if value_a is None or value_b is None:
+                return True
+            return (_is_num(value_a) and _is_num(value_b)) or (_is_temporal(value_a) and _is_temporal(value_b))
+
+        # Both bounds
+        if min_limit is not None and max_limit is not None and _same_family(min_limit, max_limit):
             return {
                 "check": {
                     "function": "is_in_range",
                     "arguments": {
                         "column": column,
-                        "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
-                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
+                        # pass through Python ints or datetime/date without stringification
+                        "min_limit": min_limit,
+                        "max_limit": max_limit,
                     },
                 },
                 "name": f"{column}_isnt_in_range",
                 "criticality": level,
             }
 
-        if max_limit is not None:
+        # Only max
+        if max_limit is not None and (_is_num(max_limit) or _is_temporal(max_limit)):
             return {
-                "check": {
-                    "function": "is_not_greater_than",
-                    "arguments": {"column": column, "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
-                },
+                "check": {"function": "is_not_greater_than", "arguments": {"column": column, "limit": max_limit}},
                 "name": f"{column}_not_greater_than",
                 "criticality": level,
             }
 
-        if min_limit is not None:
+        # Only min
+        if min_limit is not None and (_is_num(min_limit) or _is_temporal(min_limit)):
             return {
-                "check": {
-                    "function": "is_not_less_than",
-                    "arguments": {"column": column, "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
-                },
+                "check": {"function": "is_not_less_than", "arguments": {"column": column, "limit": min_limit}},
                 "name": f"{column}_not_less_than",
                 "criticality": level,
             }
