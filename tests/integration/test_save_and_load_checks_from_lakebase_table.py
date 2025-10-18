@@ -1,4 +1,5 @@
 import re
+from unittest import skip
 
 import pytest
 
@@ -10,12 +11,10 @@ from tests.conftest import compare_checks
 from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHECKS as TEST_CHECKS
 
 
-def test_load_checks_when_lakebase_table_does_not_exist(
-    ws, spark, make_shared_lakebase_instance, lakebase_user, make_random
-):
-    instance = make_shared_lakebase_instance(ws, make_random)
+def test_load_checks_when_lakebase_table_does_not_exist(ws, spark, make_lakebase_instance, lakebase_user, make_random):
     dq_engine = DQEngine(ws, spark)
 
+    instance = make_lakebase_instance()
     lakebase_location = _create_lakebase_location(instance.database_name, make_random)
     config = LakebaseChecksStorageConfig(location=lakebase_location, user=lakebase_user, instance_name=instance.name)
 
@@ -23,11 +22,12 @@ def test_load_checks_when_lakebase_table_does_not_exist(
         dq_engine.load_checks(config=config)
 
 
-def test_save_and_load_checks_from_lakebase_table(ws, spark, make_shared_lakebase_instance, lakebase_user, make_random):
-    instance = make_shared_lakebase_instance(ws, make_random)
+def test_save_and_load_checks_from_lakebase_table(ws, spark, make_lakebase_instance, lakebase_user, make_random):
     dq_engine = DQEngine(ws, spark)
 
+    instance = make_lakebase_instance()
     lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+
     config = LakebaseChecksStorageConfig(location=lakebase_location, user=lakebase_user, instance_name=instance.name)
 
     dq_engine.save_checks(checks=TEST_CHECKS, config=config)
@@ -37,11 +37,11 @@ def test_save_and_load_checks_from_lakebase_table(ws, spark, make_shared_lakebas
 
 
 def test_save_and_load_checks_from_lakebase_table_with_run_config(
-    ws, spark, make_shared_lakebase_instance, lakebase_user, make_random
+    ws, spark, make_lakebase_instance, lakebase_user, make_random
 ):
-    instance = make_shared_lakebase_instance(ws, make_random)
     dq_engine = DQEngine(ws, spark)
 
+    instance = make_lakebase_instance()
     lakebase_location = _create_lakebase_location(instance.database_name, make_random)
 
     # test first run config
@@ -64,11 +64,11 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(
 
 
 def test_save_and_load_checks_from_lakebase_table_with_output_modes(
-    ws, spark, make_shared_lakebase_instance, lakebase_user, make_random
+    ws, spark, make_lakebase_instance, lakebase_user, make_random
 ):
-    instance = make_shared_lakebase_instance(ws, make_random)
     dq_engine = DQEngine(ws, spark)
 
+    instance = make_lakebase_instance()
     lakebase_location = _create_lakebase_location(instance.database_name, make_random)
 
     run_config_name = "workflow_003"
@@ -116,9 +116,9 @@ def test_save_and_load_checks_from_lakebase_table_with_output_modes(
 
 
 def test_save_and_load_checks_from_lakebase_table_with_user_installation(
-    ws, spark, installation_ctx, make_shared_lakebase_instance, lakebase_user, make_random
+    ws, spark, installation_ctx, make_lakebase_instance, lakebase_user, make_random
 ):
-    instance = make_shared_lakebase_instance(ws, make_random)
+    instance = make_lakebase_instance()
 
     config = installation_ctx.config
     run_config = config.get_run_config()
@@ -143,12 +143,11 @@ def test_save_and_load_checks_from_lakebase_table_with_user_installation(
 
 
 def test_profiler_workflow_save_to_lakebase(
-    ws, spark, setup_workflows, make_shared_lakebase_instance, lakebase_user, make_random
+    ws, spark, setup_workflows, make_lakebase_instance, lakebase_user, make_random
 ):
     installation_ctx, run_config = setup_workflows()
 
-    instance = make_shared_lakebase_instance(ws, make_random)
-
+    instance = make_lakebase_instance()
     lakebase_location = _create_lakebase_location(instance.database_name, make_random)
 
     config = installation_ctx.config
@@ -171,6 +170,7 @@ def test_profiler_workflow_save_to_lakebase(
     assert checks, "Checks are missing"
 
 
+@skip("ad-hoc test to remove lakebase instances")
 def test_delete_all_leftover_lakebase_instances(ws):
     pattern = re.compile(r"^dqx-test-[A-Za-z0-9]{10}$")
 

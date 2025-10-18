@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import timedelta
 from typing import Any
 import re
@@ -26,14 +25,14 @@ from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog, DatabaseInstanceState
+from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -705,88 +704,39 @@ class LakebaseInstance:
     database_name: str
 
 
-@pytest.fixture(scope="session")
-def make_shared_lakebase_instance():
-    """
-    Session-scoped fixture that creates a single lakebase instance for ALL tests in the entire pytest run.
-
-    Returns a factory function that tests can call to get the shared instance.
-    The instance is created lazily on first access and reused across all tests.
-    """
-    # Store the instance so we can clean it up
-    instance_holder = {"instance": None, "ws": None}
-
-    def get_instance(ws: WorkspaceClient, make_random: Callable[[int], str]) -> LakebaseInstance:
-        """Get or create the shared lakebase instance.
-
-        Args:
-            ws: WorkspaceClient from the test (function-scoped)
-            make_random: Random string generator from the test (function-scoped)
-        """
-        if instance_holder["instance"] is not None:
-            logger.info(f"Reusing existing lakebase instance: {instance_holder['instance'].name}")
-            return instance_holder["instance"]
-
-        instance_holder["ws"] = ws
-
-        run_id = os.environ.get("GITHUB_RUN_ID", None)  # reuse the same db for the same run
-        instance_id = run_id if run_id else make_random(10).lower()
-
-        instance_name = f"dqx-{instance_id}"
-        database_name = "dqx"
-        catalog_name = f"dqx-test-{instance_id}"
+@pytest.fixture
+def make_lakebase_instance(ws, make_random):
+    def create() -> LakebaseInstance:
+        instance_name = f"dqx-test-{make_random(10).lower()}"
+        database_name = "dqx"  # does not need to be random
+        catalog_name = f"dqx-test-{make_random(10).lower()}"
         capacity = "CU_1"
 
-        # Retry logic handles BadRequest exceptions when workspace quota limit is reached
-        @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=10))
-        def _create_database_instance_if_not_exists() -> None:
-            while True:
-                try:
-                    inst = ws.database.get_database_instance(name=instance_name)
-                except NotFound:
-                    break
-                if inst.state == DatabaseInstanceState.AVAILABLE:
-                    logger.info(f"Database instance {instance_name} already exists.")
-                    return
-                time.sleep(30)  # Polling interval
-
-            # Create the database instance
-            logger.info(f"Creating database instance: {instance_name}")
+        # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
+        # Retries are performed until the timeout is reached.
+        @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=20))
+        def _create_database_instance():
             ws.database.create_database_instance_and_wait(
                 database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
             )
-            logger.info(f"Successfully created database instance: {instance_name}")
 
-        _create_database_instance_if_not_exists()
+        _create_database_instance()
+
         logger.info(f"Successfully created database instance: {instance_name}")
 
-        try:
-            ws.database.get_database_catalog(name=catalog_name)
-        except NotFound:
-            ws.database.create_database_catalog(
-                DatabaseCatalog(
-                    name=catalog_name,
-                    database_name=database_name,
-                    database_instance_name=instance_name,
-                    create_database_if_not_exists=True,
-                )
+        ws.database.create_database_catalog(
+            DatabaseCatalog(
+                name=catalog_name,
+                database_name=database_name,
+                database_instance_name=instance_name,
+                create_database_if_not_exists=True,
             )
-            logger.info(f"Successfully created database catalog: {catalog_name}")
+        )
+        logger.info(f"Successfully created database catalog: {catalog_name}")
 
-        instance = LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
-        instance_holder["instance"] = instance
-        return instance
+        return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
 
-    yield get_instance
-
-    delete_lakebase_instance(instance_holder)
-
-
-def delete_lakebase_instance(instance_holder):
-    if instance_holder["instance"] is not None and instance_holder["ws"] is not None:
-        instance = instance_holder["instance"]
-        ws = instance_holder["ws"]
-
+    def delete(instance: LakebaseInstance) -> None:
         # Delete catalog first, then instance.
         @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
         def _delete_catalog():
@@ -799,13 +749,15 @@ def delete_lakebase_instance(instance_holder):
         @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
         def _delete_instance():
             try:
-                ws.database.delete_database_instance(name=instance.name)  # async operation
+                ws.database.delete_database_instance(name=instance.name)
                 logger.info(f"Successfully deleted database instance: {instance.name}")
             except NotFound:
                 logger.info(f"Database instance {instance.name} not found (already deleted)")
 
         _delete_catalog()
         _delete_instance()
+
+    yield from factory("lakebase", create, delete)
 
 
 def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
