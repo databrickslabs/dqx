@@ -11,8 +11,6 @@ logger = logging.getLogger(__name__)
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
-RETRY_INTERVAL_SECONDS = 30
-
 
 @pytest.fixture
 def library_ref() -> str:
