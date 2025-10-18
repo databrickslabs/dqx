@@ -12,6 +12,7 @@ This page provides a reference for the quality check functions available in DQX.
 The terms `checks` and `rules` are used interchangeably in the documentation, as they are synonymous in DQX.
 
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
+All rule types, including row-level and dataset-level rules, can be defined and applied simultaneously in a single execution.
 
 You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.9.3/src/databricks/labs/dqx/check_funcs.py).
 
@@ -1372,7 +1373,7 @@ checks = [
 
 Dataset-level checks are applied to group of rows in a PySpark DataFrame.
 Similar to row-level checks, the results of these quality checks are reported for each individual row in the result columns.
-That means you can define and apply row-level and dataset-level checks at once.
+That means you can define and apply row-level and dataset-level checks together.
 
 Dataset-level checks are useful for validating aggregated values of the entire DataFrame or groups of rows within the DataFrame,
 such as ensuring that the number of rows does not exceed a certain limit or that the sum of a column is within a specified range.
