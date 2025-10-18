@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from typing import Any
 import re
 import logging
@@ -8,6 +9,8 @@ from functools import cached_property
 
 import pytest
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
+from databricks.sdk.retries import retried
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
@@ -29,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -677,47 +680,49 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
     yield from factory("file", create, delete)
 
 
-@pytest.fixture(scope="session")
-def lakebase_user():
+@pytest.fixture
+def lakebase_user(ws):
     """
-    Get the Lakebase user (service principal client ID) from environment variable.
+    Get a Lakebase user.
 
     This fixture reads ARM_CLIENT_ID which is set in the CI/CD pipeline.
-    For local development, you can set this environment variable to your service principal's client ID.
+    For local development where the ARM_CLIENT_ID is not set, the user is fetched from the workspace client.
 
     Returns:
-        The client ID to use as the Lakebase user.
-
-    Raises:
-        pytest.skip: If ARM_CLIENT_ID is not set in the environment.
+        The client ID or use name to use as the Lakebase user.
     """
     client_id = os.environ.get("ARM_CLIENT_ID")
     if not client_id:
-        pytest.skip("ARM_CLIENT_ID environment variable not set. Required for Lakebase tests.")
+        return ws.current_user.me().user_name
     return client_id
 
 
 @dataclass
 class LakebaseInstance:
     name: str
-    catalog: str
-    location: str
+    catalog_name: str
+    database_name: str
 
 
 @pytest.fixture
 def make_lakebase_instance(ws, make_random):
-
     def create() -> LakebaseInstance:
-        instance_name = f"dqxtest-{make_random(10).lower()}"
+        run_id = os.getenv("GITHUB_RUN_ID", "local")
+        instance_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
-        catalog_name = f"dqxtest-{make_random(10).lower()}"
-        capacity = "CU_2"
-        schema_name = "config"  # auto-created when saving checks, can be static since each test create new db
-        table_name = "checks"  # auto-created when saving checks, can be static since each test create new db
+        catalog_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
+        capacity = "CU_1"
 
-        _ = ws.database.create_database_instance_and_wait(
-            database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
-        )
+        # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
+        # Retries are performed until the timeout is reached.
+        @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=20))
+        def _create_database_instance():
+            ws.database.create_database_instance_and_wait(
+                database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
+            )
+
+        _create_database_instance()
+
         logger.info(f"Successfully created database instance: {instance_name}")
 
         ws.database.create_database_catalog(
@@ -730,23 +735,28 @@ def make_lakebase_instance(ws, make_random):
         )
         logger.info(f"Successfully created database catalog: {catalog_name}")
 
-        return LakebaseInstance(
-            name=instance_name, catalog=catalog_name, location=f"{database_name}.{schema_name}.{table_name}"
-        )
+        return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
 
     def delete(instance: LakebaseInstance) -> None:
-        try:
-            ws.database.delete_database_catalog(name=instance.catalog)
-            logger.info(f"Successfully deleted database catalog: {instance.catalog}")
-        except Exception as e:
-            logger.warning(f"Failed to delete database catalog {instance.catalog}: {e}")
+        # Delete catalog first, then instance.
+        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+        def _delete_catalog():
+            try:
+                ws.database.delete_database_catalog(name=instance.catalog_name)
+                logger.info(f"Successfully deleted database catalog: {instance.catalog_name}")
+            except NotFound:
+                logger.info(f"Database catalog {instance.catalog_name} not found (already deleted)")
 
-        try:
-            ws.database.delete_database_instance(name=instance.name)
-            logger.info(f"Successfully deleted database instance: {instance.name}")
-        except Exception as e:
-            logger.error(f"Failed to delete database instance {instance.name}: {e}")
-            raise
+        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+        def _delete_instance():
+            try:
+                ws.database.delete_database_instance(name=instance.name)
+                logger.info(f"Successfully deleted database instance: {instance.name}")
+            except NotFound:
+                logger.info(f"Database instance {instance.name} not found (already deleted)")
+
+        _delete_catalog()
+        _delete_instance()
 
     yield from factory("lakebase", create, delete)
 
