@@ -707,9 +707,10 @@ class LakebaseInstance:
 @pytest.fixture
 def make_lakebase_instance(ws, make_random):
     def create() -> LakebaseInstance:
-        instance_name = f"dqx-test-{make_random(10).lower()}"
+        run_id = os.getenv("GITHUB_RUN_ID", "local")
+        instance_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
         database_name = "dqx"  # does not need to be random
-        catalog_name = f"dqx-test-{make_random(10).lower()}"
+        catalog_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
         capacity = "CU_1"
 
         # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
