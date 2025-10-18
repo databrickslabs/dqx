@@ -11,6 +11,16 @@ from tests.conftest import compare_checks
 from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHECKS as TEST_CHECKS
 
 
+def test_delete_all_leftover_lakebase_instances(ws):
+    pattern = re.compile(r"^dqx-test-[A-Za-z0-9]{10}$")
+
+    instances = []
+
+    for instance in ws.database.list_database_instances():
+        if pattern.match(instance.name):
+            instances.append(instance.name)
+
+
 def test_remove_orphaned_lakebase_instances(ws):
     """
     Make sure all leftover lakeabse instances are removed.
