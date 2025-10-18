@@ -20,6 +20,9 @@ def test_delete_all_leftover_lakebase_instances(ws):
         if pattern.match(instance.name):
             instances.append(instance.name)
 
+    for instance in instances:
+        ws.database.delete_database_instance(name=instance)
+
 
 def test_remove_orphaned_lakebase_instances(ws):
     """
