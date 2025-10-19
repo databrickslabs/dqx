@@ -12,7 +12,6 @@ from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Run, Task, T
 
 
 logger = logging.getLogger(__name__)
-RETRY_INTERVAL_SECONDS = 30
 
 
 def test_run_dqx_demo_library(make_notebook, make_schema, make_job, library_ref):
