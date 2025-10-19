@@ -26,7 +26,7 @@ def test_remove_orphaned_lakebase_instances(ws):
     current_run_pattern = re.compile(rf"^dqx-test-{run_id}-[A-Za-z0-9]+$")
     pattern = re.compile(r"^dqx-test-\d+-[A-Za-z0-9]{10}$")
 
-    two_hours_ago = datetime.now() - timedelta(hours=2)  # aligned with tests timeout
+    grace_period = datetime.now() - timedelta(hours=2)  # aligned with tests timeout
     instances = []
     for instance in ws.database.list_database_instances():
         if current_run_pattern.match(instance.name):
@@ -34,7 +34,7 @@ def test_remove_orphaned_lakebase_instances(ws):
         if pattern.match(instance.name):
             creation_time = datetime.fromisoformat(instance.creation_time)
             # if database was created within the last 2h it maybe actively used by another test execution
-            if creation_time < two_hours_ago:
+            if creation_time < grace_period:
                 instances.append(instance.name)
 
     for instance in instances:
