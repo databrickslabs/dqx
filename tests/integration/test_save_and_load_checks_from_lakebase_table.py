@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -26,7 +26,7 @@ def test_remove_orphaned_lakebase_instances(ws):
     current_run_pattern = re.compile(rf"^dqx-test-{run_id}-[A-Za-z0-9]+$")
     pattern = re.compile(r"^dqx-test-\d+-[A-Za-z0-9]{10}$")
 
-    grace_period = datetime.now() - timedelta(hours=2)  # aligned with tests timeout
+    grace_period = datetime.now(timezone.utc) - timedelta(hours=2)  # aligned with tests timeout
     instances = []
     for instance in ws.database.list_database_instances():
         if current_run_pattern.match(instance.name):
