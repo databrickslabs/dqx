@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from tests.e2e.conftest import run_notebook_job
+from tests.e2e.conftest import new_classic_job_cluster, run_notebook_job
 
 
 logger = logging.getLogger(__name__)
@@ -19,4 +19,5 @@ def test_run_observable_metrics_notebook(make_notebook, make_schema, make_volume
         library_reference=library_ref,
         task_key="observable_metrics_notebook",
         base_parameters={"catalog_name": catalog, "schema_name": schema, "volume_name": volume},
+        new_cluster=new_classic_job_cluster()
     )

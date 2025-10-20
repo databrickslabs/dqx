@@ -6,6 +6,7 @@ import pytest
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.jobs import NotebookTask, Task, TerminationTypeType, Run
+from databricks.sdk.service.compute import ClusterSpec, DataSecurityMode, Kind
 
 logger = logging.getLogger(__name__)
 logging.getLogger("tests").setLevel("DEBUG")
@@ -20,6 +21,13 @@ def library_ref() -> str:
     return test_library_ref
 
 
+def new_classic_job_cluster():
+    return ClusterSpec(
+        kind=Kind.CLASSIC_PREVIEW,
+        data_security_mode=DataSecurityMode.DATA_SECURITY_MODE_DEDICATED
+    )
+
+
 def run_notebook_job(
     notebook_path: Path,
     make_notebook,
@@ -29,6 +37,7 @@ def run_notebook_job(
     timeout_minutes=30,
     task_key="notebook_task",
     ws=None,
+    new_cluster=None
 ):
     if ws is None:
         ws = WorkspaceClient()
@@ -39,7 +48,7 @@ def run_notebook_job(
     if library_reference:
         params.setdefault("test_library_ref", library_reference)
     notebook_task = NotebookTask(notebook_path=notebook_fs_path, base_parameters=params)
-    job = make_job(tasks=[Task(task_key=task_key, notebook_task=notebook_task)])
+    job = make_job(tasks=[Task(task_key=task_key, notebook_task=notebook_task, new_cluster=new_cluster)])
     waiter = ws.jobs.run_now_and_wait(job.job_id)
     run = ws.jobs.wait_get_run_job_terminated_or_skipped(
         run_id=waiter.run_id,
