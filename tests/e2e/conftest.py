@@ -22,10 +22,7 @@ def library_ref() -> str:
 
 
 def new_classic_job_cluster():
-    return ClusterSpec(
-        kind=Kind.CLASSIC_PREVIEW,
-        data_security_mode=DataSecurityMode.DATA_SECURITY_MODE_DEDICATED
-    )
+    return ClusterSpec(kind=Kind.CLASSIC_PREVIEW, data_security_mode=DataSecurityMode.DATA_SECURITY_MODE_DEDICATED)
 
 
 def run_notebook_job(
@@ -37,7 +34,7 @@ def run_notebook_job(
     timeout_minutes=30,
     task_key="notebook_task",
     ws=None,
-    new_cluster=None
+    new_cluster=None,
 ):
     if ws is None:
         ws = WorkspaceClient()
