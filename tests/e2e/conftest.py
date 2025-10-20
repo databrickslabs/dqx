@@ -21,8 +21,23 @@ def library_ref() -> str:
     return test_library_ref
 
 
-def new_classic_job_cluster():
-    return ClusterSpec(kind=Kind.CLASSIC_PREVIEW, data_security_mode=DataSecurityMode.DATA_SECURITY_MODE_DEDICATED)
+def new_classic_job_cluster(ws=None):
+    if ws is None:
+        ws = WorkspaceClient()
+    spark_version = ws.clusters.select_spark_version(latest=True)
+    node_type = ws.clusters.select_node_type(local_disk=True, min_memory_gb=16)
+    return ClusterSpec(
+        is_single_node=True,
+        node_type_id=node_type,
+        spark_version=spark_version,
+        kind=Kind.CLASSIC_PREVIEW,
+        data_security_mode=DataSecurityMode.DATA_SECURITY_MODE_DEDICATED,
+        single_user_name=ws.current_user.me().user_name,
+        spark_conf={
+            "spark.databricks.cluster.profile": "singleNode",
+            "spark.master": "local[*]",
+        },
+    )
 
 
 def run_notebook_job(
