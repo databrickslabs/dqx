@@ -96,12 +96,12 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
     """Set up workflows with metrics configuration for testing."""
 
     def create(_spark, **kwargs):
-        installation_ctx.installation_service.run()
         installation_ctx.config.serverless_clusters = False
         cluster_id = make_cluster(single_node=True, data_security_mode="DATA_SECURITY_MODE_DEDICATED").cluster_id
         installation_ctx.config.profiler_override_clusters["default"] = cluster_id
         installation_ctx.config.quality_checker_override_clusters["default"] = cluster_id
         installation_ctx.config.e2e_override_clusters["default"] = cluster_id
+        installation_ctx.installation_service.run()
 
         run_config = _setup_workflows_deps(
             installation_ctx,
@@ -114,7 +114,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
 
         if kwargs.get("metrics"):
             catalog_name = "main"
-            schema_name = run_config.output_config.location.split('.')[1]
+            schema_name = run_config.output_config.location.split(".")[1]
             metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
             run_config.metrics_config = OutputConfig(location=metrics_table_name)
 

@@ -2,10 +2,7 @@
 # MAGIC %md
 # MAGIC # Generating Data Quality Metrics with DQX
 # MAGIC
-# MAGIC In this demo we demonstrate how to generate and persist a set of data quality summary metrics when applying DQX rules to your data. DQX can track aggregate-level quality metrics based on your quality rule definitions.
-# MAGIC
-# MAGIC **Note:**
-# MAGIC This notebook can be executed without any modifications when using the [Databricks extension for Visual Studio Code](https://docs.databricks.com/aws/en/dev-tools/vscode-ext/).
+# MAGIC In this demo we demonstrate how to generate and persist a set of data quality summary metrics when applying DQX rules to your data. DQX can track aggregate-level quality metrics based on your quality rule definitions. Aggregate-level quality metrics can be tracked for both batch and streaming data processing workloads.
 
 # COMMAND ----------
 
@@ -170,7 +167,8 @@ print(metrics)
 # MAGIC ## Saving Quality Metrics to a Table
 # MAGIC
 # MAGIC Use `save_results_in_table` to persist checked data and aggregate-level data quality metrics. You can store data quality metrics from multiple workflows in the same summary table for reporting and alerting about data quality issues.
-
+# MAGIC
+# MAGIC ***NOTE:** Saving metrics to a table requires using a classic compute cluster in [Dedicated Access Mode](https://docs.databricks.com/aws/en/compute/configure#access-modes).*
 # COMMAND ----------
 
 from databricks.labs.dqx.config import OutputConfig
@@ -217,7 +215,8 @@ display(spark.table(metrics_table_name))
 # MAGIC ## End-to-end Quality Checking with Metrics
 # MAGIC
 # MAGIC You can generate quality metrics when running end-to-end validation with DQX's `apply_checks_by_metadata_and_save_in_table` method. Pass information about your quality metrics table using the `metrics_config` argument.
-
+# MAGIC
+# MAGIC ***NOTE:** Saving metrics to a table during end-to-end validation requires using a classic compute cluster in [Dedicated Access Mode](https://docs.databricks.com/aws/en/compute/configure#access-modes).*
 # COMMAND ----------
 
 from databricks.labs.dqx.config import InputConfig
