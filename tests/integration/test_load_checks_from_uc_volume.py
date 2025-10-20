@@ -1,10 +1,10 @@
 import pytest
 
 
-from databricks.sdk.errors import NotFound, BadRequest
+from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.config import VolumeFileChecksStorageConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 TEST_CHECKS = [
     {
@@ -25,39 +25,50 @@ def test_load_checks_when_volume_checks_file_missing(ws, make_schema, make_volum
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
-    volume = f"/Volume/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
+    volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
 
-    with pytest.raises(BadRequest, match="Invalid path: unsupported first path component: Volume"):
+    with pytest.raises(NotFound, match=f"Checks file {volume} missing"):
         config = VolumeFileChecksStorageConfig(location=volume)
         DQEngine(ws, spark).load_checks(config=config)
+
+
+def test_load_checks_when_checks_volumes_path_missing_volume(ws, make_random, spark):
+    volume = f"/{make_random(10).lower()}/"
+
+    with pytest.raises(InvalidParameterError, match="The volume path must start with '/Volumes/'"):
+        VolumeFileChecksStorageConfig(location=volume)
+
+
+def test_load_checks_when_checks_volume_path_missing_catalog(ws, make_random, spark):
+    volume = "/Volumes/"
+
+    with pytest.raises(InvalidParameterError, match="Invalid path: Path is missing a catalog name"):
+        VolumeFileChecksStorageConfig(location=volume)
 
 
 def test_load_checks_when_checks_volume_path_missing_schema(ws, make_random, spark):
-    volume = f"/Volumes/{make_random(10).lower()}"
+    volume = f"/Volumes/{make_random(10).lower()}/"
 
-    with pytest.raises(BadRequest, match="Invalid path: Path is missing a schema name"):
-        config = VolumeFileChecksStorageConfig(location=volume)
-        DQEngine(ws, spark).load_checks(config=config)
+    with pytest.raises(InvalidParameterError, match="Invalid path: Path is missing a schema name"):
+        VolumeFileChecksStorageConfig(location=volume)
 
 
 def test_load_checks_when_checks_volume_path_missing_volume_file(ws, make_random, spark):
     catalog_name = "main"
     volume = f"/Volumes/{catalog_name}/{make_random(10).lower()}"
 
-    with pytest.raises(BadRequest, match="Invalid path: Path is missing a volume name"):
-        config = VolumeFileChecksStorageConfig(location=volume)
-        DQEngine(ws, spark).load_checks(config=config)
+    with pytest.raises(InvalidParameterError, match="Invalid path: Path is missing a volume name"):
+        VolumeFileChecksStorageConfig(location=volume)
 
 
 def test_load_checks_when_checks_volume_does_not_exist_with_no_file(ws, make_schema, make_volume, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
-    volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
+    volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/dir"
 
-    with pytest.raises(NotFound, match=f"Checks file {volume} missing: The file being accessed is not found."):
-        config = VolumeFileChecksStorageConfig(location=volume)
-        DQEngine(ws, spark).load_checks(config=config)
+    with pytest.raises(InvalidParameterError, match="Invalid path: Path must include a file name after the volume"):
+        VolumeFileChecksStorageConfig(location=volume)
 
 
 def test_load_checks_when_checks_volume_does_not_exist(ws, make_schema, make_volume, spark):
@@ -66,7 +77,7 @@ def test_load_checks_when_checks_volume_does_not_exist(ws, make_schema, make_vol
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
 
-    with pytest.raises(NotFound, match=f"Checks file {volume} missing: The file being accessed is not found."):
+    with pytest.raises(NotFound, match=f"Checks file {volume} missing"):
         config = VolumeFileChecksStorageConfig(location=volume)
         DQEngine(ws, spark).load_checks(config=config)
 

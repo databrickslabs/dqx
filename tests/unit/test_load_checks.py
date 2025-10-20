@@ -70,7 +70,7 @@ def test_file_download_contents_none():
     # Simulate file_download.contents being None
     ws.files.download.return_value.contents = None
     with pytest.raises(CheckDownloadError, match="File download failed at Unity Catalog volume path"):
-        handler.load(VolumeFileChecksStorageConfig(location="test_path"))
+        handler.load(VolumeFileChecksStorageConfig(location="/Volumes/catalog/schema/test_path.yml"))
 
 
 def test_file_download_contents_read_none():
@@ -83,4 +83,4 @@ def test_file_download_contents_read_none():
     ws.files.download.return_value = mock_file_download
 
     with pytest.raises(NotFound, match="No contents at Unity Catalog volume path"):
-        handler.load(VolumeFileChecksStorageConfig(location="test_path"))
+        handler.load(VolumeFileChecksStorageConfig(location="/Volumes/catalog/schema/test_path.yml"))

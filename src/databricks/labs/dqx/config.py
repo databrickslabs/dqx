@@ -2,6 +2,8 @@ import abc
 from functools import cached_property
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
+
+from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
 __all__ = [
@@ -277,7 +279,24 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise InvalidConfigError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
+            raise InvalidParameterError(
+                "The Unity Catalog volume file path ('location' field) must not be empty or None."
+            )
+
+        # Expected format: /Volumes/{catalog}/{schema}/{volume}/{path/to/file}
+        if not self.location.startswith("/Volumes/"):
+            raise InvalidParameterError("The volume path must start with '/Volumes/'.")
+
+        parts = self.location.split("/")
+        # After split need at least: ['', 'Volumes', 'catalog', 'schema', 'volume', 'file']
+        if len(parts) < 3 or not parts[2]:
+            raise InvalidParameterError("Invalid path: Path is missing a catalog name")
+        if len(parts) < 4 or not parts[3]:
+            raise InvalidParameterError("Invalid path: Path is missing a schema name")
+        if len(parts) < 5 or not parts[4]:
+            raise InvalidParameterError("Invalid path: Path is missing a volume name")
+        if not parts[-1].lower().endswith(tuple(FILE_SERIALIZERS.keys())):
+            raise InvalidParameterError("Invalid path: Path must include a file name after the volume")
 
 
 @dataclass
