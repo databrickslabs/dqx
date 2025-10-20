@@ -138,7 +138,7 @@ def test_observer_custom_metrics(ws, spark, apply_checks_method):
 
 @pytest.mark.parametrize(
     "apply_checks_method",
-    [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table]
+    [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
 def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_random, apply_checks_method):
     """Test that no metrics are saved when observer is not configured."""
@@ -181,7 +181,7 @@ def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_r
 
 @pytest.mark.parametrize(
     "apply_checks_method",
-    [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table]
+    [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
 def test_apply_checks_by_metadata_and_save_in_table_raises_error_for_sparkconnect(
     ws, spark, make_schema, make_random, apply_checks_method
@@ -224,8 +224,10 @@ def test_apply_checks_by_metadata_and_save_in_table_raises_error_for_sparkconnec
             )
         elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_save_in_table:
             dq_engine.apply_checks_by_metadata_and_save_in_table(
-                checks=TEST_CHECKS, input_config=input_config, output_config=output_config,
-                metrics_config=metrics_config
+                checks=TEST_CHECKS,
+                input_config=input_config,
+                output_config=output_config,
+                metrics_config=metrics_config,
             )
         else:
             raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
