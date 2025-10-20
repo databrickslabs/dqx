@@ -17,6 +17,7 @@ from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 from chispa import assert_df_equality
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
+from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
 from databricks.sdk import WorkspaceClient
@@ -60,7 +61,7 @@ ws = WorkspaceClient()
 # COMMAND ----------
 # DBTITLE 1,test_observer_metrics_output
 
-def test_observer_metrics_output():
+def test_observer_metrics_output(apply_checks_method):
     input_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
     output_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
     metrics_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
@@ -87,9 +88,17 @@ def test_observer_metrics_output():
     output_config = OutputConfig(location=output_table_name, mode="overwrite")
     metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
-    dq_engine.apply_checks_by_metadata_and_save_in_table(
-        checks=test_checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
-    )
+    if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
+        checks = deserialize_checks(test_checks)
+        dq_engine.apply_checks_and_save_in_table(
+            checks=checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
+        )
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_save_in_table:
+        dq_engine.apply_checks_by_metadata_and_save_in_table(
+            checks=test_checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
+        )
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     expected_metrics = [
         {
@@ -187,12 +196,13 @@ def test_observer_metrics_output():
 
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
-test_observer_metrics_output()
+for method in [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table]:
+    test_observer_metrics_output(method)
 
 # COMMAND ----------
 # DBTITLE 1,test_observer_metrics_output_with_quarantine
 
-def test_observer_metrics_output_with_quarantine():
+def test_observer_metrics_output_with_quarantine(apply_checks_method):
     input_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
     output_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
     quarantine_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
@@ -221,13 +231,25 @@ def test_observer_metrics_output_with_quarantine():
     quarantine_config = OutputConfig(location=quarantine_table_name, mode="overwrite")
     metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
-    dq_engine.apply_checks_by_metadata_and_save_in_table(
-        checks=test_checks,
-        input_config=input_config,
-        output_config=output_config,
-        quarantine_config=quarantine_config,
-        metrics_config=metrics_config,
-    )
+    if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
+        checks = deserialize_checks(test_checks)
+        dq_engine.apply_checks(
+            checks=checks,
+            input_config=input_config,
+            output_config=output_config,
+            quarantine_config=quarantine_config,
+            metrics_config=metrics_config,
+        )
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_save_in_table:
+        dq_engine.apply_checks_by_metadata_and_save_in_table(
+            checks=test_checks,
+            input_config=input_config,
+            output_config=output_config,
+            quarantine_config=quarantine_config,
+            metrics_config=metrics_config,
+        )
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     expected_metrics = [
         {
@@ -324,7 +346,8 @@ def test_observer_metrics_output_with_quarantine():
     )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
-test_observer_metrics_output_with_quarantine()
+for method in [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table]:
+    test_observer_metrics_output_with_quarantine(method)
 
 # COMMAND ----------
 # DBTITLE 1,test_save_results_in_table_batch_with_metrics
@@ -435,7 +458,7 @@ test_save_results_in_table_batch_with_metrics()
 # COMMAND ----------
 # DBTITLE 1,test_streaming_observer_metrics_output
 
-def test_streaming_observer_metrics_output():
+def test_streaming_observer_metrics_output(apply_checks_method):
     input_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
     output_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
     metrics_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
@@ -465,11 +488,19 @@ def test_streaming_observer_metrics_output():
     )
     metrics_config = OutputConfig(location=metrics_table_name)
 
-    dq_engine.apply_checks_by_metadata_and_save_in_table(
-        checks=test_checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
-    )
-    time.sleep(30)
+    if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
+        checks = deserialize_checks(test_checks)
+        dq_engine.apply_checks_and_save_in_table(
+            checks=checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
+        )
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_save_in_table:
+        dq_engine.apply_checks_by_metadata_and_save_in_table(
+            checks=test_checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
+        )
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
+    time.sleep(30)
     expected_metrics = [
         {
             "run_name": "test_streaming_observer",
@@ -565,4 +596,5 @@ def test_streaming_observer_metrics_output():
     )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
-test_streaming_observer_metrics_output()
+for method in [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table]:
+    test_streaming_observer_metrics_output(method)

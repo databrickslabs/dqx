@@ -3,6 +3,7 @@ from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 import pytest
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
+from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 
@@ -31,7 +32,8 @@ TEST_CHECKS = [
 ]
 
 
-def test_observer_metrics_before_action(ws, spark):
+@pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
+def test_observer_metrics_before_action(ws, spark, apply_checks_method):
     """Test that summary metrics are empty before running a Spark action."""
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -45,13 +47,21 @@ def test_observer_metrics_before_action(ws, spark):
         ],
         TEST_SCHEMA,
     )
-    _, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
+
+    if apply_checks_method == DQEngine.apply_checks:
+        checks = deserialize_checks(TEST_CHECKS)
+        _, observation = dq_engine.apply_checks(test_df, checks)
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata:
+        _, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     actual_metrics = observation.get
     assert actual_metrics == {}
 
 
-def test_observer_metrics(ws, spark):
+@pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
+def test_observer_metrics(ws, spark, apply_checks_method):
     """Test that summary metrics can be accessed after running a Spark action like df.count()."""
     observer = DQMetricsObserver(name="test_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -65,9 +75,16 @@ def test_observer_metrics(ws, spark):
         ],
         TEST_SCHEMA,
     )
-    checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
-    checked_df.count()  # Trigger an action to get the metrics
 
+    if apply_checks_method == DQEngine.apply_checks:
+        checks = deserialize_checks(TEST_CHECKS)
+        checked_df, observation = dq_engine.apply_checks(test_df, checks)
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata:
+        checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
+
+    checked_df.count()  # Trigger an action to get the metrics
     expected_metrics = {
         "input_row_count": 4,
         "error_row_count": 1,
@@ -78,7 +95,8 @@ def test_observer_metrics(ws, spark):
     assert actual_metrics == expected_metrics
 
 
-def test_observer_custom_metrics(ws, spark):
+@pytest.mark.parametrize("apply_checks_method", [DQEngine.apply_checks, DQEngine.apply_checks_by_metadata])
+def test_observer_custom_metrics(ws, spark, apply_checks_method):
     """Test that summary metrics can be accessed after running a Spark action like df.count()."""
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -96,9 +114,16 @@ def test_observer_custom_metrics(ws, spark):
         ],
         TEST_SCHEMA,
     )
-    checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
-    checked_df.count()  # Trigger an action to get the metrics
 
+    if apply_checks_method == DQEngine.apply_checks:
+        checks = deserialize_checks(TEST_CHECKS)
+        checked_df, observation = dq_engine.apply_checks(test_df, checks)
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata:
+        checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
+
+    checked_df.count()  # Trigger an action to get the metrics
     expected_metrics = {
         "input_row_count": 4,
         "error_row_count": 1,
@@ -111,7 +136,11 @@ def test_observer_custom_metrics(ws, spark):
     assert actual_metrics == expected_metrics
 
 
-def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_random):
+@pytest.mark.parametrize(
+    "apply_checks_method",
+    [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table]
+)
+def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_random, apply_checks_method):
     """Test that no metrics are saved when observer is not configured."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
@@ -135,14 +164,28 @@ def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_r
     output_config = OutputConfig(location=output_table_name)
     metrics_config = OutputConfig(location=metrics_table_name)
 
-    dq_engine.apply_checks_by_metadata_and_save_in_table(
-        checks=TEST_CHECKS, input_config=input_config, output_config=output_config, metrics_config=metrics_config
-    )
+    if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
+        checks = deserialize_checks(TEST_CHECKS)
+        dq_engine.apply_checks_and_save_in_table(
+            checks=checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
+        )
+    elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_save_in_table:
+        dq_engine.apply_checks_by_metadata_and_save_in_table(
+            checks=TEST_CHECKS, input_config=input_config, output_config=output_config, metrics_config=metrics_config
+        )
+    else:
+        raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     assert not ws.tables.exists(metrics_table_name).table_exists
 
 
-def test_apply_checks_by_metadata_and_save_in_table_raises_error_for_sparkconnect(ws, spark, make_schema, make_random):
+@pytest.mark.parametrize(
+    "apply_checks_method",
+    [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table]
+)
+def test_apply_checks_by_metadata_and_save_in_table_raises_error_for_sparkconnect(
+    ws, spark, make_schema, make_random, apply_checks_method
+):
     """Test that apply_checks_by_metadata_and_save_in_table raises TypeError for SparkConnect DataFrames when observer is configured."""
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
@@ -174,9 +217,18 @@ def test_apply_checks_by_metadata_and_save_in_table_raises_error_for_sparkconnec
         match="Metrics collection is not supported for SparkConnect sessions. "
         "Use a Spark cluster with Dedicated access mode to collect metrics.",
     ):
-        dq_engine.apply_checks_by_metadata_and_save_in_table(
-            checks=TEST_CHECKS, input_config=input_config, output_config=output_config, metrics_config=metrics_config
-        )
+        if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
+            checks = deserialize_checks(TEST_CHECKS)
+            dq_engine.apply_checks_and_save_in_table(
+                checks=checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
+            )
+        elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_save_in_table:
+            dq_engine.apply_checks_by_metadata_and_save_in_table(
+                checks=TEST_CHECKS, input_config=input_config, output_config=output_config,
+                metrics_config=metrics_config
+            )
+        else:
+            raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
 
 def test_save_results_in_table_raises_error_for_sparkconnect(ws, spark, make_schema, make_random):
