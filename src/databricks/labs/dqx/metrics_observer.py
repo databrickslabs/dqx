@@ -105,7 +105,7 @@ class DQMetricsObserver:
         Returns:
             A Spark `Observation` instance
         """
-        return Observation(name=self.name)
+        return Observation()
 
     def set_column_names(self, error_column_name: str, warning_column_name: str) -> None:
         """
