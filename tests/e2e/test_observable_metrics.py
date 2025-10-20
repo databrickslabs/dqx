@@ -18,9 +18,5 @@ def test_run_observable_metrics_notebook(make_notebook, make_schema, make_volume
         make_job=make_job,
         library_reference=library_ref,
         task_key="observable_metrics_notebook",
-        base_parameters={
-            "catalog_name": catalog,
-            "schema_name": schema,
-            "volume_name": volume
-        },
+        base_parameters={"catalog_name": catalog, "schema_name": schema, "volume_name": volume},
     )

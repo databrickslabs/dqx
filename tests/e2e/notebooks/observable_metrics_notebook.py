@@ -45,9 +45,15 @@ test_checks = [
         "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
     },
 ]
+
+dbutils.widgets.text("catalog_name", "", "Test Catalog Name")
+dbutils.widgets.text("schema_name", "", "Test Schema Name")
+dbutils.widgets.text("volume_name", "", "Test Volume Name")
+
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
 volume_name = dbutils.widgets.get("volume_name")
+
 ws = WorkspaceClient()
 
 # COMMAND ----------
