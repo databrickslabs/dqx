@@ -103,8 +103,10 @@ class DQRuleManager:
         if self.check.check_func is check_funcs.sql_expression:
             if "expression" in self.check.check_func_kwargs:
                 field_value = self.check.check_func_kwargs["expression"]
-            else:
+            elif self.check.check_func_args:
                 field_value = self.check.check_func_args[0]
+            else:
+                return None  # should never really happen
 
             if self._is_invalid_column(field_value):
                 return field_value
