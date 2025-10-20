@@ -9,6 +9,7 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -60,9 +61,9 @@ ws = WorkspaceClient()
 # DBTITLE 1,test_observer_metrics_output
 
 def test_observer_metrics_output():
-    input_table_name = f"{catalog_name}.{schema_name}.input_table"
-    output_table_name = f"{catalog_name}.{schema_name}.output_table"
-    metrics_table_name = f"{catalog_name}.{schema_name}.metrics_table"
+    input_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    output_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
 
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -83,8 +84,8 @@ def test_observer_metrics_output():
 
     test_df.write.saveAsTable(input_table_name)
     input_config = InputConfig(location=input_table_name)
-    output_config = OutputConfig(location=output_table_name)
-    metrics_config = OutputConfig(location=metrics_table_name)
+    output_config = OutputConfig(location=output_table_name, mode="overwrite")
+    metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
     dq_engine.apply_checks_by_metadata_and_save_in_table(
         checks=test_checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
@@ -170,9 +171,20 @@ def test_observer_metrics_output():
             "user_metadata": None,
         },
     ]
-    
-    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
-    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+
+    expected_metrics_df = (
+        spark
+        .createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA)
+        .drop("run_ts")
+        .orderBy("metric_name")
+    )
+    actual_metrics_df = (
+        spark
+        .table(metrics_table_name)
+        .drop("run_ts")
+        .orderBy("metric_name")
+    )
+
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 test_observer_metrics_output()
@@ -181,10 +193,10 @@ test_observer_metrics_output()
 # DBTITLE 1,test_observer_metrics_output_with_quarantine
 
 def test_observer_metrics_output_with_quarantine():
-    input_table_name = f"{catalog_name}.{schema_name}.input_table"
-    output_table_name = f"{catalog_name}.{schema_name}.output_table"
-    quarantine_table_name = f"{catalog_name}.{schema_name}.quarantine_table"
-    metrics_table_name = f"{catalog_name}.{schema_name}.metrics_table"
+    input_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    output_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    quarantine_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
 
     custom_metrics = [
         "avg(case when _errors is not null then age else null end) as avg_error_age",
@@ -205,9 +217,9 @@ def test_observer_metrics_output_with_quarantine():
 
     test_df.write.saveAsTable(input_table_name)
     input_config = InputConfig(location=input_table_name)
-    output_config = OutputConfig(location=output_table_name)
-    quarantine_config = OutputConfig(location=quarantine_table_name)
-    metrics_config = OutputConfig(location=metrics_table_name)
+    output_config = OutputConfig(location=output_table_name, mode="overwrite")
+    quarantine_config = OutputConfig(location=quarantine_table_name, mode="overwrite")
+    metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
     dq_engine.apply_checks_by_metadata_and_save_in_table(
         checks=test_checks,
@@ -297,9 +309,19 @@ def test_observer_metrics_output_with_quarantine():
             "user_metadata": None,
         },
     ]
-    
-    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
-    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+
+    expected_metrics_df = (
+        spark
+        .createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA)
+        .drop("run_ts")
+        .orderBy("metric_name")
+    )
+    actual_metrics_df = (
+        spark
+        .table(metrics_table_name)
+        .drop("run_ts")
+        .orderBy("metric_name")
+    )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 test_observer_metrics_output_with_quarantine()
@@ -308,9 +330,9 @@ test_observer_metrics_output_with_quarantine()
 # DBTITLE 1,test_save_results_in_table_batch_with_metrics
 
 def test_save_results_in_table_batch_with_metrics():
-    output_table_name = f"{catalog_name}.{schema_name}.output_table"
-    quarantine_table_name = f"{catalog_name}.{schema_name}.quarantine_table"
-    metrics_table_name = f"{catalog_name}.{schema_name}.metrics_table"
+    output_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    quarantine_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
 
     observer = DQMetricsObserver(name="test_save_batch_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=extra_params)
@@ -327,8 +349,8 @@ def test_save_results_in_table_batch_with_metrics():
     output_df, quarantine_df, observation = dq_engine.apply_checks_by_metadata_and_split(test_df, test_checks)
 
     output_config = OutputConfig(location=output_table_name)
-    quarantine_config = OutputConfig(location=quarantine_table_name)
-    metrics_config = OutputConfig(location=metrics_table_name)
+    quarantine_config = OutputConfig(location=quarantine_table_name, mode="overwrite")
+    metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
     dq_engine.save_results_in_table(
         output_df=output_df,
@@ -393,9 +415,19 @@ def test_save_results_in_table_batch_with_metrics():
             "user_metadata": None,
         },
     ]
-    
-    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
-    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+
+    expected_metrics_df = (
+        spark
+        .createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA)
+        .drop("run_ts")
+        .orderBy("metric_name")
+    )
+    actual_metrics_df = (
+        spark
+        .table(metrics_table_name)
+        .drop("run_ts")
+        .orderBy("metric_name")
+    )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 test_save_results_in_table_batch_with_metrics()
@@ -404,9 +436,9 @@ test_save_results_in_table_batch_with_metrics()
 # DBTITLE 1,test_streaming_observer_metrics_output
 
 def test_streaming_observer_metrics_output():
-    input_table_name = f"{catalog_name}.{schema_name}.input_table"
-    output_table_name = f"{catalog_name}.{schema_name}.output_table"
-    metrics_table_name = f"{catalog_name}.{schema_name}.metrics_table"
+    input_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    output_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
     checkpoint_location = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/{str(uuid4()).replace('-', '_')}"
 
     custom_metrics = [
@@ -436,6 +468,7 @@ def test_streaming_observer_metrics_output():
     dq_engine.apply_checks_by_metadata_and_save_in_table(
         checks=test_checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
     )
+    time.sleep(30)
 
     expected_metrics = [
         {
@@ -517,9 +550,19 @@ def test_streaming_observer_metrics_output():
             "user_metadata": None,
         },
     ]
-    
-    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
-    actual_metrics_df = spark.table(metrics_table_name).drop("run_ts")
+
+    expected_metrics_df = (
+        spark
+        .createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA)
+        .drop("run_ts")
+        .orderBy("metric_name")
+    )
+    actual_metrics_df = (
+        spark
+        .table(metrics_table_name)
+        .drop("run_ts")
+        .orderBy("metric_name")
+    )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 test_streaming_observer_metrics_output()
