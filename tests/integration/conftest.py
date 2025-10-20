@@ -92,11 +92,16 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
 
 
 @pytest.fixture
-def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_table, make_random):
+def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_table, make_cluster, make_random):
     """Set up workflows with metrics configuration for testing."""
 
     def create(_spark, **kwargs):
         installation_ctx.installation_service.run()
+        installation_ctx.config.serverless_clusters = False
+        cluster_id = make_cluster(single_node=True, data_security_mode="DATA_SECURITY_MODE_DEDICATED").cluster_id
+        installation_ctx.config.profiler_override_clusters["default"] = cluster_id
+        installation_ctx.config.quality_checker_override_clusters["default"] = cluster_id
+        installation_ctx.config.e2e_override_clusters["default"] = cluster_id
 
         run_config = _setup_workflows_deps(
             installation_ctx,
