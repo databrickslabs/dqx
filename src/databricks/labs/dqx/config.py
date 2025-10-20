@@ -230,7 +230,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     instance_name: str | None = None
     user: str | None = None
-    location: str | None = None
+    location: str
     port: str = "5432"
     run_config_name: str = "default"
     mode: str = "overwrite"

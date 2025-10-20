@@ -1,5 +1,5 @@
+from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
-from chispa import assert_df_equality
 
 
 def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics):

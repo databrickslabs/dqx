@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime
 from functools import cached_property
 
+import pyspark
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, Observation, SparkSession
 
@@ -609,6 +610,7 @@ class DQEngine(DQEngineBase):
             save_dataframe_as_table(checked_df, output_config)
 
         if self._engine.observer and metrics_config and not df.isStreaming and observation is not None:
+            self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
                 observer_name=self._engine.observer.name,
                 observed_metrics=observation.get,
@@ -688,6 +690,7 @@ class DQEngine(DQEngineBase):
             save_dataframe_as_table(checked_df, output_config)
 
         if self._engine.observer and metrics_config and not df.isStreaming and observation is not None:
+            self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
                 observer_name=self._engine.observer.name,
                 observed_metrics=observation.get,
@@ -948,6 +951,7 @@ class DQEngine(DQEngineBase):
             save_dataframe_as_table(quarantine_df, quarantine_config)
 
         if self._engine.observer and observation is not None and metrics_config is not None and not is_streaming:
+            self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
                 observer_name=self._engine.observer.name,
                 observed_metrics=observation.get,
@@ -1054,6 +1058,18 @@ class DQEngine(DQEngineBase):
             custom_check_functions=custom_check_functions,
             ref_dfs=ref_dfs,
         )
+
+    def _validate_session_for_metrics(self) -> None:
+        """
+        Validates the session for metrics collection.
+
+        Raises:
+            TypeError: If the session is a SparkConnect session.
+        """
+        if isinstance(self.spark, pyspark.sql.connect.session.SparkSession):
+            raise TypeError(
+                "Metrics collection is not supported for SparkConnect sessions. Use a Spark cluster with Dedicated access mode to collect metrics."
+            )
 
     def _get_streaming_metrics_listener(
         self,
