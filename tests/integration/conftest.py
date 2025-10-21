@@ -7,6 +7,7 @@ from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.schema import dq_result_schema
+from databricks.sdk.service.compute import DataSecurityMode
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -96,8 +97,9 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
     """Set up workflows with metrics configuration for testing."""
 
     def create(_spark, **kwargs):
+        cluster = make_cluster(single_node=True, data_security_mode=DataSecurityMode.DATA_SECURITY_MODE_DEDICATED)
+        cluster_id = cluster.cluster_id
         installation_ctx.config.serverless_clusters = False
-        cluster_id = make_cluster(single_node=True, data_security_mode="DATA_SECURITY_MODE_DEDICATED").cluster_id
         installation_ctx.config.profiler_override_clusters["default"] = cluster_id
         installation_ctx.config.quality_checker_override_clusters["default"] = cluster_id
         installation_ctx.config.e2e_override_clusters["default"] = cluster_id
