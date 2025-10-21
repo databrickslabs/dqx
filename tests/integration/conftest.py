@@ -155,6 +155,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
     yield from factory("workflows_with_metrics", lambda **kw: create(spark, **kw), delete)
 
 
+@pytest.fixture
 def setup_workflows_with_custom_folder(
     ws, spark, installation_ctx_custom_install_folder, make_schema, make_table, make_random
 ):
