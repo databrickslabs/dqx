@@ -1,5 +1,6 @@
 import os
 from datetime import timedelta
+from io import BytesIO
 from typing import Any
 import re
 import logging
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture
@@ -613,7 +614,7 @@ def make_volume_check_file_as_yaml(ws, make_directory, checks_yaml_content):
             folder = make_directory()
             volume_file_path = str(folder.absolute()) + "/checks.yaml"
 
-        ws.files.upload(volume_file_path, checks_yaml_content.encode(), overwrite=True)
+        ws.files.upload(volume_file_path, BytesIO(checks_yaml_content.encode()), overwrite=True)
 
         return volume_file_path
 
@@ -632,7 +633,7 @@ def make_volume_check_file_as_json(ws, make_directory, checks_json_content):
             folder = make_directory()
             volume_file_path = str(folder.absolute()) + "/checks.json"
 
-        ws.files.upload(volume_file_path, checks_json_content.encode(), overwrite=True)
+        ws.files.upload(volume_file_path, BytesIO(checks_json_content.encode()), overwrite=True)
 
         return volume_file_path
 
@@ -651,7 +652,7 @@ def make_volume_invalid_check_file_as_yaml(ws, make_directory, checks_yaml_inval
             folder = make_directory()
             volume_file_path = str(folder.absolute()) + "/checks.yaml"
 
-        ws.files.upload(volume_file_path, checks_yaml_invalid_content.encode(), overwrite=True)
+        ws.files.upload(volume_file_path, BytesIO(checks_yaml_invalid_content.encode()), overwrite=True)
 
         return volume_file_path
 
@@ -670,7 +671,7 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
             folder = make_directory()
             volume_file_path = str(folder.absolute()) + "/checks.json"
 
-        ws.files.upload(volume_file_path, checks_json_invalid_content.encode(), overwrite=True)
+        ws.files.upload(volume_file_path, BytesIO(checks_json_invalid_content.encode()), overwrite=True)
 
         return volume_file_path
 

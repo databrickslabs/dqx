@@ -7899,6 +7899,16 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
             columns=["missing_col"],
             filter="missing_col > 0",
         ),
+        # invalid sql expression column
+        DQRowRule(
+            name="invalid_col_sql_expression",
+            criticality="error",
+            check_func=check_funcs.sql_expression,
+            check_func_args=["missing_col > 0"],  # verify validation works when using args
+            check_func_kwargs={
+                "msg": "missing_col is less than 0",
+            },
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -7933,7 +7943,8 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_sql_expression",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
@@ -7947,6 +7958,15 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "columns": ["missing_col"],
                         "filter": "missing_col > 0",
                         "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_sql_expression",
+                        "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_expression",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
@@ -8050,6 +8070,17 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                 "arguments": {"columns": ["missing_col"]},
             },
         },
+        {
+            "name": "invalid_col_sql_expression",
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "missing_col > 0",
+                    "msg": "missing_col is less than 0",
+                },
+            },
+        },
     ]
 
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
@@ -8084,7 +8115,8 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                     },
                     {
                         "name": "missing_col_sql_expression",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
@@ -8098,6 +8130,15 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "columns": ["missing_col"],
                         "filter": "missing_col > 0",
                         "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_sql_expression",
+                        "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_expression",
                         "run_time": RUN_TIME,
                         "user_metadata": {},
                     },
