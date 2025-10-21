@@ -141,7 +141,7 @@ class DQProfiler(DQEngineBase):
             options: Optional dictionary of options for PK detection
 
         Returns:
-            Dictionary with PK detection results or None if disabled/failed
+            Dictionary with PK detection results or None if not enabled or failed
         """
         if not HAS_LLM_DETECTOR:
             raise ImportError("LLM detector not available")
