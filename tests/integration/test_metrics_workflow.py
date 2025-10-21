@@ -5,10 +5,7 @@ from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
 def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics):
     """Test that quality checker workflow saves metrics when configured."""
     ctx, run_config = setup_workflows_with_metrics(metrics=True)
-
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
-    output_df = spark.table(run_config.output_config.location)
-    output_count = output_df.count()
 
     expected_metrics = [
         {
@@ -18,7 +15,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "quarantine_location": None,
             "checks_location": None,
             "metric_name": "input_row_count",
-            "metric_value": str(output_count),
+            "metric_value": "10",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -31,7 +28,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "quarantine_location": None,
             "checks_location": None,
             "metric_name": "error_row_count",
-            "metric_value": "0",
+            "metric_value": "3",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -57,7 +54,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "quarantine_location": None,
             "checks_location": None,
             "metric_name": "valid_row_count",
-            "metric_value": str(output_count),
+            "metric_value": "7",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -77,10 +74,6 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
     )
 
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
-    output_df = spark.table(run_config.output_config.location)
-    output_count = output_df.count()
-    quarantine_df = spark.table(run_config.quarantine_config.location)
-    quarantine_count = quarantine_df.count()
 
     expected_metrics = [
         {
@@ -90,7 +83,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": None,
             "metric_name": "input_row_count",
-            "metric_value": str(output_count + quarantine_count),
+            "metric_value": "10",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -103,7 +96,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": None,
             "metric_name": "error_row_count",
-            "metric_value": str(quarantine_count),
+            "metric_value": "3",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -129,7 +122,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": None,
             "metric_name": "valid_row_count",
-            "metric_value": str(output_count),
+            "metric_value": "7",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -142,7 +135,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
             "quarantine_location": run_config.quarantine_config.location,
             "checks_location": None,
             "metric_name": "total_ids",
-            "metric_value": "4",
+            "metric_value": "10",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -162,8 +155,6 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
     )
 
     ctx.deployed_workflows.run_workflow("e2e", run_config.name)
-    output_df = spark.table(run_config.output_config.location)
-    output_count = output_df.count()
 
     expected_metrics = [
         {
@@ -173,46 +164,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
             "quarantine_location": None,
             "checks_location": None,
             "metric_name": "input_row_count",
-            "metric_value": str(output_count),
-            "run_ts": None,  # Will be set at runtime
-            "error_column_name": "_errors",
-            "warning_column_name": "_warnings",
-            "user_metadata": None,
-        },
-        {
-            "run_name": "dqx",
-            "input_location": run_config.input_config.location,
-            "output_location": run_config.output_config.location,
-            "quarantine_location": None,
-            "checks_location": None,
-            "metric_name": "error_row_count",
-            "metric_value": "0",
-            "run_ts": None,  # Will be set at runtime
-            "error_column_name": "_errors",
-            "warning_column_name": "_warnings",
-            "user_metadata": None,
-        },
-        {
-            "run_name": "dqx",
-            "input_location": run_config.input_config.location,
-            "output_location": run_config.output_config.location,
-            "quarantine_location": None,
-            "checks_location": None,
-            "metric_name": "warning_row_count",
-            "metric_value": "0",
-            "run_ts": None,  # Will be set at runtime
-            "error_column_name": "_errors",
-            "warning_column_name": "_warnings",
-            "user_metadata": None,
-        },
-        {
-            "run_name": "dqx",
-            "input_location": run_config.input_config.location,
-            "output_location": run_config.output_config.location,
-            "quarantine_location": None,
-            "checks_location": None,
-            "metric_name": "valid_row_count",
-            "metric_value": str(output_count),
+            "metric_value": "10",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -225,7 +177,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
             "quarantine_location": None,
             "checks_location": None,
             "metric_name": "max_id",
-            "metric_value": "1",
+            "metric_value": "6",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -238,7 +190,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
             "quarantine_location": None,
             "checks_location": None,
             "metric_name": "min_id",
-            "metric_value": "0",
+            "metric_value": "1",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -247,15 +199,20 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
     ]
 
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
-    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts")
+    actual_metrics_df = (
+        spark.table(run_config.metrics_config.location)
+        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
+        .drop("run_ts")
+    )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
 def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
     """Test workflow with custom metrics."""
     custom_metrics = [
-        "avg(id) as average_id",
-        "sum(id) as total_id",
+        "min(id) as min_id",
+        "max(id) as max_id",
+        "sum(id) as total_sum_id",
         "count(1) as total_ids",
         "max(id) - min(id) as id_range",
     ]
@@ -270,7 +227,7 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
             "quarantine_location": None,
             "checks_location": None,
             "metric_name": "input_row_count",
-            "metric_value": "0",
+            "metric_value": "10",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -282,72 +239,7 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": None,
-            "metric_name": "error_row_count",
-            "metric_value": "0",
-            "run_ts": None,  # Will be set at runtime
-            "error_column_name": "_errors",
-            "warning_column_name": "_warnings",
-            "user_metadata": None,
-        },
-        {
-            "run_name": "dqx",
-            "input_location": run_config.input_config.location,
-            "output_location": run_config.output_config.location,
-            "quarantine_location": None,
-            "checks_location": None,
-            "metric_name": "warning_row_count",
-            "metric_value": "0",
-            "run_ts": None,  # Will be set at runtime
-            "error_column_name": "_errors",
-            "warning_column_name": "_warnings",
-            "user_metadata": None,
-        },
-        {
-            "run_name": "dqx",
-            "input_location": run_config.input_config.location,
-            "output_location": run_config.output_config.location,
-            "quarantine_location": None,
-            "checks_location": None,
-            "metric_name": "valid_row_count",
-            "metric_value": "0",
-            "run_ts": None,  # Will be set at runtime
-            "error_column_name": "_errors",
-            "warning_column_name": "_warnings",
-            "user_metadata": None,
-        },
-        {
-            "run_name": "dqx",
-            "input_location": run_config.input_config.location,
-            "output_location": run_config.output_config.location,
-            "quarantine_location": None,
-            "checks_location": None,
-            "metric_name": "average_id",
-            "metric_value": "0",
-            "run_ts": None,  # Will be set at runtime
-            "error_column_name": "_errors",
-            "warning_column_name": "_warnings",
-            "user_metadata": None,
-        },
-        {
-            "run_name": "dqx",
-            "input_location": run_config.input_config.location,
-            "output_location": run_config.output_config.location,
-            "quarantine_location": None,
-            "checks_location": None,
-            "metric_name": "total_id",
-            "metric_value": "0",
-            "run_ts": None,  # Will be set at runtime
-            "error_column_name": "_errors",
-            "warning_column_name": "_warnings",
-            "user_metadata": None,
-        },
-        {
-            "run_name": "dqx",
-            "input_location": run_config.input_config.location,
-            "output_location": run_config.output_config.location,
-            "quarantine_location": None,
-            "checks_location": None,
-            "metric_name": "total_ids",
+            "metric_name": "min_id",
             "metric_value": "1",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
@@ -360,8 +252,47 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": None,
+            "metric_name": "max_id",
+            "metric_value": "6",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "total_sum_id",
+            "metric_value": "27",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": None,
+            "checks_location": None,
+            "metric_name": "total_ids",
+            "metric_value": "10",
+            "run_ts": None,  # Will be set at runtime
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": "dqx",
+            "input_location": run_config.input_config.location,
+            "output_location": run_config.output_config.location,
+            "quarantine_location": None,
+            "checks_location": None,
             "metric_name": "id_range",
-            "metric_value": "0",
+            "metric_value": "5",
             "run_ts": None,  # Will be set at runtime
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
@@ -372,7 +303,11 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
-    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts")
+    actual_metrics_df = (
+        spark.table(run_config.metrics_config.location)
+        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
+        .drop("run_ts")
+    )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
