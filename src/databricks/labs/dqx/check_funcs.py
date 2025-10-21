@@ -1774,11 +1774,11 @@ def is_valid_json(column: str | Column) -> Column:
 @register_rule("row")
 def has_json_keys(column: str | Column, keys: list[str], require_all: bool = True) -> Column:
     """
-    Checks whether the values in the input column contain specific JSON keys.
+    Checks whether the values in the input column contain specific keys in the outermost JSON object.
 
     Args:
         column: The name of the column or the column expression to check for JSON keys.
-        keys: The list of JSON keys to check for.
+        keys: A list of JSON keys to verify within the outermost JSON object.
         require_all: If True, all specified keys must be present. If False, at least one key must be present.
 
     Returns:
@@ -1822,7 +1822,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
 
 
 @register_rule("row")
-def has_json_schema(column: str | Column, schema: str | types.StructType, strict: bool = False) -> Column:
+def has_valid_json_schema(column: str | Column, schema: str | types.StructType, strict: bool = False) -> Column:
     """
     Checks whether the values in the input column conform to a specified JSON schema.
 
@@ -1844,8 +1844,8 @@ def has_json_schema(column: str | Column, schema: str | types.StructType, strict
     unique_prefix = uuid.uuid4().hex[:8]
     corrupt_record_name = f"{unique_prefix}_dqx_corrupt_record"
     new_json_schema = types.StructType(
-            _expected_schema.fields + [types.StructField(corrupt_record_name, types.StringType(), True)]
-        )
+        _expected_schema.fields + [types.StructField(corrupt_record_name, types.StringType(), True)]
+    )
 
     parsed_struct = F.from_json(col_expr, new_json_schema, options={"columnNameOfCorruptRecord": corrupt_record_name})
 
@@ -1865,25 +1865,21 @@ def has_json_schema(column: str | Column, schema: str | types.StructType, strict
 
     condition = is_conforming | col_expr.isNull()
 
-    has_json_schema_msg = F.concat_ws(
+    has_valid_json_schema_msg = F.concat_ws(
         "",
         F.lit("Value '"),
         F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
         F.lit(f"' in Column '{col_expr_str}' does not conform to the expected JSON schema (strict={strict}): "),
         F.lit(_expected_schema.simpleString()),
     )
-    final_error_message = F.when(
-        is_invalid_json,
-        json_validation_error
-    ).otherwise(
-        has_json_schema_msg
-    )
+    final_error_message = F.when(is_invalid_json, json_validation_error).otherwise(has_valid_json_schema_msg)
 
     return make_condition(
         ~condition,
         final_error_message,
         f"{col_str_norm}_has_invalid_json_schema",
     )
+
 
 def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
     """

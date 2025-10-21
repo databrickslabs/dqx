@@ -25,7 +25,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_date,
     is_valid_json,
     has_json_keys,
-    has_json_schema,
+    has_valid_json_schema,
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
@@ -2891,7 +2891,7 @@ def test_has_json_keys_require_at_least_one(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-def test_has_json_schema(spark):
+def test_has_valid_json_schema(spark):
     schema = "a: string, b: string"
     test_data = spark.createDataFrame(
         [
@@ -2941,7 +2941,7 @@ def test_has_json_schema(spark):
         expected_schema,
     )
     actual = test_df.select(
-        has_json_schema("a", json_schema),
-        has_json_schema("b", json_schema),
+        has_valid_json_schema("a", json_schema),
+        has_valid_json_schema("b", json_schema),
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
