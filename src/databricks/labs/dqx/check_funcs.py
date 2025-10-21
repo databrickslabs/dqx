@@ -1830,7 +1830,8 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType, 
         column: The name of the column or the column expression to check for JSON schema conformity.
         schema: The expected JSON schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         strict: Whether to perform strict schema validation (default: False). For JSON schema,
-            strict mode means that the JSON must match the schema exactly (same fields, same order).
+            strict mode (True) means that the JSON must match the schema exactly (same fields, same order).
+            else, non-strict mode (False) allows extra fields in the JSON.
 
     Returns:
         Column: A Spark Column representing the condition for JSON schema violations.
@@ -1857,8 +1858,15 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType, 
 
     if strict:
         expected_field_names = [f.name for f in _expected_schema.fields]
-        concatenated_fields = F.concat_ws("_", *[parsed_struct[name] for name in expected_field_names])
-        has_content = concatenated_fields.isNotNull()
+        # concatenated_fields = F.concat_ws("_", *[parsed_struct[name] for name in expected_field_names])
+        # has_content = concatenated_fields.isNotNull()
+        has_content = F.when(
+            ~is_invalid_json,
+            F.transform(
+                F.schema_of_json(F.to_json(col_expr)),
+                lambda inferred_schema: _get_strict_schema_comparison(inferred_schema, _expected_schema),
+            ).isNotNull(),
+        ).otherwise(F.lit(False))
         is_conforming = base_conformity & has_content
     else:
         is_conforming = base_conformity
