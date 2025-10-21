@@ -288,14 +288,14 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
             raise InvalidParameterError("The volume path must start with '/Volumes/'.")
 
         parts = self.location.split("/")
-        # After split need at least: ['', 'Volumes', 'catalog', 'schema', 'volume', 'file']
+        # After split need at least: ['', 'Volumes', 'catalog', 'schema', 'volume', optional 'dir', 'file']
         if len(parts) < 3 or not parts[2]:
             raise InvalidParameterError("Invalid path: Path is missing a catalog name")
         if len(parts) < 4 or not parts[3]:
             raise InvalidParameterError("Invalid path: Path is missing a schema name")
         if len(parts) < 5 or not parts[4]:
             raise InvalidParameterError("Invalid path: Path is missing a volume name")
-        if not parts[-1].lower().endswith(tuple(FILE_SERIALIZERS.keys())):
+        if len(parts) < 6 or not parts[-1].lower().endswith(tuple(FILE_SERIALIZERS.keys())):
             raise InvalidParameterError("Invalid path: Path must include a file name after the volume")
 
 
