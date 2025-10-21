@@ -3,7 +3,7 @@
 # MAGIC # Using DQX for LLM-based Primary Key Detection
 # MAGIC DQX provides optional LLM-based primary key detection capabilities that can intelligently identify primary key columns from table schema and metadata, and generate appropriate quality rules. This feature uses Large Language Models to analyze table structures and suggest potential primary keys, enhancing the data profiling and quality rules generation process.
 # MAGIC
-# MAGIC The LLM-based primary key detection is completely optional and only activates when users explicitly request it. Regular DQX functionality works without any LLM dependencies.
+# MAGIC The LLM-based primary key detection is completely optional and only activates when users explicitly install it. Regular DQX functionality works without any LLM dependencies.
 
 # COMMAND ----------
 
