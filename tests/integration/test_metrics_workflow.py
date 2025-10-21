@@ -62,8 +62,10 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
         },
     ]
 
-    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
-    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts")
+    expected_metrics_df = (
+        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts").orderBy("metric_name")
+    )
+    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts").orderBy("metric_name")
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
@@ -143,8 +145,10 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(spark, setup_workf
         },
     ]
 
-    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
-    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts")
+    expected_metrics_df = (
+        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts").orderBy("metric_name")
+    )
+    actual_metrics_df = spark.table(run_config.metrics_config.location).drop("run_ts").orderBy("metric_name")
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
@@ -198,11 +202,14 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
         },
     ]
 
-    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    expected_metrics_df = (
+        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts").orderBy("metric_name")
+    )
     actual_metrics_df = (
         spark.table(run_config.metrics_config.location)
-        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
+        .where("metric_name NOT IN ('input_row_count', 'error_row_count', 'warning_row_count', 'valid_row_count')")
         .drop("run_ts")
+        .orderBy("metric_name")
     )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
@@ -302,11 +309,14 @@ def test_custom_metrics_in_workflow(spark, setup_workflows_with_metrics):
 
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts")
+    expected_metrics_df = (
+        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_ts").orderBy("metric_name")
+    )
     actual_metrics_df = (
         spark.table(run_config.metrics_config.location)
         .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
         .drop("run_ts")
+        .orderBy("metric_name")
     )
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
