@@ -80,7 +80,7 @@ profiler = DQProfiler(ws)
 # Enable via options parameter
 summary_stats, dq_rules = profiler.profile_table(
     "catalog.schema.table", 
-    options={"llm": True}  # Simple LLM enablement
+    options={"enable_llm_pk_detection": True}  # Enable LLM-based primary key detection
 )
 print("✅ LLM-based profiling enabled!")
 
@@ -100,8 +100,8 @@ if "llm_primary_key_detection" in summary_stats:
 # Direct LLM-based primary key detection
 result = profiler.detect_primary_keys_with_llm(
     table="customers",
-    llm=True,  # Explicit LLM enablement required
     options={
+        "enable_llm_pk_detection": True,  # Enable LLM-based detection
         "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
     }
 )
@@ -304,6 +304,124 @@ composite_result_df.show()
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Dataset Comparison with LLM Matching Key Detection
+# MAGIC 
+# MAGIC DQX now supports automatic matching key detection for dataset comparisons using LLM. This feature automatically identifies the best columns to use for row matching when comparing two datasets.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Simple Usage - Detect matching keys from all columns
+
+# COMMAND ----------
+
+# Create sample source and reference datasets
+source_data = [
+    (1, "A001", "John", "Doe", "2024-01-01"),
+    (2, "A002", "Jane", "Smith", "2024-01-02"), 
+    (3, "A003", "Bob", "Johnson", "2024-01-03"),
+    (4, "A004", "Alice", "Brown", "2024-01-04")
+]
+
+reference_data = [
+    (1, "A001", "John", "Doe", "2024-01-01"),
+    (2, "A002", "Jane", "Smith-Wilson", "2024-01-02"),  # Changed last name
+    (3, "A003", "Bob", "Johnson", "2024-01-03"),
+    (5, "A005", "Charlie", "Davis", "2024-01-05")  # New record
+]
+
+source_df = spark.createDataFrame(
+    source_data, 
+    ["id", "customer_id", "first_name", "last_name", "created_date"]
+)
+
+reference_df = spark.createDataFrame(
+    reference_data, 
+    ["id", "customer_id", "first_name", "last_name", "created_date"]
+)
+
+print("Source DataFrame:")
+source_df.show()
+print("Reference DataFrame:")
+reference_df.show()
+
+# COMMAND ----------
+
+from databricks.labs.dqx.rule import DQDatasetRule
+
+# Simple usage - detect matching keys from all columns
+compare_rule_simple = DQDatasetRule(
+    name="llm_dataset_comparison_all_columns",
+    criticality="error",
+    check_func=check_funcs.compare_datasets,
+    columns=[],  # Empty columns - LLM will detect from all columns
+    check_func_kwargs={
+        "ref_columns": [],
+        "ref_df_name": "reference_df",
+        "enable_llm_matching_key_detection": True,
+    },
+)
+
+# Apply the comparison with LLM key detection
+comparison_result = dq_engine.apply_checks(
+    source_df, 
+    [compare_rule_simple], 
+    ref_dfs={"reference_df": reference_df}
+)
+
+print("✅ Dataset comparison with LLM matching key detection completed")
+print("Detected differences:")
+comparison_result.filter("_errors > 0").show(truncate=False)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Advanced Usage - Detect from candidate columns with custom options
+
+# COMMAND ----------
+
+# Advanced usage with custom options
+compare_rule_advanced = DQDatasetRule(
+    name="llm_dataset_comparison_candidate_columns",
+    criticality="error", 
+    check_func=check_funcs.compare_datasets,
+    columns=["id", "customer_id"],  # Limit search to these candidate columns
+    check_func_kwargs={
+        "ref_columns": ["id", "customer_id"],
+        "ref_df_name": "reference_df",
+        "enable_llm_matching_key_detection": True,
+        "llm_matching_key_detection_options": {
+            "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",
+        },
+    },
+)
+
+# Apply the advanced comparison
+advanced_result = dq_engine.apply_checks(
+    source_df,
+    [compare_rule_advanced],
+    ref_dfs={"reference_df": reference_df}
+)
+
+print("✅ Advanced dataset comparison with custom LLM options completed")
+print("Results with candidate column detection:")
+advanced_result.filter("_errors > 0").show(truncate=False)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Benefits of LLM Matching Key Detection
+# MAGIC 
+# MAGIC - **🎯 Automatic Key Discovery**: No need to manually specify matching columns
+# MAGIC - **🧠 Intelligent Analysis**: LLM analyzes schema and data patterns to identify best matching keys
+# MAGIC - **🔍 Flexible Search Space**: Can search all columns or limit to candidate columns
+# MAGIC - **⚙️ Configurable Options**: Customize LLM endpoint and detection parameters
+# MAGIC - **🛡️ Validation**: Optional duplicate validation for detected keys
+# MAGIC - **📊 Better Comparisons**: More accurate dataset comparisons with optimal key selection
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Key Features
 # MAGIC 
 # MAGIC - **🔧 Completely Optional**: Not activated by default - requires explicit enablement
@@ -314,3 +432,4 @@ composite_result_df.show()
 # MAGIC - **🔄 Validation**: Optionally validates detected PKs for duplicates
 # MAGIC - **⚡ Automatic Rule Generation**: Converts detected PKs into executable `is_unique` rules
 # MAGIC - **🔗 End-to-End Workflow**: From LLM detection to data quality validation
+# MAGIC - **🔀 Dataset Comparison**: Automatic matching key detection for dataset comparisons

@@ -152,10 +152,10 @@ class DQProfiler(DQEngineBase):
             options = {}
 
         # Check if LLM-based PK detection is explicitly requested
-        llm_enabled = llm or options.get("enable_llm_pk_detection", False) or options.get("llm", False)
+        llm_enabled = llm or options.get("enable_llm_pk_detection", False)
 
         if not llm_enabled:
-            logger.debug("LLM-based PK detection not requested. Use llm=True to enable.")
+            logger.debug("LLM-based PK detection not requested. Use enable_llm_pk_detection=True to enable.")
             return None
 
         try:
@@ -217,11 +217,7 @@ class DQProfiler(DQEngineBase):
             options: Optional dictionary of options for profiling
             summary_stats: Summary statistics dictionary to update with PK detection results
         """
-        llm_enabled = options and (
-            options.get("enable_llm_pk_detection", False)
-            or options.get("llm", False)
-            or options.get("llm_pk_detection", False)
-        )
+        llm_enabled = options and options.get("enable_llm_pk_detection", False)
 
         if not llm_enabled:
             return
@@ -229,7 +225,7 @@ class DQProfiler(DQEngineBase):
         # Parse table name to extract catalog, schema, table (or use full path for files)
         # No need to parse table components since we pass the full table name
 
-        pk_result = self.detect_primary_keys_with_llm(table, options, llm=True)
+        pk_result = self.detect_primary_keys_with_llm(table, options)
 
         if pk_result and pk_result.get("success", False):
             pk_columns = pk_result.get("primary_key_columns", [])
@@ -280,16 +276,16 @@ class DQProfiler(DQEngineBase):
             detector = DatabricksPrimaryKeyDetector(
                 table=table,
                 endpoint=options.get("llm_pk_detection_endpoint", ""),
-                validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
+                validate_duplicates=True,  # Always validate for duplicates
                 spark_session=self.spark,
-                max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
+                max_retries=3,  # Fixed to 3 retries for optimal performance
             )
         else:  # use default endpoint
             detector = DatabricksPrimaryKeyDetector(
                 table=table,
-                validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
+                validate_duplicates=True,  # Always validate for duplicates
                 spark_session=self.spark,
-                max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
+                max_retries=3,  # Fixed to 3 retries for optimal performance
             )
 
         # Use generic detection method that works for both tables and paths
@@ -313,9 +309,9 @@ class DQProfiler(DQEngineBase):
                 table=temp_view_name,
                 endpoint=(options.get("llm_pk_detection_endpoint") if options else None)
                 or "databricks-meta-llama-3-1-8b-instruct",
-                validate_duplicates=options.get("llm_pk_validate_duplicates", True) if options else True,
+                validate_duplicates=True,  # Always validate for duplicates
                 spark_session=self.spark,
-                max_retries=options.get("llm_pk_max_retries", 3) if options else 3,
+                max_retries=3,  # Fixed to 3 retries for optimal performance
                 show_live_reasoning=False,
             )
 
@@ -356,11 +352,7 @@ class DQProfiler(DQEngineBase):
             options: Optional dictionary of options for profiling
             summary_stats: Summary statistics dictionary to update with PK detection results
         """
-        llm_enabled = options and (
-            options.get("enable_llm_pk_detection", False)
-            or options.get("llm", False)
-            or options.get("llm_pk_detection", False)
-        )
+        llm_enabled = options and options.get("enable_llm_pk_detection", False)
 
         if not llm_enabled:
             return

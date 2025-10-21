@@ -1,16 +1,17 @@
 import abc
+import functools as ft
 import inspect
 import logging
-from enum import Enum
-from dataclasses import dataclass, field
-import functools as ft
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
-from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
+from pyspark.sql import Column
+
 from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,14 @@ class MultipleColumnsMixin:
         """
         if columns is not None and "columns" in valid_params:
             if not columns:
-                raise InvalidCheckError("'columns' cannot be empty.")
+                # Allow empty columns if LLM matching key detection is enabled
+                enable_llm_matching_key_detection = False
+                if hasattr(self, 'check_func_kwargs'):
+                    enable_llm_matching_key_detection = getattr(self, 'check_func_kwargs', {}).get(
+                        "enable_llm_matching_key_detection", False
+                    )
+                if not enable_llm_matching_key_detection:
+                    raise InvalidCheckError("'columns' cannot be empty.")
             for col in columns:
                 if col is None:
                     raise InvalidCheckError("'columns' list contains a None element.")

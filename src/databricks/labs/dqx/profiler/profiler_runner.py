@@ -72,8 +72,6 @@ class ProfilerRunner:
             # LLM-based Primary Key Detection Options (available for both tables and DataFrames)
             "enable_llm_pk_detection": profiler_config.llm_config.enable_pk_detection,
             "llm_pk_detection_endpoint": profiler_config.llm_config.pk_detection_endpoint,
-            "llm_pk_validate_duplicates": True,  # Always validate for duplicates
-            "llm_pk_max_retries": 3,  # Fixed to 3 retries for optimal performance
         }
 
         df = read_input_data(self.spark, input_config)

@@ -1,25 +1,118 @@
 import datetime
-import re
-import warnings
 import ipaddress
+import operator as py_operator
+import re
 import uuid
+import warnings
 from collections.abc import Callable
 from enum import Enum
 from itertools import zip_longest
-import operator as py_operator
+from typing import Any
+
 import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
-from pyspark.sql import types
-from pyspark.sql import Column, DataFrame, SparkSession
+from pyspark.sql import Column, DataFrame, SparkSession, types
 from pyspark.sql.window import Window
+
+from databricks.labs.dqx.errors import (
+    InvalidParameterError,
+    MissingParameterError,
+    UnsafeSqlQueryError,
+)
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
+    get_columns_as_strings,
     is_sql_query_safe,
     normalize_col_str,
-    get_columns_as_strings,
 )
-from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
+
+# Optional LLM imports for primary key detection
+try:
+    from databricks.labs.dqx.llm.pk_identifier import DatabricksPrimaryKeyDetector
+
+    HAS_LLM_DETECTOR = True
+except ImportError:
+    HAS_LLM_DETECTOR = False
+
+
+def _detect_matching_keys_with_llm(
+    df: DataFrame,
+    columns: list[str | Column],
+    llm_options: dict[str, Any],
+    spark: SparkSession,
+    unique_id: str,
+) -> list[str]:
+    """
+    Helper function to detect matching keys using LLM.
+    
+    Args:
+        df: Source DataFrame for analysis
+        columns: Current columns list (may be empty)
+        llm_options: LLM detection options
+        spark: Spark session
+        unique_id: Unique identifier for temporary table
+        
+    Returns:
+        List of detected column names
+        
+    Raises:
+        ImportError: If LLM dependencies are not available
+        RuntimeError: If detection fails
+    """
+    if not HAS_LLM_DETECTOR:
+        raise ImportError(
+            "LLM matching key detection is enabled but LLM dependencies are not installed. "
+            "Install with: pip install databricks-labs-dqx[llm]"
+        )
+
+    temp_table_name = f"temp_pk_detection_{unique_id}"
+    df.createOrReplaceTempView(temp_table_name)
+
+    try:
+        # Determine search space for PK detection
+        if not columns:
+            search_columns = df.columns
+        else:
+            search_columns = get_columns_as_strings(columns, allow_simple_expressions_only=True)
+
+        # Create detector with options
+        detector = DatabricksPrimaryKeyDetector(
+            table=temp_table_name,
+            endpoint=llm_options["llm_pk_detection_endpoint"],
+            validate_duplicates=True,  # Always validate for duplicates
+            spark_session=spark,
+            max_retries=3,  # Fixed to 3 retries for optimal performance
+            show_live_reasoning=False,
+        )
+
+        pk_result = detector.detect_primary_keys()
+
+        if not pk_result.get("success", False):
+            raise RuntimeError(
+                f"LLM-based primary key detection failed: {pk_result.get('error', 'Unknown error')}"
+            )
+
+        detected_columns = pk_result["primary_key_columns"]
+
+        # Filter detected columns to search space if columns were provided
+        if columns:
+            detected_columns = [col for col in detected_columns if col in search_columns]
+            if not detected_columns:
+                raise RuntimeError(
+                    f"No primary key columns detected within the provided columns: {search_columns}"
+                )
+
+        return detected_columns
+
+    except Exception as e:
+        raise RuntimeError(f"Failed to detect primary keys using LLM: {str(e)}") from e
+    finally:
+        # Clean up temporary table
+        try:
+            spark.sql(f"DROP VIEW IF EXISTS {temp_table_name}")
+        except Exception:
+            pass  # Ignore cleanup errors
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
@@ -1400,6 +1493,8 @@ def compare_datasets(
     row_filter: str | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    enable_llm_matching_key_detection: bool = False,
+    llm_matching_key_detection_options: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -1458,6 +1553,12 @@ def compare_datasets(
             With tolerance=0.01 (1%):
             100 vs 101 → equal (diff = 1, tolerance = 1)
             2.001 vs 2.0099 → equal
+      enable_llm_matching_key_detection: Enable automatic matching key detection using LLM. When enabled,
+        the function will automatically detect primary/matching keys from the provided columns (or all
+        columns if columns is empty). Requires LLM dependencies to be installed.
+      llm_matching_key_detection_options: Optional dictionary of options for LLM-based matching key detection.
+        Supported options:
+        - llm_pk_detection_endpoint: Databricks Model Serving endpoint (defaults to foundational model)
 
     Returns:
       Tuple[Column, Callable]:
@@ -1479,6 +1580,13 @@ def compare_datasets(
     if abs_tolerance < 0 or rel_tolerance < 0:
         raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
 
+    # Initialize options if not provided and capture in closure
+    if llm_matching_key_detection_options is None:
+        llm_matching_key_detection_options = {
+            "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",
+        }
+    _llm_matching_key_detection_options = llm_matching_key_detection_options
+
     # convert all input columns to strings
     pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
     ref_pk_column_names = get_columns_as_strings(ref_columns, allow_simple_expressions_only=True)
@@ -1495,7 +1603,17 @@ def compare_datasets(
     filter_col = f"__filter_{uuid.uuid4().hex}"
 
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        nonlocal columns, ref_columns
+
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
+
+        # Auto-detect matching keys using LLM if enabled
+        if enable_llm_matching_key_detection:
+            detected_columns = _detect_matching_keys_with_llm(
+                df, columns, _llm_matching_key_detection_options, spark, unique_id
+            )
+            columns = detected_columns
+            ref_columns = detected_columns  # Use same columns for reference
 
         # map type columns must be skipped as they cannot be compared with eqNullSafe
         map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}

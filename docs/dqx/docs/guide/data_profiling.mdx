@@ -326,7 +326,7 @@ Example of the configuration file (relevant fields only):
 ## LLM-Assisted Primary Key Detection
 
 <Admonition type="info" title="Optional LLM Features">
-DQX provides **optional** LLM-based features that enhance data profiling capabilities. These features are only active when explicitly requested and require additional dependencies.
+DQX provides **optional** LLM-based features that enhance data profiling capabilities. These features are only active when explicitly installed. See [LLM Installation Requirements](#llm-installation-requirements) below.
 </Admonition>
 
 The LLM-based Primary Key Detection uses Large Language Models (via DSPy and Databricks Model Serving) to intelligently identify primary keys from table schema and metadata. This enhances the DQX profiling process by automatically detecting primary keys and generating appropriate uniqueness validation rules.
@@ -379,6 +379,13 @@ pip install databricks-labs-dqx[llm]
 
 #### Programmatic Integration
 
+LLM-based primary key detection can be enabled via the `options` parameter and works for all existing DQProfiler profiling methods including:
+- `profile()` - for DataFrames
+- `profile_table()` - for individual tables  
+- `profile_tables_for_patterns()` - for multiple tables using patterns
+
+The examples below showcase `profile_table()` but the same options work for all profiling methods.
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -388,19 +395,34 @@ pip install databricks-labs-dqx[llm]
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
 
-    # Enable via options parameter
+    # Enable via options parameter for profile_table()
     summary_stats, dq_rules = profiler.profile_table(
         "catalog.schema.table",
         options={
-            "llm": True,
+            "enable_llm_pk_detection": True,
             "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
         }
     )
 
-    # Or use the explicit flag
+    # Or use the explicit flag for profile_table()
     summary_stats, dq_rules = profiler.profile_table(
         "catalog.schema.table",
         options={"enable_llm_pk_detection": True}
+    )
+
+    # Same options work for DataFrame profiling
+    summary_stats, dq_rules = profiler.profile(
+        input_df,
+        options={"enable_llm_pk_detection": True}
+    )
+
+    # Same options work for multiple table profiling
+    results = profiler.profile_tables_for_patterns(
+        patterns=["catalog.schema.*"],
+        options=[{
+            "table": "*",
+            "options": {"enable_llm_pk_detection": True}
+        }]
     )
 
     # Direct LLM-based primary key detection
@@ -473,7 +495,7 @@ LLM-detected primary keys automatically generate uniqueness validation rules:
    ```
 
 2. **LLM Detection Not Running**
-   - Ensure `llm=True` or `enable_llm_pk_detection=True`
+   - Ensure `enable_llm_pk_detection=True` is set in options
    - Check that LLM dependencies are installed
 
 3. **Low Confidence Results**
@@ -493,7 +515,7 @@ import logging
 logging.basicConfig(level=logging.DEBUG)
 
 # Enable detailed logging
-profiler.profile_table(table, options={"llm": True})
+profiler.profile_table(table, options={"enable_llm_pk_detection": True})
 ```
 
 ## Profiling options
@@ -541,10 +563,7 @@ The profiler supports extensive configuration options to customize the profiling
 
       # LLM-based Primary Key Detection options
       "enable_llm_pk_detection": True,  # Enable LLM-based primary key detection
-      "llm_pk_detection": True,         # Another alternative to enable LLM PK detection
       "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",  # LLM endpoint
-      "llm_pk_validate_duplicates": True,   # Validate detected primary keys for duplicates
-      "llm_pk_max_retries": 3,             # Maximum retries for LLM prediction
     }
 
     ws = WorkspaceClient()
