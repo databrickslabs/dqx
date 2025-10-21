@@ -102,6 +102,7 @@ result = profiler.detect_primary_keys_with_llm(
     table="customers",
     options={
         "enable_llm_pk_detection": True,  # Enable LLM-based detection
+        # optional llm endpoint
         "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
     }
 )
