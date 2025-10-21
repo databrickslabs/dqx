@@ -109,13 +109,21 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
         installation_ctx.config.e2e_override_clusters["default"] = cluster_id
         installation_ctx.installation_service.run()
 
+        quarantine = False
+        if "quarantine" in kwargs and kwargs["quarantine"]:
+            quarantine = True
+
+        checks_location = None
+        if "checks" in kwargs and kwargs["checks"]:
+            checks_location = _setup_quality_checks(installation_ctx, _spark, ws)
+
         run_config = _setup_workflows_deps(
             installation_ctx,
             make_schema,
             make_table,
             make_random,
-            checks_location=None,
-            quarantine=kwargs.get("quarantine", False),
+            checks_location,
+            quarantine,
         )
 
         if kwargs.get("metrics"):

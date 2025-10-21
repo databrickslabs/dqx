@@ -1055,6 +1055,7 @@ class DQEngine(DQEngineBase):
             input_config=run_config.input_config,
             output_config=run_config.output_config,
             quarantine_config=run_config.quarantine_config,
+            metrics_config=run_config.metrics_config,
             custom_check_functions=custom_check_functions,
             ref_dfs=ref_dfs,
         )
