@@ -1829,62 +1829,63 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType, 
     Args:
         column: The name of the column or the column expression to check for JSON schema conformity.
         schema: The expected JSON schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
-        strict: Whether to perform strict schema validation (default: False). For JSON schema,
-            strict mode (True) means that the JSON must match the schema exactly (same fields, same order).
-            else, non-strict mode (False) allows extra fields in the JSON.
+        strict: Whether to perform strict schema validation. In strict mode, the JSON must match the schema
+                exactly (no extra fields, all required fields present). Non-strict mode allows extra fields.
 
     Returns:
-        Column: A Spark Column representing the condition for JSON schema violations.
+        Column: A Spark Column indicating schema validity; False if violations are found.
     """
     _expected_schema = _get_schema(schema)
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+
+    # Check JSON string validity first
     json_validation_error = is_valid_json(col_str_norm)
     is_invalid_json = json_validation_error.isNotNull()
 
-    # Add this because of to avoid name clashes if a user already specified _corrupt_record field
+    # Use a unique corrupt record field to detect parse issues
     unique_prefix = uuid.uuid4().hex[:8]
     corrupt_record_name = f"{unique_prefix}_dqx_corrupt_record"
-    new_json_schema = types.StructType(
+
+    extended_schema = types.StructType(
         _expected_schema.fields + [types.StructField(corrupt_record_name, types.StringType(), True)]
     )
 
-    parsed_struct = F.from_json(col_expr, new_json_schema, options={"columnNameOfCorruptRecord": corrupt_record_name})
+    parsed_struct = F.from_json(
+        col_expr,
+        extended_schema,
+        options={"columnNameOfCorruptRecord": corrupt_record_name},
+    )
 
     is_not_corrupt = parsed_struct[corrupt_record_name].isNull()
     base_conformity = ~is_invalid_json & is_not_corrupt
 
-    # _get_strict_schema_comparison()
-    # _get_permissive_schema_comparison
-
     if strict:
-        expected_field_names = [f.name for f in _expected_schema.fields]
-        # concatenated_fields = F.concat_ws("_", *[parsed_struct[name] for name in expected_field_names])
-        # has_content = concatenated_fields.isNotNull()
-        has_content = F.when(
-            ~is_invalid_json,
-            F.transform(
-                F.schema_of_json(F.to_json(col_expr)),
-                lambda inferred_schema: _get_strict_schema_comparison(inferred_schema, _expected_schema),
-            ).isNotNull(),
-        ).otherwise(F.lit(False))
-        is_conforming = base_conformity & has_content
+        map_json = F.from_json(col_expr, _expected_schema)
+        json_keys = F.map_keys(map_json)
+        expected_keys = [F.lit(f.name) for f in _expected_schema.fields]
+
+        has_extra_fields = F.size(F.array_except(json_keys, F.array(*expected_keys))) > 0
+        not_null_checks = _generate_not_null_expr(_expected_schema, parsed_struct)
+        has_null_fields = F.array_contains(F.array(*[F.coalesce(e, F.lit(False)) for e in not_null_checks]), False)
+
+        is_conforming = base_conformity & ~has_extra_fields & ~has_null_fields
     else:
-        is_conforming = base_conformity
+        is_conforming = base_conformity & (F.size(F.json_object_keys(col_expr)) > 0)
 
     condition = is_conforming | col_expr.isNull()
-
-    has_valid_json_schema_msg = F.concat_ws(
+    schema_str = _expected_schema.simpleString()
+    error_msg = F.concat_ws(
         "",
         F.lit("Value '"),
         F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
-        F.lit(f"' in Column '{col_expr_str}' does not conform to the expected JSON schema (strict={strict}): "),
-        F.lit(_expected_schema.simpleString()),
+        F.lit(f"' in Column '{col_expr_str}' does not conform to expected JSON schema (strict={strict}): "),
+        F.lit(schema_str),
     )
-    final_error_message = F.when(is_invalid_json, json_validation_error).otherwise(has_valid_json_schema_msg)
+    final_error_msg = F.when(is_invalid_json, json_validation_error).otherwise(error_msg)
 
     return make_condition(
         ~condition,
-        final_error_message,
+        final_error_msg,
         f"{col_str_norm}_has_invalid_json_schema",
     )
 
@@ -2112,6 +2113,27 @@ def _is_compatible_atomic_type(actual_type: types.AtomicType, expected_type: typ
         return True
 
     return False
+
+
+def _generate_not_null_expr(schema: types.StructType, col_name: Column) -> list[Column]:
+    """
+    Generate a list of expressions that check for non-null values in the given schema.
+
+    Args:
+        schema: The schema of the DataFrame.
+        col_name: The name of the column to check.
+
+    Returns:
+        A list of Column expressions that check for non-null values.
+    """
+    exprs = []
+    for field in schema.fields:
+        field_col = col_name[field.name]
+        if isinstance(field.dataType, types.StructType):
+            exprs += _generate_not_null_expr(field.dataType, field_col)
+        else:
+            exprs.append(field_col.isNotNull())
+    return exprs
 
 
 def _match_rows(
