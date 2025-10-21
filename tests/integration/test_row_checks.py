@@ -25,6 +25,7 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_date,
     is_valid_json,
     has_json_keys,
+    has_json_schema,
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
@@ -2886,5 +2887,61 @@ def test_has_json_keys_require_at_least_one(spark):
             [None, "Value 'Not a JSON string' in Column 'b' is not a valid JSON string"],
         ],
         expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_json_schema(spark):
+    schema = "a: string, b: string"
+    test_data = spark.createDataFrame(
+        [
+            ['{"key": "value", "another_key": 123}', '{"key": "value"}'],
+            ['{"number": 123}', '{"number": 123, "extra": true}'],
+            ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
+            ['{"key": "value"}', '{"missing_key": "value"}'],
+            [None, None],
+            ['Not a JSON string', '{"key": "value"}'],
+            ['{"key": "value"}', 'Not a JSON string'],
+            ['{"key": "value"}', None],
+        ]
+    )
+    test_df = spark.createDataFrame(test_data, schema)
+
+    json_schema = "STRUCT<a: BIGINT, b: BIGINT>"
+    expected_schema = "a_has_invalid_json_schema: string, b_has_invalid_json_schema: string"
+    expected = spark.createDataFrame(
+        [
+            [
+                "Value '{\"key\": \"value\", \"another_key\": 123}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value '{\"key\": \"value\"}' in Column 'b' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+            ],
+            [
+                "Value '{\"number\": 123}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value '{\"number\": 123, \"extra\": true}' in Column 'b' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+            ],
+            [
+                "Value '{\"array\": [1, 2, 3]}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value '{\"array\": {1, 2, 3}]}' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value '{\"missing_key\": \"value\"}' in Column 'b' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+            ],
+            [None, None],
+            ["Value 'Not a JSON string' in Column 'a' is not a valid JSON string", None],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value 'Not a JSON string' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    actual = test_df.select(
+        has_json_schema("a", json_schema),
+        has_json_schema("b", json_schema),
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
