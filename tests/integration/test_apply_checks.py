@@ -7427,8 +7427,8 @@ def _verify_llm_check_results(checked_df, expected_check_name):
 
     # Check that some primary key was detected and used
     # Look for either errors or warnings (the check should produce some result)
-    error_rows = checked_df.filter(checked_df._errors.isNotNull()).collect()  # pylint: disable=protected-access
-    warning_rows = checked_df.filter(checked_df._warnings.isNotNull()).collect()  # pylint: disable=protected-access
+    error_rows = checked_df.filter(checked_df["_errors"].isNotNull()).collect()
+    warning_rows = checked_df.filter(checked_df["_warnings"].isNotNull()).collect()
 
     # At least one of errors or warnings should have data
     assert len(error_rows) > 0 or len(warning_rows) > 0
