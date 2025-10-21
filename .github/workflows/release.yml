@@ -27,8 +27,7 @@ jobs:
       
       - name: Build wheels
         run: |
-          # click 8.3+ introduced bug for hatch
-          pip install "hatch==1.13.0" "click<8.3"
+          pip install hatch==1.15.0
           hatch build
       
       - name: Github release
