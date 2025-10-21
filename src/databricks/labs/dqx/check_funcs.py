@@ -1852,8 +1852,8 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType, 
     is_not_corrupt = parsed_struct[corrupt_record_name].isNull()
     base_conformity = ~is_invalid_json & is_not_corrupt
 
-    _get_strict_schema_comparison()
-    _get_permissive_schema_comparison
+    # _get_strict_schema_comparison()
+    # _get_permissive_schema_comparison
 
     if strict:
         expected_field_names = [f.name for f in _expected_schema.fields]
