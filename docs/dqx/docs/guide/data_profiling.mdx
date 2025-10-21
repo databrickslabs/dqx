@@ -426,7 +426,7 @@ The examples below showcase `profile_table()` but the same options work for all 
     )
 
     # Direct LLM-based primary key detection
-    result, detector = profiler._run_llm_pk_detection(
+    result, detector = profiler.detect_primary_keys_with_llm(
         table="main.sales.customers",
         options={
             "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"
