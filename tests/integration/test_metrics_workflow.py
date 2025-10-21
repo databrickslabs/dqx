@@ -207,7 +207,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics):
     )
     actual_metrics_df = (
         spark.table(run_config.metrics_config.location)
-        .where("metric_name NOT IN ('input_row_count', 'error_row_count', 'warning_row_count', 'valid_row_count')")
+        .where("metric_name NOT IN ('error_row_count', 'warning_row_count', 'valid_row_count')")
         .drop("run_ts")
         .orderBy("metric_name")
     )
