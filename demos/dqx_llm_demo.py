@@ -117,44 +117,9 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Rules Generation with is_unique
+# MAGIC ## Integrated Workflow: LLM Detection + Rule Generation
 # MAGIC 
-# MAGIC Once primary keys are detected via LLM, DQX can automatically generate `is_unique` data quality rules to validate the uniqueness of those columns.
-
-# COMMAND ----------
-
-from databricks.labs.dqx.profiler.generator import DQGenerator
-
-# Example: Generate is_unique rule from LLM-detected primary key
-detected_pk_columns = ["customer_id", "order_id"]  # Example detected PK
-confidence = "high"
-reasoning = "LLM analysis indicates these columns form a composite primary key based on schema patterns"
-
-# Generate is_unique rule using the detected primary key
-is_unique_rule = DQGenerator.dq_generate_is_unique(
-    column=",".join(detected_pk_columns),
-    level="error",
-    columns=detected_pk_columns,
-    confidence=confidence,
-    reasoning=reasoning,
-    llm_detected=True,
-    nulls_distinct=True  # Default behavior: NULLs are treated as distinct
-)
-
-print("Generated is_unique rule:")
-print(f"Rule name: {is_unique_rule['name']}")
-print(f"Function: {is_unique_rule['check']['function']}")
-print(f"Columns: {is_unique_rule['check']['arguments']['columns']}")
-print(f"Criticality: {is_unique_rule['criticality']}")
-print(f"LLM detected: {is_unique_rule['user_metadata']['llm_based_detection']}")
-print(f"Confidence: {is_unique_rule['user_metadata']['pk_detection_confidence']}")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Integrated Workflow: LLM Detection + Rule Generation
-# MAGIC 
-# MAGIC Here's how to combine LLM-based primary key detection with automatic rule generation:
+# MAGIC This demonstrates the complete workflow: profiling with LLM-based primary key detection and automatic rule generation using the proper DQX APIs.
 
 # COMMAND ----------
 
@@ -162,8 +127,8 @@ print(f"Confidence: {is_unique_rule['user_metadata']['pk_detection_confidence']}
 sample_data = [
     (1, "A001", "John", "Doe"),
     (2, "A002", "Jane", "Smith"), 
-    (3, "A001", "Bob", "Johnson"),  # Duplicate customer_id - should fail uniqueness
-    (4, "A003", "Alice", "Brown")
+    (3, "A003", "Bob", "Johnson"),
+    (4, "A004", "Alice", "Brown")
 ]
 
 sample_df = spark.createDataFrame(
@@ -176,249 +141,78 @@ sample_df.show()
 
 # COMMAND ----------
 
-# Simulate LLM detection result (in practice, this would come from the LLM)
-llm_detection_result = {
-    "success": True,
-    "primary_key_columns": ["id"],  # LLM detected 'id' as primary key
-    "confidence": "high",
-    "reasoning": "Column 'id' appears to be an auto-incrementing identifier based on naming patterns and data distribution"
-}
+from databricks.labs.dqx.profiler.generator import DQGenerator
 
-if llm_detection_result["success"]:
-    # Generate is_unique rule from LLM detection
-    pk_columns = llm_detection_result["primary_key_columns"]
-    
-    generated_rule = DQGenerator.dq_generate_is_unique(
-        column=",".join(pk_columns),
-        level="error",
-        columns=pk_columns,
-        confidence=llm_detection_result["confidence"],
-        reasoning=llm_detection_result["reasoning"],
-        llm_detected=True
-    )
-    
-    print("✅ Generated is_unique rule from LLM detection:")
-    print(f"   Rule: {generated_rule['name']}")
-    print(f"   Columns: {generated_rule['check']['arguments']['columns']}")
-    print(f"   Metadata: LLM-based detection with {generated_rule['user_metadata']['pk_detection_confidence']} confidence")
+# Profile the sample data with LLM-based primary key detection enabled
+ws = WorkspaceClient()
+profiler = DQProfiler(ws)
+
+# Create a temporary view for profiling
+sample_df.createOrReplaceTempView("sample_customers")
+
+# Profile with LLM-based primary key detection
+summary_stats, profiles = profiler.profile_table(
+    "sample_customers",
+    options={"enable_llm_pk_detection": True}
+)
+
+print("✅ Profiling completed with LLM-based primary key detection")
+
+# Generate quality rules from the profiles (this will include LLM-detected primary key rules)
+generator = DQGenerator(ws)
+generated_rules = generator.generate_dq_rules(profiles)
+
+print(f"\n📋 Generated {len(generated_rules)} quality rules:")
+for rule in generated_rules:
+    print(f"   - {rule['name']} ({rule['criticality']})")
+    if 'llm_based_detection' in rule.get('user_metadata', {}):
+        print(f"     🤖 LLM-detected primary key rule")
+
+# Check if LLM detected any primary keys
+if "llm_primary_key_detection" in summary_stats:
+    pk_info = summary_stats["llm_primary_key_detection"]
+    print(f"\n🔑 LLM detected primary key: {pk_info['detected_columns']}")
+    print(f"   Confidence: {pk_info['confidence']}")
+    print(f"   Has duplicates: {pk_info['has_duplicates']}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Applying the Generated is_unique Rule
+# MAGIC ### Applying the Generated Quality Rules
 # MAGIC 
-# MAGIC Now let's apply the generated rule to validate data quality:
+# MAGIC Now let's apply the generated rules (including LLM-detected primary key rules) to validate data quality using the proper DQX workflow:
 
 # COMMAND ----------
 
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQDatasetRule
-from databricks.labs.dqx import check_funcs
 
-# Convert the generated rule to a DQDatasetRule for execution
-pk_columns = generated_rule['check']['arguments']['columns']
-dq_rule = DQDatasetRule(
-    name=generated_rule['name'],
-    criticality=generated_rule['criticality'],
-    check_func=check_funcs.is_unique,
-    columns=pk_columns,
-    check_func_kwargs={
-        "nulls_distinct": generated_rule['check']['arguments']['nulls_distinct']
-    }
-)
-
-# Apply the rule using DQEngine
+# Apply all generated rules using DQEngine with metadata-based approach
 dq_engine = DQEngine(workspace_client=ws)
-result_df = dq_engine.apply_checks(sample_df, [dq_rule])
 
-print("✅ Applied is_unique rule to sample data")
-print("Result columns:", result_df.columns)
+# Option 1: Apply rules and annotate results as additional columns
+annotated_df = dq_engine.apply_checks_by_metadata(sample_df, generated_rules)
 
-# Show results - the rule should pass since 'id' column has unique values
-result_df.select("id", "customer_id", f"dq_check_{generated_rule['name']}").show()
+print("✅ Applied all generated quality rules to sample data")
+print("Result columns:", annotated_df.columns)
 
-# COMMAND ----------
+# Show results with quality check annotations
+annotated_df.show()
 
-# MAGIC %md
-# MAGIC ### Composite Primary Key Example
-# MAGIC 
-# MAGIC Let's demonstrate with a composite primary key detected by LLM:
+# Option 2: Apply rules and split into valid and quarantine DataFrames
+valid_df, quarantine_df = dq_engine.apply_checks_by_metadata_and_split(sample_df, generated_rules)
 
-# COMMAND ----------
+print(f"\n📊 Data Quality Results:")
+print(f"   Valid records: {valid_df.count()}")
+print(f"   Quarantine records: {quarantine_df.count()}")
 
-# Sample data with composite key scenario
-composite_data = [
-    ("store_1", "2024-01-01", 100.0),
-    ("store_1", "2024-01-02", 150.0),
-    ("store_2", "2024-01-01", 200.0),
-    ("store_2", "2024-01-02", 175.0),
-    ("store_1", "2024-01-01", 120.0),  # Duplicate composite key - should fail
-]
+print("\n✅ Valid data:")
+valid_df.show()
 
-composite_df = spark.createDataFrame(
-    composite_data,
-    ["store_id", "date", "sales_amount"]
-)
-
-# Simulate LLM detecting composite primary key
-composite_llm_result = {
-    "success": True,
-    "primary_key_columns": ["store_id", "date"],
-    "confidence": "medium",
-    "reasoning": "Combination of store_id and date appears to uniquely identify sales records based on business logic patterns"
-}
-
-# Generate composite is_unique rule
-composite_rule = DQGenerator.dq_generate_is_unique(
-    column=",".join(composite_llm_result["primary_key_columns"]),
-    level="warn",  # Use warning level for this example
-    columns=composite_llm_result["primary_key_columns"],
-    confidence=composite_llm_result["confidence"],
-    reasoning=composite_llm_result["reasoning"],
-    llm_detected=True
-)
-
-print("Generated composite is_unique rule:")
-print(f"Rule name: {composite_rule['name']}")
-print(f"Columns: {composite_rule['check']['arguments']['columns']}")
-print(f"Criticality: {composite_rule['criticality']}")
-
-# COMMAND ----------
-
-# Apply composite key validation
-composite_dq_rule = DQDatasetRule(
-    name=composite_rule['name'],
-    criticality=composite_rule['criticality'],
-    check_func=check_funcs.is_unique,
-    columns=composite_rule['check']['arguments']['columns'],
-    check_func_kwargs={
-        "nulls_distinct": composite_rule['check']['arguments']['nulls_distinct']
-    }
-)
-
-composite_result_df = dq_engine.apply_checks(composite_df, [composite_dq_rule])
-
-print("✅ Applied composite is_unique rule")
-print("Data with duplicates detected:")
-composite_result_df.show()
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Dataset Comparison with LLM Matching Key Detection
-# MAGIC 
-# MAGIC DQX now supports automatic matching key detection for dataset comparisons using LLM. This feature automatically identifies the best columns to use for row matching when comparing two datasets.
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Simple Usage - Detect matching keys from all columns
-
-# COMMAND ----------
-
-# Create sample source and reference datasets
-source_data = [
-    (1, "A001", "John", "Doe", "2024-01-01"),
-    (2, "A002", "Jane", "Smith", "2024-01-02"), 
-    (3, "A003", "Bob", "Johnson", "2024-01-03"),
-    (4, "A004", "Alice", "Brown", "2024-01-04")
-]
-
-reference_data = [
-    (1, "A001", "John", "Doe", "2024-01-01"),
-    (2, "A002", "Jane", "Smith-Wilson", "2024-01-02"),  # Changed last name
-    (3, "A003", "Bob", "Johnson", "2024-01-03"),
-    (5, "A005", "Charlie", "Davis", "2024-01-05")  # New record
-]
-
-source_df = spark.createDataFrame(
-    source_data, 
-    ["id", "customer_id", "first_name", "last_name", "created_date"]
-)
-
-reference_df = spark.createDataFrame(
-    reference_data, 
-    ["id", "customer_id", "first_name", "last_name", "created_date"]
-)
-
-print("Source DataFrame:")
-source_df.show()
-print("Reference DataFrame:")
-reference_df.show()
-
-# COMMAND ----------
-
-from databricks.labs.dqx.rule import DQDatasetRule
-
-# Simple usage - detect matching keys from all columns
-compare_rule_simple = DQDatasetRule(
-    name="llm_dataset_comparison_all_columns",
-    criticality="error",
-    check_func=check_funcs.compare_datasets,
-    columns=[],  # Empty columns - LLM will detect from all columns
-    check_func_kwargs={
-        "ref_columns": [],
-        "ref_df_name": "reference_df",
-        "enable_llm_matching_key_detection": True,
-    },
-)
-
-# Apply the comparison with LLM key detection
-comparison_result = dq_engine.apply_checks(
-    source_df, 
-    [compare_rule_simple], 
-    ref_dfs={"reference_df": reference_df}
-)
-
-print("✅ Dataset comparison with LLM matching key detection completed")
-print("Detected differences:")
-comparison_result.filter("_errors > 0").show(truncate=False)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Advanced Usage - Detect from candidate columns with custom options
-
-# COMMAND ----------
-
-# Advanced usage with custom options
-compare_rule_advanced = DQDatasetRule(
-    name="llm_dataset_comparison_candidate_columns",
-    criticality="error", 
-    check_func=check_funcs.compare_datasets,
-    columns=["id", "customer_id"],  # Limit search to these candidate columns
-    check_func_kwargs={
-        "ref_columns": ["id", "customer_id"],
-        "ref_df_name": "reference_df",
-        "enable_llm_matching_key_detection": True,
-        "llm_matching_key_detection_options": {
-            "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",
-        },
-    },
-)
-
-# Apply the advanced comparison
-advanced_result = dq_engine.apply_checks(
-    source_df,
-    [compare_rule_advanced],
-    ref_dfs={"reference_df": reference_df}
-)
-
-print("✅ Advanced dataset comparison with custom LLM options completed")
-print("Results with candidate column detection:")
-advanced_result.filter("_errors > 0").show(truncate=False)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Benefits of LLM Matching Key Detection
-# MAGIC 
-# MAGIC - **🎯 Automatic Key Discovery**: No need to manually specify matching columns
-# MAGIC - **🧠 Intelligent Analysis**: LLM analyzes schema and data patterns to identify best matching keys
-# MAGIC - **🔍 Flexible Search Space**: Can search all columns or limit to candidate columns
-# MAGIC - **⚙️ Configurable Options**: Customize LLM endpoint and detection parameters
-# MAGIC - **🛡️ Validation**: Optional duplicate validation for detected keys
-# MAGIC - **📊 Better Comparisons**: More accurate dataset comparisons with optimal key selection
+if quarantine_df.count() > 0:
+    print("\n⚠️ Quarantined data:")
+    quarantine_df.show()
+else:
+    print("\n🎉 No data quality issues found!")
 
 # COMMAND ----------
 

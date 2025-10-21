@@ -6,7 +6,6 @@ import re
 from typing import Any
 from fnmatch import fnmatch
 from pyspark.sql import Column
-from pyspark.sql import types as T
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -403,6 +402,20 @@ def _get_tables_from_schemas(client: WorkspaceClient, catalog_name: str, schema_
     return tables
 
 
+def _match_table_patterns(table: str, patterns: list[str]) -> bool:
+    """
+    Checks if a table name matches any of the provided wildcard patterns.
+
+    Args:
+        table (str): The fully qualified table name to check.
+        patterns (list[str]): A list of wildcard patterns to match against.
+
+    Returns:
+        bool: True if the table matches any pattern, False otherwise.
+    """
+    return any(fnmatch(table, pattern) for pattern in patterns)
+
+
 def _filter_tables_by_patterns(tables: list[str], patterns: list[str], exclude_matched: bool) -> list[str]:
     """
     Filters a list of table names based on provided wildcard patterns.
@@ -417,72 +430,5 @@ def _filter_tables_by_patterns(tables: list[str], patterns: list[str], exclude_m
         list[str]: A filtered list of table names based on the matching criteria.
     """
     if exclude_matched:
-        return [table for table in tables if not any(fnmatch(table, pattern) for pattern in patterns)]
-    return [table for table in tables if any(fnmatch(table, pattern) for pattern in patterns)]
-
-
-def spark_type_to_sql_type(spark_type: Any) -> str:
-    """
-    Converts Spark data types to SQL-like string representations.
-
-    Args:
-        spark_type (Any): The Spark DataType to convert
-
-    Returns:
-        str: A string representation of the SQL type
-    """
-    # Type mapping for better maintainability
-    type_mapping = {
-        T.StringType: "STRING",
-        T.IntegerType: "INT",
-        T.LongType: "BIGINT",
-        T.DoubleType: "DOUBLE",
-        T.FloatType: "FLOAT",
-        T.BooleanType: "BOOLEAN",
-        T.DateType: "DATE",
-        T.TimestampType: "TIMESTAMP",
-    }
-
-    # Check simple type mappings first
-    for spark_type_class, sql_type in type_mapping.items():
-        if isinstance(spark_type, spark_type_class):
-            return sql_type
-
-    # Handle complex types
-    if isinstance(spark_type, T.DecimalType):
-        return f"DECIMAL({spark_type.precision},{spark_type.scale})"
-    if isinstance(spark_type, T.ArrayType):
-        return f"ARRAY<{spark_type_to_sql_type(spark_type.elementType)}>"
-    if isinstance(spark_type, T.MapType):
-        return f"MAP<{spark_type_to_sql_type(spark_type.keyType)},{spark_type_to_sql_type(spark_type.valueType)}>"
-    if isinstance(spark_type, T.StructType):
-        return "STRUCT<...>"  # Simplified for LLM analysis
-
-    # Default case
-    return str(spark_type).upper()
-
-
-def generate_table_definition_from_dataframe(df, table: str = "dataframe_analysis") -> str:
-    """
-    Generate a CREATE TABLE statement from a DataFrame schema.
-
-    Args:
-        df (Any): The DataFrame to generate a table definition for
-        table (str): Name to use in the CREATE TABLE statement
-
-    Returns:
-        A string representing a CREATE TABLE statement
-    """
-    table_definition = f"CREATE TABLE {table} (\n"
-
-    column_definitions = []
-    for field in df.schema.fields:
-        # Convert Spark data types to SQL-like representation
-        sql_type = spark_type_to_sql_type(field.dataType)
-        nullable = "" if field.nullable else " NOT NULL"
-        column_definitions.append(f"    {field.name} {sql_type}{nullable}")
-
-    table_definition += ",\n".join(column_definitions)
-    table_definition += "\n)"
-
-    return table_definition
+        return [table for table in tables if not _match_table_patterns(table, patterns)]
+    return [table for table in tables if _match_table_patterns(table, patterns)]

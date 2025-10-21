@@ -88,6 +88,27 @@ def skip_if_runtime_not_geo_compatible(ws, debug_env):
         pytest.skip("This test requires a cluster with runtime 17.1 or above")
 
 
+@pytest.fixture
+def skip_if_llm_not_available():
+    """
+    Skip the test if LLM dependencies are not available.
+
+    This fixture checks for the availability of LLM-related dependencies
+    and skips the test if they are not installed or accessible.
+    """
+    try:
+        # Try to import LLM-related dependencies
+        import dspy  # noqa: F401
+        from databricks_langchain import (  # noqa: F401
+            ChatDatabricks,
+        )
+        from langchain_core.messages import (  # noqa: F401
+            HumanMessage,
+        )
+    except ImportError as e:
+        pytest.skip(f"LLM dependencies not available: {e}")
+
+
 class CommonUtils:
     def __init__(self, env_or_skip_fixture: Callable[[str], str], ws: WorkspaceClient):
         self._env_or_skip = env_or_skip_fixture

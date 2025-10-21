@@ -3,16 +3,9 @@ LLM-based primary key identifier.
 """
 
 from unittest.mock import Mock
-import pytest
 
-# Check LLM dependencies availability
-try:
-    from databricks.labs.dqx.llm.pk_identifier import DatabricksPrimaryKeyDetector
-
-    HAS_LLM_DEPS = True
-except ImportError:
-    DatabricksPrimaryKeyDetector = type(None)  # type: ignore
-    HAS_LLM_DEPS = False
+# Import LLM dependencies - fixture will handle availability checking
+from databricks.labs.dqx.llm.pk_identifier import DatabricksPrimaryKeyDetector
 
 
 # Test helper classes
@@ -55,8 +48,7 @@ class MockDetector:
         return result
 
 
-@pytest.mark.skipif(not HAS_LLM_DEPS, reason="LLM dependencies (dspy, databricks_langchain) not installed")
-def test_detect_primary_key_simple():
+def test_detect_primary_key_simple(skip_if_llm_not_available):
     """Test simple primary key detection with mocked table schema and LLM."""
 
     # Mock table definition and metadata
@@ -101,8 +93,7 @@ def test_detect_primary_key_simple():
     assert "customer_id" in result["reasoning"]
 
 
-@pytest.mark.skipif(not HAS_LLM_DEPS, reason="LLM dependencies (dspy, databricks_langchain) not installed")
-def test_detect_primary_key_composite():
+def test_detect_primary_key_composite(skip_if_llm_not_available):
     """Test detection of composite primary key."""
 
     # Mock table definition and metadata
@@ -145,8 +136,7 @@ def test_detect_primary_key_composite():
     assert result["primary_key_columns"] == ["order_id", "product_id"]
 
 
-@pytest.mark.skipif(not HAS_LLM_DEPS, reason="LLM dependencies (dspy, databricks_langchain) not installed")
-def test_detect_primary_key_no_clear_key():
+def test_detect_primary_key_no_clear_key(skip_if_llm_not_available):
     """Test when LLM cannot identify a clear primary key."""
 
     # Mock table definition and metadata

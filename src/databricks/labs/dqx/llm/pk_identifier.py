@@ -8,7 +8,6 @@ from databricks_langchain import ChatDatabricks
 from langchain_core.messages import HumanMessage
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.utils import generate_table_definition_from_dataframe
 
 logger = logging.getLogger(__name__)
 
@@ -135,63 +134,6 @@ class SparkManager:
         except (AttributeError, TypeError, KeyError) as e:
             logger.error(f"Unexpected error retrieving table definition for {table}: {e}")
             raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
-
-    def _execute_duplicate_check_query(self, table: str, pk_columns: list[str]) -> tuple[bool, int, Any]:
-        """Execute the duplicate check query and return results."""
-        pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
-        print(f"🔍 Checking for duplicates in {table} using columns: {pk_cols_str}")
-
-        duplicate_query = f"""
-        SELECT {pk_cols_str}, COUNT(*) as duplicate_count
-        FROM {table}
-        GROUP BY {pk_cols_str}
-        HAVING COUNT(*) > 1
-        """
-
-        duplicate_result = self.spark.sql(duplicate_query)
-        duplicates_df = duplicate_result.toPandas()
-        return len(duplicates_df) > 0, len(duplicates_df), duplicates_df
-
-    @staticmethod
-    def _report_duplicate_results(
-        has_duplicates: bool, duplicate_count: int, pk_columns: list[str], duplicates_df=None
-    ):
-        """Report the results of duplicate checking."""
-        if has_duplicates and duplicates_df is not None:
-            total_duplicate_records = duplicates_df['duplicate_count'].sum()
-            logger.warning(
-                f"Found {duplicate_count} duplicate key combinations affecting {total_duplicate_records} total records"
-            )
-            print(f"⚠️  Found {duplicate_count} duplicate combinations for: {', '.join(pk_columns)}")
-            if len(duplicates_df) > 0:
-                print("Sample duplicates:")
-                print(duplicates_df.head().to_string(index=False))
-        else:
-            logger.info(f"No duplicates found for predicted primary key: {', '.join(pk_columns)}")
-            print(f"✅ No duplicates found for: {', '.join(pk_columns)}")
-
-    def check_duplicates(
-        self,
-        table: str,
-        pk_columns: list[str],
-    ) -> tuple[bool, int]:
-        """Check for duplicates using Spark SQL GROUP BY and HAVING."""
-        if not self.spark:
-            raise ValueError("Spark session not available")
-
-        try:
-            has_duplicates, duplicate_count, duplicates_df = self._execute_duplicate_check_query(table, pk_columns)
-            self._report_duplicate_results(has_duplicates, duplicate_count, pk_columns, duplicates_df)
-            return has_duplicates, duplicate_count
-
-        except (ValueError, RuntimeError) as e:
-            logger.error(f"Error checking duplicates: {e}")
-            print(f"❌ Error checking duplicates: {e}")
-            return False, 0
-        except (AttributeError, TypeError, KeyError) as e:
-            logger.error(f"Unexpected error checking duplicates: {e}")
-            print(f"❌ Unexpected error checking duplicates: {e}")
-            return False, 0
 
     @staticmethod
     def _extract_useful_properties(stats_df) -> list[str]:
@@ -387,13 +329,66 @@ class DatabricksPrimaryKeyDetector:
             self.validate_duplicates,
         )
 
-    def _generate_table_definition_from_dataframe(self, df: Any) -> str:
-        """Generate a CREATE TABLE statement from a DataFrame schema."""
-        return generate_table_definition_from_dataframe(df, self.table)
+    def check_duplicates(
+        self,
+        table: str,
+        pk_columns: list[str],
+    ) -> tuple[bool, int]:
+        """Check for duplicates using Spark SQL GROUP BY and HAVING."""
+        if not self.spark:
+            raise ValueError("Spark session not available")
+
+        try:
+            has_duplicates, duplicate_count, duplicates_df = self._execute_duplicate_check_query(table, pk_columns)
+            self._report_duplicate_results(has_duplicates, duplicate_count, pk_columns, duplicates_df)
+            return has_duplicates, duplicate_count
+
+        except (ValueError, RuntimeError) as e:
+            logger.error(f"Error checking duplicates: {e}")
+            print(f"❌ Error checking duplicates: {e}")
+            return False, 0
+        except (AttributeError, TypeError, KeyError) as e:
+            logger.error(f"Unexpected error checking duplicates: {e}")
+            print(f"❌ Unexpected error checking duplicates: {e}")
+            return False, 0
+
+    def _execute_duplicate_check_query(self, table: str, pk_columns: list[str]) -> tuple[bool, int, Any]:
+        """Execute the duplicate check query and return results."""
+        pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
+        print(f"🔍 Checking for duplicates in {table} using columns: {pk_cols_str}")
+
+        duplicate_query = f"""
+        SELECT {pk_cols_str}, COUNT(*) as duplicate_count
+        FROM {table}
+        GROUP BY {pk_cols_str}
+        HAVING COUNT(*) > 1
+        """
+
+        duplicate_result = self.spark.sql(duplicate_query)
+        duplicates_df = duplicate_result.toPandas()
+        return len(duplicates_df) > 0, len(duplicates_df), duplicates_df
+
+    @staticmethod
+    def _report_duplicate_results(
+        has_duplicates: bool, duplicate_count: int, pk_columns: list[str], duplicates_df=None
+    ):
+        """Report the results of duplicate checking."""
+        if has_duplicates and duplicates_df is not None:
+            total_duplicate_records = duplicates_df['duplicate_count'].sum()
+            logger.warning(
+                f"Found {duplicate_count} duplicate key combinations affecting {total_duplicate_records} total records"
+            )
+            print(f"⚠️  Found {duplicate_count} duplicate combinations for: {', '.join(pk_columns)}")
+            if len(duplicates_df) > 0:
+                print("Sample duplicates:")
+                print(duplicates_df.head().to_string(index=False))
+        else:
+            logger.info(f"No duplicates found for predicted primary key: {', '.join(pk_columns)}")
+            print(f"✅ No duplicates found for: {', '.join(pk_columns)}")
 
     def _check_duplicates_and_update_result(self, table: str, pk_columns: list[str], result: dict) -> tuple[bool, int]:
         """Check for duplicates and update result with validation info."""
-        has_duplicates, duplicate_count = self.spark_manager.check_duplicates(table, pk_columns)
+        has_duplicates, duplicate_count = self.check_duplicates(table, pk_columns)
 
         result['has_duplicates'] = has_duplicates
         result['duplicate_count'] = duplicate_count

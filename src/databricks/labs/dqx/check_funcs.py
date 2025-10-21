@@ -45,17 +45,17 @@ def _detect_matching_keys_with_llm(
 ) -> list[str]:
     """
     Helper function to detect matching keys using LLM.
-    
+
     Args:
         df: Source DataFrame for analysis
         columns: Current columns list (may be empty)
         llm_options: LLM detection options
         spark: Spark session
         unique_id: Unique identifier for temporary table
-        
+
     Returns:
         List of detected column names
-        
+
     Raises:
         ImportError: If LLM dependencies are not available
         RuntimeError: If detection fails
@@ -89,9 +89,7 @@ def _detect_matching_keys_with_llm(
         pk_result = detector.detect_primary_keys()
 
         if not pk_result.get("success", False):
-            raise RuntimeError(
-                f"LLM-based primary key detection failed: {pk_result.get('error', 'Unknown error')}"
-            )
+            raise RuntimeError(f"LLM-based primary key detection failed: {pk_result.get('error', 'Unknown error')}")
 
         detected_columns = pk_result["primary_key_columns"]
 
@@ -99,9 +97,7 @@ def _detect_matching_keys_with_llm(
         if columns:
             detected_columns = [col for col in detected_columns if col in search_columns]
             if not detected_columns:
-                raise RuntimeError(
-                    f"No primary key columns detected within the provided columns: {search_columns}"
-                )
+                raise RuntimeError(f"No primary key columns detected within the provided columns: {search_columns}")
 
         return detected_columns
 
@@ -113,6 +109,7 @@ def _detect_matching_keys_with_llm(
             spark.sql(f"DROP VIEW IF EXISTS {temp_table_name}")
         except Exception:
             pass  # Ignore cleanup errors
+
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
@@ -1612,8 +1609,8 @@ def compare_datasets(
             detected_columns = _detect_matching_keys_with_llm(
                 df, columns, _llm_matching_key_detection_options, spark, unique_id
             )
-            columns = detected_columns
-            ref_columns = detected_columns  # Use same columns for reference
+            columns = detected_columns  # type: ignore[assignment]
+            ref_columns = detected_columns  # type: ignore[assignment]
 
         # map type columns must be skipped as they cannot be compared with eqNullSafe
         map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}

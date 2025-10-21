@@ -22,7 +22,7 @@ from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.utils import (
     list_tables,
 )
-from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
+from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -131,7 +131,6 @@ class DQProfiler(DQEngineBase):
         self,
         table: str,
         options: dict[str, Any] | None = None,
-        llm: bool = False,
     ) -> dict[str, Any] | None:
         """Detect primary key for a table using LLM-based analysis.
 
@@ -140,7 +139,6 @@ class DQProfiler(DQEngineBase):
         Args:
             table: Fully qualified table name (e.g., 'catalog.schema.table')
             options: Optional dictionary of options for PK detection
-            llm: Enable LLM-based detection
 
         Returns:
             Dictionary with PK detection results or None if disabled/failed
@@ -150,13 +148,6 @@ class DQProfiler(DQEngineBase):
 
         if options is None:
             options = {}
-
-        # Check if LLM-based PK detection is explicitly requested
-        llm_enabled = llm or options.get("enable_llm_pk_detection", False)
-
-        if not llm_enabled:
-            logger.debug("LLM-based PK detection not requested. Use enable_llm_pk_detection=True to enable.")
-            return None
 
         try:
             result, detector = self._run_llm_pk_detection(table, options)
@@ -201,72 +192,7 @@ class DQProfiler(DQEngineBase):
         df = read_input_data(spark=self.spark, input_config=InputConfig(location=table))
         summary_stats, dq_rules = self.profile(df=df, columns=columns, options=options)
 
-        # Add LLM-based primary key detection if explicitly requested
-        self._add_llm_primary_key_detection(table, options, summary_stats)
-
         return summary_stats, dq_rules
-
-    def _add_llm_primary_key_detection(
-        self, table: str, options: dict[str, Any] | None, summary_stats: dict[str, Any]
-    ) -> None:
-        """
-        Adds LLM-based primary key detection results to summary statistics if enabled.
-
-        Args:
-            table: The fully-qualified table name (*catalog.schema.table*)
-            options: Optional dictionary of options for profiling
-            summary_stats: Summary statistics dictionary to update with PK detection results
-        """
-        llm_enabled = options and options.get("enable_llm_pk_detection", False)
-
-        if not llm_enabled:
-            return
-
-        # Parse table name to extract catalog, schema, table (or use full path for files)
-        # No need to parse table components since we pass the full table name
-
-        pk_result = self.detect_primary_keys_with_llm(table, options)
-
-        if pk_result and pk_result.get("success", False):
-            pk_columns = pk_result.get("primary_key_columns", [])
-            if pk_columns and pk_columns != ["none"]:
-                # Add to summary stats (but don't automatically generate rules)
-                summary_stats["llm_primary_key_detection"] = {
-                    "detected_columns": pk_columns,
-                    "confidence": pk_result.get("confidence", "unknown"),
-                    "has_duplicates": pk_result.get("has_duplicates", False),
-                    "validation_performed": pk_result.get("validation_performed", False),
-                    "method": "llm_based",
-                }
-
-    def _parse_table_name(self, table: str) -> tuple[str | None, str | None, str]:
-        """
-        Parses a fully-qualified table name into its components.
-
-        Args:
-            table: The fully-qualified table name (catalog.schema.table or schema.table or table)
-
-        Returns:
-            A tuple of (catalog, schema, table_name) where catalog and schema can be None
-        """
-        table_parts = table.split(".")
-        if len(table_parts) == 3:
-            return table_parts[0], table_parts[1], table_parts[2]
-        if len(table_parts) == 2:
-            return None, table_parts[0], table_parts[1]
-        return None, None, table_parts[0]
-
-    def _is_file_path(self, name: str) -> bool:
-        """
-        Determine if the given name is a file path rather than a table name.
-
-        Args:
-            name: The name to check
-
-        Returns:
-            True if it looks like a file path, False if it looks like a table name
-        """
-        return bool(STORAGE_PATH_PATTERN.match(name))
 
     def _run_llm_pk_detection(self, table: str, options: dict[str, Any] | None):
         """Run LLM-based primary key detection for a table."""

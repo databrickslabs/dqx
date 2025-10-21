@@ -7441,7 +7441,9 @@ def _verify_llm_check_results(checked_df, expected_check_name):
     assert validation_data["name"] == expected_check_name
 
 
-def test_compare_datasets_check_with_llm_matching_key_detection_empty_columns(ws, spark, set_utc_timezone):
+def test_compare_datasets_check_with_llm_matching_key_detection_empty_columns(
+    skip_if_llm_not_available, ws, spark, set_utc_timezone
+):
     """Test compare_datasets check with enable_llm_matching_key_detection=True and empty columns (detect from all columns)."""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
@@ -7489,14 +7491,13 @@ def test_compare_datasets_check_with_llm_matching_key_detection_empty_columns(ws
     try:
         checked = dq_engine.apply_checks(src_df, checks, refs_df)
         _verify_llm_check_results(checked, "llm_matching_key_detection_empty_columns")
-
-    except ImportError as e:
-        pytest.skip(f"LLM dependencies not available: {e}")
     except Exception as e:
         pytest.skip(f"LLM-based detection failed (possibly endpoint unavailable): {e}")
 
 
-def test_compare_datasets_check_with_llm_matching_key_detection_provided_columns(ws, spark, set_utc_timezone):
+def test_compare_datasets_check_with_llm_matching_key_detection_provided_columns(
+    skip_if_llm_not_available, ws, spark, set_utc_timezone
+):
     """Test compare_datasets check with enable_llm_matching_key_detection=True and provided columns (detect from subset)."""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
@@ -7545,9 +7546,6 @@ def test_compare_datasets_check_with_llm_matching_key_detection_provided_columns
     try:
         checked = dq_engine.apply_checks(src_df, checks, refs_df)
         _verify_llm_check_results(checked, "llm_matching_key_detection_provided_columns")
-
-    except ImportError as e:
-        pytest.skip(f"LLM dependencies not available: {e}")
     except Exception as e:
         pytest.skip(f"LLM-based detection failed (possibly endpoint unavailable): {e}")
 
