@@ -21,58 +21,20 @@ RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME.isoformat())
 
 
-def skip_non_serverless_execution(reason="Test marked to be skipped when run from non-serverless compute."):
-    """
-    Decorates a test or fixture to be skipped when called from non-serverless compute. Use
-    `@skip_non_serverless_execution` to decorate tests or fixtures. When a test is decorated, the individual test is
-    skipped. When a fixture is decorated, any tests using the fixture will be skipped.
-
-    'DATABRICKS_SERVERLESS_COMPUTE_ID' must be absent in the test environment configuration for tests to be skipped.
-    """
-
-    def decorator(func):
-        def inner(*args, **kwargs):
-            if not os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
-                pytest.skip(reason)
-            return func(*args, **kwargs)
-
-        return inner
-
-    return decorator
-
-
-def skip_serverless_execution(reason="Test marked to be skipped when run from serverless compute."):
-    """
-    Decorates a test or fixture to be skipped when called from serverless compute. Use `@skip_serverless_execution` to
-    decorate tests or fixtures. When a test is decorated, the individual test is skipped. When a fixture is decorated,
-    any tests using the fixture will be skipped.
-
-    'DATABRICKS_SERVERLESS_COMPUTE_ID' must be present in the test environment configuration for tests to be skipped.
-    """
-
-    def decorator(func):
-        def inner(*args, **kwargs):
-            if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
-                pytest.skip(reason)
-            return func(*args, **kwargs)
-
-        return inner
-
-    return decorator
-
-
 @pytest.fixture
 def webbrowser_open():
     with patch("webbrowser.open") as mock_open:
         yield mock_open
 
 
-@skip_serverless_execution
 @pytest.fixture
 def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_random):
     """
     Set up the workflows with serverless cluster for the tests in the workspace.
     """
+
+    if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
 
     def create(_spark, **kwargs):
         installation_ctx.installation_service.run()
@@ -98,12 +60,14 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
     yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
 
 
-@skip_non_serverless_execution
 @pytest.fixture
 def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_schema, make_table, make_random):
     """
     Set up the workflows with serverless cluster for the tests in the workspace.
     """
+
+    if not os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
 
     def create(_spark, **kwargs):
         serverless_installation_ctx.installation_service.run()
@@ -135,10 +99,12 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
     yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
 
 
-@skip_serverless_execution
 @pytest.fixture
 def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_table, make_cluster, make_random):
     """Set up workflows with metrics configuration for testing."""
+
+    if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
 
     def create(_spark, **kwargs):
         cluster = make_cluster(
