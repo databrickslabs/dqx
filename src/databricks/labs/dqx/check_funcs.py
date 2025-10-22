@@ -36,6 +36,44 @@ except ImportError:
     HAS_LLM_DETECTOR = False
 
 
+def _get_search_columns(df: DataFrame, columns: list[str | Column]) -> list[str]:
+    """Determine search space for PK detection."""
+    if not columns:
+        return df.columns
+    return get_columns_as_strings(columns, allow_simple_expressions_only=True)
+
+
+def _create_pk_detector(
+    temp_table_name: str, llm_options: dict[str, Any], spark: SparkSession
+) -> "DatabricksPrimaryKeyDetector":
+    """Create and configure the primary key detector."""
+    return DatabricksPrimaryKeyDetector(
+        table=temp_table_name,
+        endpoint=llm_options["llm_pk_detection_endpoint"],
+        validate_duplicates=True,
+        spark_session=spark,
+        max_retries=3,
+        show_live_reasoning=False,
+    )
+
+
+def _validate_and_filter_detected_columns(
+    pk_result: dict[str, Any], search_columns: list[str], columns: list[str | Column]
+) -> list[str]:
+    """Validate PK detection result and filter columns."""
+    if not pk_result.get("success", False):
+        raise RuntimeError(f"LLM-based primary key detection failed: {pk_result.get('error', 'Unknown error')}")
+
+    detected_columns = pk_result["primary_key_columns"]
+
+    if columns:
+        detected_columns = [col for col in detected_columns if col in search_columns]
+        if not detected_columns:
+            raise RuntimeError(f"No primary key columns detected within the provided columns: {search_columns}")
+
+    return detected_columns
+
+
 def _detect_matching_keys_with_llm(
     df: DataFrame,
     columns: list[str | Column],
@@ -66,49 +104,22 @@ def _detect_matching_keys_with_llm(
             "Install with: pip install databricks-labs-dqx[llm]"
         )
 
+    search_columns = _get_search_columns(df, columns)
     temp_table_name = f"temp_pk_detection_{unique_id}"
     df.createOrReplaceTempView(temp_table_name)
 
     try:
-        # Determine search space for PK detection
-        if not columns:
-            search_columns = df.columns
-        else:
-            search_columns = get_columns_as_strings(columns, allow_simple_expressions_only=True)
-
-        # Create detector with options
-        detector = DatabricksPrimaryKeyDetector(
-            table=temp_table_name,
-            endpoint=llm_options["llm_pk_detection_endpoint"],
-            validate_duplicates=True,  # Always validate for duplicates
-            spark_session=spark,
-            max_retries=3,  # Fixed to 3 retries for optimal performance
-            show_live_reasoning=False,
-        )
-
+        detector = _create_pk_detector(temp_table_name, llm_options, spark)
         pk_result = detector.detect_primary_keys()
-
-        if not pk_result.get("success", False):
-            raise RuntimeError(f"LLM-based primary key detection failed: {pk_result.get('error', 'Unknown error')}")
-
-        detected_columns = pk_result["primary_key_columns"]
-
-        # Filter detected columns to search space if columns were provided
-        if columns:
-            detected_columns = [col for col in detected_columns if col in search_columns]
-            if not detected_columns:
-                raise RuntimeError(f"No primary key columns detected within the provided columns: {search_columns}")
-
+        detected_columns = _validate_and_filter_detected_columns(pk_result, search_columns, columns)
         return detected_columns
-
     except Exception as e:
         raise RuntimeError(f"Failed to detect primary keys using LLM: {str(e)}") from e
     finally:
-        # Clean up temporary table
         try:
             spark.sql(f"DROP VIEW IF EXISTS {temp_table_name}")
         except Exception:
-            pass  # Ignore cleanup errors
+            pass
 
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
@@ -1477,12 +1488,98 @@ def is_aggr_not_equal(
     )
 
 
+def _prepare_compare_columns(
+    df: DataFrame,
+    ref_df: DataFrame,
+    pk_column_names: list[str],
+    exclude_column_names: list[str],
+) -> tuple[list[str], list[str]]:
+    """Prepare columns for comparison and determine skipped columns."""
+    map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}
+    compare_columns = [
+        col
+        for col in df.columns
+        if (
+            col in ref_df.columns
+            and col not in pk_column_names
+            and col not in exclude_column_names
+            and col not in map_type_columns
+        )
+    ]
+    skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
+    return compare_columns, skipped_columns
+
+
+def _build_output_columns(
+    pk_column_names: list[str],
+    ref_pk_column_names: list[str],
+    compare_columns: list[str],
+    skipped_columns: list[str],
+    condition_col: str,
+) -> list[Column]:
+    """Build the output column list for the comparison result."""
+    coalesced_pk_columns = [
+        F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
+        for col, ref_col in zip(pk_column_names, ref_pk_column_names)
+    ]
+    return [
+        *coalesced_pk_columns,
+        *[F.col(f"df.{col}").alias(col) for col in compare_columns],
+        *[F.col(f"df.{col}").alias(col) for col in skipped_columns],
+        F.col(condition_col),
+    ]
+
+
+def _extract_tolerances(abs_tol: float | None, rel_tol: float | None) -> tuple[float, float]:
+    """Extract and validate tolerance values from individual parameters."""
+    abs_tolerance = 0.0 if abs_tol is None else abs_tol
+    rel_tolerance = 0.0 if rel_tol is None else rel_tol
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+    return abs_tolerance, rel_tolerance
+
+
+def _prepare_column_names(
+    columns: list[str | Column],
+    ref_columns: list[str | Column],
+    exclude_columns: list[str | Column] | None,
+) -> tuple[list[str], list[str], list[str], str]:
+    """Convert column inputs to strings and create check alias."""
+    pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
+    ref_pk_column_names = get_columns_as_strings(ref_columns, allow_simple_expressions_only=True)
+    exclude_column_names = (
+        get_columns_as_strings(exclude_columns, allow_simple_expressions_only=True) if exclude_columns else []
+    )
+    check_alias = normalize_col_str(f"datasets_diff_pk_{'_'.join(pk_column_names)}_ref_{'_'.join(ref_pk_column_names)}")
+    return pk_column_names, ref_pk_column_names, exclude_column_names, check_alias
+
+
+def _create_temp_column_names(unique_id: str) -> dict[str, str]:
+    """Create temporary column names for comparison."""
+    return {
+        "condition": f"__compare_status_{unique_id}",
+        "row_missing": f"__row_missing_{unique_id}",
+        "row_extra": f"__row_extra_{unique_id}",
+        "columns_changed": f"__columns_changed_{unique_id}",
+        "filter": f"__filter_{uuid.uuid4().hex}",
+    }
+
+
+def _initialize_llm_options(llm_opts: dict[str, Any] | None) -> tuple[bool, dict[str, Any]]:
+    """Initialize LLM options and determine if LLM detection is enabled."""
+    enable_detection = llm_opts is not None and llm_opts.get("enable", True)
+    if llm_opts is None:
+        llm_opts = {"llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct"}
+    return enable_detection, llm_opts
+
+
 @register_rule("dataset")
 def compare_datasets(
     columns: list[str | Column],
     ref_columns: list[str | Column],
     ref_df_name: str | None = None,
     ref_table: str | None = None,
+    *,
     check_missing_records: bool | None = False,
     exclude_columns: list[str | Column] | None = None,
     null_safe_row_matching: bool | None = True,
@@ -1490,7 +1587,6 @@ def compare_datasets(
     row_filter: str | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
-    enable_llm_matching_key_detection: bool = False,
     llm_matching_key_detection_options: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
@@ -1550,12 +1646,12 @@ def compare_datasets(
             With tolerance=0.01 (1%):
             100 vs 101 → equal (diff = 1, tolerance = 1)
             2.001 vs 2.0099 → equal
-      enable_llm_matching_key_detection: Enable automatic matching key detection using LLM. When enabled,
-        the function will automatically detect primary/matching keys from the provided columns (or all
-        columns if columns is empty). Requires LLM dependencies to be installed.
       llm_matching_key_detection_options: Optional dictionary of options for LLM-based matching key detection.
+        When provided, enables automatic matching key detection using LLM to detect primary/matching keys
+        from the provided columns (or all columns if columns is empty). Requires LLM dependencies.
         Supported options:
         - llm_pk_detection_endpoint: Databricks Model Serving endpoint (defaults to foundational model)
+        - enable: Set to True to enable LLM detection (default: True when options dict is provided)
 
     Returns:
       Tuple[Column, Callable]:
@@ -1571,101 +1667,69 @@ def compare_datasets(
             - if *abs_tolerance* or *rel_tolerance* is negative.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
-
-    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
-    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
-    if abs_tolerance < 0 or rel_tolerance < 0:
-        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
-
-    # Initialize options if not provided and capture in closure
-    if llm_matching_key_detection_options is None:
-        llm_matching_key_detection_options = {
-            "llm_pk_detection_endpoint": "databricks-meta-llama-3-1-8b-instruct",
-        }
-    _llm_matching_key_detection_options = llm_matching_key_detection_options
-
-    # convert all input columns to strings
-    pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
-    ref_pk_column_names = get_columns_as_strings(ref_columns, allow_simple_expressions_only=True)
-    exclude_column_names = (
-        get_columns_as_strings(exclude_columns, allow_simple_expressions_only=True) if exclude_columns else []
+    abs_tolerance, rel_tolerance = _extract_tolerances(abs_tolerance, rel_tolerance)
+    pk_column_names, ref_pk_column_names, exclude_column_names, check_alias = _prepare_column_names(
+        columns, ref_columns, exclude_columns
     )
-    check_alias = normalize_col_str(f"datasets_diff_pk_{'_'.join(pk_column_names)}_ref_{'_'.join(ref_pk_column_names)}")
 
+    enable_llm_detection, _llm_options = _initialize_llm_options(llm_matching_key_detection_options)
     unique_id = uuid.uuid4().hex
-    condition_col = f"__compare_status_{unique_id}"
-    row_missing_col = f"__row_missing_{unique_id}"
-    row_extra_col = f"__row_extra_{unique_id}"
-    columns_changed_col = f"__columns_changed_{unique_id}"
-    filter_col = f"__filter_{uuid.uuid4().hex}"
+    internal_column_names = _create_temp_column_names(unique_id)
 
     def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
         nonlocal columns, ref_columns
 
         ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
 
-        # Auto-detect matching keys using LLM if enabled
-        if enable_llm_matching_key_detection:
-            detected_columns = _detect_matching_keys_with_llm(
-                df, columns, _llm_matching_key_detection_options, spark, unique_id
-            )
+        if enable_llm_detection:
+            detected_columns = _detect_matching_keys_with_llm(df, columns, _llm_options, spark, unique_id)
             columns = detected_columns  # type: ignore[assignment]
             ref_columns = detected_columns  # type: ignore[assignment]
 
-        # map type columns must be skipped as they cannot be compared with eqNullSafe
-        map_type_columns = {field.name for field in df.schema.fields if isinstance(field.dataType, types.MapType)}
-
-        # columns to compare: present in both df and ref_df, not in PK, not excluded, not map type
-        compare_columns = [
-            col
-            for col in df.columns
-            if (
-                col in ref_df.columns
-                and col not in pk_column_names
-                and col not in exclude_column_names
-                and col not in map_type_columns
-            )
-        ]
-
-        # determine skipped columns: present in df, not compared, and not PK
-        skipped_columns = [col for col in df.columns if col not in compare_columns and col not in pk_column_names]
-
-        # apply filter before aliasing to avoid ambiguity
-        df = df.withColumn(filter_col, F.expr(row_filter) if row_filter else F.lit(True))
-
+        compare_columns, skipped_columns = _prepare_compare_columns(df, ref_df, pk_column_names, exclude_column_names)
+        df = df.withColumn(internal_column_names["filter"], F.expr(row_filter) if row_filter else F.lit(True))
         df = df.alias("df")
         ref_df = ref_df.alias("ref_df")
 
         results = _match_rows(
             df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
         )
-        results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
+        results = _add_row_diffs(
+            results,
+            pk_column_names,
+            ref_pk_column_names,
+            internal_column_names["row_missing"],
+            internal_column_names["row_extra"],
+        )
         results = _add_column_diffs(
-            results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance
+            results,
+            compare_columns,
+            internal_column_names["columns_changed"],
+            null_safe_column_value_matching,
+            abs_tolerance,
+            rel_tolerance,
         )
         results = _add_compare_condition(
-            results, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
+            results,
+            internal_column_names["condition"],
+            internal_column_names["row_missing"],
+            internal_column_names["row_extra"],
+            internal_column_names["columns_changed"],
+            internal_column_names["filter"],
         )
 
-        # in a full outer join, rows may be missing from either side, we take the first non-null value
-        coalesced_pk_columns = [
-            F.coalesce(F.col(f"df.{col}"), F.col(f"ref_df.{ref_col}")).alias(col)
-            for col, ref_col in zip(pk_column_names, ref_pk_column_names)
-        ]
-
-        # make sure original columns + condition column are present in the output
-        return results.select(
-            *coalesced_pk_columns,
-            *[F.col(f"df.{col}").alias(col) for col in compare_columns],
-            *[F.col(f"df.{col}").alias(col) for col in skipped_columns],
-            F.col(condition_col),
+        output_columns = _build_output_columns(
+            pk_column_names, ref_pk_column_names, compare_columns, skipped_columns, internal_column_names["condition"]
         )
+        return results.select(*output_columns)
 
-    condition = F.col(condition_col).isNotNull()
+    condition = F.col(internal_column_names["condition"]).isNotNull()
 
     return (
         make_condition(
-            condition=condition, message=F.when(condition, F.to_json(F.col(condition_col))), alias=check_alias
+            condition=condition,
+            message=F.when(condition, F.to_json(F.col(internal_column_names["condition"]))),
+            alias=check_alias,
         ),
         apply,
     )

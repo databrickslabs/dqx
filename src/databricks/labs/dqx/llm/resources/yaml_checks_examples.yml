@@ -665,6 +665,28 @@
       null_safe_column_value_matching: true
 - criticality: error
   check:
+    function: compare_datasets
+    arguments:
+      columns: []
+      ref_columns: []
+      ref_df_name: ref_df_key
+      enable_llm_matching_key_detection: true
+- criticality: error
+  check:
+    function: compare_datasets
+    arguments:
+      columns:
+      - customer_id
+      - order_id
+      ref_columns:
+      - customer_id
+      - order_id
+      ref_df_name: ref_df_key
+      enable_llm_matching_key_detection: true
+      llm_matching_key_detection_options:
+        llm_pk_detection_endpoint: my-custom-endpoint
+- criticality: error
+  check:
     function: is_data_fresh_per_time_window
     arguments:
       column: col6
