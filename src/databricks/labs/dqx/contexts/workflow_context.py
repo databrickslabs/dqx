@@ -154,7 +154,7 @@ class WorkflowContext(GlobalContext):
         """Returns the QualityCheckerRunner instance."""
         # Create observer if metrics are configured
         observer = None
-        if self.run_config.metrics_config:
+        if self.runnable_for_run_config and self.run_config.metrics_config:
             observer = DQMetricsObserver(custom_metrics=self.config.custom_metrics)
 
         dq_engine = DQEngine(
