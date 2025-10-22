@@ -5584,6 +5584,12 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             column="col_json_str",
             check_func_kwargs={"keys": ["key1"]},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_valid_json_schema,
+            column="col_json_str2",
+            check_func_kwargs={"schema": "STRUCT<a: STRING, d: STRING>"},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
@@ -5591,7 +5597,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2"
     )
     test_df = spark.createDataFrame(
         [
@@ -5609,6 +5615,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.255",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 "{}",
+                "{'a' : 1, 'b': 2}",
             ],
             [
                 "val2",
@@ -5624,6 +5631,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.1",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 "{'key1': '1'}",
+                "{ 'a' : 1, 'b': 1000,  'c': {'1': 8}}",
             ],
             [
                 "val3",
@@ -5639,6 +5647,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.2",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 "{'key1': '[1, 2, 3]'}",
+                "{ 'a' : 1, 'b': 1023455,  'c': null }",
             ],
         ],
         schema,
@@ -5663,6 +5672,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.255",
                 "2001:0db8:85a3:08d3:1319:8a2e:0370:7344",
                 "{}",
+                "{'a' : 1, 'b': 2}",
                 None,
                 None,
             ],
@@ -5680,6 +5690,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.1",
                 "2001:0db8:85a3:08d3:ffff:ffff:ffff:ffff",
                 "{'key1': '1'}",
+                "{ 'a' : 1, 'b': 1000,  'c': {'1': 8}}",
                 None,
                 None,
             ],
@@ -5697,6 +5708,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
                 "255.255.255.2",
                 "2001:db8:85a3:8d3:1319:8a2e:3.112.115.68",
                 "{'key1': '[1, 2, 3]'}",
+                "{ 'a' : 1, 'b': 1023455,  'c': null }",
                 None,
                 None,
             ],
