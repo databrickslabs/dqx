@@ -4744,7 +4744,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string"
     )
     test_df = spark.createDataFrame(
         [
@@ -4762,6 +4762,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.0",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 "{}",
+                "{'a': 1, 'b': 2}",
             ],
             [
                 "val2",
@@ -4777,6 +4778,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 "{'key1': 1}",
+                "{'a': 1, 'b': 2, 'c': 3}",
             ],
             [
                 "val3",
@@ -4792,6 +4794,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:0000::2",
                 "{'key1': [1, 2, 3]}",
+                "{'a': 1, 'b': 2, 'c': 1.222}",
             ],
         ],
         schema,
@@ -4819,6 +4822,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.0",
                 "2001:0db8:85a3:08d3:0000:0000:0000:0001",
                 "{}",
+                "{'a': 1, 'b': 2}",
                 None,
                 None,
             ],
@@ -4836,6 +4840,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.1",
                 "2001:0db8:85a3:08d3:0000:0000:0000:1",
                 "{'key1': 1}",
+                "{'a': 1, 'b': 2, 'c': 3}",
                 None,
                 None,
             ],
@@ -4853,6 +4858,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
                 "192.168.1.2",
                 "2001:0db8:85a3:08d3:0000::2",
                 "{'key1': [1, 2, 3]}",
+                "{'a': 1, 'b': 2, 'c': 1.222}",
                 None,
                 None,
             ],
