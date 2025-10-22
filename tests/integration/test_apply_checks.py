@@ -5588,7 +5588,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
             criticality="error",
             check_func=check_funcs.has_valid_json_schema,
             column="col_json_str2",
-            check_func_kwargs={"schema": "STRUCT<a: STRING, d: STRING>"},
+            check_func_kwargs={"schema": "STRUCT<a: STRING, b: STRING>"},
         ),
     ]
 

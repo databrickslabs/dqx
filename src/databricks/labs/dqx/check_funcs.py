@@ -1831,7 +1831,7 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
         schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType.
 
     Returns:
-        Column: Boolean condition representing JSON schema validity.
+        Column: A Spark Column representing the column conforms to the expected JSON schema.
     """
 
     _expected_schema = _get_schema(schema)

@@ -212,6 +212,13 @@
       - key2
       require_all: false
 - criticality: error
+  name: col_json_str2_has_invalid_json_schema
+  check:
+    function: has_valid_json_schema
+    arguments:
+      column: col_json_str2
+      schema: 'STRUCT<a: BIGINT, b: BIGINT>'
+- criticality: error
   check:
     function: is_valid_timestamp
     arguments:
