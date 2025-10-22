@@ -1591,3 +1591,50 @@ def test_benchmark_foreach_has_valid_schema(benchmark, ws, generated_string_df):
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.benchmark(group="test_benchmark_is_valid_json")
+def test_benchmark_is_valid_json(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_json,
+            column="col_json_str",
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.benchmark(group="test_benchmark_has_json_keys")
+def test_benchmark_has_json_keys_require_at_least_one(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.benchmark(group="test_benchmark_has_json_keys")
+def test_benchmark_has_json_keys_require_all_true(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1", "key2"]},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
