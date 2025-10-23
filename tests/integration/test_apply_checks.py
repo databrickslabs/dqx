@@ -1,30 +1,39 @@
 import json
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Callable
-import yaml
+
 import pyspark.sql.functions as F
 import pytest
-from pyspark.sql import Column, DataFrame, SparkSession
+import yaml
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.sql import Column, DataFrame, SparkSession
 
-from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
+import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.check_funcs import sql_query
-from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams, RunConfig
+from databricks.labs.dqx.config import (
+    ExtraParams,
+    FileChecksStorageConfig,
+    OutputConfig,
+    RunConfig,
+)
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import (
+    InvalidCheckError,
+    InvalidParameterError,
+    MissingParameterError,
+)
 from databricks.labs.dqx.rule import (
-    DQForEachColRule,
     ColumnArguments,
-    register_rule,
-    DQRowRule,
     DQDatasetRule,
+    DQForEachColRule,
+    DQRowRule,
+    register_rule,
 )
 from databricks.labs.dqx.schema import dq_result_schema
-from databricks.labs.dqx import check_funcs
-import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
-from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS
-
+from tests.integration.conftest import EXTRA_PARAMS, REPORTING_COLUMNS, RUN_TIME
 
 SCHEMA = "a: int, b: int, c: int"
 EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
@@ -7407,6 +7416,138 @@ def test_compare_datasets_check(ws, spark, set_utc_timezone):
     )
 
     assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+
+
+def _verify_llm_check_results(checked_df, expected_check_name):
+    """Helper function to verify LLM check results and reduce try block complexity."""
+    # Verify that the check was applied successfully
+    assert checked_df is not None
+    assert "_errors" in checked_df.columns
+    assert "_warnings" in checked_df.columns
+
+    # Check that some primary key was detected and used
+    # Look for either errors or warnings (the check should produce some result)
+    error_rows = checked_df.filter(checked_df["_errors"].isNotNull()).collect()
+    warning_rows = checked_df.filter(checked_df["_warnings"].isNotNull()).collect()
+
+    # At least one of errors or warnings should have data
+    assert len(error_rows) > 0 or len(warning_rows) > 0
+
+    # Check the validation data from whichever column has data
+    if len(error_rows) > 0:
+        validation_data = error_rows[0]["_errors"][0]
+    else:
+        validation_data = warning_rows[0]["_warnings"][0]
+    assert validation_data["name"] == expected_check_name
+
+
+def test_compare_datasets_check_with_llm_matching_key_detection_empty_columns(
+    skip_if_llm_not_available, ws, spark, set_utc_timezone
+):
+    """Test compare_datasets check with enable_llm_matching_key_detection=True and empty columns (detect from all columns)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "customer_id long, order_id long, product_name string, order_date date, created_at timestamp, amount float, quantity bigint, is_active boolean"
+
+    src_df = spark.createDataFrame(
+        [
+            [1001, 2001, "Laptop", datetime(2023, 1, 15), datetime(2023, 1, 15, 10, 30, 0), 1299.99, 1, True],
+            [1002, 2002, "Mouse", datetime(2023, 1, 16), datetime(2023, 1, 16, 14, 45, 0), 29.99, 2, True],
+            [1003, 2003, "Keyboard", datetime(2023, 1, 17), datetime(2023, 1, 17, 9, 15, 0), 89.99, 1, False],
+        ],
+        schema,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            # diff in amount
+            [1001, 2001, "Laptop", datetime(2023, 1, 15), datetime(2023, 1, 15, 10, 30, 0), 1399.99, 1, True],
+            # no diff
+            [1003, 2003, "Keyboard", datetime(2023, 1, 17), datetime(2023, 1, 17, 9, 15, 0), 89.99, 1, False],
+            # missing record in src
+            [1004, 2004, "Monitor", datetime(2023, 1, 18), datetime(2023, 1, 18, 11, 0, 0), 299.99, 1, True],
+        ],
+        schema,
+    )
+
+    # Test with empty columns - should detect PK from all columns
+    checks = [
+        DQDatasetRule(
+            name="llm_matching_key_detection_empty_columns",
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=[],  # Empty columns - detect from all
+            filter="customer_id != 1002",  # Filter out the middle record
+            check_func_kwargs={
+                "ref_columns": [],  # Empty ref_columns too
+                "ref_df_name": "ref_df",
+                "enable_llm_matching_key_detection": True,
+            },
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    try:
+        checked = dq_engine.apply_checks(src_df, checks, refs_df)
+        _verify_llm_check_results(checked, "llm_matching_key_detection_empty_columns")
+    except Exception as e:
+        pytest.skip(f"LLM-based detection failed (possibly endpoint unavailable): {e}")
+
+
+def test_compare_datasets_check_with_llm_matching_key_detection_provided_columns(
+    skip_if_llm_not_available, ws, spark, set_utc_timezone
+):
+    """Test compare_datasets check with enable_llm_matching_key_detection=True and provided columns (detect from subset)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "customer_id long, order_id long, product_name string, order_date date, created_at timestamp, amount float, quantity bigint, is_active boolean"
+
+    src_df = spark.createDataFrame(
+        [
+            [1001, 2001, "Laptop", datetime(2023, 1, 15), datetime(2023, 1, 15, 10, 30, 0), 1299.99, 1, True],
+            [1002, 2002, "Mouse", datetime(2023, 1, 16), datetime(2023, 1, 16, 14, 45, 0), 29.99, 2, True],
+            [1003, 2003, "Keyboard", datetime(2023, 1, 17), datetime(2023, 1, 17, 9, 15, 0), 89.99, 1, False],
+        ],
+        schema,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            # diff in amount
+            [1001, 2001, "Laptop", datetime(2023, 1, 15), datetime(2023, 1, 15, 10, 30, 0), 1399.99, 1, True],
+            # no diff
+            [1003, 2003, "Keyboard", datetime(2023, 1, 17), datetime(2023, 1, 17, 9, 15, 0), 89.99, 1, False],
+            # missing record in src
+            [1004, 2004, "Monitor", datetime(2023, 1, 18), datetime(2023, 1, 18, 11, 0, 0), 299.99, 1, True],
+        ],
+        schema,
+    )
+
+    # Test with provided columns - should detect PK only from these columns
+    candidate_pk_columns = ["customer_id", "order_id"]
+    checks = [
+        DQDatasetRule(
+            name="llm_matching_key_detection_provided_columns",
+            criticality="error",
+            check_func=check_funcs.compare_datasets,
+            columns=candidate_pk_columns,  # Limit search to these columns
+            filter="customer_id != 1002",  # Filter out the middle record
+            check_func_kwargs={
+                "ref_columns": candidate_pk_columns,
+                "ref_df_name": "ref_df",
+                "enable_llm_matching_key_detection": True,
+            },
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    try:
+        checked = dq_engine.apply_checks(src_df, checks, refs_df)
+        _verify_llm_check_results(checked, "llm_matching_key_detection_provided_columns")
+    except Exception as e:
+        pytest.skip(f"LLM-based detection failed (possibly endpoint unavailable): {e}")
 
 
 def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):

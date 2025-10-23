@@ -12,6 +12,7 @@ __all__ = [
     "InputConfig",
     "OutputConfig",
     "ExtraParams",
+    "LLMConfig",
     "ProfilerConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
@@ -46,6 +47,16 @@ class OutputConfig:
 
 
 @dataclass
+class LLMConfig:
+    """Configuration class for LLM-assisted features."""
+
+    # Primary Key Detection Configuration
+    # Note: LLM-based PK detection requires: pip install databricks-labs-dqx[llm]
+    enable_pk_detection: bool = False
+    pk_detection_endpoint: str = "databricks-meta-llama-3-1-8b-instruct"
+
+
+@dataclass
 class ProfilerConfig:
     """Configuration class for profiler."""
 
@@ -54,6 +65,9 @@ class ProfilerConfig:
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
     filter: str | None = None  # filter to apply to the data before profiling
+
+    # LLM-assisted features configuration
+    llm_config: LLMConfig = field(default_factory=LLMConfig)
 
 
 @dataclass
