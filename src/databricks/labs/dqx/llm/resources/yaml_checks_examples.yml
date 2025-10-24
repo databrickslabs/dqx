@@ -670,7 +670,8 @@
       columns: []
       ref_columns: []
       ref_df_name: ref_df_key
-      enable_llm_matching_key_detection: true
+      llm_matching_key_detection_options:
+        enable: true
 - criticality: error
   check:
     function: compare_datasets
@@ -682,8 +683,8 @@
       - customer_id
       - order_id
       ref_df_name: ref_df_key
-      enable_llm_matching_key_detection: true
       llm_matching_key_detection_options:
+        enable: true
         llm_pk_detection_endpoint: my-custom-endpoint
 - criticality: error
   check:

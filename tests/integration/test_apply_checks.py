@@ -7481,7 +7481,7 @@ def test_compare_datasets_check_with_llm_matching_key_detection_empty_columns(
             check_func_kwargs={
                 "ref_columns": [],  # Empty ref_columns too
                 "ref_df_name": "ref_df",
-                "enable_llm_matching_key_detection": True,
+                "llm_matching_key_detection_options": {"enable": True},
             },
         ),
     ]
@@ -7536,7 +7536,7 @@ def test_compare_datasets_check_with_llm_matching_key_detection_provided_columns
             check_func_kwargs={
                 "ref_columns": candidate_pk_columns,
                 "ref_df_name": "ref_df",
-                "enable_llm_matching_key_detection": True,
+                "llm_matching_key_detection_options": {"enable": True},
             },
         ),
     ]
