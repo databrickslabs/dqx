@@ -644,6 +644,6 @@ def _compare_num_points(
 
     return make_condition(
         condition,
-        F.when(geom_num_points_message, geom_num_points_message).otherwise(geom_cond_message),
+        F.when(geom_num_points_cond, geom_num_points_message).otherwise(geom_cond_message),
         f"{col_str_norm}_num_points_{compare_op_name}_limit",
     )
