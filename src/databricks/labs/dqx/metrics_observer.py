@@ -20,22 +20,22 @@ class DQMetricsObservation:
     Observer metrics class used to persist summary metrics.
 
     Args:
-        observer_name: Name of the observations (default is 'dqx').
+        run_name: Name of the observations (default is 'dqx').
         observed_metrics: Dictionary of observed metrics
         run_time: Run time when the data quality summary metrics were observed
         error_column_name: Name of the error column when running quality checks
         warning_column_name: Name of the warning column when running quality checks
-        input_location: Location where input data is loaded from when running quality checks (fully-qualified table
-            name or file path) used when running quality checks
-        output_location: Location where output data is persisted when running quality checks (fully-qualified table
-            name or file path)
-        quarantine_location: Location where quarantined data is persisted when running quality checks (fully-qualified
-            table name or file path)
-        checks_location: Location where checks are loaded from when running quality checks (fully-qualified table name
-            or file path) used
+        input_location: (optional) Location where input data is loaded from when running quality checks (fully-qualified table
+            name or file path).
+        output_location: (optional) Location where output data is persisted when running quality checks (fully-qualified table
+            name or file path).
+        quarantine_location: (optional) Location where quarantined data is persisted when running quality checks (fully-qualified
+            table name or file path).
+        checks_location: (optional) Location where checks are loaded from when running quality checks (fully-qualified table name
+            or file path).
     """
 
-    observer_name: str
+    run_name: str
     error_column_name: str
     warning_column_name: str
     run_time: datetime | None = None
@@ -54,6 +54,7 @@ class DQMetricsObserver:
 
     Args:
         name: Name of the observations which will be displayed in listener metrics (default is 'dqx').
+            Also used as run_name field when saving the metrics to a table.
         custom_metrics: Optional list of SQL expressions defining custom, dataset-level quality metrics
     """
 
@@ -138,7 +139,7 @@ class DQMetricsObserver:
         return spark.createDataFrame(
             [
                 [
-                    observation.observer_name,
+                    observation.run_name,
                     observation.input_location,
                     observation.output_location,
                     observation.quarantine_location,

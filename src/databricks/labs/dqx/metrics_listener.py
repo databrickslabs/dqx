@@ -49,12 +49,12 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         Args:
             event: A `QueryProgressEvent` with details about the last processed micro-batch
         """
-        observed_metrics = event.progress.observedMetrics.get(self.metrics_observation.observer_name)
+        observed_metrics = event.progress.observedMetrics.get(self.metrics_observation.run_name)
         if not observed_metrics:
             return
 
         metrics_observation = DQMetricsObservation(
-            observer_name=self.metrics_observation.observer_name,
+            run_name=self.metrics_observation.run_name,
             observed_metrics=observed_metrics.asDict(),
             run_time=datetime.fromisoformat(event.progress.timestamp),
             error_column_name=self.metrics_observation.error_column_name,

@@ -44,7 +44,7 @@ demo_schema_name = dbutils.widgets.get("demo_schema_name")
 # MAGIC You can find a list of all available built-in checks in the documentation [here](https://databrickslabs.github.io/dqx/docs/reference/quality_checks/).
 # MAGIC
 # MAGIC You can define checks in two ways:
-# MAGIC * Declarative approach (YAML or JSON): Ideal for scenarios where checks are externalized from code.
+# MAGIC * Declarative approach (YAML or JSON, or a table): Ideal for scenarios where checks are externalized from code.
 # MAGIC * Code-first (DQX classes): Ideal if you need type-safety and better IDE support
 # MAGIC
 # MAGIC We are demonstrating creating and validating a set of `quality rules (checks)` defined in YAML.
@@ -106,7 +106,7 @@ print(f"Checks from YAML: {status}")
 # MAGIC %md
 # MAGIC ## Using the `DQMetricsObserver`
 # MAGIC
-# MAGIC DQX provides a `DQMetricsObserver` for tracking aggregate-level metrics about your data. While checking data at a row level with DQX, `DQMetricsObserver` will track:
+# MAGIC DQX provides a `DQMetricsObserver` for tracking aggregate-level metrics about the quality checks output. While checking data at a row level with DQX, `DQMetricsObserver` will track:
 # MAGIC
 # MAGIC - The number of input rows
 # MAGIC - The number of rows with warnings
@@ -122,7 +122,7 @@ from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.sdk import WorkspaceClient
 
 # Create the metrics observer
-observer = DQMetricsObserver("my_observer")
+observer = DQMetricsObserver(name="my_observation")  # the name is used as run_name when saving metrics to a table
 
 # `WorkspaceClient` will be authenticated as the current user inside Databricks
 ws = WorkspaceClient()
@@ -133,7 +133,7 @@ dq_engine = DQEngine(ws, observer=observer)
 # MAGIC %md
 # MAGIC ## Generating Quality Metrics
 # MAGIC
-# MAGIC Applying checks using `apply_checks_and_split` will now generate both row-level warnings and errors and a [Spark Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html#pyspark.sql.Observation) with summary-level data quality metrics. Metrics will be tracked for all rows in the input dataset even if you use DQX to split data into valid and quarantine datasets or further process the data.
+# MAGIC Applying checks will generate both row-level warnings and errors and a [Spark Observation](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Observation.html#pyspark.sql.Observation) with summary-level data quality metrics. Metrics will be tracked for all rows in the input dataset even if you use DQX to split data into valid and quarantine datasets or further process the data.
 
 # COMMAND ----------
 
@@ -153,6 +153,7 @@ new_users = [
 new_users_df = spark.createDataFrame(new_users)
 
 # Apply the checks and display the row-level results
+# Below example uses apply_checks_by_metadata method, but metrics are supported in all apply check methods
 validated_df, observation = dq_engine.apply_checks_by_metadata(new_users_df, checks_from_yaml)
 display(validated_df)
 
@@ -168,7 +169,7 @@ print(metrics)
 # MAGIC
 # MAGIC Use `save_results_in_table` to persist checked data and aggregate-level data quality metrics. You can store data quality metrics from multiple workflows in the same summary table for reporting and alerting about data quality issues.
 # MAGIC
-# MAGIC ***NOTE:** Saving metrics to a table requires using a classic compute cluster in [Dedicated Access Mode](https://docs.databricks.com/aws/en/compute/configure#access-modes).*
+# MAGIC ***NOTE:** Saving metrics to a table requires using a classic compute cluster in [Dedicated Access Mode](https://docs.databricks.com/aws/en/compute/configure#access-modes) due to Spark Connect limitations. This limitation will be lifted in the future.*
 # COMMAND ----------
 
 from databricks.labs.dqx.config import OutputConfig
@@ -214,9 +215,9 @@ display(spark.table(metrics_table_name))
 # MAGIC %md
 # MAGIC ## End-to-end Quality Checking with Metrics
 # MAGIC
-# MAGIC You can generate quality metrics when running end-to-end validation with DQX's `apply_checks_by_metadata_and_save_in_table` method. Pass information about your quality metrics table using the `metrics_config` argument.
+# MAGIC You can generate quality metrics when running end-to-end validation when using DQX methods such as `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, `apply_checks_and_save_in_tables` and `apply_checks_and_save_in_tables_for_patterns`. Pass information about your quality metrics table using the `metrics_config`.
 # MAGIC
-# MAGIC ***NOTE:** Saving metrics to a table during end-to-end validation requires using a classic compute cluster in [Dedicated Access Mode](https://docs.databricks.com/aws/en/compute/configure#access-modes).*
+# MAGIC ***NOTE:** Saving metrics to a table requires using a classic compute cluster in [Dedicated Access Mode](https://docs.databricks.com/aws/en/compute/configure#access-modes) due to Spark Connect limitations. This limitation will be lifted in the future.*
 # COMMAND ----------
 
 from databricks.labs.dqx.config import InputConfig
