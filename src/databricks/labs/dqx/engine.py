@@ -565,7 +565,7 @@ class DQEngine(DQEngineBase):
         - valid records are written using *output_config*.
         - invalid records are written using *quarantine_config*.
 
-        If *quarantine_config* is not provided, write all rows (including result columns) using *quarantine_config*.
+        If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
 
         If *metrics_config* is provided and the `DQEngine` has a valid `observer`, data quality summary metrics will be
         tracked and written using *metrics_config*.

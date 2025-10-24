@@ -59,6 +59,7 @@ class DQMetricsObserver:
 
     name: str = "dqx"
     custom_metrics: list[str] | None = None
+
     _id: str = field(default_factory=str)
     _error_column_name: str = "_errors"
     _warning_column_name: str = "_warnings"

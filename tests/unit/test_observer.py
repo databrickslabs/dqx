@@ -1,4 +1,4 @@
-"""Unit tests for DQObserver class."""
+"""Unit tests for DQMetricsObserver class."""
 
 from pyspark.sql import Observation
 from pyspark.sql.connect.observation import Observation as SparkConnectObservation
@@ -7,7 +7,7 @@ from databricks.labs.dqx.rule import DefaultColumnNames
 
 
 def test_dq_observer_default_initialization():
-    """Test DQObserver default initialization."""
+    """Test DQMetricsObserver default initialization."""
     observer = DQMetricsObserver()
     assert observer.name == "dqx"
     assert observer.custom_metrics is None
@@ -22,7 +22,7 @@ def test_dq_observer_default_initialization():
 
 
 def test_dq_observer_with_custom_metrics():
-    """Test DQObserver with custom metrics."""
+    """Test DQMetricsObserver with custom metrics."""
     custom_metrics = ["avg(age) as avg_age", "count(case when age > 65 then 1 end) as senior_count"]
 
     observer = DQMetricsObserver(name="custom_observer", custom_metrics=custom_metrics)
@@ -41,7 +41,7 @@ def test_dq_observer_with_custom_metrics():
 
 
 def test_dq_observer_empty_custom_metrics():
-    """Test DQObserver with empty custom metrics list."""
+    """Test DQMetricsObserver with empty custom metrics list."""
     observer = DQMetricsObserver(custom_metrics=[])
 
     expected_default_metrics = [
@@ -54,7 +54,7 @@ def test_dq_observer_empty_custom_metrics():
 
 
 def test_dq_observer_default_column_names():
-    """Test that DQObserver uses correct default column names."""
+    """Test that DQMetricsObserver uses correct default column names."""
     observer = DQMetricsObserver()
     errors_column = DefaultColumnNames.ERRORS.value
     warnings_column = DefaultColumnNames.WARNINGS.value

@@ -44,7 +44,7 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
 
     def onQueryProgress(self, event: listener.QueryProgressEvent) -> None:
         """
-        Writes the custom metrics from the DQObserver to the output destination.
+        Writes the custom metrics from the DQMetricsObserver to the output destination.
 
         Args:
             event: A `QueryProgressEvent` with details about the last processed micro-batch
