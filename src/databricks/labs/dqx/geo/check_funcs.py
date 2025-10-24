@@ -1,7 +1,11 @@
+from collections.abc import Callable
+import operator as py_operator
+
 from pyspark.sql import Column
 import pyspark.sql.functions as F
+
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
+from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr, _get_limit_expr
 
 POINT_TYPE = "ST_Point"
 LINESTRING_TYPE = "ST_LineString"
@@ -447,4 +451,199 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
         condition,
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_has_y_coordinates_outside_range",
+    )
+
+
+@register_rule("row")
+def has_area_less_than(column: str | Column, limit: int | float | str | Column) -> Column:
+    """
+    Checks if the areas of values in a geometry column are not greater than a specified limit.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, column name or sql expression
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column is greater than the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_area(
+        column,
+        limit,
+        compare_op=py_operator.gt,
+        compare_op_label="greater than",
+        compare_op_name="greater_than",
+    )
+
+
+@register_rule("row")
+def has_area_greater_than(column: str | Column, limit: int | float | str | Column) -> Column:
+    """
+    Checks if the areas of values in a geometry column are not less than a specified limit.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, column name or sql expression
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column is less than the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_area(
+        column,
+        limit,
+        compare_op=py_operator.lt,
+        compare_op_label="less than",
+        compare_op_name="less_than",
+    )
+
+
+@register_rule("row")
+def has_num_points_less_than(column: str | Column, limit: int | float | str | Column) -> Column:
+    """
+    Checks if the number of coordinate pairs in the values of a geometry column is not greater than a specified limit.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, column name or sql expression
+
+    Returns:
+        Column object indicating whether the number of coordinate pairs in the geometries of the input column is
+        greater than the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_num_points(
+        column,
+        limit,
+        compare_op=py_operator.gt,
+        compare_op_label="greater than",
+        compare_op_name="greater_than",
+    )
+
+
+@register_rule("row")
+def has_num_points_greater_than(column: str | Column, limit: int | float | str | Column) -> Column:
+    """
+    Checks if the number of coordinate pairs in values of a geometry column is not less than a specified limit.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, column name or sql expression
+
+    Returns:
+        Column object indicating whether the number of coordinate pairs in the geometries of the input column is
+        less than the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_num_points(
+        column,
+        limit,
+        compare_op=py_operator.lt,
+        compare_op_label="less than",
+        compare_op_name="less_than",
+    )
+
+
+def _compare_area(
+    column: str | Column,
+    limit: int | float | str | Column,
+    compare_op: Callable[[Column, Column], Column],
+    compare_op_label: str,
+    compare_op_name: str,
+) -> Column:
+    """
+    Compares areas of values in a geometry column with a limit using the specified comparison operator.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, column name or sql expression
+        compare_op: Comparison operator (e.g., operator.gt, operator.lt).
+        compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
+        compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column is less than the provided limit
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    limit_expr = _get_limit_expr(limit)
+    # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
+    #   Databricks SQL, due to the use of the `try_to_geometry` and `st_area` functions.
+    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
+    geom_cond_message = F.concat_ws(
+        "", F.lit("value `"), col_expr.cast("string"), F.lit(f"` in column `{col_expr_str}` is not a valid geometry")
+    )
+    geom_area_cond = compare_op(F.expr(f"st_area(try_to_geometry({col_str_norm}))"), limit_expr)
+    geom_area_message = F.concat_ws(
+        "",
+        F.lit("value `"),
+        col_expr.cast("string"),
+        F.lit(f"` in column `{col_expr_str}` has area {compare_op_label} limit: "),
+        limit_expr.cast("string"),
+    )
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_area_cond)
+
+    return make_condition(
+        condition,
+        F.when(geom_area_cond, geom_area_message).otherwise(geom_cond_message),
+        f"{col_str_norm}_area_{compare_op_name}_limit",
+    )
+
+
+def _compare_num_points(
+    column: str | Column,
+    limit: int | float | str | Column,
+    compare_op: Callable[[Column, Column], Column],
+    compare_op_label: str,
+    compare_op_name: str,
+) -> Column:
+    """
+    Compares the n umber of coordinate pairs for values in a geometry column with a limit using the specified
+    comparison operator.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        limit: limit to use in the condition as number, column name or sql expression
+        compare_op: Comparison operator (e.g., operator.gt, operator.lt).
+        compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
+        compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column is less than the provided limit
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    limit_expr = _get_limit_expr(limit)
+    # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
+    #   Databricks SQL, due to the use of the `try_to_geometry` and `st_area` functions.
+    geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
+    geom_cond_message = F.concat_ws(
+        "", F.lit("value `"), col_expr.cast("string"), F.lit(f"` in column `{col_expr_str}` is not a valid geometry")
+    )
+    geom_num_points_cond = compare_op(F.expr(f"st_npoints(try_to_geometry({col_str_norm}))"), limit_expr)
+    geom_num_points_message = F.concat_ws(
+        "",
+        F.lit("value `"),
+        col_expr.cast("string"),
+        F.lit(f"` in column `{col_expr_str}` has number of coordinates {compare_op_label} limit: "),
+        limit_expr.cast("string"),
+    )
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(geom_cond | geom_num_points_cond)
+
+    return make_condition(
+        condition,
+        F.when(geom_num_points_cond, geom_num_points_message).otherwise(geom_cond_message),
+        f"{col_str_norm}_num_points_{compare_op_name}_limit",
     )

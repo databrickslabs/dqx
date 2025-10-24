@@ -407,6 +407,30 @@
       max_value: 10.0
 - criticality: error
   check:
+    function: has_area_greater_than
+    arguments:
+      column: polygon_geom
+      limit: 100.0
+- criticality: error
+  check:
+    function: has_area_less_than
+    arguments:
+      column: polygon_geom
+      limit: 0.1
+- criticality: error
+  check:
+    function: has_num_points_greater_than
+    arguments:
+      column: polygon_geom
+      limit: 10
+- criticality: error
+  check:
+    function: has_num_points_less_than
+    arguments:
+      column: polygon_geom
+      limit: 3
+- criticality: error
+  check:
     function: is_not_null
     arguments:
       column: col8.field1

@@ -1555,6 +1555,66 @@ def test_benchmark_has_y_coordinate_between(skip_if_runtime_not_geo_compatible, 
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_has_area_less_than(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_area_less_than,
+            column="polygon_geom",
+            check_func_kwargs={"limit": 1.0},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_has_area_greater_than(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_area_greater_than,
+            column="polygon_geom",
+            check_func_kwargs={"limit": 1.0},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_has_num_points_less_than(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_num_points_less_than,
+            column="polygon_geom",
+            check_func_kwargs={"limit": 1},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_has_num_points_greater_than(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_num_points_greater_than,
+            column="polygon_geom",
+            check_func_kwargs={"limit": 1},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 @pytest.mark.benchmark(group="test_benchmark_has_valid_schema")
 def test_benchmark_has_valid_schema(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
