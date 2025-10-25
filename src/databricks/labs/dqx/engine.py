@@ -5,6 +5,7 @@ from concurrent import futures
 from collections.abc import Callable
 from datetime import datetime
 from functools import cached_property
+from uuid import UUID
 
 import pyspark
 import pyspark.sql.functions as F
@@ -584,7 +585,6 @@ class DQEngine(DQEngineBase):
         df = read_input_data(self.spark, input_config)
 
         observation = None
-        target_query = None
 
         if quarantine_config:
             split_result = self.apply_checks_and_split(df, checks, ref_dfs)
@@ -611,7 +611,7 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
-                target_query_id=str(target_query.id),
+                target_query_id=target_query.id,
             )
             self.spark.streams.addListener(listener)
 
@@ -670,7 +670,6 @@ class DQEngine(DQEngineBase):
         df = read_input_data(self.spark, input_config)
 
         observation = None
-        target_query = None
 
         if quarantine_config:
             split_result = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
@@ -697,7 +696,7 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
-                target_query_id=str(target_query.id),
+                target_query_id=target_query.id,
             )
             self.spark.streams.addListener(listener)
 
@@ -970,7 +969,7 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
-                target_query_id=str(target_query.id),
+                target_query_id=target_query.id,
             )
             self.spark.streams.addListener(listener)
 
@@ -1103,7 +1102,7 @@ class DQEngine(DQEngineBase):
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
         checks_config: BaseChecksStorageConfig | None = None,
-        target_query_id: str | None = None,
+        target_query_id: UUID | None = None,
     ) -> StreamingMetricsListener:
         """
         Gets a `StreamingMetricsListener` object for writing metrics to an output table.
@@ -1114,7 +1113,7 @@ class DQEngine(DQEngineBase):
             quarantine_config: Optional configuration for writing invalid records.
             checks_config: Optional configuration for loading quality checks.
             metrics_config: Optional configuration for writing summary metrics.
-            target_query_id: Optional UUID of the specific streaming query to monitor.
+            target_query_id: Optional query ID of the specific streaming query to monitor.
         """
 
         if not isinstance(self._engine, DQEngineCore):

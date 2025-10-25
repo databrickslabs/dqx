@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from uuid import UUID
 from pyspark.sql import SparkSession
 from pyspark.sql.streaming import listener
 from databricks.labs.dqx.config import OutputConfig
@@ -20,21 +21,21 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         metrics_config: Output configuration used for writing data quality summary metrics
         metrics_observation: `DQMetricsObservation` with data quality summary information
         spark: `SparkSession` for writing summary metrics
-        target_query_id: Optional UUID of the specific streaming query to monitor. If provided, only events
+        target_query_id: Optional query ID of the specific streaming query to monitor. If provided, only events
             from this query will be processed (useful when multiple queries share the same observation).
     """
 
     metrics_config: OutputConfig
     metrics_observation: DQMetricsObservation
     spark: SparkSession
-    target_query_id: str | None
+    target_query_id: UUID | None
 
     def __init__(
         self,
         metrics_config: OutputConfig,
         metrics_observation: DQMetricsObservation,
         spark: SparkSession,
-        target_query_id: str | None = None,
+        target_query_id: UUID | None = None,
     ) -> None:
         self.metrics_config = metrics_config
         self.metrics_observation = metrics_observation
@@ -58,7 +59,7 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
             event: A `QueryProgressEvent` with details about the last processed micro-batch
         """
         # If a target query ID is specified, only process events from that query
-        if self.target_query_id is not None and str(event.progress.id) != self.target_query_id:
+        if self.target_query_id is not None and event.progress.id != self.target_query_id:
             return
 
         observed_metrics = event.progress.observedMetrics.get(self.metrics_observation.run_name)
