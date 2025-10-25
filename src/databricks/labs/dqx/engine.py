@@ -583,16 +583,9 @@ class DQEngine(DQEngineBase):
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
-        if self._engine.observer and metrics_config and df.isStreaming:
-            listener = self._get_streaming_metrics_listener(
-                input_config=input_config,
-                output_config=output_config,
-                quarantine_config=quarantine_config,
-                metrics_config=metrics_config,
-            )
-            self.spark.streams.addListener(listener)
-
         observation = None
+        target_query = None
+
         if quarantine_config:
             split_result = self.apply_checks_and_split(df, checks, ref_dfs)
             if self._engine.observer:
@@ -600,14 +593,27 @@ class DQEngine(DQEngineBase):
             else:
                 good_df, bad_df = split_result
             save_dataframe_as_table(good_df, output_config)
-            save_dataframe_as_table(bad_df, quarantine_config)
+            # Monitor the quarantine stream for metrics since it contains the check results
+            target_query = save_dataframe_as_table(bad_df, quarantine_config)
         else:
             check_result = self.apply_checks(df, checks, ref_dfs)
             if self._engine.observer:
                 checked_df, observation = check_result
             else:
                 checked_df = check_result
-            save_dataframe_as_table(checked_df, output_config)
+            # Monitor the output stream for metrics
+            target_query = save_dataframe_as_table(checked_df, output_config)
+
+        # Add listener for streaming metrics, targeting the specific query to avoid duplicates
+        if self._engine.observer and metrics_config and df.isStreaming and target_query is not None:
+            listener = self._get_streaming_metrics_listener(
+                input_config=input_config,
+                output_config=output_config,
+                quarantine_config=quarantine_config,
+                metrics_config=metrics_config,
+                target_query_id=str(target_query.id),
+            )
+            self.spark.streams.addListener(listener)
 
         if self._engine.observer and metrics_config and not df.isStreaming and observation is not None:
             self._validate_session_for_metrics()
@@ -663,16 +669,9 @@ class DQEngine(DQEngineBase):
         # Read data from the specified table
         df = read_input_data(self.spark, input_config)
 
-        if self._engine.observer and metrics_config and df.isStreaming:
-            listener = self._get_streaming_metrics_listener(
-                input_config=input_config,
-                output_config=output_config,
-                quarantine_config=quarantine_config,
-                metrics_config=metrics_config,
-            )
-            self.spark.streams.addListener(listener)
-
         observation = None
+        target_query = None
+
         if quarantine_config:
             split_result = self.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
             if self._engine.observer:
@@ -680,14 +679,27 @@ class DQEngine(DQEngineBase):
             else:
                 good_df, bad_df = split_result
             save_dataframe_as_table(good_df, output_config)
-            save_dataframe_as_table(bad_df, quarantine_config)
+            # Monitor the quarantine stream for metrics since it contains the check results
+            target_query = save_dataframe_as_table(bad_df, quarantine_config)
         else:
             check_result = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
             if self._engine.observer:
                 checked_df, observation = check_result
             else:
                 checked_df = check_result
-            save_dataframe_as_table(checked_df, output_config)
+            # Monitor the output stream for metrics
+            target_query = save_dataframe_as_table(checked_df, output_config)
+
+        # Add listener for streaming metrics, targeting the specific query to avoid duplicates
+        if self._engine.observer and metrics_config and df.isStreaming and target_query is not None:
+            listener = self._get_streaming_metrics_listener(
+                input_config=input_config,
+                output_config=output_config,
+                quarantine_config=quarantine_config,
+                metrics_config=metrics_config,
+                target_query_id=str(target_query.id),
+            )
+            self.spark.streams.addListener(listener)
 
         if self._engine.observer and metrics_config and not df.isStreaming and observation is not None:
             self._validate_session_for_metrics()
@@ -939,19 +951,28 @@ class DQEngine(DQEngineBase):
         is_streaming_quarantine = quarantine_df is not None and quarantine_df.isStreaming
         is_streaming = is_streaming_output or is_streaming_quarantine
 
-        if self._engine.observer and observation is not None and metrics_config is not None and is_streaming:
+        target_query = None
+        if output_df is not None and output_config is not None:
+            target_query = save_dataframe_as_table(output_df, output_config)
+
+        if quarantine_df is not None and quarantine_config is not None:
+            target_query = save_dataframe_as_table(quarantine_df, quarantine_config)
+
+        # Add listener for streaming metrics, targeting the specific query to avoid duplicates
+        if (
+            self._engine.observer
+            and observation is not None
+            and metrics_config is not None
+            and is_streaming
+            and target_query is not None
+        ):
             listener = self._get_streaming_metrics_listener(
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
+                target_query_id=str(target_query.id),
             )
             self.spark.streams.addListener(listener)
-
-        if output_df is not None and output_config is not None:
-            save_dataframe_as_table(output_df, output_config)
-
-        if quarantine_df is not None and quarantine_config is not None:
-            save_dataframe_as_table(quarantine_df, quarantine_config)
 
         if self._engine.observer and observation is not None and metrics_config is not None and not is_streaming:
             self._validate_session_for_metrics()
@@ -1082,6 +1103,7 @@ class DQEngine(DQEngineBase):
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
         checks_config: BaseChecksStorageConfig | None = None,
+        target_query_id: str | None = None,
     ) -> StreamingMetricsListener:
         """
         Gets a `StreamingMetricsListener` object for writing metrics to an output table.
@@ -1092,6 +1114,7 @@ class DQEngine(DQEngineBase):
             quarantine_config: Optional configuration for writing invalid records.
             checks_config: Optional configuration for loading quality checks.
             metrics_config: Optional configuration for writing summary metrics.
+            target_query_id: Optional UUID of the specific streaming query to monitor.
         """
 
         if not isinstance(self._engine, DQEngineCore):
@@ -1110,4 +1133,4 @@ class DQEngine(DQEngineBase):
             checks_location=checks_config.location if checks_config else None,
             user_metadata=self._engine.engine_user_metadata,
         )
-        return StreamingMetricsListener(metrics_config, metrics_observation, self.spark)
+        return StreamingMetricsListener(metrics_config, metrics_observation, self.spark, target_query_id)

@@ -20,18 +20,26 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         metrics_config: Output configuration used for writing data quality summary metrics
         metrics_observation: `DQMetricsObservation` with data quality summary information
         spark: `SparkSession` for writing summary metrics
+        target_query_id: Optional UUID of the specific streaming query to monitor. If provided, only events
+            from this query will be processed (useful when multiple queries share the same observation).
     """
 
     metrics_config: OutputConfig
     metrics_observation: DQMetricsObservation
     spark: SparkSession
+    target_query_id: str | None
 
     def __init__(
-        self, metrics_config: OutputConfig, metrics_observation: DQMetricsObservation, spark: SparkSession
+        self,
+        metrics_config: OutputConfig,
+        metrics_observation: DQMetricsObservation,
+        spark: SparkSession,
+        target_query_id: str | None = None,
     ) -> None:
         self.metrics_config = metrics_config
         self.metrics_observation = metrics_observation
         self.spark = spark
+        self.target_query_id = target_query_id
 
     def onQueryStarted(self, event: listener.QueryStartedEvent) -> None:
         """
@@ -49,6 +57,10 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         Args:
             event: A `QueryProgressEvent` with details about the last processed micro-batch
         """
+        # If a target query ID is specified, only process events from that query
+        if self.target_query_id is not None and str(event.progress.id) != self.target_query_id:
+            return
+
         observed_metrics = event.progress.observedMetrics.get(self.metrics_observation.run_name)
         if not observed_metrics:
             return

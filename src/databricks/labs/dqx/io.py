@@ -89,12 +89,15 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
     Args:
         df: The DataFrame to save
         output_config: Output table name, write mode, and options
+
+    Returns:
+        StreamingQuery if the DataFrame is streaming, None otherwise
     """
     logger.info(f"Saving data to {output_config.location} table")
 
     if df.isStreaming:
         if not output_config.trigger:
-            (
+            query = (
                 df.writeStream.format(output_config.format)
                 .outputMode(output_config.mode)
                 .options(**output_config.options)
@@ -102,20 +105,22 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
             )
         else:
             trigger: dict[str, Any] = output_config.trigger
-            (
+            query = (
                 df.writeStream.format(output_config.format)
                 .outputMode(output_config.mode)
                 .options(**output_config.options)
                 .trigger(**trigger)
                 .toTable(output_config.location)
             )
-    else:
-        (
-            df.write.format(output_config.format)
-            .mode(output_config.mode)
-            .options(**output_config.options)
-            .saveAsTable(output_config.location)
-        )
+        return query
+
+    (
+        df.write.format(output_config.format)
+        .mode(output_config.mode)
+        .options(**output_config.options)
+        .saveAsTable(output_config.location)
+    )
+    return None
 
 
 def get_reference_dataframes(
