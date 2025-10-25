@@ -55,8 +55,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-integration.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -83,6 +84,11 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      # Acceptance tests are run from within tests/integration folder.
+      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
+      - name: Prepare .coveragerc for integration tests
+        run: cp .coveragerc tests/integration
+
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -95,6 +101,13 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-integration-serverless.xml
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   e2e:
     environment: tool
@@ -133,6 +146,11 @@ jobs:
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
+      # e2e tests are run from within tests/e2e folder.
+      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
+      - name: Prepare code coverage configuration for e2e tests
+        run: cp .coveragerc tests/e2e
+
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -144,6 +162,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-e2e.xml
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   e2e_serverless:
     environment: tool
@@ -184,6 +209,11 @@ jobs:
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
+      # e2e tests are run from within tests/e2e folder.
+      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
+      - name: Prepare code coverage configuration for e2e tests
+        run: cp .coveragerc tests/e2e
+
       - name: Run e2e tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -196,6 +226,13 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-e2e-serverless.xml
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   benchmark:
     environment: tool

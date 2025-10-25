@@ -53,6 +53,7 @@ jobs:
 
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
+      # Run 10 tests in parallel: https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
       - name: Run integration tests and generate test coverage report
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -63,8 +64,29 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-integration.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      - name: Verify coverage XML reports in all paths
+        run: |
+          coverage_file=$(find . -name "coverage-integration.xml" | head -n 1)
+          if [ -z "$coverage_file" ]; then
+            echo "coverage-integration.xml not found in any path!"
+          else
+            echo "Found coverage-integration.xml at: $coverage_file"
+            cp $coverage_file $GITHUB_WORKSPACE/
+            cat $coverage_file
+          fi
+      
+          coverage_unit_file=$(find . -name "coverage-unit.xml" | head -n 1)
+          if [ -z "$coverage_unit_file" ]; then
+            echo "coverage-unit.xml not found in any path!"
+            exit 1
+          else
+            echo "Found coverage-unit.xml at: $coverage_unit_file"
+          fi
+
+      # Recursively search the entire workspace directory for all coverage reports.
+      # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -95,6 +117,11 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      # Integration tests are run from within tests/integration folder.
+      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
+      - name: Prepare code coverage configuration for integration tests
+        run: cp .coveragerc tests/integration
+
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -106,6 +133,13 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-integration-serverless.xml
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   e2e:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
@@ -145,6 +179,11 @@ jobs:
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
+      # e2e tests are run from within tests/e2e folder.
+      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
+      - name: Prepare code coverage configuration for e2e tests
+        run: cp .coveragerc tests/e2e
+
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -156,6 +195,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-e2e.xml
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   e2e_serverless:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
@@ -197,6 +243,11 @@ jobs:
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
+      # e2e tests are run from within tests/e2e folder.
+      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
+      - name: Prepare code coverage configuration for e2e tests
+        run: cp .coveragerc tests/e2e
+
       - name: Run e2e tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -209,3 +260,10 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-e2e-serverless.xml
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true

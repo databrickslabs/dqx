@@ -86,9 +86,16 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
     """
     Helper method to save a DataFrame to a Delta table.
 
+    For streaming DataFrames with one-time triggers (once, availableNow),
+    this method will block until the query completes. For other trigger types which are continuous
+    (e.g. unspecified, processingTime, continuous), it returns immediately with the query handle.
+
     Args:
         df: The DataFrame to save
         output_config: Output table name, write mode, and options
+
+    Returns:
+        StreamingQuery if the DataFrame is streaming, None otherwise
     """
     logger.info(f"Saving data to {output_config.location} table")
 
@@ -109,14 +116,19 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
                 .trigger(**trigger)
                 .toTable(output_config.location)
             )
-        query.awaitTermination()
-    else:
-        (
-            df.write.format(output_config.format)
-            .mode(output_config.mode)
-            .options(**output_config.options)
-            .saveAsTable(output_config.location)
-        )
+
+            if "once" in trigger or "availableNow" in trigger:
+                query.awaitTermination()
+
+        return query
+
+    (
+        df.write.format(output_config.format)
+        .mode(output_config.mode)
+        .options(**output_config.options)
+        .saveAsTable(output_config.location)
+    )
+    return None
 
 
 def get_reference_dataframes(

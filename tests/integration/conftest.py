@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime, timezone
 from unittest.mock import patch
 from pyspark.sql import DataFrame
@@ -7,6 +8,7 @@ from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.schema import dq_result_schema
+from databricks.sdk.service.compute import DataSecurityMode, Kind
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -30,6 +32,9 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
     """
     Set up the workflows with serverless cluster for the tests in the workspace.
     """
+
+    if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
 
     def create(_spark, **kwargs):
         installation_ctx.installation_service.run()
@@ -61,6 +66,9 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
     Set up the workflows with serverless cluster for the tests in the workspace.
     """
 
+    if not os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
+
     def create(_spark, **kwargs):
         serverless_installation_ctx.installation_service.run()
 
@@ -89,6 +97,72 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
         ws.workspace.delete(checks_location)
 
     yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
+
+
+@pytest.fixture
+def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_table, make_cluster, make_random):
+    """Set up workflows with metrics configuration for testing."""
+
+    if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
+
+    def create(_spark, **kwargs):
+        cluster = make_cluster(
+            single_node=True,
+            kind=Kind.CLASSIC_PREVIEW,
+            data_security_mode=DataSecurityMode.DATA_SECURITY_MODE_DEDICATED,
+        )
+        cluster_id = cluster.cluster_id
+        installation_ctx.config.serverless_clusters = False
+        installation_ctx.config.profiler_override_clusters["default"] = cluster_id
+        installation_ctx.config.quality_checker_override_clusters["default"] = cluster_id
+        installation_ctx.config.e2e_override_clusters["default"] = cluster_id
+        installation_ctx.installation_service.run()
+
+        quarantine = False
+        if "quarantine" in kwargs and kwargs["quarantine"]:
+            quarantine = True
+
+        checks_location = None
+        if "checks" in kwargs and kwargs["checks"]:
+            checks_location = _setup_quality_checks(installation_ctx, _spark, ws)
+
+        run_config = _setup_workflows_deps(
+            installation_ctx,
+            make_schema,
+            make_table,
+            make_random,
+            checks_location,
+            quarantine,
+        )
+
+        if kwargs.get("metrics"):
+            catalog_name = "main"
+            schema_name = run_config.output_config.location.split(".")[1]
+            metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
+            run_config.metrics_config = OutputConfig(location=metrics_table_name)
+
+            custom_metrics = kwargs.get("custom_metrics")
+            if custom_metrics:
+                config = installation_ctx.config
+                config.custom_metrics = custom_metrics
+                installation_ctx.installation.save(config)
+
+        checks_location = _setup_quality_checks(installation_ctx, _spark, ws)
+        run_config.checks_location = checks_location
+        installation_ctx.installation.save(installation_ctx.config)
+
+        return installation_ctx, run_config
+
+    def delete(resource):
+        ctx, run_config = resource
+        checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
+        try:
+            ws.workspace.delete(checks_location)
+        except Exception:
+            pass
+
+    yield from factory("workflows_with_metrics", lambda **kw: create(spark, **kw), delete)
 
 
 @pytest.fixture

@@ -64,6 +64,7 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
+    metrics_config: OutputConfig | None = None  # summary metrics table
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
 
     checks_location: str = (
@@ -122,6 +123,7 @@ class WorkspaceConfig:
 
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
+    custom_metrics: list[str] | None = None  # custom summary metrics tracked by the observer when applying checks
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
@@ -151,7 +153,13 @@ class WorkspaceConfig:
 
 @dataclass
 class BaseChecksStorageConfig(abc.ABC):
-    """Marker base class for storage configuration."""
+    """Marker base class for storage configuration.
+
+    Args:
+        location: The file path or table name where checks are stored.
+    """
+
+    location: str
 
 
 @dataclass
@@ -224,7 +232,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     instance_name: str | None = None
     user: str | None = None
-    location: str | None = None
+    location: str
     port: str = "5432"
     run_config_name: str = "default"
     mode: str = "overwrite"
