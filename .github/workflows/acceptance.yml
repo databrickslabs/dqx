@@ -64,6 +64,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+        run: |
+            coverage_file=$(find . -name "coverage.xml" | head -n 1)
+            if [ -z "$coverage_file" ]; then
+              echo "coverage.xml not found in any path!"
+            else
+              echo "Found coverage.xml at: $coverage_file"
+              cp $coverage_file $GITHUB_WORKSPACE/
+              cat $coverage_file
+            fi
 
       - name: Verify coverage XML reports in all paths
         run: |
