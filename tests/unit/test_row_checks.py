@@ -8,7 +8,6 @@ from databricks.labs.dqx.check_funcs import (
     is_not_less_than,
     is_in_list,
     is_not_null_and_is_in_list,
-    is_not_null_and_not_empty,
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
