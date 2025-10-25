@@ -55,8 +55,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-integration.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -100,8 +101,9 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-integration-serverless.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -160,8 +162,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-e2e.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -223,8 +226,9 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-e2e-serverless.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:

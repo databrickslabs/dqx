@@ -64,24 +64,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-        run: |
-            coverage_file=$(find . -name "coverage.xml" | head -n 1)
-            if [ -z "$coverage_file" ]; then
-              echo "coverage.xml not found in any path!"
-            else
-              echo "Found coverage.xml at: $coverage_file"
-              cp $coverage_file $GITHUB_WORKSPACE/
-              cat $coverage_file
-            fi
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-integration.xml
 
       - name: Verify coverage XML reports in all paths
         run: |
-          coverage_file=$(find . -name "coverage.xml" | head -n 1)
+          coverage_file=$(find . -name "coverage-integration.xml" | head -n 1)
           if [ -z "$coverage_file" ]; then
-            echo "coverage.xml not found in any path!"
-            exit 1
+            echo "coverage-integration.xml not found in any path!"
           else
-            echo "Found coverage.xml at: $coverage_file"
+            echo "Found coverage-integration.xml at: $coverage_file"
             cp $coverage_file $GITHUB_WORKSPACE/
             cat $coverage_file
           fi
@@ -94,7 +85,6 @@ jobs:
             echo "Found coverage-unit.xml at: $coverage_unit_file"
           fi
 
-      # Collects all coverage reports: coverage.xml from integration tests and coverage-unit.xml from unit tests
       # Recursively search the entire workspace directory for all coverage reports.
       # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
@@ -143,8 +133,9 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-integration-serverless.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -204,8 +195,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-e2e.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -268,8 +260,9 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: $GITHUB_WORKSPACE/coverage-e2e-serverless.xml
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
