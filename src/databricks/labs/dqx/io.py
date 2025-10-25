@@ -94,7 +94,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
 
     if df.isStreaming:
         if not output_config.trigger:
-            query = (
+            (
                 df.writeStream.format(output_config.format)
                 .outputMode(output_config.mode)
                 .options(**output_config.options)
@@ -102,14 +102,13 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
             )
         else:
             trigger: dict[str, Any] = output_config.trigger
-            query = (
+            (
                 df.writeStream.format(output_config.format)
                 .outputMode(output_config.mode)
                 .options(**output_config.options)
                 .trigger(**trigger)
                 .toTable(output_config.location)
             )
-        query.awaitTermination()
     else:
         (
             df.write.format(output_config.format)

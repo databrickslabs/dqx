@@ -57,6 +57,7 @@ Metrics are not directly accessible from the returned Spark Observation when dat
     ```python
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from databricks.sdk import WorkspaceClient
 
     # Create observer
     observer = DQMetricsObserver(name="dq_metrics")
@@ -124,7 +125,7 @@ Summary metrics can be written to a table when calling `DQEngine` methods to app
         criticality="error",
         check_func=check_funcs.regex_match,
         column="email",
-        check_func_kwargs={"regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
+        check_func_kwargs={"regex": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
       ),
     ]
 
@@ -165,6 +166,7 @@ Metrics are not directly accessible from the returned Spark Observation when dat
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    import time
     from databricks.labs.dqx import check_funcs
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.metrics_observer import DQMetricsObserver
@@ -179,22 +181,17 @@ Metrics are not directly accessible from the returned Spark Observation when dat
         check_func=check_funcs.is_not_null,
         column="col3",
       ),
-      DQDatasetRule(
-        criticality="error",
-        check_func=check_funcs.is_unique,
-        columns=["col1", "col2"],
-      ),
       DQRowRule(
         name="email_invalid_format",
         criticality="error",
         check_func=check_funcs.regex_match,
         column="email",
-        check_func_kwargs={"regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
+        check_func_kwargs={"regex": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
       ),
     ]
 
-    # Create the observer
-    observer = DQMetricsObserver(name="dq_metrics")
+    # Create the observer with unique name between runs to make sure metrics are cleaned after each run
+    observer = DQMetricsObserver(name=f"dq_metrics_{int(time.time())}")
 
     # Create the engine with the metrics observer
     engine = DQEngine(WorkspaceClient(), observer=observer)
@@ -203,9 +200,17 @@ Metrics are not directly accessible from the returned Spark Observation when dat
     input_config = InputConfig("main.demo.input_data", is_streaming=True)
 
     # Create the output, quarantine, and metrics configs
-    output_config = OutputConfig("main.demo.valid_data")
-    quarantine_config = OutputConfig("main.demo.quarantine_data")  # optional
-    metrics_config = OutputConfig("main.demo.metrics_data")  # optional
+    output_config = OutputConfig(
+      location="main.demo.valid_data",
+      trigger={"availableNow": True},  # stop the stream once all data is processed
+      options={"checkpointLocation": "/tmp/checkpoint/valid_data"}  # use a Volume in production for persistence
+    )
+    quarantine_config = OutputConfig(
+      location="main.demo.quarantine_data",
+      trigger={"availableNow": True},  # stop the stream once all data is processed
+      options={"checkpointLocation": "/tmp/checkpoint/quarantine_data"}  # use a Volume in production for persistence
+    )
+    metrics_config = OutputConfig("main.demo.metrics_data")  # streaming configuration not required for metrics
 
     # Read the data, apply the checks, write data to valid and quarantine tables, and write metrics to the metrics table
     # Output and quarantine data will be written in streaming and summary metrics will be written for each micro-batch
@@ -252,7 +257,7 @@ This is supported for both batch and streaming.
         criticality="error",
         check_func=check_funcs.regex_match,
         column="email",
-        check_func_kwargs={"regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
+        check_func_kwargs={"regex": r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"},
       ),
     ]
 
@@ -263,7 +268,7 @@ This is supported for both batch and streaming.
     engine = DQEngine(WorkspaceClient(), observer=observer)
 
     # Apply checks and get metrics
-    valid_df, quarantine_df, observation = engine.apply_checks_by_metadata_and_split(df, checks)
+    valid_df, quarantine_df, observation = engine.apply_checks_and_split(df, checks)
 
     # Create the output, quarantine, and metrics configs
     output_config = OutputConfig("main.demo.valid_data")
