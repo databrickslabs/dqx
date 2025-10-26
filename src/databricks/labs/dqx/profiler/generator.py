@@ -28,7 +28,7 @@ class DQGenerator(DQEngineBase):
         self,
         workspace_client: WorkspaceClient,
         spark: SparkSession | None = None,
-        model: str = "databricks/databricks-meta-llama-3-3-70b-instruct",
+        model: str = "databricks/databricks-claude-sonnet-4-5",
         api_key: str = "",
         api_base: str = "",
     ):
@@ -83,7 +83,7 @@ class DQGenerator(DQEngineBase):
         return dq_rules
 
     @telemetry_logger("generator", "generate_dq_rules_with_llm")
-    def generate_dq_rules_with_llm(self, user_input: str, table_name: str = "") -> list[dict]:
+    def generate_dq_rules_ai_assisted(self, user_input: str, table_name: str = "") -> list[dict]:
         """
         Generates data quality rules using LLM based on natural language input.
 

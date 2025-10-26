@@ -236,9 +236,9 @@ def validate_generated_rules(actual: str) -> float:
 
 
 def get_dspy_compiler(
-    model: str = "databricks/databricks-meta-llama-3-3-70b-instruct",
-    api_key: str = "",
-    api_base: str = "",
+    model: str,
+    api_key: str,
+    api_base: str,
 ) -> dspy.Module:
     """
     Get the Dspy compiler configured with an optimizer.
