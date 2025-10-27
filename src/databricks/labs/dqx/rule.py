@@ -99,9 +99,18 @@ class MultipleColumnsMixin:
                 # Allow empty columns if LLM matching key detection is enabled
                 enable_llm_matching_key_detection = False
                 if hasattr(self, 'check_func_kwargs'):
-                    enable_llm_matching_key_detection = getattr(self, 'check_func_kwargs', {}).get(
-                        "enable_llm_matching_key_detection", False
+                    # Check for the new nested structure first
+                    llm_options = getattr(self, 'check_func_kwargs', {}).get(
+                        "llm_matching_key_detection_options", {}
                     )
+                    if isinstance(llm_options, dict):
+                        enable_llm_matching_key_detection = llm_options.get("enable", False)
+                    
+                    # Fallback to old structure for backward compatibility
+                    if not enable_llm_matching_key_detection:
+                        enable_llm_matching_key_detection = getattr(self, 'check_func_kwargs', {}).get(
+                            "enable_llm_matching_key_detection", False
+                        )
                 if not enable_llm_matching_key_detection:
                     raise InvalidCheckError("'columns' cannot be empty.")
             for col in columns:
