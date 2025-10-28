@@ -9,9 +9,9 @@ import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError
+from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.check_funcs import sql_query
-from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams
+from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams, RunConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -712,7 +712,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
 
     catalog_name = "main"
     schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     ref_df2 = spark.createDataFrame(
@@ -725,7 +725,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
         SCHEMA,
     )
 
-    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+    ref_table2 = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     ref_df2.write.saveAsTable(ref_table2)
 
     checks = [
@@ -4456,8 +4456,8 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
 def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
     catalog_name = "main"
     schema_name = make_schema(catalog_name=catalog_name).name
-    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     volume = make_volume(catalog_name=catalog_name, schema_name=schema_name)
 
     file_path = Path(__file__).parent.parent / "resources" / "all_row_checks.yaml"
@@ -4530,7 +4530,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
             mode="append",
             trigger={"availableNow": True},
             options={
-                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(6).lower()}"
+                "checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(10).lower()}"
             },
         ),
     )
@@ -7649,7 +7649,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
 
     catalog_name = "main"
     ref_table_schema = make_schema(catalog_name=catalog_name)
-    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(6).lower()}"
+    ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
 
     pk_columns = ["id"]
@@ -7807,3 +7807,355 @@ def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_time
         expected_schema,
     )
     assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_tables_for_patterns_missing_output_suffix(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    with pytest.raises(InvalidParameterError, match="Output table suffix cannot be empty"):
+        dq_engine.apply_checks_and_save_in_tables_for_patterns(
+            patterns=["*"],
+            checks_location="catalog.schema.checks",
+            run_config_template=RunConfig(),
+            output_table_suffix="",
+        )
+
+
+def test_apply_checks_and_save_in_tables_for_patterns_missing_quarantine_suffix(ws, spark):
+    dq_engine = DQEngine(ws)
+
+    with pytest.raises(InvalidParameterError, match="Quarantine table suffix cannot be empty"):
+        dq_engine.apply_checks_and_save_in_tables_for_patterns(
+            patterns=["*"],
+            checks_location="catalog.schema.checks",
+            run_config_template=RunConfig(quarantine_config=OutputConfig("catalog.schema.table")),
+            quarantine_table_suffix="",
+        )
+
+
+def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    complex_cols_schema = ", arr_col array<int>, map_col: map<string, int>, struct_col: struct<field1: int>"
+    test_df = spark.createDataFrame([[1, 3, 3, [1], {"key1": 1}, {"field1": 1}]], SCHEMA + complex_cols_schema)
+
+    checks = [
+        # pass - no issues
+        DQRowRule(
+            name="a_is_null_or_empty", criticality="warn", check_func=check_funcs.is_not_null_and_not_empty, column="a"
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_not_null,
+            column=F.try_element_at("arr_col", F.lit(1)),
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_not_null,
+            column=F.try_element_at("map_col", F.lit("key1")),
+        ),
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_not_null,
+            column="struct_col.field1",
+        ),
+        # invalid filter
+        DQRowRule(
+            name="b_is_null_or_empty",
+            criticality="error",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column=F.col("b"),
+            filter="missing_col > 0",
+        ),
+        # invalid column
+        DQRowRule(
+            criticality="warn",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column=F.col("missing_col"),
+            filter="a > 0",
+            user_metadata={"tag1": "value1", "tag2": "value2"},
+        ),
+        # invalid column in for each rule
+        *DQForEachColRule(
+            check_func=check_funcs.is_not_null,
+            columns=["missing_col"],
+            criticality="error",
+        ).get_rules(),
+        # invalid columns
+        DQRowRule(
+            name="missing_col_sql_expression",
+            criticality="error",
+            check_func=check_funcs.sql_expression,
+            check_func_kwargs={
+                "expression": "missing_col > 0",
+                "msg": "missing_col is less than 0",
+            },
+            columns=["missing_col"],
+        ),
+        # invalid columns and filter
+        DQDatasetRule(
+            name="missing_col_is_unique",
+            criticality="error",
+            check_func=check_funcs.is_unique,
+            columns=["missing_col"],
+            filter="missing_col > 0",
+        ),
+        # invalid sql expression column
+        DQRowRule(
+            name="invalid_col_sql_expression",
+            criticality="error",
+            check_func=check_funcs.sql_expression,
+            check_func_args=["missing_col > 0"],  # verify validation works when using args
+            check_func_kwargs={
+                "msg": "missing_col is less than 0",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [1],
+                {"key1": 1},
+                {"field1": 1},
+                [
+                    {
+                        "name": "b_is_null_or_empty",
+                        "message": "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
+                        "columns": ["b"],
+                        "filter": "missing_col > 0",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "missing_col_is_null",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        "columns": ["missing_col"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "missing_col_sql_expression",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        "columns": ["missing_col"],
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "missing_col_is_unique",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
+                        "columns": ["missing_col"],
+                        "filter": "missing_col > 0",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_sql_expression",
+                        "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "missing_col_is_null_or_empty",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        "columns": ["missing_col"],
+                        "filter": "a > 0",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    },
+                ],
+            ]
+        ],
+        SCHEMA + complex_cols_schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    complex_cols_schema = ", arr_col array<int>, map_col: map<string, int>, struct_col: struct<field1: int>"
+    test_df = spark.createDataFrame([[1, 3, 3, [1], {"key1": 1}, {"field1": 1}]], SCHEMA + complex_cols_schema)
+
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "a"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "try_element_at(arr_col, 1)"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "try_element_at(map_col, 'key1')"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "struct_col.field1"},
+            },
+        },
+        {
+            "criticality": "error",
+            "filter": "missing_col > 0",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "b"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "filter": "a > 0",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {
+                    "column": "missing_col",
+                },
+            },
+            "user_metadata": {"tag1": "value1", "tag2": "value2"},
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "for_each_column": ["missing_col"],
+            },
+        },
+        {
+            "name": "missing_col_sql_expression",
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "missing_col > 0",
+                    "msg": "missing_col is less than 0",
+                    "columns": ["missing_col"],
+                },
+            },
+        },
+        {
+            "name": "missing_col_is_unique",
+            "criticality": "error",
+            "filter": "missing_col > 0",
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": ["missing_col"]},
+            },
+        },
+        {
+            "name": "invalid_col_sql_expression",
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "missing_col > 0",
+                    "msg": "missing_col is less than 0",
+                },
+            },
+        },
+    ]
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [1],
+                {"key1": 1},
+                {"field1": 1},
+                [
+                    {
+                        "name": "b_is_null_or_empty",
+                        "message": "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
+                        "columns": ["b"],
+                        "filter": "missing_col > 0",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "missing_col_is_null",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        "columns": ["missing_col"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "missing_col_sql_expression",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        "columns": ["missing_col"],
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "missing_col_is_unique",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid check filter: 'missing_col > 0'",
+                        "columns": ["missing_col"],
+                        "filter": "missing_col > 0",
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_sql_expression",
+                        "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {},
+                    },
+                ],
+                [
+                    {
+                        "name": "missing_col_is_null_or_empty",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        "columns": ["missing_col"],
+                        "filter": "a > 0",
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                    },
+                ],
+            ]
+        ],
+        SCHEMA + complex_cols_schema + REPORTING_COLUMNS,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)

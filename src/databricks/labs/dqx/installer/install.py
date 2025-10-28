@@ -116,12 +116,8 @@ class WorkspaceInstaller(WorkspaceContext):
             config = self.configure(default_config)
             tasks = WorkflowsRunner.all(config).tasks()
 
-            # use "default" run config, can be overridden when running the workflow
-            default_run_config = config.get_run_config()
-
             workflows_deployment = WorkflowDeployment(
                 config,
-                default_run_config.name,
                 self.installation,
                 self.install_state,
                 self.workspace_client,
@@ -288,13 +284,10 @@ class InstallationService:
         installation = product_info.current_installation(ws)
         install_state = InstallState.from_installation(installation)
         config = installation.load(WorkspaceConfig)
-        run_config_name = config.get_run_config().name
         prompts = Prompts()
         wheels = WheelsV2(installation, product_info)
         tasks = WorkflowsRunner.all(config).tasks()
-        workflow_installer = WorkflowDeployment(
-            config, run_config_name, installation, install_state, ws, wheels, product_info, tasks
-        )
+        workflow_installer = WorkflowDeployment(config, installation, install_state, ws, wheels, product_info, tasks)
         warehouse_configurator = WarehouseInstaller(ws, prompts)
 
         return cls(

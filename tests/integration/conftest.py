@@ -1,12 +1,18 @@
 import logging
+import os
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import patch
+
+from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame
 import pytest
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.schema import dq_result_schema
+from databricks.sdk.service.compute import DataSecurityMode, Kind
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -30,6 +36,9 @@ def setup_workflows(ws, spark, installation_ctx, make_schema, make_table, make_r
     """
     Set up the workflows with serverless cluster for the tests in the workspace.
     """
+
+    if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
 
     def create(_spark, **kwargs):
         installation_ctx.installation_service.run()
@@ -60,6 +69,9 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
     """
     Set up the workflows with serverless cluster for the tests in the workspace.
     """
+
+    if not os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
 
     def create(_spark, **kwargs):
         serverless_installation_ctx.installation_service.run()
@@ -92,36 +104,55 @@ def setup_serverless_workflows(ws, spark, serverless_installation_ctx, make_sche
 
 
 @pytest.fixture
-def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_table, make_random):
+def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_table, make_cluster, make_random):
     """Set up workflows with metrics configuration for testing."""
 
+    if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
+
     def create(_spark, **kwargs):
+        cluster = make_cluster(
+            single_node=True,
+            kind=Kind.CLASSIC_PREVIEW,
+            data_security_mode=DataSecurityMode.DATA_SECURITY_MODE_DEDICATED,
+        )
+        cluster_id = cluster.cluster_id
+        installation_ctx.config.serverless_clusters = False
+        installation_ctx.config.profiler_override_clusters["default"] = cluster_id
+        installation_ctx.config.quality_checker_override_clusters["default"] = cluster_id
+        installation_ctx.config.e2e_override_clusters["default"] = cluster_id
         installation_ctx.installation_service.run()
+
+        quarantine = False
+        if "quarantine" in kwargs and kwargs["quarantine"]:
+            quarantine = True
+
+        checks_location = _setup_quality_checks(installation_ctx, _spark, ws)
 
         run_config = _setup_workflows_deps(
             installation_ctx,
             make_schema,
             make_table,
             make_random,
-            checks_location=None,
-            quarantine=kwargs.get("quarantine", False),
+            checks_location,
+            quarantine,
+            is_streaming=kwargs.get("is_streaming", False),
+            is_continuous_streaming=kwargs.get("is_continuous_streaming", False),
         )
 
-        if kwargs.get("metrics"):
-            catalog_name = "main"
-            schema_name = run_config.output_config.location.split('.')[1]
-            metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
-            run_config.metrics_config = OutputConfig(location=metrics_table_name)
+        config = installation_ctx.config
+        run_config = config.get_run_config()
 
-            custom_metrics = kwargs.get("custom_metrics")
-            if custom_metrics:
-                config = installation_ctx.config
-                config.custom_metrics = custom_metrics
-                installation_ctx.installation.save(config)
+        catalog_name = "main"
+        schema_name = run_config.output_config.location.split(".")[1]
+        metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
+        run_config.metrics_config = OutputConfig(location=metrics_table_name)
 
-        checks_location = _setup_quality_checks(installation_ctx, _spark, ws)
-        run_config.checks_location = checks_location
-        installation_ctx.installation.save(installation_ctx.config)
+        custom_metrics = kwargs.get("custom_metrics")
+        if custom_metrics:
+            config.custom_metrics = custom_metrics
+
+        installation_ctx.installation.save(config)
 
         return installation_ctx, run_config
 
@@ -136,6 +167,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
     yield from factory("workflows_with_metrics", lambda **kw: create(spark, **kw), delete)
 
 
+@pytest.fixture
 def setup_workflows_with_custom_folder(
     ws, spark, installation_ctx_custom_install_folder, make_schema, make_table, make_random
 ):
@@ -175,6 +207,7 @@ def _setup_workflows_deps(
     checks_location: str | None = None,
     quarantine: bool = False,
     is_streaming: bool = False,
+    is_continuous_streaming: bool = False,
 ):
     # prepare test data
     catalog_name = "main"
@@ -199,10 +232,18 @@ def _setup_workflows_deps(
         options={"versionAsOf": "0"} if not is_streaming else {},
         is_streaming=is_streaming,
     )
-    output_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}"
+
+    trigger: dict[str, Any] = {}
+    if is_streaming:
+        if is_continuous_streaming:
+            trigger = {"processingTime": "60 seconds"}
+        else:
+            trigger = {"availableNow": True}
+
+    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     run_config.output_config = OutputConfig(
         location=output_table,
-        trigger={"availableNow": True} if is_streaming else {},
+        trigger=trigger,
         options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_out_ckpt"} if is_streaming else {}),
     )
 
@@ -210,12 +251,16 @@ def _setup_workflows_deps(
         run_config.checks_location = checks_location
 
     if quarantine:
-        quarantine_table = f"{catalog_name}.{schema.name}.{make_random(6).lower()}_quarantine"
+        quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}_quarantine"
         run_config.quarantine_config = OutputConfig(
             location=quarantine_table,
-            trigger={"availableNow": True} if is_streaming else {},
+            trigger=trigger,
             options=({"checkpointLocation": f"/tmp/dqx_tests/{make_random(10)}_qr_ckpt"} if is_streaming else {}),
         )
+
+    # ensure tests are deterministic
+    run_config.profiler_config.sample_fraction = 1.0
+    run_config.profiler_config.sample_seed = 100
 
     ctx.installation.save(ctx.config)
 
@@ -316,3 +361,20 @@ def contains_expected_workflows(workflows, state):
         if all(item in workflow.items() for item in state.items()):
             return True
     return False
+
+
+def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, quarantine_config):
+    dq_engine = DQEngine(ws, spark)
+    expected_output_df = dq_engine.get_valid(expected_output)
+    expected_quarantine_df = dq_engine.get_invalid(expected_output)
+
+    output_df = spark.table(output_config.location)
+    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
+
+    quarantine_df = spark.table(quarantine_config.location)
+    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+
+
+def assert_output_df(spark, expected_output, output_config):
+    checked_df = spark.table(output_config.location)
+    assert_df_equality(checked_df, expected_output, ignore_nullable=True)

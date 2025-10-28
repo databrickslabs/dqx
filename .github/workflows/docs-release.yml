@@ -28,8 +28,7 @@ jobs:
 
       - name: Install Hatch
         run: |
-          # click 8.3+ introduced bug for hatch
-          pip install "hatch==1.13.0" "click<8.3"
+          pip install hatch==1.15.0
 
       - uses: actions/setup-node@v4
         with:
@@ -38,14 +37,10 @@ jobs:
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
 
       - name: Install dependencies
-        run: yarn --cwd docs/dqx install --frozen-lockfile
-      
-
-      - name: Generate API docs
-        run: hatch run docs:pydoc-markdown
+        run: make docs-install
 
       - name: Build website
-        run: yarn --cwd docs/dqx build
+        run: make docs-build
 
       - name: Upload Build Artifact
         uses: actions/upload-pages-artifact@v3

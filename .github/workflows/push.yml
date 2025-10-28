@@ -37,8 +37,7 @@ jobs:
 
       - name: Run unit tests
         run: |
-          # click 8.3+ introduced bug for hatch
-          pip install "hatch==1.13.0" "click<8.3"
+          pip install hatch==1.15.0
           make test
 
   fmt:
@@ -56,13 +55,22 @@ jobs:
   docs:
     name: Build Docusaurus
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs/dqx
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: '3.12'
+
+      - name: Install Hatch
+        run: |
+          pip install hatch==1.15.0
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -70,6 +78,7 @@ jobs:
           cache-dependency-path: docs/dqx/yarn.lock # need to put the lockfile path explicitly
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: make docs-install
+
       - name: Build website
-        run: yarn build
+        run: make docs-build

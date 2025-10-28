@@ -1,3 +1,4 @@
+import copy
 from io import BytesIO
 
 import pytest
@@ -6,9 +7,14 @@ from databricks.labs.blueprint.parallel import ManyError
 from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
-from databricks.labs.dqx.config import InstallationChecksStorageConfig, InputConfig
+from databricks.labs.dqx.config import (
+    InstallationChecksStorageConfig,
+    InputConfig,
+    WorkspaceFileChecksStorageConfig,
+    TableChecksStorageConfig,
+)
 from databricks.labs.dqx.engine import DQEngine
-from tests.integration.conftest import RUN_TIME, REPORTING_COLUMNS
+from tests.integration.conftest import RUN_TIME, REPORTING_COLUMNS, assert_output_df, assert_quarantine_and_output_dfs
 
 
 def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
@@ -16,8 +22,72 @@ def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_c
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
+
+
+def test_quality_checker_workflow_for_multiple_run_configs(
+    ws, spark, setup_workflows, expected_quality_checking_output
+):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    second_run_config = copy.deepcopy(run_config)
+    second_run_config.name = "second"
+    # use the same checks but different output location
+    second_run_config.output_config.location = run_config.output_config.location + "_second"
+    installation_ctx.config.run_configs.append(second_run_config)
+
+    # overwrite config in the installation folder
+    installation_ctx.installation.save(installation_ctx.config)
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="")
+
+    # assert results
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
+    assert_output_df(spark, expected_quality_checking_output, second_run_config.output_config)
+
+
+def test_quality_checker_workflow_for_multiple_run_configs_table_checks_storage(
+    ws, spark, setup_workflows, expected_quality_checking_output
+):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    input_table = run_config.input_config.location
+    catalog_name, schema_name, _ = input_table.split('.')
+
+    # update run config to use table storage for checks
+    checks_table = f"{catalog_name}.{schema_name}.checks"
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.checks_location = checks_table
+
+    second_run_config = copy.deepcopy(run_config)
+    second_run_config.name = "second"
+    # use the same checks but different output location
+    second_run_config.output_config.location = run_config.output_config.location + "_second"
+    installation_ctx.config.run_configs.append(second_run_config)
+
+    # overwrite config in the installation folder
+    installation_ctx.installation.save(installation_ctx.config)
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(
+        config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")
+    )
+    dq_engine.save_checks(
+        config=TableChecksStorageConfig(location=checks_table, run_config_name=run_config.name), checks=checks
+    )
+    dq_engine.save_checks(
+        config=TableChecksStorageConfig(location=checks_table, run_config_name=second_run_config.name), checks=checks
+    )
+    ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="")
+
+    # assert results
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
+    assert_output_df(spark, expected_quality_checking_output, second_run_config.output_config)
 
 
 def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
@@ -25,8 +95,36 @@ def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflo
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
+
+
+def test_quality_checker_workflow_table_checks_storage(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    input_table = run_config.input_config.location
+    catalog_name, schema_name, _ = input_table.split('.')
+
+    # update run config to use table storage for checks
+    checks_table = f"{catalog_name}.{schema_name}.checks"
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.checks_location = checks_table
+    installation_ctx.installation.save(config)
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(
+        config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")
+    )
+    dq_engine.save_checks(
+        config=TableChecksStorageConfig(location=checks_table, run_config_name=run_config.name), checks=checks
+    )
+    ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
+
+    installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
+
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
 def test_quality_checker_workflow_with_custom_install_folder(
@@ -36,8 +134,7 @@ def test_quality_checker_workflow_with_custom_install_folder(
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
 def test_quality_checker_workflow_streaming(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
@@ -45,8 +142,7 @@ def test_quality_checker_workflow_streaming(ws, spark, setup_serverless_workflow
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
 def test_quality_checker_workflow_with_quarantine(
@@ -56,15 +152,9 @@ def test_quality_checker_workflow_with_quarantine(
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    dq_engine = DQEngine(ws, spark)
-    expected_output_df = dq_engine.get_valid(expected_quality_checking_output)
-    expected_quarantine_df = dq_engine.get_invalid(expected_quality_checking_output)
-
-    output_df = spark.table(run_config.output_config.location)
-    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
-
-    quarantine_df = spark.table(run_config.quarantine_config.location)
-    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+    assert_quarantine_and_output_dfs(
+        ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
+    )
 
 
 def test_quality_checker_workflow_when_missing_checks_file(ws, setup_serverless_workflows):
@@ -220,6 +310,203 @@ def test_quality_checker_workflow_with_ref(
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_quality_checker_workflow_for_patterns(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+    second_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(
+        config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")
+    )
+    dq_engine.save_checks(
+        checks=checks,
+        config=WorkspaceFileChecksStorageConfig(
+            location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml"
+        ),
+    )
+    dq_engine.save_checks(
+        checks=checks,
+        config=WorkspaceFileChecksStorageConfig(
+            location=f"{installation_ctx.installation.install_folder()}/{second_table}.yml"
+        ),
+    )
+    ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow(
+        "quality-checker", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
+    )
+
+    # assert first table
+    checked_df = spark.table(first_table + "_dq_output")
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    # assert second table
+    checked_df = spark.table(second_table + "_dq_output")
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+
+def test_quality_checker_workflow_for_patterns_exclude_patterns(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+    exclude_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(
+        config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")
+    )
+    dq_engine.save_checks(
+        checks=checks,
+        config=WorkspaceFileChecksStorageConfig(
+            location=f"{installation_ctx.installation.install_folder()}/{first_table}.yml"
+        ),
+    )
+    ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="quality-checker",
+        run_config_name=run_config.name,
+        patterns=f"{catalog_name}.{schema_name}.*",
+        exclude_patterns=exclude_table,
+    )
+
+    checked_df = spark.table(first_table + "_dq_output")
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    # 1 input + 1 output + 1 existing
+    tables = ws.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema_name)
+    assert len(list(tables)) == 3, "Tables count mismatch"
+
+
+def test_quality_checker_workflow_for_patterns_exclude_output(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+):
+    installation_ctx, run_config = setup_workflows(quarantine=True, checks=True)
+
+    # update run config to overwrite output and quarantine tables
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.output_config.mode = "overwrite"
+    run_config.quarantine_config.mode = "overwrite"
+    # test processing using absolute path
+    run_config.checks_location = f"{installation_ctx.installation.install_folder()}/checks/checks.yml"
+    installation_ctx.installation.save(config)
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(
+        config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")
+    )
+    dq_engine.save_checks(
+        checks=checks,
+        config=WorkspaceFileChecksStorageConfig(
+            location=f"{installation_ctx.installation.install_folder()}/checks/{first_table}.yml"
+        ),
+    )
+    ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
+
+    output_table_suffix = "_output"
+    quarantine_table_suffix = "_quarantine"
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="quality-checker",
+        run_config_name=run_config.name,
+        patterns=f"{catalog_name}.{schema_name}.*",
+        # existing output and quarantine tables are excluded by default based on suffixes
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+    )
+
+    # run workflow again to verify that existing output and quarantine tables are excluded
+    installation_ctx.deployed_workflows.run_workflow(
+        workflow="quality-checker",
+        run_config_name=run_config.name,
+        patterns=f"{catalog_name}.{schema_name}.*",
+        # existing output and quarantine tables are excluded by default based on suffixes
+        output_table_suffix=output_table_suffix,
+        quarantine_table_suffix=quarantine_table_suffix,
+    )
+
+    expected_output_df = dq_engine.get_valid(expected_quality_checking_output)
+    expected_quarantine_df = dq_engine.get_invalid(expected_quality_checking_output)
+
+    output_df = spark.table(first_table + output_table_suffix)
+    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
+
+    quarantine_df = spark.table(first_table + quarantine_table_suffix)
+    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+
+    # 1 input + 2 outputs (output, quarantine)
+    tables = ws.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema_name)
+    assert len(list(tables)) == 3, "Tables count mismatch"
+
+
+def test_quality_checker_workflow_for_patterns_table_checks_storage(
+    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+):
+    installation_ctx, run_config = setup_workflows(checks=True)
+
+    first_table = run_config.input_config.location
+    catalog_name, schema_name, _ = first_table.split('.')
+
+    # update run config to use table storage for checks
+    checks_table = f"{catalog_name}.{schema_name}.checks"
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.checks_location = checks_table
+    installation_ctx.installation.save(config)
+
+    second_table = _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random)
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(
+        config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")
+    )
+    dq_engine.save_checks(
+        config=TableChecksStorageConfig(location=checks_table, run_config_name=first_table), checks=checks
+    )
+    dq_engine.save_checks(
+        config=TableChecksStorageConfig(location=checks_table, run_config_name=second_table), checks=checks
+    )
+    ws.workspace.delete(f"{installation_ctx.installation.install_folder()}/checks.yml")
+
+    # run workflow
+    installation_ctx.deployed_workflows.run_workflow(
+        "quality-checker",
+        run_config_name=run_config.name,
+        # this will apply checks to the test tables as well as checks table
+        # there are no checks defined for the checks table
+        patterns=f"{catalog_name}.{schema_name}.*",
+    )
+
+    # assert first table
+    checked_df = spark.table(first_table + "_dq_output")
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    # assert second table
+    checked_df = spark.table(second_table + "_dq_output")
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+
+def _make_second_input_table(spark, catalog_name, schema_name, first_table, make_random, suffix=""):
+    second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}{suffix}"
+    spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
+    return second_table
+
+
 def _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location):
     content = '''from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from pyspark.sql import functions as F
@@ -253,7 +540,7 @@ def is_not_null_custom_func(column: str):
 def _setup_ref_table(spark, installation_ctx, make_random, run_config):
     schema_and_catalog = run_config.input_config.location.split(".")
     catalog, schema = schema_and_catalog[0], schema_and_catalog[1]
-    ref_table = f"{catalog}.{schema}.{make_random(6).lower()}"
+    ref_table = f"{catalog}.{schema}.{make_random(10).lower()}"
 
     spark.createDataFrame(
         [

@@ -7,11 +7,22 @@ from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 
 class RunConfigLoader:
     """
-    Class to handle loading of run configurations from the installation.
+    Class to handle loading of configuration from the installation.
     """
 
     def __init__(self, workspace_client: WorkspaceClient):
         self.ws = workspace_client
+
+    def load_config(self, assume_user: bool = True, product_name: str = "dqx") -> WorkspaceConfig:
+        """
+        Load workspace configuration from the installation. The workspace config contains all run configs.
+
+        Args:
+            assume_user: if True, assume user installation
+            product_name: name of the product
+        """
+        installation = self.get_installation(assume_user, product_name)
+        return installation.load(WorkspaceConfig)
 
     def load_run_config(
         self,
@@ -24,10 +35,10 @@ class RunConfigLoader:
         Load run configuration from the installation.
 
         Args:
-            run_config_name: Name of the run configuration to use.
+            run_config_name: Name of the run configuration to use, e.g. input table or job name.
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
-            assume_user: Whether to assume a per-user installation when loading the run configuration (True as default, skipped if install_folder is provided).
-            product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided ("dqx" as default).
+            assume_user: Whether to assume a per-user installation when loading the run configuration (use *True* if not provided, skipped if install_folder is provided).
+            product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided (use "dqx" if not provided).
         """
         installation = self.get_installation(assume_user, product_name, install_folder)
         return self._load_run_config(installation, run_config_name)
@@ -81,8 +92,8 @@ class RunConfigLoader:
         Load run configuration from the installation.
 
         Args:
-            installation: the installation object
-            run_config_name: name of the run configuration to use
+            installation: the installation object.
+            run_config_name: name of the run configuration to use, e.g. input table or job name.
         """
         config = installation.load(WorkspaceConfig)
         return config.get_run_config(run_config_name)

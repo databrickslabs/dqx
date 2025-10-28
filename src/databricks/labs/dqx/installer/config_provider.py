@@ -134,7 +134,7 @@ class ConfigProvider:
 
         profiler_override_clusters = json.loads(
             self._prompts.question(
-                "Optional Cluster ID to use for the profiler workflow (e.g. {\"main\": \"<existing-cluster-id>\"}). "
+                "Optional Cluster ID to use for the profiler workflow (e.g. {\"default\": \"<existing-cluster-id>\"}). "
                 "If not provided, a job cluster will be created automatically when the job runs",
                 default="{}",
                 valid_regex=r"^.*$",
@@ -151,7 +151,7 @@ class ConfigProvider:
 
         quality_checker_override_clusters = json.loads(
             self._prompts.question(
-                "Optional Cluster ID to use for the data quality job (e.g. {\"main\": \"<existing-cluster-id>\"}). "
+                "Optional Cluster ID to use for the data quality job (e.g. {\"default\": \"<existing-cluster-id>\"}). "
                 "If not provided, a job cluster will be created automatically when the job runs",
                 default="{}",
                 valid_regex=r"^.*$",
@@ -167,7 +167,7 @@ class ConfigProvider:
 
         e2e_override_clusters = json.loads(
             self._prompts.question(
-                "Optional Cluster ID to use for the end-to-end workflow (e.g. {\"main\": \"<existing-cluster-id>\"}). "
+                "Optional Cluster ID to use for the end-to-end workflow (e.g. {\"default\": \"<existing-cluster-id>\"}). "
                 "If not provided, a job cluster will be created automatically when the job runs",
                 default="{}",
                 valid_regex=r"^.*$",
@@ -383,7 +383,7 @@ class ConfigProvider:
         """Prompt user for custom metrics as Spark SQL expressions."""
         custom_metrics_input = self._prompts.question(
             "Provide custom metrics as a list of Spark SQL expressions "
-            "(e.g. \"[\'count(case when age > 65 then 1 end) as senior_count\', \'avg(salary) as avg_salary\']\"). "
+            "(e.g. [\"count(case when age > 65 then 1 end) as senior_count\", \"avg(salary) as avg_salary\"]). "
             "Leave blank to track the default data quality metrics.",
             default="[]",
             valid_regex=r"^.*$",

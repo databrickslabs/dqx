@@ -246,20 +246,6 @@ def test_quality_checker_no_input_configured(ws, spark, setup_serverless_workflo
         )
 
 
-def test_quality_checker_no_output_config_configured(ws, spark, setup_serverless_workflows):
-    installation_ctx, run_config = setup_serverless_workflows(checks=True)
-
-    config = installation_ctx.config
-    run_config = config.get_run_config()
-    run_config.output_config = None  # Simulate no output storage configured
-    installation_ctx.installation.save(config)
-
-    with pytest.raises(ManyError, match="No output storage configured during installation"):
-        apply_checks(
-            installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer
-        )
-
-
 def test_e2e_workflow(ws, spark, setup_workflows, caplog):
     installation_ctx, run_config = setup_workflows()
     e2e(installation_ctx.workspace_client, run_config=run_config.name, ctx=installation_ctx.workspace_installer)

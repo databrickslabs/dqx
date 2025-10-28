@@ -1,10 +1,10 @@
 import logging
+import os
+
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.utils import get_reference_dataframes
 
 logger = logging.getLogger(__name__)
 
@@ -16,52 +16,48 @@ class QualityCheckerRunner:
         self.spark = spark
         self.dq_engine = dq_engine
 
-    def run(
-        self,
-        checks: list[dict],
-        input_config: InputConfig,
-        output_config: OutputConfig,
-        quarantine_config: OutputConfig | None,
-        metrics_config: OutputConfig | None = None,
-        custom_check_functions: dict[str, str] | None = None,
-        reference_tables: dict[str, InputConfig] | None = None,
-    ) -> None:
+    def run(self, run_configs: list[RunConfig], max_parallelism: int | None = os.cpu_count()) -> None:
         """
-        Run the DQX data quality job on the input data and saves the generated results to delta table(s).
+        Run the DQX data quality job for the provided run configs.
 
         Args:
-            checks: The data quality checks to apply.
-            input_config: Input data configuration (e.g. table name or file location, read options).
-            output_config: Output data configuration (e.g. table name or file location, write options).
-            quarantine_config: Quarantine data configuration (e.g. table name or file location, write options).
-            metrics_config: Summary metrics data configuration (e.g. table name or file location, write options).
-            custom_check_functions: A mapping where each key is the name of a function (e.g., "my_func")
-                and each value is the file path to the Python module that defines it. The path can be absolute
-                or relative to the installation folder, and may refer to a local filesystem location, a
-                Databricks workspace path (e.g. /Workspace/my_repo/my_module.py), or a Unity Catalog volume
-                (e.g. /Volumes/catalog/schema/volume/my_module.py).
-            reference_tables: Reference tables to use in the checks.
+            run_configs: List of RunConfig objects containing the configuration for each run.
+            max_parallelism: Maximum number of parallel runs. Defaults to the number of CPU cores.
         """
-        ref_dfs = get_reference_dataframes(self.spark, reference_tables)
-        custom_check_functions_resolved = resolve_custom_check_functions_from_path(custom_check_functions)
+        logger.info("Data quality checker started.")
+        self.dq_engine.apply_checks_and_save_in_tables(run_configs=run_configs, max_parallelism=max_parallelism)
+        logger.info("Data quality checker completed.")
 
-        logger.info(f"Applying checks to {input_config.location}.")
+    def run_for_patterns(
+        self,
+        patterns: list[str],
+        exclude_patterns: list[str],
+        run_config_template: RunConfig,
+        checks_location: str,
+        output_table_suffix: str,
+        quarantine_table_suffix: str,
+        max_parallelism: int,
+    ) -> None:
+        """
+        Run the DQX data quality job for the provided location patterns using a run config template.
 
-        self.dq_engine.apply_checks_by_metadata_and_save_in_table(
-            checks=checks,
-            input_config=input_config,
-            output_config=output_config,
-            quarantine_config=quarantine_config,
-            metrics_config=metrics_config,
-            custom_check_functions=custom_check_functions_resolved,
-            ref_dfs=ref_dfs,
+        Args:
+            patterns: List of location patterns (with wildcards) to apply the data quality checks to.
+            exclude_patterns: List of table patterns to exclude from profiling (e.g. ["*output", "*quarantine"]).
+            run_config_template: A RunConfig object to be used as a template for each pattern, except location.
+            checks_location: Location to read the checks from.
+            output_table_suffix: Suffix to append to the output table names.
+            quarantine_table_suffix: Suffix to append to the quarantine table names.
+            max_parallelism: Maximum number of parallel runs. Defaults to the number of CPU cores.
+        """
+        logger.info(f"Data quality checker started for patterns {patterns} and checks {checks_location}")
+        self.dq_engine.apply_checks_and_save_in_tables_for_patterns(
+            patterns=patterns,
+            exclude_patterns=exclude_patterns,
+            checks_location=checks_location,
+            run_config_template=run_config_template,
+            max_parallelism=max_parallelism,
+            output_table_suffix=output_table_suffix,
+            quarantine_table_suffix=quarantine_table_suffix,
         )
-
-        if quarantine_config and quarantine_config.location:
-            logger.info(
-                f"Data quality checks applied, "
-                f"valid data saved to {output_config.location} and "
-                f"invalid data saved to {quarantine_config.location}."
-            )
-        else:
-            logger.info(f"Data quality checks applied, output saved to {output_config.location}.")
+        logger.info(f"Data quality checker completed for {patterns} and checks {checks_location}")

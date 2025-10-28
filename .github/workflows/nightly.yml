@@ -32,16 +32,20 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        # click 8.3+ introduced bug for hatch
-        run: pip install "hatch==1.13.0" "click<8.3"
+        run: pip install hatch==1.15.0
 
       - name: Run unit tests and generate test coverage report
         run: make test
 
-      # Acceptance tests are run from within tests/integration folder.
-      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
-      - name: Prepare .coveragerc for integration tests
-        run: cp .coveragerc tests/integration
+      # Integration tests are run from within tests/integration folder.
+      # Create .coveragerc with correct relative path to source code.
+      - name: Prepare code coverage configuration for integration tests
+        run: |
+          cat > tests/integration/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          EOF
 
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
@@ -56,8 +60,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      - name: Merge coverage reports and convert them to XML
+        run: |
+          hatch run combine_coverage
+
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -82,8 +91,17 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        # click 8.3+ introduced bug for hatch
-        run: pip install "hatch==1.13.0" "click<8.3"
+        run: pip install hatch==1.15.0
+
+      # Integration tests are run from within tests/integration folder.
+      # Create .coveragerc with correct relative path to source code.
+      - name: Prepare code coverage configuration for integration tests
+        run: |
+          cat > tests/integration/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          EOF
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
@@ -97,6 +115,17 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+
+      - name: Merge coverage reports and convert them to XML
+        run: |
+          hatch run combine_coverage
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   e2e:
     environment: tool
@@ -115,8 +144,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        # click 8.3+ introduced bug for hatch
-        run: pip install "hatch==1.13.0" "click<8.3"
+        run: pip install hatch==1.15.0
 
       - name: Install Databricks CLI
         run: |
@@ -167,8 +195,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        # click 8.3+ introduced bug for hatch
-        run: pip install "hatch==1.13.0" "click<8.3"
+        run: pip install hatch==1.15.0
 
       - name: Install Databricks CLI
         run: |
@@ -221,8 +248,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        # click 8.3+ introduced bug for hatch
-        run: pip install "hatch==1.13.0" "click<8.3"
+        run: pip install hatch==1.15.0
 
       - name: Login to Azure for azure-cli authentication
         uses: azure/login@v2
