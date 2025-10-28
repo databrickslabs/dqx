@@ -25,6 +25,8 @@ def test_list_tables(spark, ws, make_schema, make_random):
     tables = list_tables(ws, patterns=[f"{catalog_name}.{schema_name}.*"])
     assert set(tables) == {table1_name, table2_name}
 
+    tables = list_tables(ws, patterns=[f"{catalog_name}.{schema_name}.*"])
+    assert set(tables) == {table1_name, table2_name}
 
 @skip("Ad-hoc test only: Running multiple tests in parallel can cause a failure")
 def test_list_tables_extended(spark, ws, make_schema, make_random):

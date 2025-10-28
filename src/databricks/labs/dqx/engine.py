@@ -842,6 +842,124 @@ class DQEngine(DQEngineBase):
 
         self.apply_checks_and_save_in_tables(run_configs, max_parallelism)
 
+    @telemetry_logger("engine", "apply_checks_and_save_in_tables")
+    def apply_checks_and_save_in_tables(
+        self,
+        run_configs: list[RunConfig],
+        max_parallelism: int | None = os.cpu_count(),
+    ) -> None:
+        """
+        Apply data quality checks to multiple tables or views and write the results to output table(s).
+
+        If quarantine tables are provided in the run configuration, the data will be split into
+        good and bad records, with good records written to the output table and bad records to the
+        quarantine table. If quarantine tables are not provided, all records (with error/warning
+        columns) will be written to the output table.
+
+        Args:
+            run_configs (list[RunConfig]): List of run configurations containing input configs, output configs,
+                quarantine configs, and a checks file location.
+            max_parallelism (int, optional): Maximum number of tables to check in parallel. Defaults to the
+                number of CPU cores.
+
+        Returns:
+            None
+        """
+        logger.info(f"Applying checks to {len(run_configs)} tables with parallelism {max_parallelism}")
+        with futures.ThreadPoolExecutor(max_workers=max_parallelism) as executor:
+            apply_checks_runs = [
+                executor.submit(self._apply_checks_for_run_config, run_config) for run_config in run_configs
+            ]
+            for future in futures.as_completed(apply_checks_runs):
+                # Retrieve the result to propagate any exceptions
+                future.result()
+
+    @telemetry_logger("engine", "apply_checks_and_save_in_tables_for_patterns")
+    def apply_checks_and_save_in_tables_for_patterns(
+        self,
+        patterns: list[str],  # can use wildcard e.g. catalog.schema.*
+        checks_location: str,  # use as prefix for checks defined in files
+        exclude_patterns: list[str] | None = None,
+        exclude_matched: bool = False,
+        run_config_template: RunConfig = RunConfig(),
+        max_parallelism: int | None = os.cpu_count(),
+        output_table_suffix: str = "_dq_output",
+        quarantine_table_suffix: str = "_dq_quarantine",
+    ) -> None:
+        """
+        Apply data quality checks to tables or views matching a pattern and write the results to output table(s).
+
+        If quarantine option is enabled the data will be split into
+        good and bad records, with good records written to the output table
+        (under the same name as input table and "_dq" suffix) and bad records to the
+        quarantine table (under the same name as input table and "_quarantine" suffix).
+        If quarantine is not enabled, all records (with error/warning columns) will be written to the output table.
+
+        Checks are expected to be available under the same name as the table, with a .yml extension.
+
+        Args:
+            patterns: List of table names or filesystem-style wildcards (e.g. 'schema.*') to include.
+                If None, all tables are included. By default, tables matching the pattern are included.
+            checks_location: Location of the checks files (e.g., absolute workspace or volume directory, or delta table).
+                For file based locations, checks are expected to be found under checks_location/table_name.yml.
+            exclude_matched (bool): Specifies whether to include tables matched by the pattern.
+                If True, matched tables are excluded. If False, matched tables are included.
+            exclude_patterns: List of table names or filesystem-style wildcards to exclude.
+                If None, no tables are excluded.
+            run_config_template: Run configuration template to use for all tables.
+                Skip location in the input_config, output_config, and quarantine_config as it is derived from patterns.
+                Skip checks_location of the run config as it is derived separately.
+                Autogenerate input_config and output_config if not provided.
+            max_parallelism (int): Maximum number of tables to check in parallel.
+            output_table_suffix: Suffix to append to the original table name for the output table.
+            quarantine_table_suffix: Suffix to append to the original table name for the quarantine table.
+
+        Returns:
+            None
+        """
+        if not output_table_suffix:
+            raise InvalidParameterError("Output table suffix cannot be empty.")
+
+        if run_config_template.quarantine_config and not quarantine_table_suffix:
+            raise InvalidParameterError("Quarantine table suffix cannot be empty.")
+
+        if run_config_template.input_config is None:
+            run_config_template.input_config = InputConfig(location="")  # location derived from patterns
+
+        if run_config_template.output_config is None:
+            run_config_template.output_config = OutputConfig(location="")  # location derived from patterns
+
+        tables = list_tables(
+            workspace_client=self.ws,
+            patterns=patterns,
+            exclude_matched=exclude_matched,
+            exclude_patterns=exclude_patterns,
+        )
+
+        run_configs = []
+        for table in tables:
+            run_config = copy.deepcopy(run_config_template)
+
+            assert run_config.input_config  # to satisfy linter
+            assert run_config.output_config  # to satisfy linter
+
+            run_config.name = table
+            run_config.input_config.location = table
+            run_config.output_config.location = f"{table}{output_table_suffix}"
+
+            if run_config.quarantine_config:
+                run_config.quarantine_config.location = f"{table}{quarantine_table_suffix}"
+
+            run_config.checks_location = (
+                checks_location
+                if is_table_location(checks_location)
+                # for file based checks expecting a file per table
+                else f"{safe_strip_file_from_path(checks_location)}/{table}.yml"
+            )
+            run_configs.append(run_config)
+
+        self.apply_checks_and_save_in_tables(run_configs, max_parallelism)
+
     @staticmethod
     def validate_checks(
         checks: list[dict],
