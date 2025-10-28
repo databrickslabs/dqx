@@ -1,6 +1,5 @@
 import abc
 from functools import cached_property
-from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
@@ -98,17 +97,13 @@ class RunConfig:
     lakebase_port: str | None = None
 
 
-def _default_run_time() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 @dataclass(frozen=True)
 class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
     result_column_names: dict[str, str] = field(default_factory=dict)
-    run_time: str = field(default_factory=_default_run_time)
     user_metadata: dict[str, str] = field(default_factory=dict)
+    run_time_overwrite: str | None = None
 
 
 @dataclass
@@ -123,7 +118,7 @@ class WorkspaceConfig:
 
     # whether to use serverless clusters for the jobs, only used during workspace installation
     serverless_clusters: bool = True
-    extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. run_time
+    extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. result_column_names
 
     # cluster configuration for the jobs (applicable for non-serverless clusters only)
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)

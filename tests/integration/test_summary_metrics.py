@@ -34,7 +34,7 @@ def test_observer_custom_column_names(ws, spark):
     errors_column = "dq_errors"
     warnings_column = "dq_warnings"
     extra_params = ExtraParams(
-        run_time=RUN_TIME.isoformat(),
+        run_time_overwrite=RUN_TIME.isoformat(),
         result_column_names={
             ColumnArguments.ERRORS.value: errors_column,
             ColumnArguments.WARNINGS.value: warnings_column,

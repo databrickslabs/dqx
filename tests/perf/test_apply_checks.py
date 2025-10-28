@@ -8,7 +8,7 @@ from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from tests.perf.conftest import DEFAULT_ROWS
 
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
-EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME.isoformat())
+EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat())
 EXPECTED_ROWS = DEFAULT_ROWS
 
 

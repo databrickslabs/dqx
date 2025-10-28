@@ -435,7 +435,7 @@ Summary metrics can be written and centralized in a delta table. The metrics tab
 | `checks_location`     | `STRING`              | Location where checks are stored (table name or file path), if known.                                                                    |
 | `metric_name`         | `STRING`              | Name of the metric (e.g., 'input_row_count').                                                                                            |
 | `metric_value`        | `STRING`              | Value of the metric (stored as string).                                                                                                  |
-| `run_time`            | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated. For batch execution, it's the time `DQEngine` is created.                        |
+| `run_time`            | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated.                                                                                  |
 | `error_column_name`   | `STRING`              | Name of the error column in the output or quarantine table containing per row quality checking results (default: '_errors').             |
 | `warning_column_name` | `STRING`              | Name of the warning column in the output or quarantine table containing per row quality checking results (default: '_warnings').         |
 | `user_metadata`       | `MAP[STRING, STRING]` | User-defined, run-level metadata.                                                                                                        |

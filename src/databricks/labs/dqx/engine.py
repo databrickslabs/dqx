@@ -3,7 +3,7 @@ import os
 import logging
 from concurrent import futures
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import cached_property
 from typing import Any
 
@@ -82,7 +82,9 @@ class DQEngineCore(DQEngineCoreBase):
         }
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self.run_time = datetime.fromisoformat(extra_params.run_time)
+        self.run_time_overwrite = (
+            datetime.fromisoformat(extra_params.run_time_overwrite) if extra_params.run_time_overwrite else None
+        )
         self.engine_user_metadata = extra_params.user_metadata
         self.observer = observer
         if self.observer:
@@ -378,6 +380,8 @@ class DQEngineCore(DQEngineCoreBase):
 
         check_conditions = []
         current_df = df
+        # checks are lazy evaluated anyway, therefore using the same time
+        run_time = self.run_time_overwrite if self.run_time_overwrite else datetime.now(timezone.utc)
 
         for check in checks:
             manager = DQRuleManager(
@@ -385,7 +389,7 @@ class DQEngineCore(DQEngineCoreBase):
                 df=current_df,
                 spark=self.spark,
                 engine_user_metadata=self.engine_user_metadata,
-                run_time=self.run_time,
+                run_time=run_time,
                 ref_dfs=ref_dfs,
             )
             log_telemetry(self.ws, "check", check.check_func.__name__)
@@ -1082,7 +1086,9 @@ class DQEngine(DQEngineBase):
             self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
                 run_name=self._engine.observer.name,
-                run_time=self._engine.run_time,
+                run_time=(
+                    self._engine.run_time_overwrite if self._engine.run_time_overwrite else datetime.now(timezone.utc)
+                ),
                 observed_metrics=observed_metrics,
                 error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
                 warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
-EXTRA_PARAMS = ExtraParams(run_time=RUN_TIME.isoformat())
+EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat())
 
 
 @pytest.fixture

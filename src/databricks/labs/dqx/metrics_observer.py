@@ -21,10 +21,10 @@ class DQMetricsObservation:
 
     Args:
         run_name: Name of the observations (default is 'dqx').
-        observed_metrics: Dictionary of observed metrics
-        run_time: Run time when the data quality summary metrics were observed
-        error_column_name: Name of the error column when running quality checks
-        warning_column_name: Name of the warning column when running quality checks
+        observed_metrics: Dictionary of observed metrics.
+        run_time: Run time when the data quality summary metrics were observed.
+        error_column_name: Name of the error column when running quality checks.
+        warning_column_name: Name of the warning column when running quality checks.
         input_location: (optional) Location where input data is loaded from when running quality checks (fully-qualified table
             name or file path).
         output_location: (optional) Location where output data is persisted when running quality checks (fully-qualified table

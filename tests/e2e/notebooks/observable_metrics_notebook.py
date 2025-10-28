@@ -27,7 +27,7 @@ from databricks.sdk import WorkspaceClient
 
 # Test constants
 run_time = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
-extra_params = ExtraParams(run_time=run_time.isoformat())
+extra_params = ExtraParams(run_time_overwrite=run_time.isoformat())
 test_schema = StructType(
     [
         StructField("id", IntegerType()),
@@ -75,7 +75,7 @@ def test_save_summary_metrics():
 
     user_metadata = {"key1": "value1", "key2": "value2"}
     extra_params_custom = ExtraParams(
-      run_time=run_time.isoformat(), 
+      run_time_overwrite=run_time.isoformat(),
       result_column_names={"errors": "dq_errors", "warnings": "dq_warnings"},
       user_metadata=user_metadata,
     )
@@ -228,7 +228,7 @@ def test_save_summary_metrics_with_streaming():
 
     user_metadata = {"key1": "value1", "key2": "value2"}
     extra_params_custom = ExtraParams(
-        run_time=run_time.isoformat(),
+        run_time_overwrite=run_time.isoformat(),
         result_column_names={"errors": "dq_errors", "warnings": "dq_warnings"},
         user_metadata=user_metadata,
     )
@@ -1644,7 +1644,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(appl
     observer = DQMetricsObserver(name="test_streaming_observer", custom_metrics=custom_metrics)
     user_metadata = {"key1": "value1", "key2": "value2"}
     extra_params_custom = ExtraParams(
-      run_time=run_time.isoformat(), 
+      run_time_overwrite=run_time.isoformat(),
       result_column_names={"errors": "dq_errors", "warnings": "dq_warnings"},
       user_metadata=user_metadata,
     )

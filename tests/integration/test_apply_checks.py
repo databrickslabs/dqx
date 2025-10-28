@@ -3570,7 +3570,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
-            run_time=RUN_TIME.isoformat(),
+            run_time_overwrite=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3631,7 +3631,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
-            run_time=RUN_TIME.isoformat(),
+            run_time_overwrite=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3720,7 +3720,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
         ws,
         extra_params=ExtraParams(
             result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"},
-            run_time=RUN_TIME.isoformat(),
+            run_time_overwrite=RUN_TIME.isoformat(),
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -5952,7 +5952,7 @@ def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compa
 
 def test_define_user_metadata_and_extract_dq_results(ws, spark):
     user_metadata = {"key1": "value1", "key2": "value2"}
-    extra_params = ExtraParams(run_time=RUN_TIME.isoformat(), user_metadata=user_metadata)
+    extra_params = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), user_metadata=user_metadata)
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     test_df = spark.createDataFrame([[None, 1, 1]], SCHEMA)
 
@@ -6250,7 +6250,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
 
 def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
     extra_params = ExtraParams(
-        run_time=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+        run_time_overwrite=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
     )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
@@ -6342,7 +6342,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
 
 def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
     extra_params = ExtraParams(
-        run_time=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+        run_time_overwrite=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
     )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
