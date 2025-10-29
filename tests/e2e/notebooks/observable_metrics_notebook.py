@@ -61,6 +61,118 @@ ws = WorkspaceClient()
 
 # COMMAND ----------
 
+# DBTITLE 1,test_save_summary_metrics_default
+def test_save_summary_metrics_default():
+    """Test that default summary metrics can be accessed after running a Spark action like df.count()."""
+    metrics_table_name = f"{catalog_name}.{schema_name}.{str(uuid4()).replace("-", "_")}"
+
+    observer_name = "test_observer"
+    observer = DQMetricsObserver(name=observer_name)
+
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [2, "Bob", 25, 45000],
+            [None, "Charlie", 35, 60000],
+            [4, None, 28, 55000],
+        ],
+        test_schema,
+    )
+
+    checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, test_checks)
+    checked_df.count()  # Trigger an action to get the metrics
+
+    input_config = InputConfig(location="input_table")
+    output_config = OutputConfig(location="output_table")
+    quarantine_config = OutputConfig(location="quarantine_table")
+    metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
+    checks_location = "checks_location"
+
+    dq_engine.save_summary_metrics(
+        observed_metrics=observation.get,
+        metrics_config=metrics_config,
+        input_config=input_config,
+        output_config=output_config,
+        quarantine_config=quarantine_config,
+        checks_location=checks_location,
+    )
+
+    actual_metrics_df = spark.table(metrics_config.location).orderBy("metric_name")
+
+    # Extract run_time field from the results, as it is auto-generated
+    actual_run_time = None
+    for run_time_row in actual_metrics_df.select("run_time").collect():
+        if run_time_row:
+            actual_run_time = run_time_row[0]
+            break
+
+    expected_metrics = [
+        {
+            "run_name": observer_name,
+            "input_location": input_config.location,
+            "output_location": output_config.location,
+            "quarantine_location": quarantine_config.location,
+            "checks_location": checks_location,
+            "metric_name": "input_row_count",
+            "metric_value": "4",
+            "run_time": actual_run_time,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": observer_name,
+            "input_location": input_config.location,
+            "output_location": output_config.location,
+            "quarantine_location": quarantine_config.location,
+            "checks_location": checks_location,
+            "metric_name": "error_row_count",
+            "metric_value": "1",
+            "run_time": actual_run_time,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": observer_name,
+            "input_location": input_config.location,
+            "output_location": output_config.location,
+            "quarantine_location": quarantine_config.location,
+            "checks_location": checks_location,
+            "metric_name": "warning_row_count",
+            "metric_value": "1",
+            "run_time": actual_run_time,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+        {
+            "run_name": observer_name,
+            "input_location": input_config.location,
+            "output_location": output_config.location,
+            "quarantine_location": quarantine_config.location,
+            "checks_location": checks_location,
+            "metric_name": "valid_row_count",
+            "metric_value": "2",
+            "run_time": actual_run_time,
+            "error_column_name": "_errors",
+            "warning_column_name": "_warnings",
+            "user_metadata": None,
+        },
+    ]
+
+    expected_metrics_df = (
+        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy("metric_name")
+    )
+    
+    assert_df_equality(expected_metrics_df, actual_metrics_df)
+
+test_save_summary_metrics_default()
+
+# COMMAND ----------
+
 # DBTITLE 1,test_save_summary_metrics
 def test_save_summary_metrics():
     """Test that summary metrics can be accessed after running a Spark action like df.count()."""

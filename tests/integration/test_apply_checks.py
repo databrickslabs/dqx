@@ -80,6 +80,79 @@ def test_apply_checks_passed(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_failed(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1, 1, 1], [None, 1, 2], [1, None, 3]], SCHEMA)
+
+    checks = [
+        DQRowRule(
+            name="a_is_null_or_empty",
+            criticality="error",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column="a",
+        ),
+        DQRowRule(
+            name="b_is_null_or_empty",
+            criticality="error",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column=F.col("b"),
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # Extract run_time field from the results, as it is auto-generated
+    run_time_values = checked.select(F.explode(F.col("_errors")).alias("error")).select("error.run_time").collect()
+    run_time = None
+    for run_time_row in run_time_values:
+        if run_time_row:
+            run_time = run_time_row[0]
+            break
+
+    expected = spark.createDataFrame(
+        [
+            [1, 1, 1, None, None],
+            [
+                None,
+                1,
+                2,
+                [
+                    {
+                        "name": "a_is_null_or_empty",
+                        "message": "Column 'a' value is null or empty",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                None,
+                3,
+                [
+                    {
+                        "name": "b_is_null_or_empty",
+                        "message": "Column 'b' value is null or empty",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
 def test_foreign_key_check(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
