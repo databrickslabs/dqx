@@ -27,7 +27,8 @@ from databricks.sdk import WorkspaceClient
 
 # Test constants
 run_time = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
-extra_params = ExtraParams(run_time_overwrite=run_time.isoformat())
+run_id = "2f9120cf-e9f2-446a-8278-12d508b00639"
+extra_params = ExtraParams(run_time_overwrite=run_time.isoformat(), run_id_overwrite=run_id)
 test_schema = StructType(
     [
         StructField("id", IntegerType()),
@@ -108,8 +109,15 @@ def test_save_summary_metrics_default():
             actual_run_time = run_time_row[0]
             break
 
+    actual_run_id = None
+    for run_id_row in actual_metrics_df.select("run_id").collect():
+        if run_id_row:
+            actual_run_id = run_id_row[0]
+            break
+
     expected_metrics = [
         {
+            "run_id": actual_run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -123,6 +131,7 @@ def test_save_summary_metrics_default():
             "user_metadata": None,
         },
         {
+            "run_id": actual_run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -136,6 +145,7 @@ def test_save_summary_metrics_default():
             "user_metadata": None,
         },
         {
+            "run_id": actual_run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -149,6 +159,7 @@ def test_save_summary_metrics_default():
             "user_metadata": None,
         },
         {
+            "run_id": actual_run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -186,10 +197,12 @@ def test_save_summary_metrics():
     observer = DQMetricsObserver(name=observer_name, custom_metrics=custom_metrics)
 
     user_metadata = {"key1": "value1", "key2": "value2"}
+
     extra_params_custom = ExtraParams(
       run_time_overwrite=run_time.isoformat(),
       result_column_names={"errors": "dq_errors", "warnings": "dq_warnings"},
       user_metadata=user_metadata,
+      run_id_overwrite=run_id,
     )
 
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=extra_params_custom)
@@ -224,6 +237,7 @@ def test_save_summary_metrics():
 
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -237,6 +251,7 @@ def test_save_summary_metrics():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -250,6 +265,7 @@ def test_save_summary_metrics():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -263,6 +279,7 @@ def test_save_summary_metrics():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -276,6 +293,7 @@ def test_save_summary_metrics():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -289,6 +307,7 @@ def test_save_summary_metrics():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -343,6 +362,7 @@ def test_save_summary_metrics_with_streaming():
         run_time_overwrite=run_time.isoformat(),
         result_column_names={"errors": "dq_errors", "warnings": "dq_warnings"},
         user_metadata=user_metadata,
+        run_id_overwrite=run_id,
     )
 
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=extra_params_custom)
@@ -382,6 +402,7 @@ def test_save_summary_metrics_with_streaming():
 
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -395,6 +416,7 @@ def test_save_summary_metrics_with_streaming():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -408,6 +430,7 @@ def test_save_summary_metrics_with_streaming():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -421,6 +444,7 @@ def test_save_summary_metrics_with_streaming():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -434,6 +458,7 @@ def test_save_summary_metrics_with_streaming():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -447,6 +472,7 @@ def test_save_summary_metrics_with_streaming():
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": observer_name,
             "input_location": input_config.location,
             "output_location": output_config.location,
@@ -512,6 +538,7 @@ def test_observer_metrics_output_with_empty_checks(apply_checks_method):
 
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -525,6 +552,7 @@ def test_observer_metrics_output_with_empty_checks(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -538,6 +566,7 @@ def test_observer_metrics_output_with_empty_checks(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -551,6 +580,7 @@ def test_observer_metrics_output_with_empty_checks(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -564,6 +594,7 @@ def test_observer_metrics_output_with_empty_checks(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -577,6 +608,7 @@ def test_observer_metrics_output_with_empty_checks(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -661,6 +693,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(apply_checks_
 
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -674,6 +707,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(apply_checks_
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -687,6 +721,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(apply_checks_
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -700,6 +735,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(apply_checks_
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -713,6 +749,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(apply_checks_
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -726,6 +763,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(apply_checks_
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -803,6 +841,7 @@ def test_observer_metrics_output(apply_checks_method):
 
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -816,6 +855,7 @@ def test_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -829,6 +869,7 @@ def test_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -842,6 +883,7 @@ def test_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -855,6 +897,7 @@ def test_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -868,6 +911,7 @@ def test_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -957,6 +1001,7 @@ def test_observer_metrics_output_with_quarantine(apply_checks_method):
 
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -970,6 +1015,7 @@ def test_observer_metrics_output_with_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -983,6 +1029,7 @@ def test_observer_metrics_output_with_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -996,6 +1043,7 @@ def test_observer_metrics_output_with_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1009,6 +1057,7 @@ def test_observer_metrics_output_with_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1022,6 +1071,7 @@ def test_observer_metrics_output_with_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1097,6 +1147,7 @@ def test_save_results_in_table_batch_with_metrics(apply_checks_method):
 
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_save_batch_observer",
             "input_location": None,
             "output_location": output_table_name,
@@ -1110,6 +1161,7 @@ def test_save_results_in_table_batch_with_metrics(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_save_batch_observer",
             "input_location": None,
             "output_location": output_table_name,
@@ -1123,6 +1175,7 @@ def test_save_results_in_table_batch_with_metrics(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_save_batch_observer",
             "input_location": None,
             "output_location": output_table_name,
@@ -1136,6 +1189,7 @@ def test_save_results_in_table_batch_with_metrics(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_save_batch_observer",
             "input_location": None,
             "output_location": output_table_name,
@@ -1222,6 +1276,7 @@ def test_save_results_in_table_streaming_with_metrics(apply_checks_method):
     time.sleep(30)
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_save_batch_observer",
             "input_location": None,
             "output_location": output_table_name,
@@ -1235,6 +1290,7 @@ def test_save_results_in_table_streaming_with_metrics(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_save_batch_observer",
             "input_location": None,
             "output_location": output_table_name,
@@ -1248,6 +1304,7 @@ def test_save_results_in_table_streaming_with_metrics(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_save_batch_observer",
             "input_location": None,
             "output_location": output_table_name,
@@ -1261,6 +1318,7 @@ def test_save_results_in_table_streaming_with_metrics(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_save_batch_observer",
             "input_location": None,
             "output_location": output_table_name,
@@ -1309,7 +1367,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
         "sum(case when _warnings is not null then salary else null end) as total_warning_salary",
     ]
     observer = DQMetricsObserver(name="test_streaming_observer", custom_metrics=custom_metrics)
-    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=extra_params)
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer)
 
     test_df = spark.createDataFrame(
         [
@@ -1356,8 +1414,15 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             actual_run_time = run_time_row[0]
             break
 
+    actual_run_id = None
+    for run_id_row in actual_metrics_df.select("run_id").collect():
+        if run_id_row:
+            actual_run_id = run_id_row[0]
+            break
+
     expected_metrics = [
         {
+            "run_id": actual_run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1371,6 +1436,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": actual_run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1384,6 +1450,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": actual_run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1397,6 +1464,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": actual_run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1410,6 +1478,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": actual_run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1423,6 +1492,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": actual_run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1503,6 +1573,7 @@ def test_streaming_observer_metrics_output_and_quarantine(apply_checks_method):
     time.sleep(30)
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1516,6 +1587,7 @@ def test_streaming_observer_metrics_output_and_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1529,6 +1601,7 @@ def test_streaming_observer_metrics_output_and_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1542,6 +1615,7 @@ def test_streaming_observer_metrics_output_and_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1555,6 +1629,7 @@ def test_streaming_observer_metrics_output_and_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1568,6 +1643,7 @@ def test_streaming_observer_metrics_output_and_quarantine(apply_checks_method):
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1649,6 +1725,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(apply_checks_method
     time.sleep(30)
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1662,6 +1739,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(apply_checks_method
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1675,6 +1753,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(apply_checks_method
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1688,6 +1767,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(apply_checks_method
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1701,6 +1781,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(apply_checks_method
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1714,6 +1795,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(apply_checks_method
             "user_metadata": None,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1767,6 +1849,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(appl
       run_time_overwrite=run_time.isoformat(),
       result_column_names={"errors": "dq_errors", "warnings": "dq_warnings"},
       user_metadata=user_metadata,
+      run_id_overwrite=run_id,
     )
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=extra_params_custom)
 
@@ -1805,6 +1888,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(appl
     time.sleep(30)
     expected_metrics = [
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1818,6 +1902,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(appl
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1831,6 +1916,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(appl
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1844,6 +1930,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(appl
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1857,6 +1944,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(appl
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,
@@ -1870,6 +1958,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(appl
             "user_metadata": user_metadata,
         },
         {
+            "run_id": run_id,
             "run_name": "test_streaming_observer",
             "input_location": input_table_name,
             "output_location": output_table_name,

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import datetime
 from functools import cached_property
 from typing import Any
+from uuid import uuid4
 
 import pyspark
 import pyspark.sql.functions as F
@@ -86,12 +87,16 @@ class DQEngineCore(DQEngineCoreBase):
             datetime.fromisoformat(extra_params.run_time_overwrite) if extra_params.run_time_overwrite else None
         )
         self.engine_user_metadata = extra_params.user_metadata
+
         self.observer = observer
         if self.observer:
             self.observer.set_column_names(
                 error_column_name=self._result_column_names[ColumnArguments.ERRORS],
                 warning_column_name=self._result_column_names[ColumnArguments.WARNINGS],
             )
+            self.run_id = extra_params.run_id_overwrite or self.observer.observation_id
+        else:
+            self.run_id = extra_params.run_id_overwrite or str(uuid4())
 
     @cached_property
     def result_column_names(self) -> dict[ColumnArguments, str]:
@@ -386,6 +391,7 @@ class DQEngineCore(DQEngineCoreBase):
                 check=check,
                 df=current_df,
                 spark=self.spark,
+                run_id=self.run_id,
                 engine_user_metadata=self.engine_user_metadata,
                 run_time_overwrite=self.run_time_overwrite,
                 ref_dfs=ref_dfs,
@@ -1087,6 +1093,7 @@ class DQEngine(DQEngineBase):
         if self._engine.observer:
             self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
+                run_id=self._engine.run_id,
                 run_name=self._engine.observer.name,
                 run_time_overwrite=self._engine.run_time_overwrite,
                 observed_metrics=observed_metrics,
@@ -1137,6 +1144,7 @@ class DQEngine(DQEngineBase):
             raise ValueError("Metrics cannot be collected for engine with no observer")
 
         metrics_observation = DQMetricsObservation(
+            run_id=self._engine.run_id,
             run_name=self._engine.observer.name,
             error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
             warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],

@@ -9,7 +9,7 @@ import pyspark.sql.functions as F
 
 
 OBSERVATION_TABLE_SCHEMA = (
-    "run_name string, input_location string, output_location string, quarantine_location string, "
+    "run_id string, run_name string, input_location string, output_location string, quarantine_location string, "
     "checks_location string, metric_name string, metric_value string, run_time timestamp, error_column_name string, "
     "warning_column_name string, user_metadata map<string, string>"
 )
@@ -21,6 +21,7 @@ class DQMetricsObservation:
     Observer metrics class used to persist summary metrics.
 
     Args:
+        run_id: Unique observation id.
         run_name: Name of the observations (default is 'dqx').
         observed_metrics: Dictionary of observed metrics.
         run_time_overwrite: Run time when the data quality summary metrics were observed. If None, current_timestamp() is used.
@@ -36,6 +37,7 @@ class DQMetricsObservation:
             or file path).
     """
 
+    run_id: str
     run_name: str
     error_column_name: str
     warning_column_name: str
@@ -140,6 +142,7 @@ class DQMetricsObserver:
         df = spark.createDataFrame(
             [
                 [
+                    observation.run_id,
                     observation.run_name,
                     observation.input_location,
                     observation.output_location,

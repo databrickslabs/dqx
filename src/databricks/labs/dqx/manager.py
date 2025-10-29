@@ -39,6 +39,7 @@ class DQRuleManager:
         engine_user_metadata: Metadata provided by the engine (overridden by check.user_metadata if present).
         run_time_overwrite: Optional timestamp override. If None, current_timestamp() is used for per-micro-batch timestamps.
         ref_dfs: Optional reference DataFrames for dataset-level checks.
+        run_id: Optional unique run id.
     """
 
     check: DQRule
@@ -46,6 +47,7 @@ class DQRuleManager:
     spark: SparkSession
     engine_user_metadata: dict[str, str]
     run_time_overwrite: datetime | None
+    run_id: str
     ref_dfs: dict[str, DataFrame] | None = None
 
     @cached_property
@@ -148,6 +150,7 @@ class DQRuleManager:
             F.lit(self.check.filter or None).cast("string").alias("filter"),
             F.lit(self.check.check_func.__name__).alias("function"),
             run_time_expr.alias("run_time"),
+            F.lit(self.run_id).alias("run_id"),
             F.create_map(*[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
                 "user_metadata"
             ),

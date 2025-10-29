@@ -104,6 +104,7 @@ class ExtraParams:
     result_column_names: dict[str, str] = field(default_factory=dict)
     user_metadata: dict[str, str] = field(default_factory=dict)
     run_time_overwrite: str | None = None
+    run_id_overwrite: str | None = None
 
 
 @dataclass

@@ -5,7 +5,7 @@ from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import ColumnArguments
-from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME
+from tests.integration.conftest import EXTRA_PARAMS
 
 TEST_SCHEMA = StructType(
     [
@@ -34,7 +34,6 @@ def test_observer_custom_column_names(ws, spark):
     errors_column = "dq_errors"
     warnings_column = "dq_warnings"
     extra_params = ExtraParams(
-        run_time_overwrite=RUN_TIME.isoformat(),
         result_column_names={
             ColumnArguments.ERRORS.value: errors_column,
             ColumnArguments.WARNINGS.value: warnings_column,

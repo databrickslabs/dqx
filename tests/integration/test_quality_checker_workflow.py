@@ -14,7 +14,13 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from tests.integration.conftest import RUN_TIME, REPORTING_COLUMNS, assert_output_df, assert_quarantine_and_output_dfs
+from tests.integration.conftest import (
+    RUN_TIME,
+    RUN_ID,
+    REPORTING_COLUMNS,
+    assert_output_df,
+    assert_quarantine_and_output_dfs,
+)
 
 
 def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
@@ -206,6 +212,7 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
 
     checked = spark.table(run_config.output_config.location)
 
+    user_metadata = {}
     expected = spark.createDataFrame(
         [
             [1, "a", None, None],
@@ -222,7 +229,8 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "run_id": RUN_ID,
+                        "user_metadata": user_metadata,
                     },
                     {
                         "name": "id_is_not_null_custom",
@@ -231,7 +239,8 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
                         "filter": None,
                         "function": "is_not_null_custom_func",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "run_id": RUN_ID,
+                        "user_metadata": user_metadata,
                     },
                 ],
                 None,
@@ -280,6 +289,7 @@ def test_quality_checker_workflow_with_ref(
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -298,6 +308,7 @@ def test_quality_checker_workflow_with_ref(
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],

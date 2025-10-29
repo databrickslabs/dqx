@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
-EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat())
+RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
+EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID)
 
 
 @pytest.fixture
@@ -284,6 +285,7 @@ def expected_quality_checking_output(spark) -> DataFrame:
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -300,6 +302,7 @@ def expected_quality_checking_output(spark) -> DataFrame:
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -316,6 +319,7 @@ def expected_quality_checking_output(spark) -> DataFrame:
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],

@@ -23,8 +23,7 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
 import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
-from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS
-
+from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID
 
 SCHEMA = "a: int, b: int, c: int"
 EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
@@ -113,11 +112,19 @@ def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
     run_time_values = (
         checked_materialized.select(F.explode(F.col("_errors")).alias("error")).select("error.run_time").collect()
     )
+    run_id_values = (
+        checked_materialized.select(F.explode(F.col("_errors")).alias("error")).select("error.run_id").collect()
+    )
 
     run_time = None
     for run_time_row in run_time_values:
         if run_time_row:
             run_time = run_time_row[0]
+            break
+    run_id = None
+    for run_id_row in run_id_values:
+        if run_id_row:
+            run_id = run_id_row[0]
             break
 
     expected = spark.createDataFrame(
@@ -135,6 +142,7 @@ def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": run_time,
+                        "run_id": run_id,
                         "user_metadata": {},
                     }
                 ],
@@ -152,6 +160,7 @@ def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": run_time,
+                        "run_id": run_id,
                         "user_metadata": {},
                     }
                 ],
@@ -234,6 +243,7 @@ def test_foreign_key_check(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -250,6 +260,7 @@ def test_foreign_key_check(ws, spark):
                         "filter": "a > 4",
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -261,6 +272,7 @@ def test_foreign_key_check(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -339,6 +351,7 @@ def test_foreign_key_check_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -356,6 +369,7 @@ def test_foreign_key_check_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -379,6 +393,7 @@ def test_foreign_key_check_negate(ws, spark):
                         "filter": "a > 4",
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -390,6 +405,7 @@ def test_foreign_key_check_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -505,6 +521,7 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -607,6 +624,7 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -624,6 +642,7 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -727,6 +746,7 @@ def test_foreign_key_check_yaml(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -743,6 +763,7 @@ def test_foreign_key_check_yaml(ws, spark):
                         "filter": "a > 4",
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -754,6 +775,7 @@ def test_foreign_key_check_yaml(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -864,6 +886,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -880,6 +903,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                         "filter": "a > 4",
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -891,6 +915,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -1125,6 +1150,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b > 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1142,6 +1168,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b > 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1159,6 +1186,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b > 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1175,6 +1203,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b = 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1192,6 +1221,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b = 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1279,6 +1309,7 @@ def test_compare_datasets_with_tolerance(ws, spark):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1295,6 +1326,7 @@ def test_compare_datasets_with_tolerance(ws, spark):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1382,6 +1414,7 @@ def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_ma
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1441,6 +1474,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     }
                 ],
@@ -1458,6 +1492,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value13", "tag2": "value23"},
                     }
                 ],
@@ -1469,6 +1504,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value11", "tag2": "value21"},
                     }
                 ],
@@ -1485,6 +1521,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     },
                     {
@@ -1494,6 +1531,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value13", "tag2": "value23"},
                     },
                 ],
@@ -1505,6 +1543,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value11", "tag2": "value21"},
                     }
                 ],
@@ -1585,6 +1624,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1594,6 +1634,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1603,6 +1644,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1651,6 +1693,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1660,6 +1703,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1669,6 +1713,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1708,6 +1753,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1725,6 +1771,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1736,6 +1783,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1752,6 +1800,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1761,6 +1810,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1772,6 +1822,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1827,6 +1878,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1845,6 +1897,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1854,6 +1907,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1870,6 +1924,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1881,6 +1936,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1890,6 +1946,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1952,6 +2009,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1963,6 +2021,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1980,6 +2039,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1989,6 +2049,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2005,6 +2066,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2016,6 +2078,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2025,6 +2088,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2074,6 +2138,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2085,6 +2150,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2102,6 +2168,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2111,6 +2178,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2127,6 +2195,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2138,6 +2207,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2147,6 +2217,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2194,6 +2265,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2205,6 +2277,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2222,6 +2295,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2231,6 +2305,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2247,6 +2322,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2258,6 +2334,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2267,6 +2344,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2314,6 +2392,7 @@ def test_apply_checks_with_filter(ws, spark):
                         "filter": "a<3",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2332,6 +2411,7 @@ def test_apply_checks_with_filter(ws, spark):
                         "filter": "b>3",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2403,6 +2483,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2412,6 +2493,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2421,6 +2503,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2438,6 +2521,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2447,6 +2531,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2456,6 +2541,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2503,6 +2589,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                         "filter": "a<3",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2521,6 +2608,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                         "filter": "b>3",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2560,6 +2648,7 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2598,6 +2687,7 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2784,6 +2874,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2793,6 +2884,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2802,6 +2894,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2819,6 +2912,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2835,6 +2929,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2844,6 +2939,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2858,6 +2954,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2934,6 +3031,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2951,6 +3049,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3027,6 +3126,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3044,6 +3144,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3095,6 +3196,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3112,6 +3214,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3129,6 +3232,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3138,6 +3242,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3147,6 +3252,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3156,6 +3262,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3165,6 +3272,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3174,6 +3282,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3183,6 +3292,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3200,6 +3310,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3209,6 +3320,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3218,6 +3330,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3227,6 +3340,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3236,6 +3350,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3245,6 +3360,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3254,6 +3370,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3299,6 +3416,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3308,6 +3426,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3325,6 +3444,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3334,6 +3454,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3351,6 +3472,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3360,6 +3482,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3417,6 +3540,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3426,6 +3550,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3435,6 +3560,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3444,6 +3570,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3461,6 +3588,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3470,6 +3598,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3479,6 +3608,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3488,6 +3618,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3519,6 +3650,7 @@ def test_get_valid_records(ws, spark):
                         "filter": None,
                         "function": "is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3535,6 +3667,7 @@ def test_get_valid_records(ws, spark):
                         "filter": None,
                         "function": "is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3576,6 +3709,7 @@ def test_get_invalid_records(ws, spark):
                         "filter": None,
                         "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3592,6 +3726,7 @@ def test_get_invalid_records(ws, spark):
                         "filter": None,
                         "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3618,6 +3753,7 @@ def test_get_invalid_records(ws, spark):
                         "filter": None,
                         "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3634,6 +3770,7 @@ def test_get_invalid_records(ws, spark):
                         "filter": None,
                         "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3655,6 +3792,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
             run_time_overwrite=RUN_TIME.isoformat(),
+            run_id_overwrite=RUN_ID,
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3679,6 +3817,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3696,6 +3835,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3716,6 +3856,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
             run_time_overwrite=RUN_TIME.isoformat(),
+            run_id_overwrite=RUN_ID,
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3744,6 +3885,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
                             "run_time": RUN_TIME,
+                            "run_id": RUN_ID,
                             "user_metadata": {},
                         }
                     ],
@@ -3762,6 +3904,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
                             "run_time": RUN_TIME,
+                            "run_id": RUN_ID,
                             "user_metadata": {},
                         }
                     ],
@@ -3778,6 +3921,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
                             "run_time": RUN_TIME,
+                            "run_id": RUN_ID,
                             "user_metadata": {},
                         }
                     ],
@@ -3789,6 +3933,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
                             "run_time": RUN_TIME,
+                            "run_id": RUN_ID,
                             "user_metadata": {},
                         }
                     ],
@@ -3805,6 +3950,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
         extra_params=ExtraParams(
             result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"},
             run_time_overwrite=RUN_TIME.isoformat(),
+            run_id_overwrite=RUN_ID,
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3833,6 +3979,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
                             "run_time": RUN_TIME,
+                            "run_id": RUN_ID,
                             "user_metadata": {},
                         }
                     ],
@@ -3851,6 +3998,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
                             "run_time": RUN_TIME,
+                            "run_id": RUN_ID,
                             "user_metadata": {},
                         }
                     ],
@@ -3867,6 +4015,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
                             "run_time": RUN_TIME,
+                            "run_id": RUN_ID,
                             "user_metadata": {},
                         }
                     ],
@@ -3878,6 +4027,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                             "filter": None,
                             "function": "is_not_null_and_not_empty",
                             "run_time": RUN_TIME,
+                            "run_id": RUN_ID,
                             "user_metadata": {},
                         }
                     ],
@@ -3933,6 +4083,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3942,6 +4093,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3951,6 +4103,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4011,6 +4164,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4020,6 +4174,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4029,6 +4184,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4038,6 +4194,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4115,6 +4272,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4132,6 +4290,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4148,6 +4307,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4157,6 +4317,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4168,6 +4329,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4184,6 +4346,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4193,6 +4356,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4204,6 +4368,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4220,6 +4385,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4231,6 +4397,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4247,6 +4414,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4258,6 +4426,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4329,6 +4498,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4338,6 +4508,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4347,6 +4518,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4358,6 +4530,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4374,6 +4547,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4383,6 +4557,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4392,6 +4567,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4403,6 +4579,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4419,6 +4596,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4428,6 +4606,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4445,6 +4624,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4454,6 +4634,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4471,6 +4652,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4480,6 +4662,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4491,6 +4674,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4507,6 +4691,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4516,6 +4701,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4527,6 +4713,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -6036,7 +6223,9 @@ def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compa
 
 def test_define_user_metadata_and_extract_dq_results(ws, spark):
     user_metadata = {"key1": "value1", "key2": "value2"}
-    extra_params = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), user_metadata=user_metadata)
+    extra_params = ExtraParams(
+        run_time_overwrite=RUN_TIME.isoformat(), user_metadata=user_metadata, run_id_overwrite=RUN_ID
+    )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     test_df = spark.createDataFrame([[None, 1, 1]], SCHEMA)
 
@@ -6083,6 +6272,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 None,
                 "is_not_null_and_not_empty",
                 RUN_TIME,
+                RUN_ID,
                 user_metadata,
             ],
             [
@@ -6092,6 +6282,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 "b = 1",
                 "is_not_null",
                 RUN_TIME,
+                RUN_ID,
                 user_metadata,
             ],
         ],
@@ -6140,6 +6331,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6149,6 +6341,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6222,6 +6415,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6231,6 +6425,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6306,6 +6501,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6315,6 +6511,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6334,7 +6531,9 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
 
 def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
     extra_params = ExtraParams(
-        run_time_overwrite=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+        run_time_overwrite=RUN_TIME.isoformat(),
+        run_id_overwrite=RUN_ID,
+        user_metadata={"tag2": "from_engine", "tag3": "from_engine"},
     )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
@@ -6370,6 +6569,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
                     }
                 ],
@@ -6386,6 +6586,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
                     }
                 ],
@@ -6402,6 +6603,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
                     },
                     {
@@ -6411,6 +6613,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
                     },
                 ],
@@ -6426,7 +6629,9 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
 
 def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
     extra_params = ExtraParams(
-        run_time_overwrite=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+        run_time_overwrite=RUN_TIME.isoformat(),
+        run_id_overwrite=RUN_ID,
+        user_metadata={"tag2": "from_engine", "tag3": "from_engine"},
     )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
@@ -6464,6 +6669,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
                     }
                 ],
@@ -6480,6 +6686,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
                     }
                 ],
@@ -6496,6 +6703,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
                     },
                     {
@@ -6505,6 +6713,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
                     },
                 ],
@@ -6664,6 +6873,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6675,6 +6885,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6684,6 +6895,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6693,6 +6905,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6709,6 +6922,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6718,6 +6932,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6727,6 +6942,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6736,6 +6952,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6745,6 +6962,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6756,6 +6974,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6765,6 +6984,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6774,6 +6994,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6790,6 +7011,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6799,6 +7021,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6808,6 +7031,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6817,6 +7041,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6826,6 +7051,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6835,6 +7061,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6844,6 +7071,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": "b is not null",
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6855,6 +7083,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6864,6 +7093,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6873,6 +7103,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6882,6 +7113,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7041,6 +7273,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7050,6 +7283,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7061,6 +7295,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7070,6 +7305,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7079,6 +7315,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7088,6 +7325,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7097,6 +7335,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7113,6 +7352,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7122,6 +7362,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7131,6 +7372,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7140,6 +7382,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7149,6 +7392,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7160,6 +7404,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7169,6 +7414,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7178,6 +7424,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7187,6 +7434,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7196,6 +7444,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7212,6 +7461,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7221,6 +7471,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7230,6 +7481,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7239,6 +7491,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7248,6 +7501,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7257,6 +7511,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": "b is not null",
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7266,6 +7521,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7275,6 +7531,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": "b is not null",
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7286,6 +7543,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7295,6 +7553,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7304,6 +7563,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7313,6 +7573,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7322,6 +7583,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7331,6 +7593,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7468,6 +7731,7 @@ def test_compare_datasets_check(ws, spark, set_utc_timezone):
                         "filter": "id1 != 2",
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1"},
                     }
                 ],
@@ -7569,6 +7833,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7604,6 +7869,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7640,6 +7906,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7785,6 +8052,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                         "filter": filter_str,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7810,6 +8078,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                         "filter": filter_str,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7876,6 +8145,7 @@ def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_time
                         "filter": None,
                         "function": "is_data_fresh_per_time_window",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -8014,6 +8284,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": "missing_col > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8023,6 +8294,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8033,6 +8305,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8043,6 +8316,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": "missing_col > 0",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8052,6 +8326,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -8063,6 +8338,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": "a > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     },
                 ],
@@ -8186,6 +8462,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": "missing_col > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8195,6 +8472,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8205,6 +8483,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8215,6 +8494,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": "missing_col > 0",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8224,6 +8504,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -8235,6 +8516,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": "a > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     },
                 ],

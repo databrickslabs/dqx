@@ -860,9 +860,9 @@ Summary metrics can also be enabled in DQX workflows. Metrics are configured:
 
 For detailed information about summary metrics, including examples and best practices, see the [Summary Metrics Guide](/docs/guide/summary_metrics).
 
-## Quality checking results
+## Detailed quality checking results
 
-Quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data.
+Detailed row-level quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data.
 The result columns are named `_error` and `_warning` by default, but you can customize them as described in the [additional configuration](/docs/guide/additional_configuration) section.
 
 The result columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
@@ -877,6 +877,7 @@ Below is a sample output of a check stored in a result column (error or warning)
     "filter": "country = 'Poland'",
     "function": "is_not_null",
     "run_time": "2025-10-29T15:09:41.174Z",
+    "run_id": "2f9120cf-e9f2-446a-8278-12d508b00639"
     "user_metadata": {"key1": "value1", "key2": "value2"},
   },
 ]
@@ -890,6 +891,7 @@ The structure of the result columns is an array of struct containing the followi
 - `filter`: filter applied to if any (string type).
 - `function`: rule/check function applied (string type).
 - `run_time`: timestamp when the check was executed (timestamp type).
+- `run_id`: run id which is unique for each `DQEngine` instance. The `run_id` is also stored in the summary metrics table and can be used to join with the detailed quality check results.
 - `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
 
 The below example demonstrates how to extract the results from a result columns in PySpark:
@@ -910,18 +912,21 @@ The below example demonstrates how to extract the results from a result columns 
     results_df = invalid_df.select(
       F.explode(F.col("_warnings")).alias("result"),
     ).select(F.expr("result.*"))
+
+    # Join detailed quality results with the summary metrics
+    joined_df = results_df.join(summary_metrics_df, on="run_id", how="inner")
     ```
   </TabItem>
 </Tabs>
 
 The `results_df` will contain the following columns:
 ```python
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+----------------+
-| name             | message               | columns  | filter             | function    | run_time                      | user_metadata  |
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+----------------+
-| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29T15:11:51.354+00:00 | {}             |
-| ...              | ...                   | ...      | ...                | ...         | ...                           | ...            |
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+----------------+
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
+| name             | message               | columns  | filter             | function    | run_time                      | run_id                               | user_metadata  |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
+| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29T15:11:51.354+00:00 | 2f9120cf-e9f2-446a-8278-12d508b00639 | {}             |
+| ...              | ...                   | ...      | ...                | ...         | ...                           | ...                                  |                |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
 ```
 
 An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.

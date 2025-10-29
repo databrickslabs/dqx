@@ -207,8 +207,8 @@ You must use streaming metrics listener or end-to-end methods that persist the o
       ),
     ]
 
-    # Create the observer with unique name between runs to make sure metrics are cleaned after each run
-    observer = DQMetricsObserver(name=f"dq_metrics_{int(time.time())}")
+    # Create the observer
+    observer = DQMetricsObserver(name="dq_metrics")
 
     # Create the engine with the metrics observer
     engine = DQEngine(WorkspaceClient(), observer=observer)
@@ -426,19 +426,20 @@ databricks labs dqx e2e --run-config "production"
 
 Summary metrics can be written and centralized in a delta table. The metrics table contains the following fields:
 
-| Column Name           | Column Type           | Description                                                                                                                              |
-|-----------------------|-----------------------|------------------------------------------------------------------------------------------------------------------------------------------|
-| `run_name`            | `STRING`              | Name of the metrics observer: `name` passed to `DQMetricsObserver`, or 'dqx' when applying checks using Workflows.                       |
-| `input_location`      | `STRING`              | Location of the input dataset (table name or file path), if known.                                                                       |
-| `output_location`     | `STRING`              | Location of the output dataset (table name or file path).                                                                                |
-| `quarantine_location` | `STRING`              | Location of the quarantine dataset (table name or file path), if used.                                                                   |
-| `checks_location`     | `STRING`              | Location where checks are stored (table name or file path), if known.                                                                    |
-| `metric_name`         | `STRING`              | Name of the metric (e.g., 'input_row_count').                                                                                            |
-| `metric_value`        | `STRING`              | Value of the metric (stored as string).                                                                                                  |
-| `run_time`            | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated.                                                                                  |
-| `error_column_name`   | `STRING`              | Name of the error column in the output or quarantine table containing per row quality checking results (default: '_errors').             |
-| `warning_column_name` | `STRING`              | Name of the warning column in the output or quarantine table containing per row quality checking results (default: '_warnings').         |
-| `user_metadata`       | `MAP[STRING, STRING]` | User-defined, run-level metadata.                                                                                                        |
+| Column Name           | Column Type           | Description                                                                                                                                              |
+|-----------------------|-----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `run_id`              | `STRING`              | Unique run id of the observer. Same as `run_id` stored detailed row-level quality results. It can be used for joining with the detailed quality results. |
+| `run_name`            | `STRING`              | Name of the metrics observer: `name` passed to `DQMetricsObserver`, or 'dqx' when applying checks using Workflows.                                       |
+| `input_location`      | `STRING`              | Location of the input dataset (table name or file path), if known.                                                                                       |
+| `output_location`     | `STRING`              | Location of the output dataset (table name or file path).                                                                                                |
+| `quarantine_location` | `STRING`              | Location of the quarantine dataset (table name or file path), if used.                                                                                   |
+| `checks_location`     | `STRING`              | Location where checks are stored (table name or file path), if known.                                                                                    |
+| `metric_name`         | `STRING`              | Name of the metric (e.g., 'input_row_count').                                                                                                            |
+| `metric_value`        | `STRING`              | Value of the metric (stored as string).                                                                                                                  |
+| `run_time`            | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated.                                                                                                  |
+| `error_column_name`   | `STRING`              | Name of the error column in the output or quarantine table containing per row quality checking results (default: '_errors').                             |
+| `warning_column_name` | `STRING`              | Name of the warning column in the output or quarantine table containing per row quality checking results (default: '_warnings').                         |
+| `user_metadata`       | `MAP[STRING, STRING]` | User-defined, run-level metadata.                                                                                                                        |
 
 ## Best Practices
 

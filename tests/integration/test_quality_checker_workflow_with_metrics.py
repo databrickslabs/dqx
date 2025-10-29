@@ -4,7 +4,7 @@ from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
-from tests.integration.conftest import assert_quarantine_and_output_dfs, assert_output_df, RUN_TIME
+from tests.integration.conftest import assert_quarantine_and_output_dfs, assert_output_df, RUN_TIME, RUN_ID
 
 
 def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics, expected_quality_checking_output):
@@ -15,6 +15,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
     checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
     expected_metrics = [
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -28,6 +29,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -41,6 +43,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -54,6 +57,7 @@ def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metri
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -88,6 +92,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
     checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
     expected_metrics = [
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -101,6 +106,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -114,6 +120,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -127,6 +134,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -140,6 +148,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -174,6 +183,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
     checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
     expected_metrics = [
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -187,6 +197,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -200,6 +211,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -243,6 +255,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
     checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
     expected_metrics = [
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -256,6 +269,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -269,6 +283,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -282,6 +297,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -295,6 +311,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -308,6 +325,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -352,6 +370,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
     checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
     expected_metrics = [
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -365,6 +384,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -378,6 +398,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -391,6 +412,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -404,6 +426,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -448,6 +471,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
     checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
     expected_metrics = [
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -461,6 +485,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -474,6 +499,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -487,6 +513,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -500,6 +527,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": run_config.output_config.location,
@@ -555,6 +583,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
 
     expected_metrics = [
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": output_location,
@@ -568,6 +597,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": output_location,
@@ -581,6 +611,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": output_location,
@@ -594,6 +625,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
             "user_metadata": None,
         },
         {
+            "run_id": RUN_ID,
             "run_name": "dqx",
             "input_location": run_config.input_config.location,
             "output_location": output_location,
