@@ -478,6 +478,7 @@ class DQEngine(DQEngineBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
+        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
         return self._engine.apply_checks(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_split")
@@ -500,6 +501,7 @@ class DQEngine(DQEngineBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
+        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_by_metadata")
@@ -526,6 +528,7 @@ class DQEngine(DQEngineBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
+        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
@@ -554,6 +557,7 @@ class DQEngine(DQEngineBase):
             with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
             quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
+        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
         return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
