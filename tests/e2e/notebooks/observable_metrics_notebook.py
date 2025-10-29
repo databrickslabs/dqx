@@ -1342,6 +1342,20 @@ def test_streaming_observer_metrics_output(apply_checks_method):
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     time.sleep(30)
+
+    actual_metrics_df = (
+        spark
+        .table(metrics_table_name)
+        .orderBy("metric_name")
+    )
+
+    # Extract run_time field from the results, as it is auto-generated
+    actual_run_time = None
+    for run_time_row in actual_metrics_df.select("run_time").collect():
+        if run_time_row:
+            actual_run_time = run_time_row[0]
+            break
+
     expected_metrics = [
         {
             "run_name": "test_streaming_observer",
@@ -1351,7 +1365,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "checks_location": checks_location,
             "metric_name": "input_row_count",
             "metric_value": "4",
-            "run_time": run_time,
+            "run_time": actual_run_time,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
             "user_metadata": None,
@@ -1364,7 +1378,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "checks_location": checks_location,
             "metric_name": "error_row_count",
             "metric_value": "1",
-            "run_time": run_time,
+            "run_time": actual_run_time,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
             "user_metadata": None,
@@ -1377,7 +1391,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "checks_location": checks_location,
             "metric_name": "warning_row_count",
             "metric_value": "1",
-            "run_time": run_time,
+            "run_time": actual_run_time,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
             "user_metadata": None,
@@ -1390,7 +1404,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "checks_location": checks_location,
             "metric_name": "valid_row_count",
             "metric_value": "2",
-            "run_time": run_time,
+            "run_time": actual_run_time,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
             "user_metadata": None,
@@ -1403,7 +1417,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "checks_location": checks_location,
             "metric_name": "avg_error_age",
             "metric_value": "35.0",
-            "run_time": run_time,
+            "run_time": actual_run_time,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
             "user_metadata": None,
@@ -1416,7 +1430,7 @@ def test_streaming_observer_metrics_output(apply_checks_method):
             "checks_location": checks_location,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
-            "run_time": run_time,
+            "run_time": actual_run_time,
             "error_column_name": "_errors",
             "warning_column_name": "_warnings",
             "user_metadata": None,
@@ -1426,15 +1440,9 @@ def test_streaming_observer_metrics_output(apply_checks_method):
     expected_metrics_df = (
         spark
         .createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA)
-        .drop("run_time")
         .orderBy("metric_name")
     )
-    actual_metrics_df = (
-        spark
-        .table(metrics_table_name)
-        .drop("run_time")
-        .orderBy("metric_name")
-    )
+
     assert_df_equality(expected_metrics_df, actual_metrics_df)
     assert spark.table(output_config.location).count() == 4
 

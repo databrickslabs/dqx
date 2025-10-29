@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from pyspark.sql import DataFrame, Observation, SparkSession
+import pyspark.sql.functions as F
 
 
 OBSERVATION_TABLE_SCHEMA = (
@@ -22,7 +23,7 @@ class DQMetricsObservation:
     Args:
         run_name: Name of the observations (default is 'dqx').
         observed_metrics: Dictionary of observed metrics.
-        run_time: Run time when the data quality summary metrics were observed.
+        run_time_overwrite: Run time when the data quality summary metrics were observed. If None, current_timestamp() is used.
         error_column_name: Name of the error column when running quality checks.
         warning_column_name: Name of the warning column when running quality checks.
         input_location: (optional) Location where input data is loaded from when running quality checks (fully-qualified table
@@ -38,7 +39,7 @@ class DQMetricsObservation:
     run_name: str
     error_column_name: str
     warning_column_name: str
-    run_time: datetime | None = None
+    run_time_overwrite: datetime | None = None
     observed_metrics: dict[str, Any] | None = None
     input_location: str | None = None
     output_location: str | None = None
@@ -136,7 +137,7 @@ class DQMetricsObserver:
         if not observation.observed_metrics:
             return spark.createDataFrame([], schema=OBSERVATION_TABLE_SCHEMA)
 
-        return spark.createDataFrame(
+        df = spark.createDataFrame(
             [
                 [
                     observation.run_name,
@@ -146,7 +147,7 @@ class DQMetricsObserver:
                     observation.checks_location,
                     metric_key,
                     metric_value,
-                    observation.run_time,
+                    observation.run_time_overwrite,
                     observation.error_column_name,
                     observation.warning_column_name,
                     observation.user_metadata if observation.user_metadata else None,
@@ -155,3 +156,8 @@ class DQMetricsObserver:
             ],
             schema=OBSERVATION_TABLE_SCHEMA,
         )
+
+        if observation.run_time_overwrite is None:
+            df = df.withColumn("run_time", F.current_timestamp())
+
+        return df

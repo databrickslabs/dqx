@@ -3,7 +3,7 @@ import os
 import logging
 from concurrent import futures
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime
 from functools import cached_property
 from typing import Any
 
@@ -1088,9 +1088,7 @@ class DQEngine(DQEngineBase):
             self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
                 run_name=self._engine.observer.name,
-                run_time=(
-                    self._engine.run_time_overwrite if self._engine.run_time_overwrite else datetime.now(timezone.utc)
-                ),
+                run_time_overwrite=self._engine.run_time_overwrite,
                 observed_metrics=observed_metrics,
                 error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
                 warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],

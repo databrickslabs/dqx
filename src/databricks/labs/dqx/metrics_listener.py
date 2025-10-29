@@ -68,7 +68,7 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         metrics_observation = DQMetricsObservation(
             run_name=self.metrics_observation.run_name,
             observed_metrics=observed_metrics.asDict(),
-            run_time=datetime.fromisoformat(event.progress.timestamp),
+            run_time_overwrite=datetime.fromisoformat(event.progress.timestamp),  # time the micro-batch is processed
             error_column_name=self.metrics_observation.error_column_name,
             warning_column_name=self.metrics_observation.warning_column_name,
             input_location=self.metrics_observation.input_location,
