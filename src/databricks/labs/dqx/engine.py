@@ -380,8 +380,6 @@ class DQEngineCore(DQEngineCoreBase):
 
         check_conditions = []
         current_df = df
-        # checks are lazy evaluated anyway, therefore using the same time
-        run_time = self.run_time_overwrite if self.run_time_overwrite else datetime.now(timezone.utc)
 
         for check in checks:
             manager = DQRuleManager(
@@ -389,7 +387,7 @@ class DQEngineCore(DQEngineCoreBase):
                 df=current_df,
                 spark=self.spark,
                 engine_user_metadata=self.engine_user_metadata,
-                run_time=run_time,
+                run_time_overwrite=self.run_time_overwrite,
                 ref_dfs=ref_dfs,
             )
             log_telemetry(self.ws, "check", check.check_func.__name__)

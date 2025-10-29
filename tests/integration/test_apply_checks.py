@@ -80,7 +80,11 @@ def test_apply_checks_passed(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_failed(ws, spark):
+def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
+    catalog = "main"
+    schema = make_schema(catalog_name=catalog).name
+    output_table = f"{catalog}.{schema}.{make_random(8).lower()}"
+
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 1, 1], [None, 1, 2], [1, None, 3]], SCHEMA)
 
@@ -101,8 +105,15 @@ def test_apply_checks_failed(ws, spark):
 
     checked = dq_engine.apply_checks(test_df, checks)
 
+    # persist result to materialize run_time
+    checked.write.saveAsTable(output_table)
+    checked_materialized = spark.table(output_table)
+
     # Extract run_time field from the results, as it is auto-generated
-    run_time_values = checked.select(F.explode(F.col("_errors")).alias("error")).select("error.run_time").collect()
+    run_time_values = (
+        checked_materialized.select(F.explode(F.col("_errors")).alias("error")).select("error.run_time").collect()
+    )
+
     run_time = None
     for run_time_row in run_time_values:
         if run_time_row:
@@ -150,7 +161,7 @@ def test_apply_checks_failed(ws, spark):
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked_materialized, expected, ignore_nullable=True)
 
 
 def test_foreign_key_check(ws, spark):
