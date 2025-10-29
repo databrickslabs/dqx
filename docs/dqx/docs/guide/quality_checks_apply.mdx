@@ -876,7 +876,7 @@ Below is a sample output of a check stored in a result column (error or warning)
     "columns": ["city"],
     "filter": "country = 'Poland'",
     "function": "is_not_null",
-    "run_time": "2025-10-29 15:05:33.953353",
+    "run_time": "2025-10-29T15:09:41.174Z",
     "user_metadata": {"key1": "value1", "key2": "value2"},
   },
 ]
@@ -916,12 +916,12 @@ The below example demonstrates how to extract the results from a result columns 
 
 The `results_df` will contain the following columns:
 ```python
-+------------------+-----------------------+----------+--------------------+-------------+----------------------------+----------------+
-| name             | message               | columns  | filter             | function    | run_time                   | user_metadata  |
-+------------------+-----------------------+----------+--------------------+-------------+----------------------------+----------------+
-| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29 15:05:33.953353 | {}             |
-| ...              | ...                   | ...      | ...                | ...         | ...                        | ...            |
-+------------------+-----------------------+----------+--------------------+-------------+----------------------------+----------------+
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+----------------+
+| name             | message               | columns  | filter             | function    | run_time                      | user_metadata  |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+----------------+
+| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29T15:11:51.354+00:00 | {}             |
+| ...              | ...                   | ...      | ...                | ...         | ...                           | ...            |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+----------------+
 ```
 
 An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.
