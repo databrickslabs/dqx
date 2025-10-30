@@ -327,6 +327,12 @@ def validate_run_status(run: Run, client: WorkspaceClient) -> None:
     task = run.tasks[0]
     termination_details = run.status.termination_details
 
+    run_output = client.jobs.get_run_output(task.run_id)
+    logger.info("Run output:")
+    logger.info(run_output.as_dict())
     assert (
         termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
+    ), (f"Run of '{task.task_key}' "
+        f"failed with message: {run_output.error}, "
+        f"error trace: {run_output.error_trace}, "
+    )
