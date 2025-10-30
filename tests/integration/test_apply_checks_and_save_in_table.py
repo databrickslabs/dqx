@@ -15,7 +15,7 @@ from databricks.labs.dqx.config import (
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
-from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, REPORTING_COLUMNS
+from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, RUN_ID, REPORTING_COLUMNS
 
 
 def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_random):
@@ -71,6 +71,7 @@ def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_rand
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -89,6 +90,7 @@ def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_rand
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -151,6 +153,7 @@ def test_apply_checks_and_save_in_single_table_with_quarantine(ws, spark, make_s
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -215,6 +218,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schem
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -233,6 +237,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schem
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -294,6 +299,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table_with_quarantine(ws, s
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -421,6 +427,7 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -458,6 +465,7 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -522,6 +530,7 @@ def test_apply_checks_by_metadata_and_save_in_table_with_custom_functions(ws, sp
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -584,6 +593,7 @@ def test_apply_checks_and_save_in_table_with_custom_functions(ws, spark, make_sc
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -738,6 +748,7 @@ def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, 
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -811,6 +822,7 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -829,6 +841,7 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -904,6 +917,7 @@ def test_apply_checks_and_save_in_tables_streaming_write(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -991,6 +1005,7 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1015,6 +1030,7 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1096,6 +1112,7 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1282,6 +1299,7 @@ def custom_string_check(column: str) -> Column:
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1412,6 +1430,7 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1436,6 +1455,7 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1516,6 +1536,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1540,6 +1561,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1635,6 +1657,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1658,6 +1681,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1749,6 +1773,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1886,6 +1911,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1909,6 +1935,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1987,6 +2014,7 @@ def custom_string_check(column: str) -> Column:
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],

@@ -4,6 +4,8 @@ import re
 from typing import Any
 from pyspark.sql import SparkSession
 from pyspark.sql.dataframe import DataFrame
+from pyspark.sql.streaming import StreamingQuery
+
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.errors import InvalidConfigError
 
@@ -82,18 +84,22 @@ def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFram
     return spark.readStream.options(**input_config.options).table(input_config.location)
 
 
-def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
+def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> StreamingQuery | None:
     """
     Helper method to save a DataFrame to a Delta table.
 
     Args:
         df: The DataFrame to save
         output_config: Output table name, write mode, and options
+
+    Returns:
+        StreamingQuery handle if the DataFrame is streaming, None otherwise
     """
     logger.info(f"Saving data to {output_config.location} table")
 
     if df.isStreaming:
         if not output_config.trigger:
+            logger.info("Using default streaming trigger")
             query = (
                 df.writeStream.format(output_config.format)
                 .outputMode(output_config.mode)
@@ -102,6 +108,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
             )
         else:
             trigger: dict[str, Any] = output_config.trigger
+            logger.info(f"Setting streaming trigger: {trigger}")
             query = (
                 df.writeStream.format(output_config.format)
                 .outputMode(output_config.mode)
@@ -109,14 +116,30 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
                 .trigger(**trigger)
                 .toTable(output_config.location)
             )
-        query.awaitTermination()
-    else:
-        (
-            df.write.format(output_config.format)
-            .mode(output_config.mode)
-            .options(**output_config.options)
-            .saveAsTable(output_config.location)
-        )
+        return query
+
+    (
+        df.write.format(output_config.format)
+        .mode(output_config.mode)
+        .options(**output_config.options)
+        .saveAsTable(output_config.location)
+    )
+    return None
+
+
+def is_one_time_trigger(trigger: dict[str, Any] | None) -> bool:
+    """
+    Checks if a trigger is a one-time trigger that should wait for completion.
+
+    Args:
+        trigger: Trigger configuration dict
+
+    Returns:
+        True if the trigger is 'once' or 'availableNow', False otherwise
+    """
+    if trigger is None:
+        return False
+    return "once" in trigger or "availableNow" in trigger
 
 
 def get_reference_dataframes(

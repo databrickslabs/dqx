@@ -8,6 +8,7 @@ dq_result_item_schema = StructType(
         StructField("filter", StringType(), nullable=True),
         StructField("function", StringType(), nullable=True),
         StructField("run_time", TimestampType(), nullable=True),
+        StructField("run_id", StringType(), nullable=True),
         StructField("user_metadata", MapType(StringType(), StringType()), nullable=True),
     ]
 )
