@@ -8,9 +8,8 @@ from uuid import uuid4
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
-from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Run, Task, TerminationTypeType
-from tests.e2e.conftest import new_classic_job_cluster
-
+from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
+from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
 
 logger = logging.getLogger(__name__)
 
@@ -314,24 +313,3 @@ def test_run_dqx_demo_summary_metrics(make_notebook, make_schema, make_job, libr
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_summary_metrics")
-
-
-def validate_run_status(run: Run, client: WorkspaceClient) -> None:
-    """
-    Validates that a job task run completed successfully.
-
-    Args:
-        run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-        client: `WorkspaceClient` object for getting task output
-    """
-    task = run.tasks[0]
-    termination_details = run.status.termination_details
-
-    run_output = client.jobs.get_run_output(task.run_id)
-    logger.info("Run output:")
-    logger.info(run_output.as_dict())
-    assert termination_details.type == TerminationTypeType.SUCCESS, (
-        f"Run of '{task.task_key}' "
-        f"failed with message: {run_output.error}, "
-        f"error trace: {run_output.error_trace}"
-    )
