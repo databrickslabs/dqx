@@ -333,5 +333,5 @@ def validate_run_status(run: Run, client: WorkspaceClient) -> None:
     assert termination_details.type == TerminationTypeType.SUCCESS, (
         f"Run of '{task.task_key}' "
         f"failed with message: {run_output.error}, "
-        f"error trace: {run_output.error_trace}, "
+        f"error trace: {run_output.error_trace}"
     )
