@@ -53,10 +53,16 @@ def test_dq_observer_empty_custom_metrics():
     assert observer.metrics == expected_default_metrics
 
 
-def test_dq_observer_observation_id_uniqueness():
+def test_dq_observer_run_id_uniqueness():
     observer1 = DQMetricsObserver()
     observer2 = DQMetricsObserver()
-    assert observer1.observation_id != observer2.observation_id
+    assert observer1.id != observer2.id
+
+
+def test_dq_observer_id_overwrite():
+    run_id_overwrite = "1"
+    observer = DQMetricsObserver(id_overwrite=run_id_overwrite)
+    assert observer.id == run_id_overwrite
 
 
 def test_dq_observer_default_column_names():

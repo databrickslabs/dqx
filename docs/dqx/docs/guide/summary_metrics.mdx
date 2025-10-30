@@ -242,7 +242,9 @@ You must use streaming metrics listener or end-to-end methods that persist the o
       metrics_config=metrics_config,
       target_query_id=quarantine_query.id,
     )
-    spark.streams.addListener(listener)  # for streaming writing metrics requires a stream listener, observation cannot be accessed
+    # for streaming writing metrics requires a stream listener, observation cannot be accessed directly
+    # this adds a global listener for the current Spark session so do not add it again if reusing the same session
+    spark.streams.addListener(listener)
 
     output_query.awaitTermination()
     quarantine_query.awaitTermination()
@@ -426,20 +428,20 @@ databricks labs dqx e2e --run-config "production"
 
 Summary metrics can be written and centralized in a delta table. The metrics table contains the following fields:
 
-| Column Name           | Column Type           | Description                                                                                                                                              |
-|-----------------------|-----------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `run_id`              | `STRING`              | Unique run id of the observer. Same as `run_id` stored detailed row-level quality results. It can be used for joining with the detailed quality results. |
-| `run_name`            | `STRING`              | Name of the metrics observer: `name` passed to `DQMetricsObserver`, or 'dqx' when applying checks using Workflows.                                       |
-| `input_location`      | `STRING`              | Location of the input dataset (table name or file path), if known.                                                                                       |
-| `output_location`     | `STRING`              | Location of the output dataset (table name or file path).                                                                                                |
-| `quarantine_location` | `STRING`              | Location of the quarantine dataset (table name or file path), if used.                                                                                   |
-| `checks_location`     | `STRING`              | Location where checks are stored (table name or file path), if known.                                                                                    |
-| `metric_name`         | `STRING`              | Name of the metric (e.g., 'input_row_count').                                                                                                            |
-| `metric_value`        | `STRING`              | Value of the metric (stored as string).                                                                                                                  |
-| `run_time`            | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated.                                                                                                  |
-| `error_column_name`   | `STRING`              | Name of the error column in the output or quarantine table containing per row quality checking results (default: '_errors').                             |
-| `warning_column_name` | `STRING`              | Name of the warning column in the output or quarantine table containing per row quality checking results (default: '_warnings').                         |
-| `user_metadata`       | `MAP[STRING, STRING]` | User-defined, run-level metadata.                                                                                                                        |
+| Column Name           | Column Type           | Description                                                                                                                                                                                                                                                                     |
+|-----------------------|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `run_id`              | `STRING`              | Unique run ID recorded in the summary metrics as well as detailed quality checking results to enable cross-referencing. When reusing the same `DQEngine` instance, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance. |
+| `run_name`            | `STRING`              | Name of the metrics observer: `name` passed to `DQMetricsObserver`, or 'dqx' when applying checks using Workflows.                                                                                                                                                              |
+| `input_location`      | `STRING`              | Location of the input dataset (table name or file path), if known.                                                                                                                                                                                                              |
+| `output_location`     | `STRING`              | Location of the output dataset (table name or file path).                                                                                                                                                                                                                       |
+| `quarantine_location` | `STRING`              | Location of the quarantine dataset (table name or file path), if used.                                                                                                                                                                                                          |
+| `checks_location`     | `STRING`              | Location where checks are stored (table name or file path), if known.                                                                                                                                                                                                           |
+| `metric_name`         | `STRING`              | Name of the metric (e.g., 'input_row_count').                                                                                                                                                                                                                                   |
+| `metric_value`        | `STRING`              | Value of the metric (stored as string).                                                                                                                                                                                                                                         |
+| `run_time`            | `TIMESTAMP`           | Run timestamp when the summary metrics were calculated.                                                                                                                                                                                                                         |
+| `error_column_name`   | `STRING`              | Name of the error column in the output or quarantine table containing per row quality checking results (default: '_errors').                                                                                                                                                    |
+| `warning_column_name` | `STRING`              | Name of the warning column in the output or quarantine table containing per row quality checking results (default: '_warnings').                                                                                                                                                |
+| `user_metadata`       | `MAP[STRING, STRING]` | User-defined, run-level metadata.                                                                                                                                                                                                                                               |
 
 ## Best Practices
 
@@ -456,42 +458,77 @@ Use cases:
 2. **Set Thresholds**: Establish acceptable ranges for error rates and warning counts.
 3. **Alert on Anomalies**: Set up alerts when metrics deviate significantly from historical patterns, e.g. by using Databricks SQL Alerts.
 
-The example query below shows how you can analyze metrics persisted to a table:
-```sql
-/* EXAMPLE: Identify quality degradation */
-WITH daily_metrics AS (
-  SELECT 
-    date_trunc('day', run_time) as run_date,
-    input_location,
-    metric_name,
-    CAST(metric_value AS DOUBLE) as metric_value
-  FROM 
-    main.analytics.dq_metrics 
-  WHERE 
-    run_time >= current_date - INTERVAL 30 DAYS
-    AND metric_name IN ('input_row_count', 'error_row_count', 'warning_row_count')
-),
-pivoted_metrics AS (
-  SELECT 
-    run_date,
-    input_location,
-    MAX(CASE WHEN metric_name = 'input_row_count' THEN metric_value END) as input_count,
-    MAX(CASE WHEN metric_name = 'error_row_count' THEN metric_value END) as error_count,
-    MAX(CASE WHEN metric_name = 'warning_row_count' THEN metric_value END) as warning_count
-  FROM daily_metrics
-  GROUP BY run_date, input_location
-)
-SELECT 
-  run_date,
-  input_location,
-  avg(error_count * 100.0 / NULLIF(input_count, 0)) as avg_error_rate,
-  avg(warning_count * 100.0 / NULLIF(input_count, 0)) as avg_warning_rate
-FROM 
-  pivoted_metrics
-WHERE 
-  input_count > 0
-GROUP BY 
-  run_date, input_location
-ORDER BY 
-  run_date DESC, input_location
-```
+The example below shows how you can analyze metrics persisted to a table:
+<Tabs>
+  <TabItem value="Python" label="SQL" default>
+    ```sql
+    /* EXAMPLE: Identify quality degradation */
+    WITH daily_metrics AS (
+      SELECT
+        date_trunc('day', run_time) as run_date,
+        input_location,
+        metric_name,
+        CAST(metric_value AS DOUBLE) as metric_value
+      FROM
+        main.analytics.dq_metrics
+      WHERE
+        run_time >= current_date - INTERVAL 30 DAYS
+        AND metric_name IN ('input_row_count', 'error_row_count', 'warning_row_count')
+    ),
+    pivoted_metrics AS (
+      SELECT
+        run_date,
+        input_location,
+        MAX(CASE WHEN metric_name = 'input_row_count' THEN metric_value END) as input_count,
+        MAX(CASE WHEN metric_name = 'error_row_count' THEN metric_value END) as error_count,
+        MAX(CASE WHEN metric_name = 'warning_row_count' THEN metric_value END) as warning_count
+      FROM daily_metrics
+      GROUP BY run_date, input_location
+    )
+    SELECT
+      run_date,
+      input_location,
+      avg(error_count * 100.0 / NULLIF(input_count, 0)) as avg_error_rate,
+      avg(warning_count * 100.0 / NULLIF(input_count, 0)) as avg_warning_rate
+    FROM
+      pivoted_metrics
+    WHERE
+      input_count > 0
+    GROUP BY
+      run_date, input_location
+    ORDER BY
+      run_date DESC, input_location
+    ```
+  </TabItem>
+</Tabs>
+
+When you need to explore detailed row-level quality results based on summary metrics for **troubleshooting**, the example below illustrates how to do so:
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    import pyspark.sql.functions as F
+
+    # fetch any metrics row as an example
+    metrics_row = spark.table(metrics_table_name).collect()[0]
+    run_id = metrics_row["run_id"]
+    output_table_name = metrics_row["output_location"]
+
+    # retrieve detailed results
+    output_df = spark.table(output_table_name)
+
+    # extract errors
+    results_df = output_df.select(
+      F.explode(F.col("_errors")).alias("result"),
+    ).select(F.expr("result.*"))
+
+    # extract warnings
+    results_df = output_df.select(
+      F.explode(F.col("_warnings")).alias("result"),
+    ).select(F.expr("result.*"))
+
+    # Fetch detailed quality results using the run_id from summary metrics
+    filtered_results_df = results_df.filter(F.col("run_id") == run_id)  # filter, or join
+    filtered_results_df.show()
+    ```
+  </TabItem>
+</Tabs>

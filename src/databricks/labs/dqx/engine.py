@@ -94,9 +94,11 @@ class DQEngineCore(DQEngineCoreBase):
                 error_column_name=self._result_column_names[ColumnArguments.ERRORS],
                 warning_column_name=self._result_column_names[ColumnArguments.WARNINGS],
             )
-            self.run_id = extra_params.run_id_overwrite or self.observer.observation_id
+            self.observer.id_overwrite = extra_params.run_id_overwrite
+            # run id is globally assigned for each engine instance
+            self.run_id = self.observer.id
         else:
-            self.run_id = extra_params.run_id_overwrite or str(uuid4())
+            self.run_id = extra_params.run_id_overwrite or str(uuid4())  # auto-generate if not provided
 
     @cached_property
     def result_column_names(self) -> dict[ColumnArguments, str]:
@@ -436,7 +438,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         observation = self.observer.observation
         if df.isStreaming:
-            return df.observe(self.observer.name, *metric_exprs), observation
+            return df.observe(self.observer.id, *metric_exprs), observation
 
         return df.observe(observation, *metric_exprs), observation
 

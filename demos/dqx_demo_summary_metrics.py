@@ -275,3 +275,38 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
 
 display(spark.table(output_table_name))
 display(spark.table(metrics_table_name))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Exploring Detailed Results from Summary-Level Metrics
+# MAGIC
+# MAGIC When you need to explore detailed row-level quality results based on summary metrics for **troubleshooting**, the example below illustrates how to do so:
+
+# COMMAND ----------
+
+import pyspark.sql.functions as F
+
+# fetch any metrics row as an example
+metrics_row = spark.table(metrics_table_name).collect()[0]
+run_id = metrics_row["run_id"]
+output_table_name = metrics_row["output_location"]
+
+# retrieve detailed results
+output_df = spark.table(output_table_name)
+
+# extract errors
+results_df = output_df.select(
+  F.explode(F.col("_errors")).alias("result"),
+).select(F.expr("result.*"))
+
+# extract warnings
+results_df = output_df.select(
+  F.explode(F.col("_warnings")).alias("result"),
+).select(F.expr("result.*"))
+
+display(results_df)
+
+# You can fetch detailed quality results using the run_id from summary metrics
+filtered_results_df = results_df.filter(F.col("run_id") == run_id)  # filter, or join
+display(filtered_results_df)

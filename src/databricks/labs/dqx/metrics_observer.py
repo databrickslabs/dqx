@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from typing import Any
@@ -63,23 +63,20 @@ class DQMetricsObserver:
 
     name: str = "dqx"
     custom_metrics: list[str] | None = None
+    id_overwrite: str | None = None
 
-    _id: str = field(default_factory=str)
     _error_column_name: str = "_errors"
     _warning_column_name: str = "_warnings"
 
-    def __post_init__(self) -> None:
-        self._id = str(uuid4())
-
     @cached_property
-    def observation_id(self) -> str:
+    def id(self) -> str:
         """
-        Observer ID.
+        ID of the observer.
 
         Returns:
-            Unique observation ID
+            Unique ID
         """
-        return self._id
+        return self.id_overwrite or str(uuid4())
 
     @cached_property
     def metrics(self) -> list[str]:

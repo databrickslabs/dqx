@@ -891,7 +891,7 @@ The structure of the result columns is an array of struct containing the followi
 - `filter`: filter applied to if any (string type).
 - `function`: rule/check function applied (string type).
 - `run_time`: timestamp when the check was executed (timestamp type).
-- `run_id`: run id which is unique for each `DQEngine` instance. The `run_id` is also stored in the summary metrics table and can be used to join with the detailed quality check results.
+- `run_id`: unique run ID recorded in the detailed quality checking results as well as summary metrics to enable cross-referencing. When reusing the same `DQEngine` instance, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance.
 - `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
 
 The below example demonstrates how to extract the results from a result columns in PySpark:
@@ -913,8 +913,12 @@ The below example demonstrates how to extract the results from a result columns 
       F.explode(F.col("_warnings")).alias("result"),
     ).select(F.expr("result.*"))
 
-    # Join detailed quality results with the summary metrics
-    joined_df = results_df.join(summary_metrics_df, on="run_id", how="inner")
+    results_df.show()
+
+    # If using summary metrics, you can drill down to detailed quality results
+    run_id = spark.table(metrics_table_name).collect()[0]["run_id"]  # fetch any run_id as an example
+    filtered_results_df = results_df.filter(F.col("run_id") == run_id)  # use run_id for filtering
+    filtered_results_df.show()
     ```
   </TabItem>
 </Tabs>

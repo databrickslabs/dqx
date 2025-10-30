@@ -61,7 +61,7 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         if self.target_query_id is not None and str(event.progress.id) != self.target_query_id:
             return
 
-        observed_metrics = event.progress.observedMetrics.get(self.metrics_observation.run_name)
+        observed_metrics = event.progress.observedMetrics.get(self.metrics_observation.run_id)
         if not observed_metrics:
             return
 
