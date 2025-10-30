@@ -891,7 +891,7 @@ The structure of the result columns is an array of struct containing the followi
 - `filter`: filter applied to if any (string type).
 - `function`: rule/check function applied (string type).
 - `run_time`: timestamp when the check was executed (timestamp type).
-- `run_id`: unique run ID recorded in the detailed quality checking results as well as summary metrics to enable cross-referencing. When reusing the same `DQEngine` instance, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance.
+- `run_id`: unique run ID recorded in the detailed quality checking results as well as summary metrics to enable cross-referencing. When reusing the same `DQEngine` and observer instances, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance. It is only changed when new engine and observer (if using one) is created.
 - `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
 
 The below example demonstrates how to extract the results from a result columns in PySpark:
