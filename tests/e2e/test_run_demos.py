@@ -6,6 +6,7 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import OperationFailed
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
@@ -62,11 +63,16 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
-    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-        run_id=waiter.run_id,
-        timeout=timedelta(minutes=30),
-        callback=lambda r: validate_run_status(r, ws),
-    )
+    try:
+        run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+            run_id=waiter.run_id,
+            timeout=timedelta(minutes=30),
+            callback=lambda r: validate_run_status(r, ws),
+        )
+    except OperationFailed:
+        run = ws.jobs.get_run(waiter.run_id)
+        validate_run_status(run, ws)
+        raise
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
