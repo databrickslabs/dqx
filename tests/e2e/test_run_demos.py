@@ -6,7 +6,6 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import OperationFailed
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
