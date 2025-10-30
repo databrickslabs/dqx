@@ -50,9 +50,9 @@ test_checks = [
     },
 ]
 
-dbutils.widgets.text("catalog_name", "", "Test Catalog Name")
-dbutils.widgets.text("schema_name", "", "Test Schema Name")
-dbutils.widgets.text("volume_name", "", "Test Volume Name")
+dbutils.widgets.text("catalog_name", "main", "Test Catalog Name")
+dbutils.widgets.text("schema_name", "default", "Test Schema Name")
+dbutils.widgets.text("volume_name", "dqx_test", "Test Volume Name")
 
 catalog_name = dbutils.widgets.get("catalog_name")
 schema_name = dbutils.widgets.get("schema_name")
