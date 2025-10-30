@@ -58,21 +58,16 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_database": catalog, "demo_schema": schema, "test_library_ref": library_ref},
+        base_parameters={"demo_database_name": catalog, "demo_schema_name": schema, "test_library_ref": library_ref},
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
-    try:
-        run = ws.jobs.wait_get_run_job_terminated_or_skipped(
-            run_id=waiter.run_id,
-            timeout=timedelta(minutes=30),
-            callback=lambda r: validate_run_status(r, ws),
-        )
-    except OperationFailed:
-        run = ws.jobs.get_run(waiter.run_id)
-        validate_run_status(run, ws)
-        raise
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
