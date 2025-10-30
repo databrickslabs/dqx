@@ -44,6 +44,19 @@ resources:
 
 Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
 
+### Optional dependencies
+
+DQX provides optional extras for specific features:
+
+#### AI-Assisted Quality Checks Generation
+
+To use AI-assisted rule generation with LLM support:
+```commandline
+pip install 'databricks-labs-dqx[llm]'
+```
+
+This installs additional dependencies including DSPy for LLM integration. See the [AI-Assisted Generation Guide](/docs/guide/ai_assisted_quality_checks_generation) for more details.
+
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
