@@ -37,15 +37,17 @@ class DQRuleManager:
         check: The DQRule instance that defines the check to apply.
         df: The DataFrame on which to apply the check.
         engine_user_metadata: Metadata provided by the engine (overridden by check.user_metadata if present).
-        run_time: The timestamp when the check is executed.
+        run_time_overwrite: Optional timestamp override. If None, current_timestamp() is used for per-micro-batch timestamps.
         ref_dfs: Optional reference DataFrames for dataset-level checks.
+        run_id: Optional unique run id.
     """
 
     check: DQRule
     df: DataFrame
     spark: SparkSession
     engine_user_metadata: dict[str, str]
-    run_time: datetime
+    run_time_overwrite: datetime | None
+    run_id: str
     ref_dfs: dict[str, DataFrame] | None = None
 
     @cached_property
@@ -137,13 +139,18 @@ class DQRuleManager:
         return DQCheckResult(condition=check_result, check_df=raw_result.check_df)
 
     def _build_result_struct(self, condition: Column) -> Column:
+        # Use current_timestamp() to make sure streaming gets per-micro-batch timestamps,
+        # or use literal run time if explicitly overridden
+        run_time_expr = F.current_timestamp() if self.run_time_overwrite is None else F.lit(self.run_time_overwrite)
+
         return F.struct(
             F.lit(self.check.name).alias("name"),
             condition.alias("message"),
             self.check.columns_as_string_expr.alias("columns"),
             F.lit(self.check.filter or None).cast("string").alias("filter"),
             F.lit(self.check.check_func.__name__).alias("function"),
-            F.lit(self.run_time).alias("run_time"),
+            run_time_expr.alias("run_time"),
+            F.lit(self.run_id).alias("run_id"),
             F.create_map(*[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
                 "user_metadata"
             ),

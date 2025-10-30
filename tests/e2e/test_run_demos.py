@@ -8,8 +8,8 @@ from uuid import uuid4
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
-from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Run, Task, TerminationTypeType
-
+from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
+from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_database": catalog, "demo_schema": schema, "test_library_ref": library_ref},
+        base_parameters={"demo_database_name": catalog, "demo_schema_name": schema, "test_library_ref": library_ref},
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
@@ -285,17 +285,31 @@ def test_run_dqx_multi_table_demo(make_notebook, make_schema, make_job, library_
     logging.info(f"Job run {run.run_id} completed successfully for dqx_multi_table_demo")
 
 
-def validate_run_status(run: Run, client: WorkspaceClient) -> None:
-    """
-    Validates that a job task run completed successfully.
+def test_run_dqx_demo_summary_metrics(make_notebook, make_schema, make_job, library_ref):
+    ws = WorkspaceClient()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_summary_metrics.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
-    Args:
-        run: `Run` object returned from a `WorkspaceClient.jobs.submit(...)` command
-        client: `WorkspaceClient` object for getting task output
-    """
-    task = run.tasks[0]
-    termination_details = run.status.termination_details
+    catalog = "main"
+    schema = make_schema(catalog_name=catalog).name
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={
+            "demo_catalog_name": catalog,
+            "demo_schema_name": schema,
+            "test_library_ref": library_ref,
+        },
+    )
+    job = make_job(
+        tasks=[Task(task_key="dqx_demo_library", notebook_task=notebook_task, new_cluster=new_classic_job_cluster())]
+    )
 
-    assert (
-        termination_details.type == TerminationTypeType.SUCCESS
-    ), f"Run of '{task.task_key}' failed with message: {client.jobs.get_run_output(task.run_id).error}"
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_summary_metrics")
