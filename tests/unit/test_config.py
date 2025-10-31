@@ -2,10 +2,12 @@ import pytest
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.config import (
     FileChecksStorageConfig,
+    LakebaseChecksStorageConfig,
     WorkspaceFileChecksStorageConfig,
     TableChecksStorageConfig,
+    VolumeFileChecksStorageConfig,
 )
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
 DEFAULT_RUN_CONFIG_NAME = "default"
 DEFAULT_RUN_CONFIG = RunConfig(
@@ -46,34 +48,95 @@ def test_get_run_config_when_no_run_configs():
 
 
 @pytest.mark.parametrize(
-    "config_class, location, expected_message",
+    "config_class, location, expected_exception, expected_message",
     [
-        (FileChecksStorageConfig, None, "The file path \\('location' field\\) must not be empty or None"),
-        (FileChecksStorageConfig, "", "The file path \\('location' field\\) must not be empty or None"),
+        (
+            FileChecksStorageConfig,
+            None,
+            InvalidConfigError,
+            "The file path \\('location' field\\) must not be empty or None",
+        ),
+        (
+            FileChecksStorageConfig,
+            "",
+            InvalidConfigError,
+            "The file path \\('location' field\\) must not be empty or None",
+        ),
         (
             WorkspaceFileChecksStorageConfig,
             None,
+            InvalidConfigError,
             "The workspace file path \\('location' field\\) must not be empty or None",
         ),
         (
             WorkspaceFileChecksStorageConfig,
             "",
+            InvalidConfigError,
             "The workspace file path \\('location' field\\) must not be empty or None",
         ),
-        (TableChecksStorageConfig, None, "The table name \\('location' field\\) must not be empty or None"),
-        (TableChecksStorageConfig, "", "The table name \\('location' field\\) must not be empty or None"),
+        (
+            TableChecksStorageConfig,
+            None,
+            InvalidConfigError,
+            "The table name \\('location' field\\) must not be empty or None",
+        ),
+        (
+            TableChecksStorageConfig,
+            "",
+            InvalidConfigError,
+            "The table name \\('location' field\\) must not be empty or None",
+        ),
         (
             InstallationChecksStorageConfig,
             None,
+            InvalidConfigError,
             "The workspace file path \\('location' field\\) must not be empty or None",
         ),
         (
             InstallationChecksStorageConfig,
             "",
+            InvalidConfigError,
             "The workspace file path \\('location' field\\) must not be empty or None",
+        ),
+        (LakebaseChecksStorageConfig, "", InvalidParameterError, "Location must not be empty or None."),
+        (
+            VolumeFileChecksStorageConfig,
+            "",
+            InvalidParameterError,
+            "The Unity Catalog volume file path \\('location' field\\) must not be empty or None.",
+        ),
+        (
+            VolumeFileChecksStorageConfig,
+            "invalid_volume_path/files",
+            InvalidParameterError,
+            "The volume path must start with '/Volumes/'.",
+        ),
+        (
+            VolumeFileChecksStorageConfig,
+            "/Volumes",
+            InvalidParameterError,
+            "The volume path must start with '/Volumes/'.",
+        ),
+        (
+            VolumeFileChecksStorageConfig,
+            "/Volumes/main",
+            InvalidParameterError,
+            "Invalid path: Path is missing a schema name",
+        ),
+        (
+            VolumeFileChecksStorageConfig,
+            "/Volumes/main/demo",
+            InvalidParameterError,
+            "Invalid path: Path is missing a volume name",
+        ),
+        (
+            VolumeFileChecksStorageConfig,
+            "/Volumes/main/demo/files/my_file.txt",
+            InvalidParameterError,
+            "Invalid path: Path must include a file name after the volume",
         ),
     ],
 )
-def test_post_init_validation(config_class, location, expected_message):
-    with pytest.raises(InvalidConfigError, match=expected_message):
+def test_post_init_validation(config_class, location, expected_exception, expected_message):
+    with pytest.raises(expected_exception, match=expected_message):
         config_class(location=location)

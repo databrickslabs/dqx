@@ -181,7 +181,7 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
     save_dataframe_as_table(
         streaming_input_df,
         output_config,
-    )
+    ).awaitTermination()
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)
@@ -189,7 +189,7 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
     save_dataframe_as_table(
         streaming_input_df,
         output_config,
-    )
+    ).awaitTermination()
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)  # no new records

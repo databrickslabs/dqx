@@ -221,7 +221,7 @@ When `DATABRICKS_SERVERLESS_COMPUTE_ID` is set, the `DATABRICKS_CLUSTER_ID` is i
 ## Manual testing of the framework
 
 We require that all changes must be covered by unit tests and integration tests. A pull request (PR) will be blocked if the proposed change negatively impacts the code coverage.
-However, manual testing may still be useful before creating or merging a PR.
+However, manual testing may still be useful before creating or merging a PR, e.g. when wanting to test a new demo in the Databricks workspace.
 
 To test DQX from your feature branch, you can install it directly as follows:
 ```commandline
@@ -233,6 +233,15 @@ Replace `feature_branch_name` with the name of your branch.
 If you contribute from a fork, install it from the fork branch:
 ```commandline
 pip install git+https://github.com/your-username/dqx.git@feature_branch_name
+```
+
+Alternatively, if you want to test before committing the changes, you can build the wheel package and upload it to the workspace manually:
+```commandline
+# Create wheel inside dist/databricks_labs_dqx-<version>-py3-none-any.whl
+hatch build
+
+# Upload the wheel to the workspace and run
+pip install /<workspace-path>/databricks_labs_dqx-<version>-py3-none-any.whl
 ```
 
 ## Manual testing of the CLI commands from the current codebase

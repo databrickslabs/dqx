@@ -62,7 +62,7 @@ new_users_df = spark.createDataFrame(new_users)
 # MAGIC You can find a list of all available built-in checks in the documentation [here](https://databrickslabs.github.io/dqx/docs/reference/quality_checks/).
 # MAGIC
 # MAGIC You can define checks in two ways:
-# MAGIC * Declarative approach (YAML or JSON): Ideal for scenarios where checks are externalized from code.
+# MAGIC * Declarative approach (YAML or JSON, or a table): Ideal for scenarios where checks are externalized from code.
 # MAGIC * Code-first (DQX classes): Ideal if you need type-safety and better IDE support
 
 # COMMAND ----------
