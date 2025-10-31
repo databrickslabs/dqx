@@ -2,8 +2,7 @@ import abc
 from collections.abc import Callable
 from functools import cached_property
 from typing import final
-from pyspark.sql import DataFrame
-
+from pyspark.sql import DataFrame, Observation
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.labs.dqx.rule import DQRule
 from databricks.sdk import WorkspaceClient
@@ -44,7 +43,7 @@ class DQEngineCoreBase(DQEngineBase):
     @abc.abstractmethod
     def apply_checks(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
-    ) -> DataFrame:
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """Apply data quality checks to the given DataFrame.
 
         Args:
@@ -53,13 +52,14 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame that includes errors and warnings result columns.
+            A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
+            summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
 
     @abc.abstractmethod
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
-    ) -> tuple[DataFrame, DataFrame]:
+    ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks to the given DataFrame and split the results into two DataFrames
         ("good" and "bad").
 
@@ -69,8 +69,9 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
-            "bad" (rows with errors or warnings and the corresponding result columns).
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
+            with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
+            quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
 
     @abc.abstractmethod
@@ -80,7 +81,7 @@ class DQEngineCoreBase(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> DataFrame:
+    ) -> DataFrame | tuple[DataFrame, Observation]:
         """
         Apply data quality checks defined as metadata to the given DataFrame.
 
@@ -95,7 +96,8 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            DataFrame that includes errors and warnings result columns.
+            A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
+            summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
 
     @abc.abstractmethod
@@ -105,7 +107,7 @@ class DQEngineCoreBase(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-    ) -> tuple[DataFrame, DataFrame]:
+    ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
         two DataFrames ("good" and "bad").
 
@@ -120,8 +122,9 @@ class DQEngineCoreBase(DQEngineBase):
             ref_dfs: Optional reference DataFrames to use in the checks.
 
         Returns:
-            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and
-            "bad" (rows with errors or warnings and the corresponding result columns).
+            A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
+            with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
+            quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
 
     @staticmethod
