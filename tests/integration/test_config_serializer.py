@@ -1,11 +1,7 @@
 from unittest.mock import patch
 
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.blueprint.wheels import ProductInfo
-
-from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.config_serializer import ConfigSerializer
-from tests.integration.conftest import TestInstallationMixin
 
 
 def test_load_workspace_config_from_user_installation(ws, serverless_installation_ctx, spark):
@@ -67,16 +63,3 @@ def test_load_run_config_from_custom_folder_installation(ws, installation_ctx_cu
     expected_run_config = installation_ctx_custom_install_folder.config.get_run_config("default")
 
     assert run_config == expected_run_config
-
-
-def test_get_custom_installation(ws, make_directory):
-    product_info = ProductInfo.for_testing(WorkspaceConfig)
-    custom_folder = str(make_directory().absolute())
-
-    custom_installation = TestInstallationMixin(ws).get_installation(
-        product_name=product_info.product_name(), install_folder=custom_folder
-    )
-    custom_installation.install_folder()
-
-    assert custom_installation.install_folder() == custom_folder
-    assert ws.workspace.get_status(custom_folder)

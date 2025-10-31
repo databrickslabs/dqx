@@ -1,4 +1,3 @@
-from databricks.labs.blueprint.installation import Installation
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 
@@ -22,6 +21,25 @@ class ConfigSerializer(InstallationMixin):
         installation = self._get_installation(product_name, assume_user, install_folder)
         return installation.load(WorkspaceConfig)
 
+    def save_config(
+        self,
+        config: WorkspaceConfig,
+        install_folder: str | None = None,
+        assume_user: bool = True,
+        product_name: str = "dqx",
+    ) -> None:
+        """
+        Save workspace config in the installation.
+
+        Args:
+            config: Workspace config object to save
+            product_name: Product/installation identifier used to resolve installation paths (not used if install_folder is provided)
+            assume_user: Whether to assume a per-user installation when loading the run configuration (not used if install_folder is provided)
+            install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
+        """
+        installation = self._get_installation(product_name, assume_user, install_folder)
+        return installation.save(config)
+
     def load_run_config(
         self,
         run_config_name: str | None,
@@ -38,36 +56,30 @@ class ConfigSerializer(InstallationMixin):
             assume_user: Whether to assume a per-user installation when loading the run configuration (not used if install_folder is provided)
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
         """
-        installation = self._get_installation(product_name, assume_user, install_folder)
-        return self._load_run_config(installation, run_config_name)
+        config = self.load_config(assume_user, product_name, install_folder)
+        return config.get_run_config(run_config_name)
 
-    def save_config(
+    def save_run_config(
         self,
-        config: WorkspaceConfig,
+        run_config: RunConfig,
         install_folder: str | None = None,
         assume_user: bool = True,
         product_name: str = "dqx",
     ) -> None:
         """
-        Load configuration from the installation.
+        Save run config in the workspace installation config.
 
         Args:
-            config: Workspace config object
+            run_config: Run config object to save in the workspace config
             product_name: Product/installation identifier used to resolve installation paths (not used if install_folder is provided)
             assume_user: Whether to assume a per-user installation when loading the run configuration (not used if install_folder is provided)
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
         """
         installation = self._get_installation(product_name, assume_user, install_folder)
-        return installation.save(config)
-
-    @staticmethod
-    def _load_run_config(installation: Installation, run_config_name: str | None) -> RunConfig:
-        """
-        Load run configuration from the installation.
-
-        Args:
-            installation: the installation object.
-            run_config_name: name of the run configuration to use, e.g. input table or job name.
-        """
         config = installation.load(WorkspaceConfig)
-        return config.get_run_config(run_config_name)
+
+        # Add or update the run config
+        config.run_configs = [rc for rc in config.run_configs if rc.name != run_config.name]
+        config.run_configs.append(run_config)
+
+        installation.save(config)
