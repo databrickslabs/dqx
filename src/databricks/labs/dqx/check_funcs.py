@@ -129,12 +129,13 @@ def is_not_null(column: str | Column) -> Column:
 
 
 @register_rule("row")
-def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
+def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
-
+        Can optionally perform a case-insensitive comparison.
     Args:
         column: column to check; can be a string column name or a column expression
         allowed: list of allowed values (actual values or Column objects)
+        case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
         Column object for condition
@@ -152,9 +153,21 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
     if not allowed:
         raise InvalidParameterError("allowed list must not be empty.")
 
-    allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
+    # Keep original values for display in error message
+    allowed_cols_display = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
+
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    condition = col_expr.isNull() | ~col_expr.isin(*allowed_cols)
+
+    # Create columns for comparison
+    allowed_cols_compare = allowed_cols_display[:]
+    col_expr_compare = col_expr
+
+    # Case-insensitive normalization
+    if not case_sensitive:
+        col_expr_compare = F.lower(col_expr)
+        allowed_cols_compare = [F.lower(c) for c in allowed_cols_display]
+
+    condition = col_expr.isNull() | ~col_expr_compare.isin(*allowed_cols_compare)
     return make_condition(
         condition,
         F.concat_ws(
@@ -162,7 +175,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
             F.lit("Value '"),
             F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
             F.lit(f"' in Column '{col_expr_str}' is null or not in the allowed list: ["),
-            F.concat_ws(", ", *allowed_cols),
+            F.concat_ws(", ", *allowed_cols_display),
             F.lit("]"),
         ),
         f"{col_str_norm}_is_null_or_is_not_in_the_list",
@@ -170,13 +183,14 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
 
 
 @register_rule("row")
-def is_in_list(column: str | Column, allowed: list) -> Column:
+def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are present in the list of allowed values
-    (null values are allowed).
+    (null values are allowed). Can optionally perform a case-insensitive comparison.
 
     Args:
         column: column to check; can be a string column name or a column expression
         allowed: list of allowed values (actual values or Column objects)
+        case_sensitive: whether to perform a case-sensitive comparison (default: True)
 
     Returns:
         Column object for condition
@@ -194,9 +208,21 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
     if not allowed:
         raise InvalidParameterError("allowed list must not be empty.")
 
-    allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
+    # Keep original values for display in error message
+    allowed_cols_display = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
+
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    condition = ~col_expr.isin(*allowed_cols)
+
+    # Create columns for comparison
+    allowed_cols_compare = allowed_cols_display[:]
+    col_expr_compare = col_expr
+
+    # Case-insensitive normalization
+    if not case_sensitive:
+        col_expr_compare = F.lower(col_expr)
+        allowed_cols_compare = [F.lower(c) for c in allowed_cols_display]
+
+    condition = ~col_expr_compare.isin(*allowed_cols_compare)
     return make_condition(
         condition,
         F.concat_ws(
@@ -204,7 +230,7 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
             F.lit("Value '"),
             F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
             F.lit(f"' in Column '{col_expr_str}' is not in the allowed list: ["),
-            F.concat_ws(", ", *allowed_cols),
+            F.concat_ws(", ", *allowed_cols_display),
             F.lit("]"),
         ),
         f"{col_str_norm}_is_not_in_the_list",
