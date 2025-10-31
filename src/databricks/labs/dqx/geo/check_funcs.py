@@ -456,7 +456,7 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
 
 @register_rule("row")
 def has_area_equal_to(
-    column: str | Column, value: int | float | str | Column, srid: int | Column | None = None, geodesic: bool = False
+    column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are equal to a specified value. By default, the 2D Cartesian
@@ -490,7 +490,7 @@ def has_area_equal_to(
 
 @register_rule("row")
 def has_area_not_equal_to(
-    column: str | Column, value: int | float | str | Column, srid: int | Column | None = None, geodesic: bool = False
+    column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D Cartesian
@@ -524,7 +524,7 @@ def has_area_not_equal_to(
 
 @register_rule("row")
 def has_area_less_than(
-    column: str | Column, value: int | float | str | Column, srid: int | Column | None = None, geodesic: bool = False
+    column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not greater than a specified limit. By default, the 2D
@@ -558,7 +558,7 @@ def has_area_less_than(
 
 @register_rule("row")
 def has_area_greater_than(
-    column: str | Column, value: int | float | str | Column, srid: int | Column | None = None, geodesic: bool = False
+    column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not less than a specified limit. By default, the 2D
@@ -711,7 +711,7 @@ def _compare_sql_function_result(
     compare_op: Callable[[Column, Column], Column],
     compare_op_label: str,
     compare_op_name: str,
-    srid: int | Column | None = None,
+    srid: int | None = None,
     geodesic: bool = False,
 ) -> Column:
     """
@@ -744,8 +744,7 @@ def _compare_sql_function_result(
         spatial_conversion_expr = f"try_to_geography({col_str_norm}"
         spatial_data_type = "geography"
     elif srid:
-        srid_expr = _get_limit_expr(srid)
-        spatial_conversion_expr = f"try_to_geometry({col_str_norm}, {srid_expr})"
+        spatial_conversion_expr = f"try_to_geometry({col_str_norm}, {srid})"
         spatial_data_type = "geometry"
     else:
         spatial_conversion_expr = f"try_to_geometry({col_str_norm})"
