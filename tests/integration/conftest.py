@@ -7,10 +7,12 @@ from unittest.mock import patch
 from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame
 import pytest
+from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 
@@ -198,6 +200,19 @@ def setup_workflows_with_custom_folder(
         ws.workspace.delete(checks_location)
 
     yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
+
+
+class TestInstallationMixin(InstallationMixin):
+    def get_my_username(self):
+        return self._my_username
+
+    def get_me(self):
+        return self._me
+
+    def get_installation(
+        self, product_name: str, assume_user: bool = True, install_folder: str | None = None
+    ) -> Installation:
+        return self._get_installation(product_name, assume_user, install_folder)
 
 
 def _setup_workflows_deps(

@@ -16,7 +16,7 @@ from pyspark.sql.streaming import StreamingQuery
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.checks_serializer import deserialize_checks
-from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
     BaseChecksStorageHandlerFactory,
@@ -457,14 +457,14 @@ class DQEngine(DQEngineBase):
         engine: DQEngineCore | None = None,
         extra_params: ExtraParams | None = None,
         checks_handler_factory: BaseChecksStorageHandlerFactory | None = None,
-        run_config_loader: RunConfigLoader | None = None,
+        config_serializer: ConfigSerializer | None = None,
         observer: DQMetricsObserver | None = None,
     ):
         super().__init__(workspace_client)
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
         self._engine = engine or DQEngineCore(workspace_client, spark, extra_params, observer)
-        self._run_config_loader = run_config_loader or RunConfigLoader(workspace_client)
+        self._config_serializer = config_serializer or ConfigSerializer(workspace_client)
         self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
         )
@@ -944,7 +944,7 @@ class DQEngine(DQEngineBase):
             raise InvalidConfigError("At least one of 'output_df' or 'quarantine_df' Dataframe must be present.")
 
         if output_df is not None and output_config is None:
-            run_config = self._run_config_loader.load_run_config(
+            run_config = self._config_serializer.load_run_config(
                 run_config_name=run_config_name,
                 assume_user=assume_user,
                 product_name=product_name,
@@ -953,7 +953,7 @@ class DQEngine(DQEngineBase):
             output_config = run_config.output_config
 
         if quarantine_df is not None and quarantine_config is None:
-            run_config = self._run_config_loader.load_run_config(
+            run_config = self._config_serializer.load_run_config(
                 run_config_name=run_config_name,
                 assume_user=assume_user,
                 product_name=product_name,
@@ -962,7 +962,7 @@ class DQEngine(DQEngineBase):
             quarantine_config = run_config.quarantine_config
 
         if self._engine.observer and metrics_config is None:
-            run_config = self._run_config_loader.load_run_config(
+            run_config = self._config_serializer.load_run_config(
                 run_config_name=run_config_name,
                 assume_user=assume_user,
                 product_name=product_name,

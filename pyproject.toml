@@ -10,6 +10,7 @@ maintainers = [
     { name = "Databricks Labs", email = "labs-oss@databricks.com" },
     { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
     { name = "Alex Ott", email = "alexey.ott@databricks.com" },
+    { name = "Greg Hansen", email = "gregory.hansen@databricks.com" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
