@@ -1582,8 +1582,7 @@ def compare_datasets(
     *,
     check_missing_records: bool | None = False,
     exclude_columns: list[str | Column] | None = None,
-    null_safe_row_matching: bool | None = True,
-    null_safe_column_value_matching: bool | None = True,
+    null_safe_matching: bool | dict[str, bool] | None = True,
     row_filter: str | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
@@ -1631,9 +1630,10 @@ def compare_datasets(
         column expressions are supported, e.g. F.col("col_name"). This parameter does not alter
         the list of columns used to determine row matches; it only controls which columns are
         skipped during the column value comparison.
-      null_safe_row_matching: If True, treats nulls as equal when matching rows.
-      null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
-        If enabled, (NULL, NULL) column values are equal and matching.
+      null_safe_matching: Controls null handling in comparisons. Can be:
+        - bool: If True, treats nulls as equal for both row matching and column value matching.
+        - dict: Fine-grained control with keys 'row' and 'value' (e.g., {'row': True, 'value': False}).
+        Defaults to True (null-safe for both).
       row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected
         from the check filter.
       abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
@@ -1671,6 +1671,14 @@ def compare_datasets(
     pk_column_names, ref_pk_column_names, exclude_column_names, check_alias = _prepare_column_names(
         columns, ref_columns, exclude_columns
     )
+
+    # Extract null-safe matching settings
+    if isinstance(null_safe_matching, dict):
+        null_safe_row_matching = null_safe_matching.get("row", True)
+        null_safe_column_value_matching = null_safe_matching.get("value", True)
+    else:
+        null_safe_row_matching = null_safe_matching if null_safe_matching is not None else True
+        null_safe_column_value_matching = null_safe_matching if null_safe_matching is not None else True
 
     enable_llm_detection, _llm_options = _initialize_llm_options(llm_matching_key_detection_options)
     unique_id = uuid.uuid4().hex

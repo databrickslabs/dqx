@@ -277,6 +277,7 @@ class DatabricksPrimaryKeyDetector:
         show_live_reasoning: bool = True,
         max_retries: int = 3,
         chat_databricks_cls=None,
+        detector_cls=None,
     ):
         self.table = table
         self.context = context
@@ -285,7 +286,7 @@ class DatabricksPrimaryKeyDetector:
         self.validate_duplicates = validate_duplicates
         self.fail_on_duplicates = fail_on_duplicates
         self.spark = spark_session
-        self.detector = dspy.ChainOfThought(PrimaryKeyDetection)
+        self.detector = detector_cls if detector_cls else dspy.ChainOfThought(PrimaryKeyDetection)
         self.spark_manager = SparkManager(spark_session)
         self.show_live_reasoning = show_live_reasoning
         self.max_retries = max_retries
