@@ -1,5 +1,6 @@
 import abc
 from functools import cached_property
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
@@ -11,6 +12,7 @@ __all__ = [
     "InputConfig",
     "OutputConfig",
     "ExtraParams",
+    "LLMConfig",
     "ProfilerConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
@@ -41,21 +43,17 @@ class OutputConfig:
     format: str = "delta"
     mode: str = "append"
     options: dict[str, str] = field(default_factory=dict)
-    trigger: dict[str, str | bool] = field(default_factory=dict)
+    trigger: dict[str, bool | str] = field(default_factory=dict)
 
-    def __post_init__(self):
-        """
-        Normalize trigger configuration by converting string boolean representations to actual booleans.
-        This is required due to the limitation of the config deserializer.
-        """
-        # Convert string representations of booleans to actual booleans
-        for key, value in list(self.trigger.items()):
-            if isinstance(value, str):
-                if value.lower() == 'true':
-                    self.trigger[key] = True
-                elif value.lower() == 'false':
-                    self.trigger[key] = False
-                # Otherwise keep it as a string (e.g., "10 seconds" for processingTime)
+
+@dataclass
+class LLMConfig:
+    """Configuration class for LLM-assisted features."""
+
+    # Primary Key Detection Configuration
+    # Note: LLM-based PK detection requires: pip install databricks-labs-dqx[llm]
+    enable_pk_detection: bool = False
+    pk_detection_endpoint: str = "databricks-meta-llama-3-1-8b-instruct"
 
 
 @dataclass
@@ -68,6 +66,9 @@ class ProfilerConfig:
     limit: int = 1000  # limit the number of records to profile
     filter: str | None = None  # filter to apply to the data before profiling
 
+    # LLM-assisted features configuration
+    llm_config: LLMConfig = field(default_factory=LLMConfig)
+
 
 @dataclass
 class RunConfig:
@@ -77,7 +78,6 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
-    metrics_config: OutputConfig | None = None  # summary metrics table
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
 
     checks_location: str = (
@@ -97,14 +97,17 @@ class RunConfig:
     lakebase_port: str | None = None
 
 
+def _default_run_time() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 @dataclass(frozen=True)
 class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
     result_column_names: dict[str, str] = field(default_factory=dict)
+    run_time: str = field(default_factory=_default_run_time)
     user_metadata: dict[str, str] = field(default_factory=dict)
-    run_time_overwrite: str | None = None
-    run_id_overwrite: str | None = None
 
 
 @dataclass
@@ -119,7 +122,7 @@ class WorkspaceConfig:
 
     # whether to use serverless clusters for the jobs, only used during workspace installation
     serverless_clusters: bool = True
-    extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. result_column_names
+    extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. run_time
 
     # cluster configuration for the jobs (applicable for non-serverless clusters only)
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
@@ -133,7 +136,6 @@ class WorkspaceConfig:
 
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
-    custom_metrics: list[str] | None = None  # custom summary metrics tracked by the observer when applying checks
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
@@ -163,13 +165,7 @@ class WorkspaceConfig:
 
 @dataclass
 class BaseChecksStorageConfig(abc.ABC):
-    """Marker base class for storage configuration.
-
-    Args:
-        location: The file path or table name where checks are stored.
-    """
-
-    location: str
+    """Marker base class for storage configuration."""
 
 
 @dataclass
@@ -242,7 +238,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     instance_name: str | None = None
     user: str | None = None
-    location: str
+    location: str | None = None
     port: str = "5432"
     run_config_name: str = "default"
     mode: str = "overwrite"

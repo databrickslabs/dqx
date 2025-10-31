@@ -1205,8 +1205,7 @@ def test_compare_dataset_disabled_null_safe_row_matching(spark: SparkSession):
         ref_columns=columns,  # columns are matched by position, so the order of columns must align exactly
         ref_df_name="df_ref",
         check_missing_records=True,
-        null_safe_row_matching=False,
-        null_safe_column_value_matching=True,
+        null_safe_matching={"row": False, "value": True},
     )
 
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
@@ -1305,7 +1304,7 @@ def test_compare_dataset_disabled_null_safe_column_value_matching(spark: SparkSe
         ref_columns=columns,
         ref_df_name="df_ref",
         check_missing_records=True,
-        null_safe_column_value_matching=False,
+        null_safe_matching={"row": True, "value": False},
     )
 
     actual: DataFrame = apply(df, spark, {"df_ref": df_ref})
