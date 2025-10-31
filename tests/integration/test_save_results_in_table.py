@@ -4,6 +4,7 @@ from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidConfigError
 
 
 def test_save_results_in_table(ws, spark, make_schema, make_random):
@@ -280,6 +281,14 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     assert (
         spark.sql(f"SHOW TABLES FROM {catalog_name}.{schema.name} LIKE '{quarantine_table}'").count() == 0
     ), "Quarantine table should not have been saved"
+
+
+def test_save_results_in_table_missing_output_and_quarantine_dfs(ws, spark):
+    engine = DQEngine(ws, spark)
+    with pytest.raises(
+        InvalidConfigError, match="At least one of 'output_df' or 'quarantine_df' Dataframe must be present."
+    ):
+        engine.save_results_in_table()
 
 
 def test_save_results_in_table_in_custom_folder_installation(

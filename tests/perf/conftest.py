@@ -48,7 +48,7 @@ def make_data_gen(
 
 @pytest.fixture
 def extra_params():
-    return ExtraParams(run_time=RUN_TIME.isoformat())
+    return ExtraParams(run_time_overwrite=RUN_TIME.isoformat())
 
 
 @pytest.fixture
