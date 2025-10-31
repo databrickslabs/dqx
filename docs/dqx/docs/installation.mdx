@@ -42,6 +42,8 @@ resources:
                 package: databricks-labs-dqx==0.8.0
 ```
 
+Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
+
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
@@ -73,8 +75,15 @@ Install DQX in your Databricks workspace via Databricks CLI:
 databricks labs install dqx
 ```
 
+As a best practice, you should always pin the version so that your code is not affected by future changes:
+```commandline
+databricks labs install dqx@v0.8.0
+```
+
 You'll be prompted to provide several configuration options.
 You can use standard Databricks CLI options like `--profile` for authentication.
+
+Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
 
 <Admonition type="tip" title="Execution Environment">
 * Make sure to have Databricks CLI v0.241 or later installed locally to avoid encountering the error: ModuleNotFoundError: No module named 'pyspark'.
@@ -209,6 +218,11 @@ run_configs:                        # <- list of run configurations, each run co
       #checkpointLocation: /Volumes/catalog1/schema1/checkpoint  # <- only applicable if input_config.is_streaming is enabled
     trigger:                             # <- optional streaming trigger, only applicable if input_config.is_streaming is enabled
       availableNow: true
+
+  metrics_config:                        # <-  optional summary metrics storage
+    format: delta
+    location: main.iot.dq_metrics
+    mode: append
 
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
