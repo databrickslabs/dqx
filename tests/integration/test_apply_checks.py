@@ -1177,7 +1177,7 @@ def test_compare_datasets_with_tolerance(ws, spark):
                 "ref_df_name": "ref_df",
                 "abs_tolerance": 1.0,  # absolute tolerance of 1
                 "rel_tolerance": 0.01,  # relative tolerance of 1%
-                "null_safe_column_value_matching": True,
+                "null_safe_matching": True,
             },
             user_metadata={"test": "tolerance"},
         ),
@@ -1280,7 +1280,7 @@ def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_ma
                 "ref_df_name": "ref_df",
                 "abs_tolerance": 1.0,  # absolute tolerance of 1
                 "rel_tolerance": 0.01,  # relative tolerance of 1%
-                "null_safe_column_value_matching": False,
+                "null_safe_matching": False,
             },
             user_metadata={"test": "tolerance"},
         ),
