@@ -67,10 +67,10 @@ You can also define your own custom checks (see [Creating custom checks](#creati
 | `has_dimension`                    | Checks whether the values in the input column are geometries of the specified dimension (2D projected dimension). This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `dimension`: dimension to check                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `has_x_coordinate_between`         | Checks whether the values in the input column are geometries with x coordinate between the provided boundaries. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                          | `column`: column to check (can be a string column name or a column expression); `min_value`: minimum value; `max_value`: maximum value                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `has_y_coordinate_between`         | Checks whether the values in the input column are geometries with y coordinate between the provided boundaries. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                          | `column`: column to check (can be a string column name or a column expression); `min_value`: minimum value; `max_value`: maximum value                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `has_area_greater_than`            | Checks whether the values in the input column are geometries with area greater than the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `value`: area value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                             |
-| `has_area_less_than`               | Checks whether the values in the input column are geometries with area less than the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression); `value`: area value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                             |
-| `has_area_equal_to`                | Checks whether the values in the input column are geometries with area equal to the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                                     | `column`: column to check (can be a string column name or a column expression); `value`: area value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                             |
-| `has_area_not_equal_to`            | Checks whether the values in the input column are geometries with area not equal to the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `value`: area value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                             |
+| `has_area_greater_than`            | Checks whether the values in the input column are geometries or geographies with area greater than the specified limit. Supports both 2D Cartesian area (geometry) and geodesic area (geography). This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `value`: area value to compare against (can be a number, column name, or SQL expression); `srid`: optional SRID for geometry conversion; `geodesic`: whether to use geodesic area calculation (default: False)                                                                                                                                                                                                                                                       |
+| `has_area_less_than`               | Checks whether the values in the input column are geometries or geographies with area less than the specified limit. Supports both 2D Cartesian area (geometry) and geodesic area (geography). This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression); `value`: area value to compare against (can be a number, column name, or SQL expression); `srid`: optional SRID for geometry conversion; `geodesic`: whether to use geodesic area calculation (default: False)                                                                                                                                                                                                                                                       |
+| `has_area_equal_to`                | Checks whether the values in the input column are geometries or geographies with area equal to the specified limit. Supports both 2D Cartesian area (geometry) and geodesic area (geography). This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `value`: area value to compare against (can be a number, column name, or SQL expression); `srid`: optional SRID for geometry conversion; `geodesic`: whether to use geodesic area calculation (default: False)                                                                                                                                                                                                                                                       |
+| `has_area_not_equal_to`            | Checks whether the values in the input column are geometries or geographies with area not equal to the specified limit. Supports both 2D Cartesian area (geometry) and geodesic area (geography). This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `value`: area value to compare against (can be a number, column name, or SQL expression); `srid`: optional SRID for geometry conversion; `geodesic`: whether to use geodesic area calculation (default: False)                                                                                                                                                                                                                                                       |
 | `has_num_points_greater_than`      | Checks whether the values in the input column are geometries with number of coordinate pairs greater than the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
 | `has_num_points_less_than`         | Checks whether the values in the input column are geometries with number of coordinate pairs less than the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                              | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
 | `has_num_points_equal_to`          | Checks whether the values in the input column are geometries with number of coordinate pairs equal to the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
@@ -616,21 +616,31 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       min_value: 0.0
       max_value: 10.0
       
-# has_area_greater_than check
+# has_area_greater_than check (geometry)
 - criticality: error
   check:
     function: has_area_greater_than
     arguments:
       column: polygon_geom
-      limit: 100.0
+      value: 100.0
       
-# has_area_less_than check
+# has_area_greater_than check (geography with geodesic area)
+- criticality: error
+  check:
+    function: has_area_greater_than
+    arguments:
+      column: geography_geom
+      value: 1000000.0  # 1 million square meters
+      geodesic: true
+      
+# has_area_less_than check (geometry with SRID)
 - criticality: error
   check:
     function: has_area_less_than
     arguments:
       column: polygon_geom
-      limit: 0.1
+      value: 0.1
+      srid: 3857
 
 # has_area_equal_to check
 - criticality: error
@@ -1141,7 +1151,7 @@ checks = [
       check_func_kwargs={"min_value": 0.0, "max_value": 10.0}
     ),
 
-    # has_area_greater_than check
+    # has_area_greater_than check (geometry)
     DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.has_area_greater_than,
@@ -1149,12 +1159,20 @@ checks = [
       check_func_kwargs={"value": 100.0}
     ),
 
-    # has_area_less_than check
+    # has_area_greater_than check (geography with geodesic area)
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.has_area_greater_than,
+      column="geography_geom",
+      check_func_kwargs={"value": 1000000.0, "geodesic": True}
+    ),
+
+    # has_area_less_than check (geometry with SRID)
     DQRowRule(
       criticality="error",
       check_func=geo_check_funcs.has_area_less_than,
       column="polygon_geom",
-      check_func_kwargs={"value": 0.1}
+      check_func_kwargs={"value": 0.1, "srid": 3857}
     ),    
     
     # has_area_equal_to check

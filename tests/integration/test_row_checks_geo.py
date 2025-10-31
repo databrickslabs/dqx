@@ -411,26 +411,47 @@ def test_has_y_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
 def test_has_area_equal_to(skip_if_runtime_not_geo_compatible, spark):
     test_df = spark.sql(
         """
-        SELECT geom FROM VALUES
-        ('POINT(0 0)'),                                         -- Point has area 0
-        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'),                 -- Unit square has area 1
-        ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))'),                 -- 2x2 square has area 4
-        ('invalid-geometry'),                                   -- Invalid geometry
-        (null)                                                  -- Null geometry
-        AS data(geom)
+        SELECT geom, geog FROM VALUES
+        ('POINT(0 0)', 'POINT(0 0)'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
+        ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
+        ('invalid-geometry', 'invalid-geography'),
+        (null, null)
+        AS data(geom, geog)
         """
     )
 
-    actual = test_df.select(has_area_equal_to("geom", 0.0))
+    actual = test_df.select(
+        has_area_equal_to("geom", 0.0).alias("basic_geometry"),
+        has_area_equal_to("geom", 1.0, srid=4326).alias("geometry_srid"),
+        has_area_equal_to("geog", 0.0, geodesic=True).alias("geography_geodesic"),
+    )
 
-    checked_schema = "geom_area_not_equal_to_limit: string"
+    checked_schema = "basic_geometry: string, geometry_srid: string, geography_geodesic: string"
     expected = spark.createDataFrame(
         [
-            [None],
-            ["value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area not equal to value: 0.0"],
-            ["value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area not equal to value: 0.0"],
-            ["value `invalid-geometry` in column `geom` is not a valid geometry"],
-            [None],
+            # Point: area=0, so basic(0==0)=None, srid(0!=1)=error, geodesic(0==0)=None
+            [None, "value `POINT(0 0)` in column `geom` has area not equal to value: 1.0", None],
+            # Unit square: area=1, so basic(1!=0)=error, srid(1==1)=None, small polygon geodesic(>0!=0)=error
+            [
+                "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area not equal to value: 0.0",
+                None,
+                "value `POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))` in column `geog` has area not equal to value: 0.0",
+            ],
+            # 2x2 square: area=4, so basic(4!=0)=error, srid(4!=1)=error, large polygon geodesic(>0!=0)=error
+            [
+                "value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area not equal to value: 0.0",
+                "value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area not equal to value: 1.0",
+                "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geog` has area not equal to value: 0.0",
+            ],
+            # Invalid geometry/geography
+            [
+                "value `invalid-geometry` in column `geom` is not a valid geometry",
+                "value `invalid-geometry` in column `geom` is not a valid geometry",
+                "value `invalid-geography` in column `geog` is not a valid geography",
+            ],
+            # Null geometry/geography
+            [None, None, None],
         ],
         checked_schema,
     )
@@ -441,26 +462,43 @@ def test_has_area_equal_to(skip_if_runtime_not_geo_compatible, spark):
 def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
     test_df = spark.sql(
         """
-        SELECT geom FROM VALUES
-        ('POINT(0 0)'),                                         -- Point has area 0
-        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'),                 -- Unit square has area 1
-        ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))'),                 -- 2x2 square has area 4
-        ('invalid-geometry'),                                   -- Invalid geometry
-        (null)                                                  -- Null geometry
-        AS data(geom)
+        SELECT geom, geog FROM VALUES
+        ('POINT(0 0)', 'POINT(0 0)'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
+        ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
+        ('invalid-geometry', 'invalid-geography'),
+        (null, null)
+        AS data(geom, geog)
         """
     )
 
-    actual = test_df.select(has_area_not_equal_to("geom", 0.0))
+    actual = test_df.select(
+        has_area_not_equal_to("geom", 0.0).alias("basic_geometry"),
+        has_area_not_equal_to("geom", 1.0, srid=3857).alias("geometry_srid"),
+        has_area_not_equal_to("geog", 0.0, geodesic=True).alias("geography_geodesic"),
+    )
 
-    checked_schema = "geom_area_equal_to_limit: string"
+    checked_schema = "basic_geometry: string, geometry_srid: string, geography_geodesic: string"
     expected = spark.createDataFrame(
         [
-            ["value `POINT(0 0)` in column `geom` has area equal to value: 0.0"],
-            [None],
-            [None],
-            ["value `invalid-geometry` in column `geom` is not a valid geometry"],
-            [None],
+            # Point: area=0, so basic(0==0)=error, srid(0!=1)=None, geodesic(0==0)=error
+            [
+                "value `POINT(0 0)` in column `geom` has area equal to value: 0.0",
+                None,
+                "value `POINT(0 0)` in column `geog` has area equal to value: 0.0",
+            ],
+            # Unit square: area=1, so basic(1!=0)=None, srid(1==1)=error, small polygon geodesic(>0!=0)=None
+            [None, "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area equal to value: 1.0", None],
+            # 2x2 square: area=4, so basic(4!=0)=None, srid(4!=1)=None, large polygon geodesic(>0!=0)=None
+            [None, None, None],
+            # Invalid geometry/geography
+            [
+                "value `invalid-geometry` in column `geom` is not a valid geometry",
+                "value `invalid-geometry` in column `geom` is not a valid geometry",
+                "value `invalid-geography` in column `geog` is not a valid geography",
+            ],
+            # Null geometry/geography
+            [None, None, None],
         ],
         checked_schema,
     )
@@ -471,26 +509,47 @@ def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
 def test_has_area_less_than(skip_if_runtime_not_geo_compatible, spark):
     test_df = spark.sql(
         """
-        SELECT geom FROM VALUES
-        ('POINT(0 0)'),                                         -- Point has area 0
-        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'),                 -- Unit square has area 1
-        ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))'),                 -- 2x2 square has area 4
-        ('invalid-geometry'),                                   -- Invalid geometry
-        (null)                                                  -- Null geometry
-        AS data(geom)
+        SELECT geom, geog FROM VALUES
+        ('POINT(0 0)', 'POINT(0 0)'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
+        ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
+        ('invalid-geometry', 'invalid-geography'),
+        (null, null)
+        AS data(geom, geog)
         """
     )
 
-    actual = test_df.select(has_area_less_than("geom", 2.0))
+    actual = test_df.select(
+        has_area_less_than("geom", 2.0).alias("basic_geometry"),
+        has_area_less_than("geom", 1.0, srid=3857).alias("geometry_srid"),
+        has_area_less_than("geog", 1000.0, geodesic=True).alias("geography_geodesic"),
+    )
 
-    checked_schema = "geom_area_greater_than_limit: string"
+    checked_schema = "basic_geometry: string, geometry_srid: string, geography_geodesic: string"
     expected = spark.createDataFrame(
         [
-            [None],
-            [None],
-            ["value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area greater than value: 2.0"],
-            ["value `invalid-geometry` in column `geom` is not a valid geometry"],
-            [None],
+            # Point: area=0, so basic(0<2)=None, srid(0<1)=None, geodesic(0<1000)=None
+            [None, None, None],
+            # Unit square: area=1, so basic(1<2)=None, srid(1>=1)=error, small polygon geodesic(~123<1000)=None
+            [
+                None,
+                "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area greater than value: 1.0",
+                None,
+            ],
+            # 2x2 square: area=4, so basic(4>=2)=error, srid(4>=1)=error, large polygon geodesic(~12300>=1000)=error
+            [
+                "value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area greater than value: 2.0",
+                "value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area greater than value: 1.0",
+                "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geog` has area greater than value: 1000.0",
+            ],
+            # Invalid geometry/geography
+            [
+                "value `invalid-geometry` in column `geom` is not a valid geometry",
+                "value `invalid-geometry` in column `geom` is not a valid geometry",
+                "value `invalid-geography` in column `geog` is not a valid geography",
+            ],
+            # Null geometry/geography
+            [None, None, None],
         ],
         checked_schema,
     )
@@ -501,26 +560,47 @@ def test_has_area_less_than(skip_if_runtime_not_geo_compatible, spark):
 def test_has_area_greater_than(skip_if_runtime_not_geo_compatible, spark):
     test_df = spark.sql(
         """
-        SELECT geom FROM VALUES
-        ('POINT(0 0)'),                                         -- Point has area 0
-        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'),                 -- Unit square has area 1
-        ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))'),                 -- 2x2 square has area 4
-        ('invalid-geometry'),                                   -- Invalid geometry
-        (null)                                                  -- Null geometry
-        AS data(geom)
+        SELECT geom, geog FROM VALUES
+        ('POINT(0 0)', 'POINT(0 0)'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
+        ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
+        ('invalid-geometry', 'invalid-geography'),
+        (null, null)
+        AS data(geom, geog)
         """
     )
 
-    actual = test_df.select(has_area_greater_than("geom", 1.0))
+    actual = test_df.select(
+        has_area_greater_than("geom", 1.0).alias("basic_geometry"),
+        has_area_greater_than("geom", 2.0, srid=4326).alias("geometry_srid"),
+        has_area_greater_than("geog", 500.0, geodesic=True).alias("geography_geodesic"),
+    )
 
-    checked_schema = "geom_area_less_than_limit: string"
+    checked_schema = "basic_geometry: string, geometry_srid: string, geography_geodesic: string"
     expected = spark.createDataFrame(
         [
-            ["value `POINT(0 0)` in column `geom` has area less than value: 1.0"],
-            [None],
-            [None],
-            ["value `invalid-geometry` in column `geom` is not a valid geometry"],
-            [None],
+            # Point: area=0, so basic(0<=1)=error, srid(0<=2)=error, geodesic(0<=500)=error
+            [
+                "value `POINT(0 0)` in column `geom` has area less than value: 1.0",
+                "value `POINT(0 0)` in column `geom` has area less than value: 2.0",
+                "value `POINT(0 0)` in column `geog` has area less than value: 500.0",
+            ],
+            # Unit square: area=1, so basic(1<=1)=error, srid(1<=2)=error, small polygon geodesic(~123<=500)=error
+            [
+                None,
+                "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area less than value: 2.0",
+                "value `POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))` in column `geog` has area less than value: 500.0",
+            ],
+            # 2x2 square: area=4, so basic(4>1)=None, srid(4>2)=None, large polygon geodesic(~12300>500)=None
+            [None, None, None],
+            # Invalid geometry/geography
+            [
+                "value `invalid-geometry` in column `geom` is not a valid geometry",
+                "value `invalid-geometry` in column `geom` is not a valid geometry",
+                "value `invalid-geography` in column `geog` is not a valid geography",
+            ],
+            # Null geometry/geography
+            [None, None, None],
         ],
         checked_schema,
     )

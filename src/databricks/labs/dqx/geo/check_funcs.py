@@ -455,13 +455,18 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
 
 
 @register_rule("row")
-def has_area_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
+def has_area_equal_to(
+    column: str | Column, value: int | float | str | Column, srid: int | Column | None = None, geodesic: bool = False
+) -> Column:
     """
-    Checks if the areas of values in a geometry column are equal to a specified value.
+    Checks if the areas of values in a geometry column are equal to a specified value. By default, the 2D Cartesian
+    area in the specified coordinate reference system is used.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        value: value to use in the condition as number, column name or sql expression
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        srid: Optional integer which is the SRID of the geometry or geography value (default `None`).
+        geodesic: Whether to use the 2D geodesic area (default `False`).
 
     Returns:
         Column object indicating whether the area the geometries in the input column are equal to the provided value
@@ -478,17 +483,24 @@ def has_area_equal_to(column: str | Column, value: int | float | str | Column) -
         compare_op=py_operator.ne,
         compare_op_label="not equal to",
         compare_op_name="not_equal_to",
+        srid=srid,
+        geodesic=geodesic,
     )
 
 
 @register_rule("row")
-def has_area_not_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
+def has_area_not_equal_to(
+    column: str | Column, value: int | float | str | Column, srid: int | Column | None = None, geodesic: bool = False
+) -> Column:
     """
-    Checks if the areas of values in a geometry column are not equal to a specified value.
+    Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D Cartesian
+    area in the specified coordinate reference system is used.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        value: value to use in the condition as number, column name or sql expression
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        srid: Optional integer which is the SRID of the geometry or geography value (default `None`).
+        geodesic: Whether to use the 2D geodesic area (default `False`).
 
     Returns:
         Column object indicating whether the area the geometries in the input column are not equal to the provided value
@@ -505,17 +517,24 @@ def has_area_not_equal_to(column: str | Column, value: int | float | str | Colum
         compare_op=py_operator.eq,
         compare_op_label="equal to",
         compare_op_name="equal_to",
+        srid=srid,
+        geodesic=geodesic,
     )
 
 
 @register_rule("row")
-def has_area_less_than(column: str | Column, value: int | float | str | Column) -> Column:
+def has_area_less_than(
+    column: str | Column, value: int | float | str | Column, srid: int | Column | None = None, geodesic: bool = False
+) -> Column:
     """
-    Checks if the areas of values in a geometry column are not greater than a specified limit.
+    Checks if the areas of values in a geometry column are not greater than a specified limit. By default, the 2D
+    Cartesian area in the specified coordinate reference system is used.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        value: value to use in the condition as number, column name or sql expression
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        srid: Optional integer which is the SRID of the geometry or geography value (default `None`).
+        geodesic: Whether to use the 2D geodesic area (default `False`).
 
     Returns:
         Column object indicating whether the area the geometries in the input column is greater than the provided value
@@ -532,17 +551,24 @@ def has_area_less_than(column: str | Column, value: int | float | str | Column) 
         compare_op=py_operator.gt,
         compare_op_label="greater than",
         compare_op_name="greater_than",
+        srid=srid,
+        geodesic=geodesic,
     )
 
 
 @register_rule("row")
-def has_area_greater_than(column: str | Column, value: int | float | str | Column) -> Column:
+def has_area_greater_than(
+    column: str | Column, value: int | float | str | Column, srid: int | Column | None = None, geodesic: bool = False
+) -> Column:
     """
-    Checks if the areas of values in a geometry column are not less than a specified limit.
+    Checks if the areas of values in a geometry column are not less than a specified limit. By default, the 2D
+    Cartesian area in the specified coordinate reference system is used.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        value: value to use in the condition as number, column name or sql expression
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        srid: Optional integer which is the SRID of the geometry or geography value (default `None`).
+        geodesic: Whether to use the 2D geodesic area (default `False`).
 
     Returns:
         Column object indicating whether the area the geometries in the input column is less than the provided value
@@ -559,6 +585,8 @@ def has_area_greater_than(column: str | Column, value: int | float | str | Colum
         compare_op=py_operator.lt,
         compare_op_label="less than",
         compare_op_name="less_than",
+        srid=srid,
+        geodesic=geodesic,
     )
 
 
@@ -568,8 +596,8 @@ def has_num_points_equal_to(column: str | Column, value: int | float | str | Col
     Checks if the number of coordinate pairs in values of a geometry column is equal to a specified value.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        value: value to use in the condition as number, column name or sql expression
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -596,8 +624,8 @@ def has_num_points_not_equal_to(column: str | Column, value: int | float | str |
     Checks if the number of coordinate pairs in values of a geometry column is not equal to a specified value.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        value: value to use in the condition as number, column name or sql expression
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is not
@@ -624,8 +652,8 @@ def has_num_points_less_than(column: str | Column, value: int | float | str | Co
     Checks if the number of coordinate pairs in the values of a geometry column is not greater than a specified limit.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        value: value to use in the condition as number, column name or sql expression
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -652,8 +680,8 @@ def has_num_points_greater_than(column: str | Column, value: int | float | str |
     Checks if the number of coordinate pairs in values of a geometry column is not less than a specified limit.
 
     Args:
-        column: column to check; can be a string column name or a column expression
-        value: value to use in the condition as number, column name or sql expression
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
 
     Returns:
         Column object indicating whether the number of coordinate pairs in the geometries of the input column is
@@ -683,6 +711,8 @@ def _compare_sql_function_result(
     compare_op: Callable[[Column, Column], Column],
     compare_op_label: str,
     compare_op_name: str,
+    srid: int | Column | None = None,
+    geodesic: bool = False,
 ) -> Column:
     """
     Compares the results from applying a spatial SQL function (e.g. `st_area`) on a geometry column against a limit
@@ -697,6 +727,8 @@ def _compare_sql_function_result(
         compare_op: Comparison operator (e.g., `operator.gt`, `operator.lt`).
         compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+        srid: Optional integer which is the SRID of the converted geometry or geography value (default `None`).
+        geodesic: Whether to convert the input column to a geography type for computing geodesic distances.
 
     Returns:
         Column object indicating whether the area the geometries in the input column is less than the provided limit
@@ -708,11 +740,25 @@ def _compare_sql_function_result(
     value_expr = _get_limit_expr(value)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_area` functions.
-    is_valid_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
+    if geodesic:
+        spatial_conversion_expr = f"try_to_geography({col_str_norm}"
+        spatial_data_type = "geography"
+    elif srid:
+        srid_expr = _get_limit_expr(srid)
+        spatial_conversion_expr = f"try_to_geometry({col_str_norm}, {srid_expr})"
+        spatial_data_type = "geometry"
+    else:
+        spatial_conversion_expr = f"try_to_geometry({col_str_norm})"
+        spatial_data_type = "geometry"
+
+    is_valid_cond = F.expr(f"{spatial_conversion_expr} IS NULL")
     is_valid_message = F.concat_ws(
-        "", F.lit("value `"), col_expr.cast("string"), F.lit(f"` in column `{col_expr_str}` is not a valid geometry")
+        "",
+        F.lit("value `"),
+        col_expr.cast("string"),
+        F.lit(f"` in column `{col_expr_str}` is not a valid {spatial_data_type}"),
     )
-    compare_cond = compare_op(F.expr(f"{spatial_function}(try_to_geometry({col_str_norm}))"), value_expr)
+    compare_cond = compare_op(F.expr(f"{spatial_function}({spatial_conversion_expr})"), value_expr)
     compare_message = F.concat_ws(
         "",
         F.lit("value `"),

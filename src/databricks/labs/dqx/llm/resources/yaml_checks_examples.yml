@@ -410,13 +410,21 @@
     function: has_area_greater_than
     arguments:
       column: polygon_geom
-      limit: 100.0
+      value: 100.0
+- criticality: error
+  check:
+    function: has_area_greater_than
+    arguments:
+      column: geography_geom
+      value: 1000000.0
+      geodesic: true
 - criticality: error
   check:
     function: has_area_less_than
     arguments:
       column: polygon_geom
-      limit: 0.1
+      value: 0.1
+      srid: 3857
 - criticality: error
   check:
     function: has_area_equal_to
