@@ -111,21 +111,29 @@ python="3.12" # must match the version required by databricks-connect and python
 path = ".venv"
 
 [tool.hatch.envs.default.scripts]
-test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
-coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
-integration = "pytest tests/integration/ -n 5 --cov --cov-report=xml --timeout 1200 --durations 20"
-e2e         = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-perf         = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-fmt         = ["black .",
-               "ruff check . --fix",
-               "mypy .",
-               "pylint --output-format=colorized -j 0 src tests"]
-verify      = ["black --check .",
-               "ruff check .",
-               "mypy .",
-               "pylint --output-format=colorized -j 0 src tests"]
+test            = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
+test_coverage   = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
+# Note that integration tests are controlled by the acceptance action (e.g. running 10 tests in parallel):
+# https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
+# This integration config is only used when running integration tests locally.
+integration     = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 1200 --durations 20"
+e2e             = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+perf            = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+fmt             = ["black .",
+                    "ruff check . --fix",
+                    "mypy .",
+                    "pylint --output-format=colorized -j 0 src tests"]
+verify          = ["black --check .",
+                    "ruff check .",
+                    "mypy .",
+                    "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
 extract_checks_examples = "python src/databricks/labs/dqx/llm/extract_checks_examples.py"
+combine_coverage = [
+  "coverage combine", # combine binary coverage data files
+  "coverage xml -o coverage-integration.xml",  # generate XML report
+  "coverage erase" # remove coverage data files
+]
 
 [tool.hatch.envs.docs]
 dependencies = ["pydoc-markdown>=4.8.2"]
@@ -193,7 +201,12 @@ branch = true
 parallel = true
 
 [tool.coverage.report]
-omit = ["*/working-copy/*", 'src/databricks/labs/dqx/__main__.py']
+omit = [
+    "*/working-copy/*",
+    "src/databricks/__init__.py",
+    "src/databricks/labs/__init__.py",
+    "src/databricks/labs/dqx/__main__.py"
+]
 exclude_lines = [
     "no cov",
     "if __name__ == .__main__.:",
@@ -408,7 +421,7 @@ method-naming-style = "snake_case"
 
 # Regular expression matching correct method names. Overrides method-naming-
 # style. If left empty, method names will be checked with the set naming style.
-method-rgx = "[a-z_][a-z0-9_]{2,}$"
+method-rgx = "[a-z_][a-z0-9_]{1,}$"
 
 # Naming style matching correct module names.
 module-naming-style = "snake_case"

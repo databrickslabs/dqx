@@ -430,6 +430,8 @@ def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, 
 class ChecksDummyStorageConfig(BaseChecksStorageConfig):
     """Dummy storage config for testing unsupported storage type."""
 
+    location: str = "test_location"
+
 
 def test_load_checks_invalid_storage_config(ws, spark):
     engine = DQEngine(ws, spark)

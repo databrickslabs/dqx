@@ -56,7 +56,7 @@ def test_create_unsupported_config():
     class UnsupportedConfig(BaseChecksStorageConfig):
         pass
 
-    config = UnsupportedConfig()
+    config = UnsupportedConfig(location="INVALID")
     with pytest.raises(InvalidConfigError, match="Unsupported storage config type"):
         STORAGE_FACTORY.create(config)
 
