@@ -413,7 +413,7 @@ def test_has_area_equal_to(skip_if_runtime_not_geo_compatible, spark):
         """
         SELECT geom, geog FROM VALUES
         ('POINT(0 0)', 'POINT(0 0)'),
-        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))'),
         ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
         ('invalid-geometry', 'invalid-geography'),
         (null, null)
@@ -436,7 +436,7 @@ def test_has_area_equal_to(skip_if_runtime_not_geo_compatible, spark):
             [
                 "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area not equal to value: 0.0",
                 None,
-                "value `POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))` in column `geog` has area not equal to value: 0.0",
+                "value `POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))` in column `geog` has area not equal to value: 0.0",
             ],
             # 2x2 square: area=4, so basic(4!=0)=error, srid(4!=1)=error, large polygon geodesic(>0!=0)=error
             [
@@ -464,7 +464,7 @@ def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
         """
         SELECT geom, geog FROM VALUES
         ('POINT(0 0)', 'POINT(0 0)'),
-        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))'),
         ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
         ('invalid-geometry', 'invalid-geography'),
         (null, null)
@@ -511,7 +511,7 @@ def test_has_area_less_than(skip_if_runtime_not_geo_compatible, spark):
         """
         SELECT geom, geog FROM VALUES
         ('POINT(0 0)', 'POINT(0 0)'),
-        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))'),
         ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
         ('invalid-geometry', 'invalid-geography'),
         (null, null)
@@ -536,7 +536,7 @@ def test_has_area_less_than(skip_if_runtime_not_geo_compatible, spark):
                 "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area greater than value: 1.0",
                 None,
             ],
-            # 2x2 square: area=4, so basic(4>=2)=error, srid(4>=1)=error, large polygon geodesic(~12300>=1000)=error
+            # 2x2 square: area=4, so basic(4>=2)=error, srid(4>=1)=error, large polygon geodesic(~1.23M>=1000)=error
             [
                 "value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area greater than value: 2.0",
                 "value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area greater than value: 1.0",
@@ -562,7 +562,7 @@ def test_has_area_greater_than(skip_if_runtime_not_geo_compatible, spark):
         """
         SELECT geom, geog FROM VALUES
         ('POINT(0 0)', 'POINT(0 0)'),
-        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))'),
         ('POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
         ('invalid-geometry', 'invalid-geography'),
         (null, null)
@@ -589,9 +589,9 @@ def test_has_area_greater_than(skip_if_runtime_not_geo_compatible, spark):
             [
                 None,
                 "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area less than value: 2.0",
-                "value `POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))` in column `geog` has area less than value: 500.0",
+                "value `POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))` in column `geog` has area less than value: 500.0",
             ],
-            # 2x2 square: area=4, so basic(4>1)=None, srid(4>2)=None, large polygon geodesic(~12300>500)=None
+            # 2x2 square: area=4, so basic(4>1)=None, srid(4>2)=None, large polygon geodesic(~1.23M>500)=None
             [None, None, None],
             # Invalid geometry/geography
             [
