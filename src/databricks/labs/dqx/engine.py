@@ -10,7 +10,6 @@ from uuid import uuid4
 
 import pyspark
 import pyspark.sql.functions as F
-from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, Observation, SparkSession
 from pyspark.sql.streaming import StreamingQuery
 
@@ -1229,5 +1228,5 @@ class DQEngine(DQEngineBase):
 
         try:
             log_telemetry(self.ws, "dlt", "true" if self.spark.conf.get('pipelines.id', None) else "false")
-        except AnalysisException:
+        except Exception:
             pass  # in non-dlt serverless cluster this will raise an error
