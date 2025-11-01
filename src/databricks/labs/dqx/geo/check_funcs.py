@@ -744,7 +744,7 @@ def _compare_sql_function_result(
         spatial_conversion_expr = f"try_to_geography({col_str_norm})"
         spatial_data_type = "geography"
     elif srid:
-        spatial_conversion_expr = f"try_to_geometry({col_str_norm}, {srid})"
+        spatial_conversion_expr = f"st_setsrid(try_to_geometry({col_str_norm}), {srid})"
         spatial_data_type = "geometry"
     else:
         spatial_conversion_expr = f"try_to_geometry({col_str_norm})"
