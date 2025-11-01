@@ -6129,6 +6129,54 @@ def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compa
             column=F.col("polygon_geom"),
             check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
         ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_area_greater_than,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"value": 0.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_area_less_than,
+            column=F.col("point_geom"),
+            check_func_kwargs={"value": 1.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_area_equal_to,
+            column=F.col("point_geom"),
+            check_func_kwargs={"value": 0.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_area_not_equal_to,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"value": 0.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_num_points_greater_than,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"value": 2},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_num_points_less_than,
+            column=F.col("point_geom"),
+            check_func_kwargs={"value": 2},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_num_points_equal_to,
+            column=F.col("point_geom"),
+            check_func_kwargs={"value": 1},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.has_num_points_not_equal_to,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"value": 2},
+        ),
     ]
 
     dq_engine = DQEngine(ws)
