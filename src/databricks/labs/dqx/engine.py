@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pyspark
 import pyspark.sql.functions as F
+from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, Observation, SparkSession
 from pyspark.sql.streaming import StreamingQuery
 
@@ -484,7 +485,7 @@ class DQEngine(DQEngineBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        self._log_telemetry_for_streaming(df)
         return self._engine.apply_checks(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_split")
@@ -507,7 +508,7 @@ class DQEngine(DQEngineBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
-        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        self._log_telemetry_for_streaming(df)
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_by_metadata")
@@ -534,7 +535,7 @@ class DQEngine(DQEngineBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        self._log_telemetry_for_streaming(df)
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
@@ -563,7 +564,7 @@ class DQEngine(DQEngineBase):
             with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
             quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        self._log_telemetry_for_streaming(df)
         return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
@@ -1222,3 +1223,11 @@ class DQEngine(DQEngineBase):
             output_query.awaitTermination()
         if quarantine_query and quarantine_config and is_one_time_trigger(quarantine_config.trigger):
             quarantine_query.awaitTermination()
+
+    def _log_telemetry_for_streaming(self, df):
+        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+
+        try:
+            log_telemetry(self.ws, "dlt", "true" if self.spark.conf.get('pipelines.id', None) else "false")
+        except AnalysisException:
+            pass  # in non-dlt serverless cluster this will raise an error
