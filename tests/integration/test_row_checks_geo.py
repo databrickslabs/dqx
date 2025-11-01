@@ -530,13 +530,13 @@ def test_has_area_less_than(skip_if_runtime_not_geo_compatible, spark):
         [
             # Point: area=0, so basic(0<2)=None, srid(0<1)=None, geodesic(0<1000)=None
             [None, None, None],
-            # Unit square: area=1, so basic(1<2)=None, srid(1>=1)=error, small polygon geodesic(~123<1000)=None
+            # Unit square: area=1, so basic(1<2)=None, srid(1=1)=None, small polygon geodesic(~123<1000)=None
             [
                 None,
-                "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area greater than value: 1.0",
+                None,
                 None,
             ],
-            # 2x2 square: area=4, so basic(4>=2)=error, srid(4>=1)=error, large polygon geodesic(~1.23M>=1000)=error
+            # 2x2 square: area=4, so basic(4>2)=error, srid(4>1)=error, large polygon geodesic(~1.23M>1000)=error
             [
                 "value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area greater than value: 2.0",
                 "value `POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))` in column `geom` has area greater than value: 1.0",
@@ -579,13 +579,13 @@ def test_has_area_greater_than(skip_if_runtime_not_geo_compatible, spark):
     checked_schema = "basic_geometry: string, geometry_srid: string, geography_geodesic: string"
     expected = spark.createDataFrame(
         [
-            # Point: area=0, so basic(0<=1)=error, srid(0<=2)=error, geodesic(0<=500)=error
+            # Point: area=0, so basic(0<1)=error, srid(0<2)=error, geodesic(0<500)=error
             [
                 "value `POINT(0 0)` in column `geom` has area less than value: 1.0",
                 "value `POINT(0 0)` in column `geom` has area less than value: 2.0",
                 "value `POINT(0 0)` in column `geog` has area less than value: 500.0",
             ],
-            # Unit square: area=1, so basic(1<=1)=error, srid(1<=2)=error, small polygon geodesic(~123<=500)=error
+            # Unit square: area=1, so basic(1=1)=None, srid(1<2)=error, small polygon geodesic(~123<500)=error
             [
                 None,
                 "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area less than value: 2.0",
