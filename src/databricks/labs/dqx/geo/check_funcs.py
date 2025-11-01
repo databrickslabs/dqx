@@ -457,7 +457,7 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
 
 @register_rule("row")
 def has_area_equal_to(
-    column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
+    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
 ) -> Column:
     """
     Checks if the areas of values in a geometry or geography column are equal to a specified value. By default, the 2D
@@ -494,7 +494,7 @@ def has_area_equal_to(
 
 @register_rule("row")
 def has_area_not_equal_to(
-    column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
+    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D
@@ -531,7 +531,7 @@ def has_area_not_equal_to(
 
 @register_rule("row")
 def has_area_less_than(
-    column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
+    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not greater than a specified limit. By default, the 2D
