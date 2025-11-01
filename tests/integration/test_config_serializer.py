@@ -85,6 +85,22 @@ def test_save_workspace_config_in_user_installation(ws, installation_ctx, spark)
     assert actual_config == config
 
 
+def test_update_workspace_config_in_user_installation(ws, installation_ctx, spark):
+    installation_ctx.installation.save(installation_ctx.config)
+
+    config = installation_ctx.config
+    run_config = installation_ctx.config.get_run_config("default")
+    run_config.checks_location = "fake_location"
+
+    product_name = installation_ctx.product_info.product_name()
+    ConfigSerializer(ws).save_config(config=config, assume_user=True, product_name=product_name)
+
+    actual_config = ConfigSerializer(ws).load_config(assume_user=True, product_name=product_name)
+
+    assert actual_config == config
+    assert actual_config.get_run_config("default") == run_config
+
+
 def test_save_workspace_config_in_global_installation(ws, installation_ctx):
     product_name = installation_ctx.product_info.product_name()
     with patch.object(Installation, '_global_installation', return_value=f"/Shared/{product_name}"):
@@ -100,7 +116,7 @@ def test_save_workspace_config_in_global_installation(ws, installation_ctx):
         assert actual_config == config
 
 
-def test_save_run_config_in_user_installation(ws, installation_ctx):
+def test_save_run_config_new_in_user_installation(ws, installation_ctx):
     installation_ctx.installation.save(installation_ctx.config)
 
     run_config = RunConfig(name="fake")
@@ -116,6 +132,20 @@ def test_save_run_config_in_user_installation(ws, installation_ctx):
         run_config_name="default", assume_user=True, product_name=product_name
     )
     assert actual_default_run_config == installation_ctx.config.get_run_config("default")
+
+
+def test_update_run_config_in_user_installation(ws, installation_ctx):
+    installation_ctx.installation.save(installation_ctx.config)
+
+    run_config = installation_ctx.config.get_run_config("default")
+    run_config.checks_location = "fake_location"
+    product_name = installation_ctx.product_info.product_name()
+    ConfigSerializer(ws).save_run_config(run_config=run_config, assume_user=True, product_name=product_name)
+
+    actual_run_config = ConfigSerializer(ws).load_run_config(
+        run_config_name="default", assume_user=True, product_name=product_name
+    )
+    assert actual_run_config == installation_ctx.config.get_run_config("default")
 
 
 def test_save_run_config_in_global_installation(ws, installation_ctx):
