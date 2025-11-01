@@ -741,7 +741,7 @@ def _compare_sql_function_result(
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_area` functions.
     if geodesic:
-        spatial_conversion_expr = f"try_to_geography({col_str_norm}"
+        spatial_conversion_expr = f"try_to_geography({col_str_norm})"
         spatial_data_type = "geography"
     elif srid:
         spatial_conversion_expr = f"try_to_geometry({col_str_norm}, {srid})"
