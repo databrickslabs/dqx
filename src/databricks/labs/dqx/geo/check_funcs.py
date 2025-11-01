@@ -14,6 +14,7 @@ MULTIPOINT_TYPE = "ST_MultiPoint"
 MULTILINESTRING_TYPE = "ST_MultiLineString"
 MULTIPOLYGON_TYPE = "ST_MultiPolygon"
 GEOMETRYCOLLECTION_TYPE = "ST_GeometryCollection"
+DEFAULT_SRID = 4326
 
 
 @register_rule("row")
@@ -459,13 +460,16 @@ def has_area_equal_to(
     column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
 ) -> Column:
     """
-    Checks if the areas of values in a geometry column are equal to a specified value. By default, the 2D Cartesian
-    area in the specified coordinate reference system is used.
+    Checks if the areas of values in a geometry or geography column are equal to a specified value. By default, the 2D
+    Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to
+    transform the input values and compute areas with specific units of measure.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
-        srid: Optional integer which is the SRID of the geometry or geography value (default `None`).
+        srid: Optional integer SRID to use for computing the area of the geometry or geography value (default `None`).
+            If an SRID is provided, the input value is translated and area is calculated using the units of measure of
+            the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
 
     Returns:
@@ -493,13 +497,16 @@ def has_area_not_equal_to(
     column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
 ) -> Column:
     """
-    Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D Cartesian
-    area in the specified coordinate reference system is used.
+    Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D
+    Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to
+    transform the input values and compute areas with specific units of measure.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
-        srid: Optional integer which is the SRID of the geometry or geography value (default `None`).
+        srid: Optional integer SRID to use for computing the area of the geometry or geography value (default `None`).
+            If an SRID is provided, the input value is translated and area is calculated using the units of measure of
+            the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
 
     Returns:
@@ -528,12 +535,15 @@ def has_area_less_than(
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not greater than a specified limit. By default, the 2D
-    Cartesian area in the specified coordinate reference system is used.
+    Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to
+    transform the input values and compute areas with specific units of measure.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
-        srid: Optional integer which is the SRID of the geometry or geography value (default `None`).
+        srid: Optional integer SRID to use for computing the area of the geometry or geography value (default `None`).
+            If an SRID is provided, the input value is translated and area is calculated using the units of measure of
+            the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
 
     Returns:
@@ -558,16 +568,19 @@ def has_area_less_than(
 
 @register_rule("row")
 def has_area_greater_than(
-    column: str | Column, value: int | float | str | Column, srid: int | None = None, geodesic: bool = False
+    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
 ) -> Column:
     """
     Checks if the areas of values in a geometry column are not less than a specified limit. By default, the 2D
-    Cartesian area in the specified coordinate reference system is used.
+    Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to
+    transform the input values and compute areas with specific units of measure.
 
     Args:
         column: Column to check; can be a string column name or a column expression
         value: Value to use in the condition as number, column name or sql expression
-        srid: Optional integer which is the SRID of the geometry or geography value (default `None`).
+        srid: Optional integer SRID to use for computing the area of the geometry or geography value (default `None`).
+            If an SRID is provided, the input value is translated and area is calculated using the units of measure of
+            the specified coordinate reference system (e.g. meters squared for `srid=3857`).
         geodesic: Whether to use the 2D geodesic area (default `False`).
 
     Returns:
@@ -727,7 +740,7 @@ def _compare_sql_function_result(
         compare_op: Comparison operator (e.g., `operator.gt`, `operator.lt`).
         compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
-        srid: Optional integer which is the SRID of the converted geometry or geography value (default `None`).
+        srid: Optional integer SRID for computing measurements on the converted geometry or geography value (default `None`).
         geodesic: Whether to convert the input column to a geography type for computing geodesic distances.
 
     Returns:
@@ -744,7 +757,7 @@ def _compare_sql_function_result(
         spatial_conversion_expr = f"try_to_geography({col_str_norm})"
         spatial_data_type = "geography"
     elif srid:
-        spatial_conversion_expr = f"st_setsrid(try_to_geometry({col_str_norm}), {srid})"
+        spatial_conversion_expr = f"st_transform(st_setsrid(try_to_geometry({col_str_norm}), {DEFAULT_SRID}), {srid})"
         spatial_data_type = "geometry"
     else:
         spatial_conversion_expr = f"try_to_geometry({col_str_norm})"
