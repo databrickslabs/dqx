@@ -437,7 +437,7 @@ def test_has_area_equal_to(skip_if_runtime_not_geo_compatible, spark):
                 "value `POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))` in column `geog` has area not equal to value: 0.0",
             ],
             [
-                "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geom` has area not equal to value: 0.0",
+                "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area not equal to value: 0.0",
                 None,  # area should = 1
                 "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geog` has area not equal to value: 0.0",
             ],
@@ -469,7 +469,7 @@ def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
 
     actual = test_df.select(
         has_area_not_equal_to("geom", 0.0).alias("basic_geometry"),
-        has_area_not_equal_to("geom", 0.000001, srid=4326).alias("geometry_srid"),
+        has_area_not_equal_to("geom", 0.0001, srid=4326).alias("geometry_srid"),
         has_area_not_equal_to("geog", 0.0, geodesic=True).alias("geography_geodesic"),
     )
 
@@ -483,12 +483,12 @@ def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
             ],
             [
                 None,
-                "value `POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))` in column `geom` has area equal to value: 0.000001",
+                None,
                 None,
             ],
             [
                 None,
-                None,
+                "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` has area equal to value: 0.001",
                 None,
             ],
             [
@@ -579,12 +579,12 @@ def test_has_area_greater_than(skip_if_runtime_not_geo_compatible, spark):
             ],
             [
                 "value `POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))` in column `geom` has area less than value: 20000.0",
-                "value `POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))` in column `geom` has area less than value: 1.0",
+                "value `POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))` in column `geom` has area less than value: 1.0",
                 "value `POLYGON((0 0, 0.0001 0, 0.0001 0.0001, 0 0.0001, 0 0))` in column `geog` has area less than value: 20000.0",
             ],
             [
                 None,
-                "value `POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))` in column `geom` has area less than value: 1.0",
+                "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geom` has area less than value: 1.0",
                 None,
             ],
             [
