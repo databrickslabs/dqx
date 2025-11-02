@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false  # don't cancel ongoing runs to ensure fixture resources are properly released and cleaned
+  cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are properly terminated
 
 jobs:
 
