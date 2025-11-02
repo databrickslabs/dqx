@@ -488,7 +488,7 @@ def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
             ],
             [
                 None,
-                "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` has area equal to value: 0.0001",
+                "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geom` has area equal to value: 0.0001",
                 None,
             ],
             [
