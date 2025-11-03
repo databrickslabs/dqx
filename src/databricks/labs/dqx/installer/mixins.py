@@ -3,7 +3,6 @@ import os
 
 from databricks.labs.blueprint.installation import Installation
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
 
