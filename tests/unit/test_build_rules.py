@@ -890,7 +890,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
 
 
 def test_validate_check_func_arguments_too_many_positional():
-    with pytest.raises(TypeError, match="takes 2 positional arguments but 3 were given"):
+    with pytest.raises(TypeError, match="takes from 2 to 3 positional arguments but 4 were given"):
         DQRowRule(
             name="col1_is_not_in_the_list",
             criticality="error",
