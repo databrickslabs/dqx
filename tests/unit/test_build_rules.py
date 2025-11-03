@@ -896,7 +896,7 @@ def test_validate_check_func_arguments_too_many_positional():
             criticality="error",
             check_func=is_in_list,
             column="col1",
-            check_func_args=[[1, 2], "extra_arg"],
+            check_func_args=[[1, 2], True, "extra_arg"],
         )
 
 
