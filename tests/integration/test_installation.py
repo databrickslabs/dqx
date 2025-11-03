@@ -299,6 +299,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
         config.run_configs[0].warehouse_id = None
         assert config == WorkspaceConfig(
             log_level='INFO',
+            serverless_clusters=False,
             run_configs=[
                 RunConfig(
                     name="default",
