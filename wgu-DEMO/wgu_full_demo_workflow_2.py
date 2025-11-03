@@ -183,7 +183,7 @@ manual_rules = yaml.safe_load("""
     for_each_column:
       - student_id
     arguments:
-      regex: '^[A-Za-z]{3}\\d{8}$'
+      regex: '^[A-Za-z]{3}[0-9]{8}$'
       negate: false
   criticality: warn
   name: valid_student_id_pattern
@@ -221,6 +221,17 @@ manual_rules = yaml.safe_load("""
       status_col: student_status
   criticality: warn
   name: paid_status_inconsistent_with_status
+
+# 7. Name field should not contain numbers (warn)
+- check:
+    function: regex_match
+    for_each_column:
+      - name
+    arguments:
+      regex: '.*[0-9].*'
+      negate: true       # fail if regex *matches* (contains a number)
+  criticality: warn
+  name: name_no_numeric_chars
 """)
 
 print("✅ Manual YAML rules loaded successfully.")
@@ -289,17 +300,37 @@ upsert_to_table(invalid_df_unique, invalid_table)
 # COMMAND ----------
 
 # ============================================
-# 🔍 Final DQX Record Accounting Validation (Audit-Safe, Rule-Aware)
+# 🔍 Final DQX Record Accounting Validation (DQX-Compatible)
 # ============================================
 
-raw_invalid_count   = invalid_df.count()
-dedup_invalid_count = invalid_df_unique.count()
-valid_count_final   = valid_df.count()
-total_source_count  = students_df_filtered.count()
+from pyspark.sql.functions import col, size
 
-# ID-level validation
+# --- 1️⃣ Categorize Invalid Rows ---
+invalid_errors_df = invalid_df.filter(size(col("_errors")) > 0)
+invalid_warnings_df = invalid_df.filter(
+    (size(col("_warnings")) > 0) & (size(col("_errors")) == 0)
+)
+
+# Drop duplicates by student_id for record-level accounting
+invalid_errors_unique = invalid_errors_df.dropDuplicates(["student_id"])
+invalid_warnings_unique = invalid_warnings_df.dropDuplicates(["student_id"])
+invalid_all_unique = invalid_df.dropDuplicates(["student_id"])
+
+# --- 2️⃣ Compute True Quarantined (Error-Only, Not in Valid Table) ---
+true_quarantined_df = invalid_errors_unique.join(
+    valid_df.select("student_id"), on="student_id", how="left_anti"
+)
+true_quarantined_count = true_quarantined_df.count()
+
+# --- 3️⃣ Compute Core Counts ---
+raw_invalid_count   = invalid_df.count()                            # Total violations (row-level)
+dedup_invalid_count = invalid_all_unique.count()                    # Unique violated records
+valid_count_final   = valid_df.count()                              # Records passing all error-level rules
+total_source_count  = students_df_filtered.count()                  # Total incoming data
+
+# --- 4️⃣ Reconcile IDs for full audit check ---
 valid_ids   = valid_df.select("student_id").distinct()
-invalid_ids = invalid_df_unique.select("student_id").distinct()
+invalid_ids = invalid_all_unique.select("student_id").distinct()
 source_ids  = students_df_filtered.select("student_id").distinct()
 
 missing_in_results = source_ids.subtract(valid_ids.union(invalid_ids))
@@ -308,35 +339,39 @@ extras_in_results  = valid_ids.union(invalid_ids).subtract(source_ids)
 missing_count = missing_in_results.count()
 extra_count   = extras_in_results.count()
 
-# Human-readable audit summary
+# --- 5️⃣ Human-Readable Audit Summary Table ---
 audit_summary = spark.createDataFrame(
     [
         ("Raw Invalid Rows (rule-level)", raw_invalid_count),
         ("Unique Invalid Rows (record-level)", dedup_invalid_count),
+        ("Warning-Only Records (non-critical)", invalid_warnings_unique.count()),
+        ("True Quarantined Records (error-only, not in valid table)", true_quarantined_count),
         ("Final Valid Records", valid_count_final),
         ("Total Input Records", total_source_count),
-        ("Sum (Valid + Unique Invalid)", valid_count_final + dedup_invalid_count),
+        ("Sum (Valid + True Quarantined)", valid_count_final + true_quarantined_count),
         ("Missing from Both Outputs", missing_count),
         ("Extra (Not in Source)", extra_count),
     ],
     ["Metric", "Count"]
 )
 
-# ✅ Logic: Only flag if IDs are missing or extra
+# --- 6️⃣ Intelligent Validation Messaging ---
 if missing_count == 0 and extra_count == 0:
     print("\n✅ All records accounted for — record-level 1:1 partition verified.")
-    print("ℹ️ Note: Multiple rule violations per record cause higher raw invalid counts (expected).")
+    print("ℹ️ Note: Records with warnings remain valid; quarantines reflect only error-level failures.")
 else:
     print("\n⚠️ Record mismatch detected — investigate filtering, duplication, or rule overlap.")
 
-print(f"\n{'='*90}")
-print("📊 FINAL DQX RECORD ACCOUNTING SUMMARY")
+# --- 7️⃣ Summary Console Output ---
+print(f"\n{'='*100}")
+print("📊 FINAL DQX RECORD ACCOUNTING SUMMARY (Enhanced, Compatible)")
 print(f"📦 Total Input Records: {total_source_count}")
 print(f"✅ Valid Records: {valid_count_final}")
-print(f"⚠️ Unique Quarantined Warns/Errors: {dedup_invalid_count}")
-print(f"❗ Raw Rule Violations Logged: {raw_invalid_count}")
+print(f"⚠️ Warning-Only Records (valid but flagged): {invalid_warnings_unique.count()}")
+print(f"❌ True Quarantined Records (error-only): {true_quarantined_count}")
+print(f"❗ Raw Rule Violations Logged (all rules): {raw_invalid_count}")
 print(f"🚫 Missing Records: {missing_count}")
 print(f"🚫 Extra Records: {extra_count}")
-print(f"{'='*90}")
+print(f"{'='*100}")
 
 display(audit_summary)

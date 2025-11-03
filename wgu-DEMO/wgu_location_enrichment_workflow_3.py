@@ -1,15 +1,16 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 🗺️ Student Location Generator + Enrichment + Gold View (Workflow-Optimized)
+# MAGIC # 🗺️ Student Location Generator + Enrichment + Gold View (Workflow-Optimized, with Name Cleanup)
 # MAGIC
 # MAGIC **Pipeline Flow**
 # MAGIC 1️⃣ Bronze → Raw student data (`students_data_workflow`)  
 # MAGIC 2️⃣ Bronze → Generate & append location data (`students_location_workflow`)  
-# MAGIC 3️⃣ Silver → Enrich valid DQX results (`student_data_enriched_workflow`)  
+# MAGIC 3️⃣ Silver → Enrich valid DQX results + clean student names (`student_data_enriched_workflow`)  
 # MAGIC 4️⃣ Gold → Business filter for current students (`student_data_current_workflow`)
 # MAGIC
 # MAGIC ✅ Incremental updates for locations  
-# MAGIC ✅ Idempotent enrichment for Silver  
+# MAGIC ✅ Name cleanup (removes digits and trims whitespace)  
+# MAGIC ✅ Idempotent Silver enrichment  
 # MAGIC ✅ Clean Gold subset (current students only)
 
 # COMMAND ----------
@@ -19,7 +20,7 @@
 # COMMAND ----------
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, regexp_replace, trim
 from delta.tables import DeltaTable
 from faker import Faker
 import pandas as pd
@@ -116,7 +117,7 @@ else:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 4️⃣ Enrich Valid DQX Students with Location Data (Silver Layer)
+# MAGIC ### 4️⃣ Enrich Valid DQX Students with Location Data + Clean Names (Silver Layer)
 
 # COMMAND ----------
 
@@ -143,10 +144,17 @@ enriched_df = (
     )
 )
 
-# Write to Silver table (replace each workflow run for freshness)
-enriched_df.write.format("delta").mode("overwrite").saveAsTable(ENRICHED_TABLE)
+# ✅ Name cleanup transformation — remove digits and extra spaces
+enriched_df_cleaned = (
+    enriched_df
+    .withColumn("name", regexp_replace(col("name"), "[0-9]", ""))  # remove numbers
+    .withColumn("name", trim(col("name")))                         # remove extra spaces
+)
 
-print(f"💎 Enriched dataset written to {ENRICHED_TABLE} ({enriched_df.count()} records).")
+# Write to Silver table (overwrite for freshness)
+enriched_df_cleaned.write.format("delta").mode("overwrite").saveAsTable(ENRICHED_TABLE)
+
+print(f"💎 Enriched & cleaned dataset written to {ENRICHED_TABLE} ({enriched_df_cleaned.count()} records).")
 
 # COMMAND ----------
 
@@ -155,7 +163,7 @@ print(f"💎 Enriched dataset written to {ENRICHED_TABLE} ({enriched_df.count()}
 
 # COMMAND ----------
 
-gold_df = enriched_df.filter(col("student_status") == "current")
+gold_df = enriched_df_cleaned.filter(col("student_status") == "current")
 
 gold_df.write.format("delta").mode("overwrite").saveAsTable(GOLD_TABLE)
 
