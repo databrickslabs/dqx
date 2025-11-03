@@ -1,12 +1,13 @@
 from unittest import skip
 import pytest
 from databricks.sdk.errors import NotFound
-
 from databricks.labs.dqx.utils import list_tables
+
+from tests.conftest import TEST_CATALOG
 
 
 def test_list_tables(spark, ws, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
@@ -31,7 +32,7 @@ def test_list_tables(spark, ws, make_schema, make_random):
 
 @skip("Ad-hoc test only: Running multiple tests in parallel can cause a failure")
 def test_list_tables_extended(spark, ws, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -50,7 +51,7 @@ def test_list_tables_extended(spark, ws, make_schema, make_random):
 
 
 def test_list_tables_with_exclude_patterns(spark, ws, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 

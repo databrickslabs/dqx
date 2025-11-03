@@ -7,12 +7,17 @@ from unittest.mock import patch
 from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame
 import pytest
+from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk.service.compute import DataSecurityMode, Kind
+
+from tests.conftest import TEST_CATALOG
+
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -144,7 +149,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
         config = installation_ctx.config
         run_config = config.get_run_config()
 
-        catalog_name = "main"
+        catalog_name = TEST_CATALOG
         schema_name = run_config.output_config.location.split(".")[1]
         metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
         run_config.metrics_config = OutputConfig(location=metrics_table_name)
@@ -200,6 +205,19 @@ def setup_workflows_with_custom_folder(
     yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
 
 
+class TestInstallationMixin(InstallationMixin):
+    def get_my_username(self):
+        return self._my_username
+
+    def get_me(self):
+        return self._me
+
+    def get_installation(
+        self, product_name: str, assume_user: bool = True, install_folder: str | None = None
+    ) -> Installation:
+        return self._get_installation(product_name, assume_user, install_folder)
+
+
 def _setup_workflows_deps(
     ctx,
     make_schema,
@@ -211,7 +229,7 @@ def _setup_workflows_deps(
     is_continuous_streaming: bool = False,
 ):
     # prepare test data
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     input_table = make_table(
