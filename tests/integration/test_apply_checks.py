@@ -25,6 +25,9 @@ from databricks.labs.dqx import check_funcs
 import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
 from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID
 
+from tests.conftest import TEST_CATALOG
+
+
 SCHEMA = "a: int, b: int, c: int"
 EXPECTED_SCHEMA = SCHEMA + REPORTING_COLUMNS
 EXPECTED_SCHEMA_WITH_CUSTOM_NAMES = (
@@ -80,7 +83,7 @@ def test_apply_checks_passed(ws, spark):
 
 
 def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     output_table = f"{catalog}.{schema}.{make_random(8).lower()}"
 
@@ -816,7 +819,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
         SCHEMA,
     )
 
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     ref_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
@@ -4725,7 +4728,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
 
 
 def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     output_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
@@ -4869,7 +4872,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 def test_apply_checks_all_row_geo_checks_as_yaml_with_streaming(
     skip_if_runtime_not_geo_compatible, ws, make_schema, make_random, make_volume, spark
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
     output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -7998,7 +8001,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
         schema_ref,
     )
 
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     ref_table_schema = make_schema(catalog_name=catalog_name)
     ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)

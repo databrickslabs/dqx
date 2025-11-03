@@ -1,6 +1,6 @@
 import abc
 from functools import cached_property
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -134,6 +134,17 @@ class WorkspaceConfig:
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
     custom_metrics: list[str] | None = None  # custom summary metrics tracked by the observer when applying checks
+
+    def as_dict(self) -> dict:
+        """
+        Convert the WorkspaceConfig to a dictionary for serialization.
+        This method ensures that all fields, including boolean False values, are properly serialized.
+        Used by blueprint's installation when saving the config (Installation.save()).
+
+        Returns:
+            A dictionary representation of the WorkspaceConfig.
+        """
+        return asdict(self)
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

@@ -22,6 +22,8 @@ from tests.integration.conftest import (
     assert_quarantine_and_output_dfs,
 )
 
+from tests.conftest import TEST_CATALOG
+
 
 def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows(checks=True)
@@ -187,7 +189,7 @@ def test_quality_checker_workflow_with_custom_check_func_in_volume(
 ):
     installation_ctx, run_config = setup_serverless_workflows()
 
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     custom_checks_funcs_location = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/custom_check_funcs.py"

@@ -1,7 +1,3 @@
-import os
-import re
-from datetime import datetime, timedelta, timezone
-
 import pytest
 
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
@@ -10,35 +6,6 @@ from databricks.sdk.errors import NotFound
 
 from tests.conftest import compare_checks
 from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHECKS as TEST_CHECKS
-
-
-def test_remove_orphaned_lakebase_instances(ws):
-    """
-    Make sure all orphaned / leftover lakeabse instances are removed.
-    Orphaned instances are created when github action is cancelled and fixtures clean up process is not run.
-    """
-    run_id = os.getenv("GITHUB_RUN_ID")
-
-    if not run_id:
-        return  # only applicable when run in CI
-
-    # must match pattern from make_lakebase_instance fixture
-    current_run_pattern = re.compile(rf"^dqx-test-{run_id}-[A-Za-z0-9]+$")
-    pattern = re.compile(r"^dqx-test-\d+-[A-Za-z0-9]{10}$")
-
-    grace_period = datetime.now(timezone.utc) - timedelta(hours=2)  # aligned with tests timeout
-    instances = []
-    for instance in ws.database.list_database_instances():
-        if current_run_pattern.match(instance.name):
-            continue  # skip as it belongs to the current run
-        if pattern.match(instance.name):
-            creation_time = datetime.fromisoformat(instance.creation_time)
-            # if database was created within the last 2h it maybe actively used by another test execution
-            if creation_time < grace_period:
-                instances.append(instance.name)
-
-    for instance in instances:
-        ws.database.delete_database_instance(name=instance)
 
 
 def test_load_checks_when_lakebase_table_does_not_exist(ws, spark, make_lakebase_instance, lakebase_user, make_random):
