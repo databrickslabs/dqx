@@ -460,7 +460,7 @@ def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
         SELECT geom, geog FROM VALUES
         ('POINT(0 0)', 'POINT(0 0)'),
         ('POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))', 'POLYGON((0 0, 0.001 0, 0.001 0.001, 0 0.001, 0 0))'),
-        ('POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
+        ('POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))', 'POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))'),
         ('invalid-geometry', 'invalid-geography'),
         (null, null)
         AS data(geom, geog)
@@ -469,7 +469,7 @@ def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
 
     actual = test_df.select(
         has_area_not_equal_to("geom", 0.0).alias("basic_geometry"),
-        has_area_not_equal_to("geom", 0.0001, srid=4326).alias("geometry_srid"),
+        has_area_not_equal_to("geom", 1.0, srid=4326).alias("geometry_srid"),
         has_area_not_equal_to("geog", 0.0, geodesic=True).alias("geography_geodesic"),
     )
 
@@ -488,7 +488,7 @@ def test_has_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
             ],
             [
                 None,
-                "value `POLYGON((0 0, 0.01 0, 0.01 0.01, 0 0.01, 0 0))` in column `geom` has area equal to value: 0.0001",
+                "value `POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))` in column `geom` has area equal to value: 1.0",
                 None,
             ],
             [
