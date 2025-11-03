@@ -139,6 +139,10 @@ class WorkspaceConfig:
         """
         Convert the WorkspaceConfig to a dictionary for serialization.
         This method ensures that all fields, including boolean False values, are properly serialized.
+        Used by blueprint's installation when saving the config (Installation.save()).
+
+        Returns:
+            A dictionary representation of the WorkspaceConfig.
         """
         return asdict(self)
 

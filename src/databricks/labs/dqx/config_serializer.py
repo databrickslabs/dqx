@@ -8,7 +8,7 @@ class ConfigSerializer(InstallationMixin):
     """
 
     def load_config(
-        self, assume_user: bool = True, product_name: str = "dqx", install_folder: str | None = None
+        self, product_name: str = "dqx", assume_user: bool = True, install_folder: str | None = None
     ) -> WorkspaceConfig:
         """
         Load workspace configuration from the installation. The workspace config contains all run configs.
@@ -17,6 +17,9 @@ class ConfigSerializer(InstallationMixin):
             product_name: name of the product
             assume_user: if True, assume user installation
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
+
+        Returns:
+            WorkspaceConfig: Loaded workspace configuration.
         """
         installation = self._get_installation(product_name, assume_user, install_folder)
         return installation.load(WorkspaceConfig)
@@ -24,9 +27,9 @@ class ConfigSerializer(InstallationMixin):
     def save_config(
         self,
         config: WorkspaceConfig,
-        install_folder: str | None = None,
-        assume_user: bool = True,
         product_name: str = "dqx",
+        assume_user: bool = True,
+        install_folder: str | None = None,
     ) -> None:
         """
         Save workspace config in the installation.
@@ -36,6 +39,9 @@ class ConfigSerializer(InstallationMixin):
             product_name: Product/installation identifier used to resolve installation paths (not used if install_folder is provided)
             assume_user: Whether to assume a per-user installation when loading the run configuration (not used if install_folder is provided)
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
+
+        Returns:
+            None
         """
         installation = self._get_installation(product_name, assume_user, install_folder)
         return installation.save(config)
@@ -43,9 +49,9 @@ class ConfigSerializer(InstallationMixin):
     def load_run_config(
         self,
         run_config_name: str | None,
-        install_folder: str | None = None,
-        assume_user: bool = True,
         product_name: str = "dqx",
+        assume_user: bool = True,
+        install_folder: str | None = None,
     ) -> RunConfig:
         """
         Load run configuration from the installation.
@@ -55,16 +61,19 @@ class ConfigSerializer(InstallationMixin):
             product_name: Product/installation identifier used to resolve installation paths (not used if install_folder is provided)
             assume_user: Whether to assume a per-user installation when loading the run configuration (not used if install_folder is provided)
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
+
+        Returns:
+            RunConfig: Loaded run configuration.
         """
-        config = self.load_config(assume_user, product_name, install_folder)
+        config = self.load_config(product_name, assume_user, install_folder)
         return config.get_run_config(run_config_name)
 
     def save_run_config(
         self,
         run_config: RunConfig,
-        install_folder: str | None = None,
-        assume_user: bool = True,
         product_name: str = "dqx",
+        assume_user: bool = True,
+        install_folder: str | None = None,
     ) -> None:
         """
         Save run config in the workspace installation config.
@@ -74,6 +83,9 @@ class ConfigSerializer(InstallationMixin):
             product_name: Product/installation identifier used to resolve installation paths (not used if install_folder is provided)
             assume_user: Whether to assume a per-user installation when loading the run configuration (not used if install_folder is provided)
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
+
+        Returns:
+            None
         """
         installation = self._get_installation(product_name, assume_user, install_folder)
         config = installation.load(WorkspaceConfig)

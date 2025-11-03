@@ -198,7 +198,7 @@ In the example below, checks are defined in YAML syntax for convenience and then
 <Admonition type="note" title="Note">
 Checks are applied to a `column` specified in the `arguments` of the `check`. This can be either a column name as `string` or column expression.
 Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (e.g. `sql_expression` and `sql_query`).
-Alternatively, `for_each_column` can be used to define a list of columns that the check should be applied for one by one. The `for_each_column` is supported for quality rules that take `column` or `columns` as arguments (e.g. not supported by `sql_expression` and `sql_query`).
+Alternatively, `for_each_column` can be used to define a list of columns for which the same check should be applied. The `for_each_column` is supported for quality rules that take `column` or `columns` as arguments (e.g. not supported by `sql_expression` and `sql_query`).
 For details on each check, please refer to the documentation [here](/docs/reference/quality_checks).
 </Admonition>
 

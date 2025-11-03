@@ -448,6 +448,16 @@ class DQEngine(DQEngineBase):
 
     This class delegates core checking logic to *DQEngineCore* while providing helpers to
     read inputs, persist results, and work with different storage backends for checks.
+
+    Args:
+        workspace_client: WorkspaceClient instance used to access the Databricks workspace.
+        spark: Optional SparkSession to use. If not provided, the active session is used.
+        engine: Optional DQEngineCore instance to use. If not provided, a new instance is created.
+        extra_params: Optional extra parameters for the engine, such as result column names and run metadata.
+        checks_handler_factory: Optional factory to create checks storage handlers. If not provided,
+            a default factory is created.
+        config_serializer: Optional ConfigSerializer instance to use. If not provided, a new instance is created.
+        observer: Optional DQMetricsObserver for tracking data quality summary metrics.
     """
 
     def __init__(
