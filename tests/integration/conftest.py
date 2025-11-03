@@ -16,6 +16,9 @@ from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 
+from tests.conftest import TEST_CATALOG
+
+
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
@@ -146,7 +149,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
         config = installation_ctx.config
         run_config = config.get_run_config()
 
-        catalog_name = "main"
+        catalog_name = TEST_CATALOG
         schema_name = run_config.output_config.location.split(".")[1]
         metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
         run_config.metrics_config = OutputConfig(location=metrics_table_name)
@@ -226,7 +229,7 @@ def _setup_workflows_deps(
     is_continuous_streaming: bool = False,
 ):
     # prepare test data
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     input_table = make_table(

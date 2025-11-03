@@ -31,6 +31,9 @@ from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
 logger = logging.getLogger(__name__)
 
 
+TEST_CATALOG = "dqx"
+
+
 @pytest.fixture(scope="session")
 def debug_env_name():
     return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json

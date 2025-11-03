@@ -9,6 +9,8 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
+
+from tests.conftest import TEST_CATALOG
 from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
 
 logger = logging.getLogger(__name__)
@@ -21,7 +23,7 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job, library_ref)
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
         directory = notebook.as_fuse().parent.as_posix()
 
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
@@ -52,7 +54,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
         folder = notebook.as_fuse().parent / "quality_rules"
         make_directory(path=folder)
 
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
@@ -135,7 +137,7 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job, library_ref):
 
 
 def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_job):
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     installation_ctx.replace(
         extend_prompts={
@@ -177,7 +179,7 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
 
@@ -233,7 +235,7 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
 def test_run_dqx_demo_asset_bundle(make_schema, make_random, library_ref):
     cli_path = shutil.which("databricks")
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     run_id = make_random(10).lower()
 
@@ -267,7 +269,7 @@ def test_run_dqx_multi_table_demo(make_notebook, make_schema, make_job, library_
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
@@ -291,7 +293,7 @@ def test_run_dqx_demo_summary_metrics(make_notebook, make_schema, make_job, libr
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
