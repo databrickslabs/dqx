@@ -1,0 +1,93 @@
+- check:
+    for_each_column:
+    - student_id
+    - student_status
+    - load_timestamp
+    - month_end_date
+    - paid
+    - stays_on_campus
+    function: is_not_null_and_not_empty
+  criticality: error
+  name: not_null_core_fields
+- check:
+    arguments:
+      columns:
+      - student_id
+    function: is_unique
+  criticality: error
+  name: unique_student_id
+- check:
+    arguments:
+      negate: false
+      regex: ^[A-Za-z]{3}\d{8}$
+    for_each_column:
+    - student_id
+    function: regex_match
+  criticality: error
+  name: valid_student_id_pattern
+- check:
+    arguments:
+      column: load_timestamp
+      max_limit: current_date()
+      min_limit: date('1900-01-01')
+    function: is_in_range
+  criticality: warn
+  name: load_timestamp_not_future
+- check:
+    arguments:
+      allowed:
+      - graduated
+      - current
+      - break
+      - dropped
+    for_each_column:
+    - student_status
+    function: is_in_list
+  criticality: error
+  name: valid_student_status
+- check:
+    arguments:
+      allowed:
+      - true
+      - false
+    for_each_column:
+    - paid
+    function: is_in_list
+  criticality: error
+  name: valid_paid_boolean
+- check:
+    arguments:
+      allowed:
+      - true
+      - false
+    for_each_column:
+    - stays_on_campus
+    function: is_in_list
+  criticality: error
+  name: valid_stays_on_campus_boolean
+- check:
+    arguments:
+      column: load_timestamp
+    function: is_not_null
+  criticality: error
+  name: load_timestamp_is_null
+- check:
+    arguments:
+      column: month_end_date
+    function: is_not_null
+  criticality: error
+  name: month_end_date_is_null
+- check:
+    arguments:
+      column: student_id
+      trim_strings: true
+    function: is_not_null_and_not_empty
+  criticality: error
+  name: student_id_is_null_or_empty
+- check:
+    arguments:
+      column: student_status
+      trim_strings: true
+    function: is_not_null_and_not_empty
+  criticality: error
+  name: student_status_is_null_or_empty
