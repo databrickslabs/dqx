@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 
 
 class InstallationMixin:
-    def __init__(self, workspace_client: WorkspaceClient):
-        self._workspace_client = workspace_client
+    def __init__(self, ws: WorkspaceClient):
+        self._ws = ws
 
     @staticmethod
     def _get_name(name: str, install_folder: str) -> str:
@@ -26,7 +26,7 @@ class InstallationMixin:
         Current user
         """
         if not hasattr(self, "_me"):
-            self._me = self._workspace_client.current_user.me()
+            self._me = self._ws.current_user.me()
         return self._me.user_name
 
     def _get_installation(
@@ -46,11 +46,11 @@ class InstallationMixin:
             return installation
 
         if assume_user:
-            installation = Installation.assume_user_home(self._workspace_client, product_name)
+            installation = Installation.assume_user_home(self._ws, product_name)
         else:
-            installation = Installation.assume_global(self._workspace_client, product_name)
+            installation = Installation.assume_global(self._ws, product_name)
 
-        installation.current(self._workspace_client, product_name, assume_user=assume_user)
+        installation.current(self._ws, product_name, assume_user=assume_user)
         return installation
 
     def _get_custom_installation(self, product_name: str, install_folder: str) -> Installation:
@@ -66,8 +66,8 @@ class InstallationMixin:
             An Installation instance for the custom folder
         """
         try:
-            self._workspace_client.workspace.get_status(install_folder)
+            self._ws.workspace.get_status(install_folder)
         except NotFound:
-            self._workspace_client.workspace.mkdirs(install_folder)
+            self._ws.workspace.mkdirs(install_folder)
 
-        return Installation(self._workspace_client, product_name, install_folder=install_folder)
+        return Installation(self._ws, product_name, install_folder=install_folder)
