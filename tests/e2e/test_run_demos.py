@@ -29,8 +29,8 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job, library_ref)
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
         base_parameters={
-            "demo_database_name": catalog,
-            "demo_schema_name": schema,
+            "demo_catalog": catalog,
+            "demo_schema": schema,
             "demo_file_directory": directory,
             "test_library_ref": library_ref,
         },
@@ -59,7 +59,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_database_name": catalog, "demo_schema_name": schema, "test_library_ref": library_ref},
+        base_parameters={"demo_catalog": catalog, "demo_schema": schema, "test_library_ref": library_ref},
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
@@ -187,8 +187,8 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
     run_id = str(uuid4())
     base_output_path = tmp_path / run_id
     base_parameters = {
-        "demo_catalog_name": catalog,
-        "demo_schema_name": schema,
+        "demo_catalog": catalog,
+        "demo_schema": schema,
         "silver_checkpoint": f"{base_output_path}/silver_checkpoint",
         "quarantine_checkpoint": f"{base_output_path}/quarantine_checkpoint",
         "test_library_ref": library_ref,
@@ -274,7 +274,7 @@ def test_run_dqx_multi_table_demo(make_notebook, make_schema, make_job, library_
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_catalog_name": catalog, "demo_schema_name": schema, "test_library_ref": library_ref},
+        base_parameters={"demo_catalog": catalog, "demo_schema": schema, "test_library_ref": library_ref},
     )
     job = make_job(tasks=[Task(task_key="dqx_multi_table_demo", notebook_task=notebook_task)])
 
@@ -299,8 +299,8 @@ def test_run_dqx_demo_summary_metrics(make_notebook, make_schema, make_job, libr
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
         base_parameters={
-            "demo_catalog_name": catalog,
-            "demo_schema_name": schema,
+            "demo_catalog": catalog,
+            "demo_schema": schema,
             "test_library_ref": library_ref,
         },
     )

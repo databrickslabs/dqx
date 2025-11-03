@@ -41,12 +41,12 @@ default_catalog = "main"
 default_schema = "default"
 
 dbutils.widgets.text("demo_file_directory", default_file_directory, "File Directory")
-dbutils.widgets.text("demo_catalog_name", default_catalog, "Catalog Name")
-dbutils.widgets.text("demo_schema_name", default_schema, "Schema Name")
+dbutils.widgets.text("demo_catalog", default_catalog, "Catalog Name")
+dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
 
 demo_file_directory = dbutils.widgets.get("demo_file_directory")
-demo_catalog_name = dbutils.widgets.get("demo_catalog_name")
-demo_schema_name = dbutils.widgets.get("demo_schema_name")
+demo_catalog_name = dbutils.widgets.get("demo_catalog")
+demo_schema_name = dbutils.widgets.get("demo_schema")
 
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
