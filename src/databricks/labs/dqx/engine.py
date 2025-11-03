@@ -1235,8 +1235,13 @@ class DQEngine(DQEngineBase):
 
     def _log_telemetry_for_streaming(self, df):
         log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        log_telemetry(self.ws, "dlt", str(self._is_dlt_pipeline()).lower())
 
+    def _is_dlt_pipeline(self) -> bool:
+        dlt_pipeline_id = None
         try:
-            log_telemetry(self.ws, "dlt", "true" if self.spark.conf.get('pipelines.id', None) else "false")
+            dlt_pipeline_id = self.spark.conf.get('pipelines.id', None)
         except Exception:
             pass  # in non-dlt serverless cluster this will raise an error
+
+        return bool(dlt_pipeline_id)
