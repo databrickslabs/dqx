@@ -549,14 +549,20 @@ def test_my_username():
     assert mixin.get_my_username() == "test_user"
 
 
-def test_get_custom_installation(ws, make_directory):
+def test_get_installation(ws, installation_ctx):
+    installation_ctx.installation_service.run()
+
+    installation = TestInstallationMixin(ws).get_installation(product_name=installation_ctx.installation.product())
+    assert installation_ctx.installation.install_folder() == installation.install_folder()
+
+
+def test_get_custom_folder_installation(ws, make_directory):
     product_info = ProductInfo.for_testing(WorkspaceConfig)
     custom_folder = str(make_directory().absolute())
 
     custom_installation = TestInstallationMixin(ws).get_installation(
         product_name=product_info.product_name(), install_folder=custom_folder
     )
-    custom_installation.install_folder()
 
     assert custom_installation.install_folder() == custom_folder
     assert ws.workspace.get_status(custom_folder)

@@ -30,20 +30,19 @@ class InstallationMixin:
         return self._me.user_name
 
     def _get_installation(
-        self, product_name: str, assume_user: bool = True, install_folder: str | None = None
+        self, product_name: str = "dqx", assume_user: bool = True, install_folder: str | None = None
     ) -> Installation:
         """
         Get the installation for the given product name.
 
         Args:
-            assume_user: if True, assume user installation
-            product_name: name of the product
-            install_folder: optional installation folder
+            product_name: name of the product.
+            assume_user: if True, assume user installation.
+            install_folder: optional installation folder.
         """
 
         if install_folder:
-            installation = self._get_custom_installation(product_name, install_folder)
-            return installation
+            return Installation(self._ws, product_name, install_folder=install_folder)
 
         if assume_user:
             installation = Installation.assume_user_home(self._ws, product_name)
@@ -52,22 +51,3 @@ class InstallationMixin:
 
         installation.current(self._ws, product_name, assume_user=assume_user)
         return installation
-
-    def _get_custom_installation(self, product_name: str, install_folder: str) -> Installation:
-        """
-        Creates an Installation instance for a custom installation folder, similar to assume_user_home and assume_global.
-        This ensures the custom folder is created in the workspace when the installation is accessed.
-
-        Args:
-            product_name: The product name
-            install_folder: The custom installation folder path
-
-        Returns:
-            An Installation instance for the custom folder
-        """
-        try:
-            self._ws.workspace.get_status(install_folder)
-        except NotFound:
-            self._ws.workspace.mkdirs(install_folder)
-
-        return Installation(self._ws, product_name, install_folder=install_folder)

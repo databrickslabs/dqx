@@ -83,7 +83,9 @@ class WorkspaceInstaller(WorkspaceContext, InstallationMixin):
             NotFound: If the installation is not found.
         """
         if self._install_folder:
-            return self._get_custom_installation(self.product_info.product_name(), self._install_folder)
+            return self._get_installation(
+                product_name=self.product_info.product_name(), install_folder=self._install_folder
+            )
         try:
             return self.product_info.current_installation(self.workspace_client)
         except NotFound:
