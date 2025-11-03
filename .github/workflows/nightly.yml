@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: single-acceptance-job-per-repo
-  cancel-in-progress: false  # don't cancel ongoing performance runs to ensure resources are properly released and cleaned
+  cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are properly terminated
 
 jobs:
   integration:
