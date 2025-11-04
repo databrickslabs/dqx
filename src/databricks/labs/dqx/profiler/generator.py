@@ -1,5 +1,7 @@
 import logging
 import json
+from collections.abc import Callable
+
 from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
@@ -10,10 +12,9 @@ from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import MissingParameterError
 
-# Conditional imports for LLM functionality
+# Conditional imports for LLM-assisted rules generation
 try:
-    from databricks.labs.dqx.llm.llm_core import get_dspy_compiler
-    from databricks.labs.dqx.llm.llm_engine import get_business_rules_with_llm
+    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
     from databricks.labs.dqx.llm.llm_utils import get_column_metadata
 
     LLM_ENABLED = True
@@ -31,21 +32,16 @@ class DQGenerator(DQEngineBase):
         model: str = "databricks/databricks-claude-sonnet-4-5",
         api_key: str = "",
         api_base: str = "",
+        custom_check_functions: dict[str, Callable] | None = None,
     ):
         super().__init__(workspace_client=workspace_client)
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-
-        # Initialize DSPy compiler during init
-        if not LLM_ENABLED:
-            logger.warning("LLM dependencies not installed. DSPy compiler not available.")
-            self.dspy_compiler = None
-        else:
-            try:
-                self.dspy_compiler = get_dspy_compiler(model=model, api_key=api_key, api_base=api_base)
-                logger.info(f"DSPy compiler initialized with model: {model}")
-            except Exception as e:
-                logger.error(f"Failed to initialize DSPy compiler: {e}")
-                self.dspy_compiler = None
+        self.custom_check_functions = custom_check_functions
+        self.llm_engine = (
+            DQLLMEngine(model=model, api_key=api_key, api_base=api_base, custom_check_functions=custom_check_functions)
+            if LLM_ENABLED
+            else None
+        )
 
     @telemetry_logger("generator", "generate_dq_rules")
     def generate_dq_rules(self, profiles: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
@@ -77,7 +73,7 @@ class DQGenerator(DQEngineBase):
                     expr["filter"] = dataset_filter
                 dq_rules.append(expr)
 
-        status = DQEngine.validate_checks(dq_rules)
+        status = DQEngine.validate_checks(dq_rules, self.custom_check_functions)
         assert not status.has_errors
 
         return dq_rules
@@ -98,29 +94,25 @@ class DQGenerator(DQEngineBase):
         Raises:
             MissingParameterError: If DSPy compiler is not available.
         """
-        # Check if DSPy compiler is available
-        if self.dspy_compiler is None:
+        if self.llm_engine is None:
             raise MissingParameterError(
-                "DSPy compiler not available. Make sure LLM dependencies are installed: "
+                "LLM engine not available. Make sure LLM dependencies are installed: "
                 "pip install 'databricks-labs-dqx[llm]'"
             )
 
+        logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
         schema_info = get_column_metadata(table_name, self.spark) if table_name else ""
 
-        logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-
         # Generate rules using pre-initialized LLM compiler
-        prediction = get_business_rules_with_llm(
-            user_input=user_input, dspy_compiler=self.dspy_compiler, schema_info=schema_info
-        )
+        prediction = self.llm_engine.get_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
 
-        # Validate the generated rules using DQEngine
+        # Validate the generated rules
         dq_rules = json.loads(prediction.quality_rules)
-        status = DQEngine.validate_checks(dq_rules)
+        status = DQEngine.validate_checks(checks=dq_rules, custom_check_functions=self.custom_check_functions)
         if status.has_errors:
             logger.warning(f"Generated rules have validation errors: {status.errors}")
         else:
-            logger.info(f"Generated {len(dq_rules)} rules with LLM:{dq_rules}")
+            logger.info(f"Generated {len(dq_rules)} rules with LLM: {dq_rules}")
             logger.info(f"LLM reasoning: {prediction.reasoning}")
 
         return dq_rules

@@ -66,31 +66,19 @@ def get_column_metadata(table_name: str, spark: SparkSession) -> str:
     return json.dumps(schema_info)
 
 
-def load_training_examples() -> list[dict[str, Any]]:
-    """A function to Load the training_examples.yml file from the llm/resources folder.
-
-    Returns:
-        list[dict[str, Any]]: Training examples as a list of dictionaries.
-    """
-    resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
-
-    training_examples_as_text = resource.read_text(encoding="utf-8")
-    training_examples = yaml.safe_load(training_examples_as_text)
-    if not isinstance(training_examples, list):
-        raise ValueError("YAML file must contain a list at the root level.")
-
-    return training_examples
-
-
-def _get_required_check_function_info() -> list[dict[str, str]]:
+def get_required_check_functions_info(
+    custom_check_functions: dict[str, Callable] | None = None
+) -> list[dict[str, str]]:
     """
     Extract only required function information (name and doc).
 
     Returns:
-        list[dict[str, str]]: A list of dictionaries containing the name, doc, type, signature, and parameters of each function.
+        list[dict[str, str]]: A list of dictionaries containing the required fields for each check function.
     """
     required_function_docs: list[dict[str, str]] = []
-    for func in get_check_function_definition():
+    for func in get_check_function_definition(custom_check_functions):
+        # tests showed that using function name and parameters alone yields the same results
+        # as using full specification while reducing token count
         required_func_info = {
             "check_function_name": func.get("name", ""),
             "parameters": func.get("parameters", ""),
@@ -99,18 +87,19 @@ def _get_required_check_function_info() -> list[dict[str, str]]:
     return required_function_docs
 
 
-def create_optimizer_training_set() -> list[dspy.Example]:
+def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | None = None) -> list[dspy.Example]:
     """
-    Get examples for the dspy optimizer.
+    Get quality check training examples for the dspy optimizer.
+
+    Args:
+        custom_check_functions: A dictionary of custom check functions.
 
     Returns:
         list[dspy.Example]: A list of dspy.Example objects created from training examples.
     """
-    training_examples = load_training_examples()
+    training_examples = _load_training_examples()
 
     examples = []
-    available_functions = json.dumps(_get_required_check_function_info())
-
     for example_data in training_examples:
         # Convert schema_info to JSON string format expected by dspy.Example
         schema_info_json = json.dumps(example_data["schema_info"])
@@ -118,7 +107,7 @@ def create_optimizer_training_set() -> list[dspy.Example]:
         example = dspy.Example(
             schema_info=schema_info_json,
             business_description=example_data["business_description"],
-            available_functions=available_functions,
+            available_functions=json.dumps(get_required_check_functions_info(custom_check_functions)),
             quality_rules=example_data["quality_rules"],
             reasoning=example_data["reasoning"],
         ).with_inputs("schema_info", "business_description", "available_functions")
@@ -126,3 +115,20 @@ def create_optimizer_training_set() -> list[dspy.Example]:
         examples.append(example)
 
     return examples
+
+
+def _load_training_examples() -> list[dict[str, Any]]:
+    """A function to Load the training examples from the llm/resources/training_examples.yml file.
+
+    Returns:
+        list[dict[str, Any]]: Training examples as a list of dictionaries.
+    """
+    resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
+
+    training_examples_as_text = resource.read_text(encoding="utf-8")
+    training_examples = yaml.safe_load(training_examples_as_text)
+
+    if not isinstance(training_examples, list):
+        raise ValueError("YAML file must contain a list at the root level.")
+
+    return training_examples

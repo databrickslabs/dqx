@@ -50,12 +50,21 @@ DQX provides optional extras for specific features:
 
 #### AI-Assisted Quality Checks Generation
 
-To use AI-assisted rule generation with LLM support:
+To use AI-assisted rule generation with LLM support, install the `llm` extras:
 ```commandline
 pip install 'databricks-labs-dqx[llm]'
 ```
 
 This installs additional dependencies including DSPy for LLM integration. See the [AI-Assisted Generation Guide](/docs/guide/ai_assisted_quality_checks_generation) for more details.
+
+#### PII detection capabilities
+
+To use built-in pii detection rules, install the `pii` extras:
+```commandline
+pip install 'databricks-labs-dqx[pii]'
+```
+
+This installs additional dependencies including Microsoft Presidio library.
 
 ## DQX installation as a Tool in a Databricks Workspace
 

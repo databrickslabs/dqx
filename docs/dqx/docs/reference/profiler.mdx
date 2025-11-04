@@ -90,10 +90,10 @@ The `DQGenerator` class converts profiling results into DQX quality rules:
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
 <summary>**Available DQGenerator methods**</summary>
-| Method              | Description                                                           | Arguments                                                                                                                                                  | Supports local execution |
-| ------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| `generate_dq_rules` | Generates a list of data quality rules from profiling results.        | `profiles`: List of DQProfile objects; `level`: Criticality level for generated rules (default "error").                                                   | Yes                      |
-| `generate_dq_rules_ai_assisted` | Generates a list of data quality rules using Natural language description       | `user_input`: Natural language description of data quality requirements; `table_name`: Optional fully qualified table name (If not provided, description provided bt the user will be used to guess the table schema).                                                   | Yes                      |
+| Method                          | Description                                                                 | Arguments                                                                                                                                                                                                              | Supports local execution |
+| ------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `generate_dq_rules`             | Generates a list of data quality rules from profiling results.              | `profiles`: List of DQProfile objects; `level`: Criticality level for generated rules (default "error").                                                                                                               | Yes                      |
+| `generate_dq_rules_ai_assisted` | Generates a list of data quality rules using Natural language description.  | `user_input`: Natural language description of data quality requirements; `table_name`: Optional fully qualified table name (if not provided, description provided by the user will be used to guess the table schema). | Yes                      |
 
 </details>
 

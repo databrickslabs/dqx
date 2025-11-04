@@ -1,5 +1,8 @@
 import json
 import logging
+from collections.abc import Callable
+from functools import cached_property
+
 import dspy  # type: ignore
 from databricks.labs.dqx.llm.llm_utils import create_optimizer_training_set
 from databricks.labs.dqx.engine import DQEngineCore
@@ -18,7 +21,7 @@ class SchemaGuesserSignature(dspy.Signature):
     business_description: str = dspy.InputField(
         desc=(
             "Natural language summary of the dataset and its use. "
-            "Including some column hints (e.g., id, amount, status, email, dates)."
+            "Including some column hints (eg. id, amount, status, email, dates)."
         )
     )
     guessed_schema_json: str = dspy.OutputField(
@@ -31,8 +34,8 @@ class SchemaGuesserSignature(dspy.Signature):
     )
     assumptions_bullets: str = dspy.OutputField(
         desc=(
-            "Concise bullet list (1-6 lines) of assumptions made about columns, types, "
-            "and examples. Keep each bullet short."
+            "Concise bullet list (1-6 lines) of assumptions made about columns, types, and examples. "
+            "Keep each bullet short."
         )
     )
 
@@ -86,12 +89,12 @@ class RuleSignature(dspy.Signature):
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
 
 
-class DQRuleGeneration(dspy.Module):
+class LLMRuleGeneration(dspy.Module):
     """
     Generate data quality rules with improved JSON output reliability.
 
-    This class provides functionality to generate data quality rules based on schema information,
-    business descriptions, and available functions. It can optionally infer the schema from the
+    This class provides functionality to generate data quality rules based on business descriptions,
+    available functions and schema information. It can optionally infer the schema from the
     business description if schema_info is not provided or is empty.
     """
 
@@ -111,14 +114,13 @@ class DQRuleGeneration(dspy.Module):
         self, schema_info: str, business_description: str, available_functions: str
     ) -> dspy.primitives.prediction.Prediction:
         """
-        Generate data quality rules based on schema information, business descriptions, and available functions.
+        Generate data quality rules based on business descriptions, available functions and schema information.
 
-        If schema_info is empty and enable_schema_inference is True, it will first use SchemaGuesser
-        to infer the schema from the business description.
+        If schema_info is empty, it will first use SchemaGuesser to infer the schema from the business description.
 
         Args:
             schema_info (str): JSON string containing table schema with column names, types, and sample data.
-                              If empty and enable_schema_inference=True, schema will be inferred.
+                              If empty, schema will be inferred.
             business_description (str): Natural language description of data quality requirements.
             available_functions (str): JSON string of available DQX check functions.
 
@@ -145,13 +147,15 @@ class DQRuleGeneration(dspy.Module):
             schema_info=schema_info, business_description=business_description, available_functions=available_functions
         )
 
-        # Validate and clean the JSON output
+        # Validate the JSON output
         if result.quality_rules:
             try:
                 # Try to parse the JSON to ensure it's valid
                 json.loads(result.quality_rules)
             except json.JSONDecodeError as e:
-                logger.warning(f"Generated invalid JSON: {e}. Raw output: {result.quality_rules}")
+                logger.warning(
+                    f"Generated invalid JSON: {e}. Raw output: {result.quality_rules}. Returning empty rules."
+                )
                 # Return a fallback empty array if JSON is invalid
                 result.quality_rules = "[]"
 
@@ -173,105 +177,106 @@ class DQRuleGeneration(dspy.Module):
         return result
 
 
-def _configure_dspy_model(model: str, api_key: str = "", api_base: str = ""):
-    """
-    Configure the Dspy language model.
+class DQLLMCore:
+    def __init__(
+        self,
+        model: str,
+        api_key: str = "",
+        api_base: str = "",
+        custom_check_functions: dict[str, Callable] | None = None,
+    ):
+        """
+        Initialize the DSPy compiler with optimizer for data quality rule generation.
 
-    Args:
-        model (str): The model to use for the Dspy language model.
-        api_key (str): The API key for the model. Not required by Databricks foundational models.
-        api_base (str): The API base URL for the model. Not required by Databricks foundational models.
-    """
-    language_model = dspy.LM(
-        model=model,
-        model_type="chat",
-        api_key=api_key,
-        api_base=api_base,
-        max_retries=3,
-    )
-    dspy.configure(lm=language_model)
+        Args:
+            model (str): The model to use for the Dspy language model.
+            api_key (str): Optional API key for the model. Not required by Databricks foundational models.
+            api_base (str): Optional API base URL for the model. Not required by Databricks foundational models.
+            custom_check_functions (dict[str, Callable] | None): Optional custom check functions to include.
+        """
+        self._model = model
+        self._api_key = api_key
+        self._api_base = api_base
+        self._custom_check_functions = custom_check_functions
+        self._configure_model()
+        self.dq_model = LLMRuleGeneration()
 
+    @cached_property
+    def compiler(self) -> dspy.Module:
+        """
+        Get the Dspy model configured with an optimizer. Use standard DSPy approach with improved prompting.
 
-def validate_generated_rules(actual: str) -> float:
-    """
-    Validate generated rules with granular scoring for better optimizer feedback.
+        Returns:
+            dspy.Module: Dspy compiler optimized for generating data quality rules.
+        """
+        train_set = create_optimizer_training_set(self._custom_check_functions)
 
-    Scoring breakdown:
-        - JSON parsing (40%): Checks if the actual output can be parsed as valid JSON.
-        - Rules validation (60%): Ensures the rules pass DQX validation checks.
+        # Standard metric for JSON output validation
+        def json_metric(_example, pred, _trace=None):
+            if hasattr(pred, 'quality_rules'):
+                return self._validate_generated_rules(pred.quality_rules)
+            return 0.0
 
-    Args:
-        actual (str): JSON string of the actual generated rules.
+        optimizer = dspy.BootstrapFewShot(
+            metric=json_metric,
+            max_bootstrapped_demos=3,
+            max_labeled_demos=5,
+            teacher_settings={},
+        )
 
-    Returns:
-        float: A score between 0.0 and 1.0 representing the quality of the generated rules.
-    """
-    total_score = 0.0
+        optimized_model = optimizer.compile(self.dq_model, trainset=train_set)
+        return optimized_model
 
-    # Score weights
-    json_weight = 0.2
-    rule_weight = 0.8
+    def _configure_model(self):
+        """Configure the Dspy language model."""
+        language_model = dspy.LM(
+            model=self._model,
+            model_type="chat",
+            api_key=self._api_key,
+            api_base=self._api_base,
+            max_retries=3,
+        )
+        dspy.configure(lm=language_model)
 
-    # Json parsing score (40%)
-    try:
-        actual_rules = json.loads(actual)
-        total_score += json_weight
-        logger.debug(f"✓ JSON parsing successful (+{json_weight:.1f})")
-    except json.JSONDecodeError as e:
-        logger.warning(f"✗ JSON parsing failed: {e}")
-        logger.debug(f"  Raw output: {repr(actual[:200])}")
-        # Early return if we can't parse JSON at all
+    def _validate_generated_rules(self, actual: str) -> float:
+        """
+        Validate generated rules with granular scoring for better optimizer feedback.
+
+        Scoring breakdown:
+            - JSON parsing (20%): Checks if the actual output can be parsed as valid JSON.
+            - Rules validation (80%): Ensures the rules pass DQX checks validation.
+
+        Args:
+            actual (str): JSON string of the actual generated rules.
+
+        Returns:
+            float: A score between 0.0 and 1.0 representing the quality of the generated rules.
+        """
+        total_score = 0.0
+
+        # Score weights
+        json_weight = 0.2
+        rule_weight = 0.8
+
+        # Json parsing score (20%)
+        try:
+            actual_rules = json.loads(actual)
+            total_score += json_weight
+            logger.debug(f"✓ JSON parsing successful (+{json_weight:.1f})")
+        except json.JSONDecodeError as e:
+            logger.warning(f"✗ JSON parsing failed: {e}")
+            logger.debug(f"  Raw output: {repr(actual[:200])}")
+            # Early return if we can't parse JSON at all
+            return total_score
+
+        # Rules validation score (80%)
+        validation_status = DQEngineCore.validate_checks(actual_rules, self._custom_check_functions)
+        if not validation_status.has_errors:
+            total_score += rule_weight
+            logger.debug(f"✓ Rules validation passed (+{rule_weight:.1f})")
+        else:
+            # TODO use the errors for student-teacher self-improvement model in the future
+            logger.warning(f"✗ Rules validation errors: {validation_status.errors}")
+
+        logger.debug(f"Final score: {total_score:.2f}")
         return total_score
-
-    # Rules validation score (60%)
-    validation_status = DQEngineCore.validate_checks(actual_rules)
-    if not validation_status.has_errors:
-        total_score += rule_weight
-        logger.debug(f"✓ Rules validation passed (+{rule_weight:.1f})")
-    else:
-        logger.warning(f"✗ Rules validation errors: {validation_status.errors}")
-
-    logger.debug(f"Final score: {total_score:.2f}")
-    return total_score
-
-
-def get_dspy_compiler(
-    model: str,
-    api_key: str,
-    api_base: str,
-) -> dspy.Module:
-    """
-    Get the Dspy compiler configured with an optimizer.
-
-    This function initializes and configures the Dspy compiler with a training set and an optimizer
-    to validate and optimize the generated data quality rules.
-
-    Args:
-        model (str): The model to use for the Dspy language model.
-        api_key (str): The API key for the model. Not required by Databricks foundational models.
-        api_base (str): The API base URL for the model. Not required by Databricks foundational models.
-
-    Returns:
-        dspy.Module: An optimized Dspy module for generating data quality rules.
-    """
-    _configure_dspy_model(api_key=api_key, api_base=api_base, model=model)
-
-    # Use standard DSPy approach with improved prompting
-    dq_model = DQRuleGeneration()
-    train_set = create_optimizer_training_set()
-
-    # Standard metric for JSON output validation
-    def json_metric(_example, pred, _trace=None):
-        if hasattr(pred, 'quality_rules'):
-            return validate_generated_rules(pred.quality_rules)
-        return 0.0
-
-    optimizer = dspy.BootstrapFewShot(
-        metric=json_metric,
-        max_bootstrapped_demos=3,
-        max_labeled_demos=5,
-        teacher_settings={},
-    )
-
-    optimized_model = optimizer.compile(dq_model, trainset=train_set)
-    return optimized_model
