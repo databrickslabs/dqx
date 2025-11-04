@@ -104,14 +104,3 @@
   business_description: "Each order's total must not exceed 10 times the average order total for that day"
   quality_rules: '[{"criticality":"warn","check":{"function":"sql_query","arguments":{"query":"SELECT order_id, CASE WHEN order_total > 10 * AVG(order_total) OVER (PARTITION BY order_date) THEN true ELSE false END as condition FROM {{ orders }}","merge_columns":["order_id"],"condition_column":"condition","input_placeholder":"orders","msg":"Order total exceeds 10x daily average"}}}]'
   reasoning: "The sql_query function enables complex aggregation checks using window functions to detect outlier orders that are significantly higher than the daily average. Input table can be provided directly by fully qualified name or with curly brackets {{ orders }}, where 'orders' is the name of the input table specified in the input_placeholder argument"
-
-- name: "customer_table_schema_validation"
-  schema_info:
-    columns:
-      - name: "customer_id"
-        type: "string"
-      - name: "email"
-        type: "string"
-  business_description: "Customer table must have the expected schema with required columns and types"
-  quality_rules: '[{"criticality":"error","check":{"function":"has_valid_schema","arguments":{"expected_schema":"customer_id STRING, email STRING"}}}]'
-  reasoning: "The has_valid_schema function validates that the DataFrame schema matches the expected structure, ensuring data consistency and preventing schema drift"

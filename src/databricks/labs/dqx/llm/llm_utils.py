@@ -59,8 +59,9 @@ def get_required_check_functions_info(
     """
     required_function_docs: list[dict[str, str]] = []
     for func in get_check_function_definition(custom_check_functions):
-        # tests showed that using function name and parameters alone yields the same results
-        # as using full specification while reducing token count
+        # Tests showed that using function name and parameters alone yields better results
+        # compared to full specification while reducing token count.
+        # LLMs often dilute attention given too much specification.
         required_func_info = {
             "check_function_name": func.get("name", ""),
             "parameters": func.get("parameters", ""),
