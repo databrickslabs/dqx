@@ -40,7 +40,7 @@ random.seed(datetime.now().timestamp())
 # ============================================
 SOURCE_TABLE = "wgu_poc.wgu_bronze.students_data_workflow"
 TARGET_TABLE = "wgu_poc.wgu_bronze.students_location_workflow"
-VALID_STUDENTS_TABLE = "wgu_poc.dqx_output.students_valid_workflow"
+VALID_STUDENTS_TABLE = "wgu_poc.wgu_silver.students_valid_workflow"
 ENRICHED_TABLE = "wgu_poc.wgu_silver.student_data_enriched_workflow"
 GOLD_TABLE = "wgu_poc.wgu_gold.student_data_current_workflow"
 

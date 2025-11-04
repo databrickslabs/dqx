@@ -49,7 +49,7 @@ ws = WorkspaceClient()
 # CONFIGURATION
 # ============================================
 source_table  = "wgu_poc.wgu_bronze.students_data_workflow"
-valid_table   = "wgu_poc.dqx_output.students_valid_workflow"
+valid_table   = "wgu_poc.wgu_silver.students_valid_workflow"
 invalid_table = "wgu_poc.dqx_output.students_quarantined_workflow"
 
 print(f"📘 Source Table: {source_table}")
