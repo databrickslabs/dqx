@@ -6,16 +6,17 @@ from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
+from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import MissingParameterError
+from databricks.labs.dqx.utils import get_column_metadata
 
 # Conditional imports for LLM-assisted rules generation
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
-    from databricks.labs.dqx.llm.llm_utils import get_column_metadata
 
     LLM_ENABLED = True
 except ImportError:
@@ -29,16 +30,26 @@ class DQGenerator(DQEngineBase):
         self,
         workspace_client: WorkspaceClient,
         spark: SparkSession | None = None,
-        model: str = "databricks/databricks-claude-sonnet-4-5",
-        api_key: str = "",
-        api_base: str = "",
+        llm_model_config: LLMModelConfig | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
     ):
+        """
+        Initializes the DQGenerator with optional Spark session and LLM model configuration.
+
+        Args:
+            workspace_client: Databricks WorkspaceClient instance.
+            spark: Optional SparkSession instance. If not provided, a new session will be created.
+            llm_model_config: Optional LLM model configuration for AI-assisted rule generation.
+            custom_check_functions: Optional dictionary of custom check functions.
+        """
         super().__init__(workspace_client=workspace_client)
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+
         self.custom_check_functions = custom_check_functions
+        llm_model_config = llm_model_config or LLMModelConfig()
+
         self.llm_engine = (
-            DQLLMEngine(model=model, api_key=api_key, api_base=api_base, custom_check_functions=custom_check_functions)
+            DQLLMEngine(model_config=llm_model_config, custom_check_functions=custom_check_functions)
             if LLM_ENABLED
             else None
         )
@@ -101,7 +112,7 @@ class DQGenerator(DQEngineBase):
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-        schema_info = get_column_metadata(table_name, self.spark) if table_name else ""
+        schema_info = get_column_metadata(self.spark, table_name) if table_name else ""
 
         # Generate rules using pre-initialized LLM compiler
         prediction = self.llm_engine.get_business_rules_with_llm(user_input=user_input, schema_info=schema_info)

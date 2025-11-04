@@ -12,6 +12,8 @@ __all__ = [
     "OutputConfig",
     "ExtraParams",
     "ProfilerConfig",
+    "LLMModelConfig",
+    "LLMConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
@@ -98,6 +100,25 @@ class RunConfig:
 
 
 @dataclass(frozen=True)
+class LLMModelConfig:
+    """Configuration for LLM model"""
+
+    # The model to use for the DSPy language model
+    model: str = "databricks/databricks-claude-sonnet-4-5"
+    # Optional API key for the model. Not required by foundational models
+    api_key: str = ""  #
+    # Optional API base URL for the model. Not required by foundational models
+    api_base: str = ""
+
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """Configuration for LLM usage"""
+
+    model: LLMModelConfig = field(default_factory=LLMModelConfig)
+
+
+@dataclass(frozen=True)
 class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
@@ -134,6 +155,8 @@ class WorkspaceConfig:
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
     custom_metrics: list[str] | None = None  # custom summary metrics tracked by the observer when applying checks
+
+    llm_config: LLMConfig = field(default_factory=LLMConfig)
 
     def as_dict(self) -> dict:
         """

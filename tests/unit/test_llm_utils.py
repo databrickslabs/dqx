@@ -1,13 +1,10 @@
 import inspect
-from unittest.mock import Mock
 import json
 import dspy  # type: ignore
 import pyspark.sql.functions as F
-from pyspark.sql.types import StructField, StringType, IntegerType
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from databricks.labs.dqx.llm.llm_utils import (
     get_check_function_definition,
-    get_column_metadata,
     create_optimizer_training_set,
 )
 
@@ -63,29 +60,6 @@ def test_get_check_function_definition_with_custom_check_functions_missing_speci
         )
     )
     assert not result
-
-
-def test_column_metadata():
-    mock_spark = Mock()
-    mock_df = Mock()
-    mock_df.schema.fields = [
-        StructField("customer_id", StringType(), True),
-        StructField("first_name", StringType(), True),
-        StructField("last_name", StringType(), True),
-        StructField("age", IntegerType(), True),
-    ]
-    mock_spark.table.return_value = mock_df
-
-    result = get_column_metadata("test_table", mock_spark)
-    expected_result = {
-        "columns": [
-            {"name": "customer_id", "type": "string"},
-            {"name": "first_name", "type": "string"},
-            {"name": "last_name", "type": "string"},
-            {"name": "age", "type": "int"},
-        ]
-    }
-    assert result == json.dumps(expected_result)
 
 
 def test_get_training_examples():

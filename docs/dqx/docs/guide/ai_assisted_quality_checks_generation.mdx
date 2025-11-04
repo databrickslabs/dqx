@@ -12,10 +12,10 @@ DQX provides the capability to generate data quality rule candidates using AI/LL
 
 ## Overview
 
-The AI-assisted quality checks generation is available via the `DQGenerator` class which supports:
+The AI-assisted quality checks generation is available via the `DQGenerator` class and supports:
 - Analyzing natural language descriptions of data quality requirements.
 - Optionally inspecting table schemas to understand data structure.
-- Generating appropriate data quality rules that match the requirements.
+- Generating appropriate data quality rules that match the requirements using built-in and custom check functions.
 - Validating the generated rules to ensure they are syntactically correct.
 
 This approach is particularly useful when you have clear business requirements, but need help translating them into technical data quality rules.
@@ -67,11 +67,7 @@ Here's a simple example of generating quality rules from a natural language desc
 
     # Initialize the generator
     ws = WorkspaceClient()
-    generator = DQGenerator(
-      workspace_client=ws,
-      #model="databricks/databricks-claude-sonnet-4-5",  # optional, the generator use a foundational model by default
-      #custom_check_functions=globals(), # Optional dictionary with custom check functions
-    )
+    generator = DQGenerator(workspace_client=ws)
 
     # Generate rules from natural language description
     user_input = """
@@ -119,6 +115,52 @@ The LLM will analyze the table schema to generate more accurate rules:
   </TabItem>
 </Tabs>
 
+### Providing custom check functions
+
+DQX provides a collection of predefined built-in quality rules (check functions). Additionally, you can define your own custom check functions using python to meet specific requirements (see [here](/docs/reference/quality_checks).
+Custom Python check functions can be passed to the generator, allowing the LLM to utilize them as needed.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.check_funcs import make_condition, register_rule
+    import pyspark.sql.functions as F
+
+    @register_rule("row")
+    def not_ends_with_suffix(column: str, suffix: str):
+    """
+    Example fo custom python row-level check function.
+    """
+    return make_condition(
+      F.col(column).endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}"
+    )
+
+    custom_check_functions = {"ends_with_suffix": not_ends_with_suffix}
+
+    # Initialize the generator
+    ws = WorkspaceClient()
+    generator = DQGenerator(
+      workspace_client=ws,
+      custom_check_functions=custom_check_functions
+    )
+
+    # Generate rules from natural language description
+    user_input = """
+    Username should not start with 's' if age is less than 18.
+    All users must have a valid email address.
+    Age should be between 0 and 120.
+    Email address must not end with '@gmail.com'.
+    """
+
+    checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
+
+    print(checks)
+    ```
+  </TabItem>
+</Tabs>
+
 ### Using Custom Model Configuration
 
 You can configure the generator to use custom models or API endpoints:
@@ -128,24 +170,31 @@ You can configure the generator to use custom models or API endpoints:
     ```python
     from databricks.labs.dqx.profiler.generator import DQGenerator
     from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.config import LLMModelConfig
 
     ws = WorkspaceClient()
 
-    # Option 1: Using Databricks Foundation Model API with explicit credentials
-    generator = DQGenerator(
-      workspace_client=ws,
+    # Option 1: Using Databricks Foundation Model API
+    model_config = LLMModelConfig(
+      model="databricks/databricks-claude-sonnet-4-5"  # default
+    )
+    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
+
+    # Option 2: Using Databricks Foundation Model API with explicit credentials
+    model_config = LLMModelConfig(
       model="databricks/databricks-claude-sonnet-4-5",
       api_key="your-api-key",
       api_base="https://your-workspace.azuredatabricks.net/serving-endpoints"
     )
+    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
 
-    # Option 2: Using an arbitrary LLM model
-    generator = DQGenerator(
-      workspace_client=ws,
+    # Option 3: Using an arbitrary LLM model
+    model_config = LLMModelConfig(
       model="databricks/meta-llama-3-1-70b-instruct",
       api_key="your-api-key",
       api_base="https://your-workspace.azuredatabricks.net/serving-endpoints"
     )
+    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
 
     user_input = "All fields should contain data and have no empty values"
     checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)

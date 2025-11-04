@@ -7,7 +7,6 @@ from typing import Any
 import json
 import yaml
 import dspy  # type: ignore
-from pyspark.sql import SparkSession
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 
@@ -47,23 +46,6 @@ def get_check_function_definition(custom_check_functions: dict[str, Callable] | 
             }
         )
     return function_docs
-
-
-def get_column_metadata(table_name: str, spark: SparkSession) -> str:
-    """
-    Get the column metadata for a given table.
-
-    Args:
-        table_name (str): The name of the table to retrieve metadata for.
-        spark (SparkSession): The Spark session used to access the table.
-
-    Returns:
-        str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
-    """
-    df = spark.table(table_name)
-    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
-    schema_info = {"columns": columns}
-    return json.dumps(schema_info)
 
 
 def get_required_check_functions_info(
