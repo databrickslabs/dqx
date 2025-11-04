@@ -1,0 +1,28 @@
+- check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: student_id
+      trim_strings: true
+  name: student_id_is_null_or_empty
+  criticality: error
+- check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: city
+      trim_strings: true
+  name: city_is_null_or_empty
+  criticality: error
+- check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: state
+      trim_strings: true
+  name: state_is_null_or_empty
+  criticality: error
+- check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: zipcode
+      trim_strings: true
+  name: zipcode_is_null_or_empty
+  criticality: error

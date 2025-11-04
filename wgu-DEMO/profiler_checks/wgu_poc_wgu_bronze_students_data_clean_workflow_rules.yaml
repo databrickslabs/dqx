@@ -1,0 +1,48 @@
+- check:
+    function: is_not_null
+    arguments:
+      column: student_id
+  name: student_id_is_null
+  criticality: error
+- check:
+    function: is_not_null
+    arguments:
+      column: name
+  name: name_is_null
+  criticality: error
+- check:
+    function: is_not_null
+    arguments:
+      column: email
+  name: email_is_null
+  criticality: error
+- check:
+    function: is_not_null
+    arguments:
+      column: student_status
+  name: student_status_is_null
+  criticality: error
+- check:
+    function: is_not_null
+    arguments:
+      column: month_end_date
+  name: month_end_date_is_null
+  criticality: error
+- check:
+    function: is_not_null
+    arguments:
+      column: paid
+  name: paid_is_null
+  criticality: error
+- check:
+    function: is_not_null
+    arguments:
+      column: stays_on_campus
+  name: stays_on_campus_is_null
+  criticality: error
+- check:
+    function: is_not_null
+    arguments:
+      column: load_timestamp
+  name: load_timestamp_is_null
+  criticality: error

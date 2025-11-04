@@ -1,0 +1,28 @@
+- check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: student_id
+      trim_strings: true
+  name: student_id_is_null_or_empty
+  criticality: error
+- check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: name
+      trim_strings: true
+  name: name_is_null_or_empty
+  criticality: error
+- check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: email
+      trim_strings: true
+  name: email_is_null_or_empty
+  criticality: error
+- check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: student_status
+      trim_strings: true
+  name: student_status_is_null_or_empty
+  criticality: error

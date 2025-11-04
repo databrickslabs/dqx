@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Synthetic Student Data Generator
+# MAGIC # Synthetic Student Data Generator (Workflow Version - Balanced & DQX-Ready)
 # MAGIC
 # MAGIC Generates **100 synthetic student records per run** and upserts them into:
 # MAGIC **wgu_poc.wgu_bronze.students_data_workflow**
@@ -30,7 +30,7 @@ from delta.tables import DeltaTable
 # CONFIGURATION
 # ============================================
 NUM_RECORDS = 100
-TARGET_TABLE = "wgu_poc.wgu_bronze.students_data_workflow"
+TARGET_TABLE = "wgu_poc.wgu_bronze.student_data_clean_workflow"
 
 # Ensure controlled randomness
 random.seed(datetime.now().timestamp())
@@ -49,46 +49,25 @@ end_date = datetime(2025, 12, 31)
 # ============================================
 
 def random_timestamp(start, end):
+    """Generate random timestamp between start and end."""
     delta = end - start
     random_seconds = random.randint(0, int(delta.total_seconds()))
     return start + timedelta(seconds=random_seconds)
 
 def generate_student_id():
+    """Generate a unique student ID pattern (e.g., abc12345678)."""
     letters = ''.join(random.choices(string.ascii_lowercase, k=3))
     numbers = f"{random.randint(0, 99999999):08d}"
     return f"{letters}{numbers}"
 
 def generate_email(name):
+    """Create a clean, valid email address."""
     base = name.lower().replace(" ", ".").replace("'", "")
     domain = random.choice(["gmail.com", "yahoo.com", "wgu.edu", "outlook.com"])
     return f"{base}@{domain}"
 
-def maybe_null(value, probability=0.05):
-    return None if random.random() < probability else value
-
-def malform_student_id(value):
-    malformations = [
-        value + "###", value.replace('a', '@').replace('e', '3'),
-        value[:5], value.upper() + "!", "INVALID_" + value
-    ]
-    return random.choice(malformations)
-
-def malform_status(value):
-    return random.choice(["UNKNOWN", "grad@uated", "current123", "N/A", "---", "pending??"])
-
-def malform_name(value):
-    malformations = [value.lower(), value.upper(), value + "123", "???", value.replace(" ", "_")]
-    return random.choice(malformations)
-
-def malform_email(value):
-    malformations = [
-        "notanemail", "missing_at_symbol.com", "@nouser.com",
-        "test@fake", "user@@domain.com", "email@domain", None
-    ]
-    return random.choice(malformations)
-
 # ============================================
-# GENERATE DATA (90% imperfect, 10% guaranteed clean)
+# GENERATE 100% CLEAN DATA
 # ============================================
 data = []
 generated_ids = set()
@@ -107,45 +86,16 @@ for i in range(NUM_RECORDS):
     stays_on_campus = random.choice([True, False])
     load_timestamp = datetime.now(pytz.utc)
 
-    # 💎 Ensure first ~10–15% are fully clean
-    if i < int(NUM_RECORDS * 0.15):
-        record = {
-            'student_id': student_id,
-            'name': name,
-            'email': email,
-            'student_status': student_status,
-            'month_end_date': month_end_date,
-            'paid': paid,
-            'stays_on_campus': stays_on_campus,
-            'load_timestamp': load_timestamp
-        }
-    else:
-        # Randomly dirty records (~85–90%)
-        # Each record has small independent chance of malformed or null values
-        if random.random() < 0.10: student_id = malform_student_id(student_id)
-        if random.random() < 0.10: student_status = malform_status(student_status)
-        if random.random() < 0.08: name = malform_name(name)
-        if random.random() < 0.08: email = malform_email(email)
-
-        # Occasional nulls (5%)
-        student_id = maybe_null(student_id, 0.05)
-        name = maybe_null(name, 0.05)
-        email = maybe_null(email, 0.05)
-        student_status = maybe_null(student_status, 0.05)
-        month_end_date = maybe_null(month_end_date, 0.05)
-        paid = maybe_null(paid, 0.05)
-        stays_on_campus = maybe_null(stays_on_campus, 0.05)
-
-        record = {
-            'student_id': student_id,
-            'name': name,
-            'email': email,
-            'student_status': student_status,
-            'month_end_date': month_end_date,
-            'paid': paid,
-            'stays_on_campus': stays_on_campus,
-            'load_timestamp': load_timestamp
-        }
+    record = {
+        'student_id': student_id,
+        'name': name,
+        'email': email,
+        'student_status': student_status,
+        'month_end_date': month_end_date,
+        'paid': paid,
+        'stays_on_campus': stays_on_campus,
+        'load_timestamp': load_timestamp
+    }
 
     data.append(record)
 
@@ -193,7 +143,7 @@ print(f"\n{'='*60}")
 print("📊 SYNTHETIC STUDENT DATA GENERATION SUMMARY")
 print(f"🏁 Run Completed: {datetime.now()}")
 print(f"💾 Records Added to Target Table: {added_count}")
-print(f"💎 Clean Records (Guaranteed ~15%): ~{int(NUM_RECORDS*0.15)}")
+print(f"💎 Clean Records (100%): {NUM_RECORDS}")
 print(f"📦 Target Table: {TARGET_TABLE}")
 print(f"{'='*60}")
 

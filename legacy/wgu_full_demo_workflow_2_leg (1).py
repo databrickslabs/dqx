@@ -1,24 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 🧩 E2E Single Table Validation (DQX-Optimized)
+# MAGIC # Hybrid DQX Flow — Simplified & Clean Audit Summary (Fixed)
 # MAGIC
-# MAGIC **Purpose:**  
-# MAGIC Demonstrates a best-practice single-table DQX pipeline aligned with official Databricks Labs DQX methodology.  
-# MAGIC
-# MAGIC - **Input:** `wgu_poc.wgu_bronze.students_data_workflow`  
-# MAGIC - **Outputs:**  
-# MAGIC   - Valid records → `wgu_poc.dqx_output.students_valid_workflow`  
-# MAGIC   - Quarantined (errors only) → `wgu_poc.dqx_output.students_quarantined_workflow`  
-# MAGIC   - Clean audit summary → printed and stored in-memory  
-# MAGIC
-# MAGIC **DQX Lifecycle Steps**
-# MAGIC
-# MAGIC 1️⃣ Load data (incremental & valid timestamp range)  
-# MAGIC 2️⃣ Profile dataset (using DQProfiler)  
-# MAGIC 3️⃣ Generate rules (auto + manual\custom)  
-# MAGIC 4️⃣ Apply checks via DQEngine  
-# MAGIC 5️⃣ Upsert valid/quarantined records  
-# MAGIC 6️⃣ Create null-safe audit summary
+# MAGIC - Input: `wgu_poc.wgu_bronze.students_data_workflow`
+# MAGIC - Outputs:
+# MAGIC   - Valid records → `wgu_poc.dqx_output.students_valid_workflow`
+# MAGIC   - Quarantined (error-level only) → `wgu_poc.dqx_output.students_quarantined_workflow`
+# MAGIC - Clean audit summary with key metrics and fixed null-safe clean record filter
 
 # COMMAND ----------
 
@@ -39,9 +27,6 @@ from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition
 from pyspark.sql import functions as F
 
-# -------------------------------------------
-# ENVIRONMENT SETUP
-# -------------------------------------------
 spark = SparkSession.builder.getOrCreate()
 ws = WorkspaceClient()
 
@@ -52,21 +37,17 @@ source_table  = "wgu_poc.wgu_bronze.students_data_workflow"
 valid_table   = "wgu_poc.dqx_output.students_valid_workflow"
 invalid_table = "wgu_poc.dqx_output.students_quarantined_workflow"
 
-print(f"📘 Source Table: {source_table}")
+print(f"Source: {source_table}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1️⃣ Load Data (Incremental with Timestamp Validation)
-# MAGIC
-# MAGIC - Filters out already-processed rows (based on latest `load_timestamp`)  
-# MAGIC - Applies year sanity checks to prevent corrupt timestamps
+# MAGIC ### 1️⃣ Load Data (Incremental Filter)
 
 # COMMAND ----------
 
 students_df = spark.table(source_table)
 
-# Incremental filter — only new records since last valid DQ run
 if spark.catalog.tableExists(valid_table):
     last_ts = spark.table(valid_table).agg(spark_max("load_timestamp")).collect()[0][0]
     if last_ts:
@@ -76,46 +57,37 @@ else:
     print("Full run — no prior valid data detected.")
 
 if students_df.count() == 0:
-    print("⚠️ No new rows detected. Exiting gracefully.")
+    print("No new rows to process.")
     dbutils.notebook.exit("No new rows detected.")
 
-# Sanity filter: remove invalid timestamps
+# Filter timestamp sanity
 students_df_filtered = students_df.filter(
-    (year(col("load_timestamp")).between(1900, 9999)) &
-    (year(col("month_end_date")).between(1900, 9999))
+    (year(col("load_timestamp")).between(1900, 9999))
+    & (year(col("month_end_date")).between(1900, 9999))
 )
-print(f"✅ Rows ready for profiling: {students_df_filtered.count()}")
+print(f"Rows profiled: {students_df_filtered.count()}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2️⃣ DQX Profiling + Auto Rule Generation
-# MAGIC
-# MAGIC Profiles the dataset to infer distributions, null counts, and data types.  
-# MAGIC Then automatically generates DQX rules per field.
+# MAGIC ### 2️⃣ DQX Profiling + Auto Rules
 
 # COMMAND ----------
 
 profiler = DQProfiler(ws)
-summary_stats, profiles = profiler.profile(students_df_filtered, options={"sample_fraction": 0.7, "limit": 10000})
+summary_stats, profiles = profiler.profile(students_df_filtered, options={"sample_fraction": 0.7})
 auto_rules = DQGenerator(ws).generate_dq_rules(profiles)
-print(f"✅ Profiling complete and {len(auto_rules)} auto rules generated.")
+print("Auto rules generated")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 3️⃣ Custom & Manual Rules (with Custom Function Registration)
-# MAGIC
-# MAGIC - Manual YAML rules represent consistent validation logic  
-# MAGIC - Custom rule demonstrates DQX extensibility
+# MAGIC ### 3️⃣ Custom & Manual Rules
 
 # COMMAND ----------
 
 @register_rule("row")
 def paid_status_consistency(paid_col: str, status_col: str):
-    """
-    Ensure that if a student is marked as 'paid', their status is logically consistent.
-    """
     invalid_condition = (
         (F.col(paid_col) == True) &
         (~F.col(status_col).isin("graduated", "dropped"))
@@ -131,8 +103,13 @@ manual_rules = yaml.safe_load("""
     function: is_not_null_and_not_empty
     for_each_column:
       - student_id
+      - name
+      - email
+      - student_status
       - load_timestamp
+      - month_end_date
       - paid
+      - stays_on_campus
   criticality: error
   name: not_null_core_fields
 
@@ -147,19 +124,19 @@ manual_rules = yaml.safe_load("""
     function: regex_match
     for_each_column: [student_id]
     arguments:
-      regex: '^(?i)(?!INVALID|_|NULL)[A-Z]{3}[0-9]{8}$'
+      regex: '^[A-Za-z]{3}[0-9]{8}$'
       negate: false
-  criticality: error
-  name: valid_student_id_pattern_strict
+  criticality: warn
+  name: valid_student_id_pattern
 
 - check:
     function: regex_match
     for_each_column: [email]
     arguments:
-      regex: '^(?i)(?!.*\\.\\.)(?!.*\\.@)(?!.*@\\.)[A-Z0-9](?:[A-Z0-9._%+-]{0,63}[A-Z0-9])?@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\\.[A-Z]{2,})+$'
+      regex: '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'
       negate: false
   criticality: warn
-  name: valid_email_format_strict
+  name: valid_email_format
 
 - check:
     function: is_in_list
@@ -187,86 +164,69 @@ manual_rules = yaml.safe_load("""
   name: name_no_numeric_chars
 """)
 
-print("✅ Manual and custom rules registered successfully.")
+print("Manual rules loaded")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 4️⃣ Apply DQX Rules + Split Valid vs Quarantined
-# MAGIC
-# MAGIC Uses **DQEngine** to apply all active rules to the dataset,  
-# MAGIC generating `_errors` and `_warnings` metadata columns automatically.
+# MAGIC ### 4️⃣ Apply DQX Rules + Split
 
 # COMMAND ----------
 
 dq_engine = DQEngine(ws)
 all_rules = manual_rules + auto_rules
 
-# Validate all rule structures
 status = dq_engine.validate_checks(all_rules, custom_check_functions=globals())
 if status.has_errors:
-    print("⚠️ Rule validation issues detected:")
+    print("Rule validation issues:")
     print(status.errors)
 else:
-    print("✅ All rules validated successfully.")
+    print("Rules validated successfully")
 
-# Apply rules and split valid/quarantined records
 valid_df, invalid_df = dq_engine.apply_checks_by_metadata_and_split(
     students_df_filtered,
     all_rules,
     custom_check_functions=globals()
 )
 
-# Ensure unique quarantine by student_id if present
-if "student_id" in invalid_df.columns:
-    invalid_df = invalid_df.dropDuplicates(["student_id"])
+invalid_df_unique = invalid_df.dropDuplicates(["student_id"])
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5️⃣ Upsert Valid + Quarantined Records (Delta Upsert)
-# MAGIC
-# MAGIC Maintains incremental history via merge/upsert semantics.
+# MAGIC ### 5️⃣ Upsert Valid + Quarantined Data
 
 # COMMAND ----------
 
 def upsert_to_table(df, table_name, key="student_id"):
-    """Upsert (merge) a dataframe into a Delta table by primary key."""
-    if not spark.catalog.tableExists(table_name):
+    if spark.catalog.tableExists(table_name):
+        delta = DeltaTable.forName(spark, table_name)
+        delta.alias("tgt").merge(df.alias("src"), f"tgt.{key}=src.{key}") \
+            .whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+    else:
         df.write.format("delta").mode("overwrite").saveAsTable(table_name)
-        print(f"💾 Created new table {table_name} with {df.count()} records.")
-        return
-    delta = DeltaTable.forName(spark, table_name)
-    join_key = key if key in df.columns else df.columns[0]
-    (
-        delta.alias("tgt")
-        .merge(df.alias("src"), f"tgt.{join_key} = src.{join_key}")
-        .whenMatchedUpdateAll()
-        .whenNotMatchedInsertAll()
-        .execute()
-    )
-    print(f"💾 Upserted {df.count()} → {table_name}")
+    print(f"Upserted {df.count()} → {table_name}")
 
 valid_df = valid_df.withColumn("dq_run_timestamp", current_timestamp())
-invalid_df = invalid_df.withColumn("dq_run_timestamp", current_timestamp())
+invalid_df_unique = invalid_df_unique.withColumn("dq_run_timestamp", current_timestamp())
 
 upsert_to_table(valid_df, valid_table)
-upsert_to_table(invalid_df, invalid_table)
+upsert_to_table(invalid_df_unique, invalid_table)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 6️⃣ Simplified Audit Summary (DQX Metadata + Null-Safe Filtering)
-# MAGIC
-# MAGIC Leverages `_errors` and `_warnings` arrays produced by DQX to compute counts  
-# MAGIC without assuming fixed schema or null behavior.
+# MAGIC ### 6️⃣ Simplified Audit Summary (Null-Safe Clean Record Detection)
 
 # COMMAND ----------
+
+from pyspark.sql.functions import col, size
 
 total_rows = students_df_filtered.count()
 total_warnings = invalid_df.filter(size(col("_warnings")) > 0).count()
 total_errors = invalid_df.filter(size(col("_errors")) > 0).count()
 
+# ✅ Null-safe detection for fully clean rows (no warns + no errors)
 clean_df = valid_df.filter(
     ((col("_warnings").isNull()) | (size(col("_warnings")) == 0)) &
     ((col("_errors").isNull())   | (size(col("_errors")) == 0))
@@ -284,7 +244,7 @@ summary_df = spark.createDataFrame(
 )
 
 print(f"\n{'='*80}")
-print("📊 FINAL DQX SUMMARY (Aligned with DQX Methodology)")
+print("📊 FINAL DQX SUMMARY (Simplified & Null-Safe)")
 print(f"🏁 Run Completed: {datetime.now()}")
 print(f"📦 Total Rows Profiled: {total_rows}")
 print(f"⚠️ Total Warnings Found: {total_warnings}")

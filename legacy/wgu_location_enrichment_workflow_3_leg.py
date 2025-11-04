@@ -1,19 +1,17 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # Student Location Generator + Enrichment + Gold View (Workflow-Optimized, Cleaned & Normalized)
+# MAGIC # 🗺️ Student Location Generator + Enrichment + Gold View (Workflow-Optimized, with Name Cleanup)
 # MAGIC
 # MAGIC **Pipeline Flow**
-# MAGIC
 # MAGIC 1️⃣ Bronze → Raw student data (`students_data_workflow`)  
 # MAGIC 2️⃣ Bronze → Generate & append location data (`students_location_workflow`)  
-# MAGIC 3️⃣ Silver → Enrich valid DQX results + clean & normalize names (`student_data_enriched_workflow`)  
+# MAGIC 3️⃣ Silver → Enrich valid DQX results + clean student names (`student_data_enriched_workflow`)  
 # MAGIC 4️⃣ Gold → Business filter for current students (`student_data_current_workflow`)
 # MAGIC
-# MAGIC - Incremental updates for locations  
-# MAGIC - Cleans numeric characters from names  
-# MAGIC - Normalizes capitalization (Firstname Lastname / Firstname Lastname Jr)  
-# MAGIC - Idempotent enrichment for Silver layer  
-# MAGIC - Clean Gold subset for “current” students only
+# MAGIC ✅ Incremental updates for locations  
+# MAGIC ✅ Name cleanup (removes digits and trims whitespace)  
+# MAGIC ✅ Idempotent Silver enrichment  
+# MAGIC ✅ Clean Gold subset (current students only)
 
 # COMMAND ----------
 
@@ -22,8 +20,7 @@
 # COMMAND ----------
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, regexp_replace, trim, udf
-from pyspark.sql.types import StringType
+from pyspark.sql.functions import col, regexp_replace, trim
 from delta.tables import DeltaTable
 from faker import Faker
 import pandas as pd
@@ -44,11 +41,11 @@ VALID_STUDENTS_TABLE = "wgu_poc.dqx_output.students_valid_workflow"
 ENRICHED_TABLE = "wgu_poc.wgu_silver.student_data_enriched_workflow"
 GOLD_TABLE = "wgu_poc.wgu_gold.student_data_current_workflow"
 
-print(f"Source Table: {SOURCE_TABLE}")
-print(f"Location Table: {TARGET_TABLE}")
-print(f"Valid Students Table: {VALID_STUDENTS_TABLE}")
-print(f"Silver Target Table: {ENRICHED_TABLE}")
-print(f"Gold Target Table: {GOLD_TABLE}")
+print(f"📘 Source Table: {SOURCE_TABLE}")
+print(f"📦 Location Table: {TARGET_TABLE}")
+print(f"✅ Valid Students Table: {VALID_STUDENTS_TABLE}")
+print(f"💎 Silver Target Table: {ENRICHED_TABLE}")
+print(f"🏆 Gold Target Table: {GOLD_TABLE}")
 
 # COMMAND ----------
 
@@ -66,14 +63,14 @@ if spark.catalog.tableExists(TARGET_TABLE):
         tgt_students_df, on="student_id", how="left_anti"
     )
     new_count = new_students_df.count()
-    print(f"Found {new_count} new students not yet in location table.")
+    print(f"🧮 Found {new_count} new students not yet in location table.")
 else:
     new_students_df = src_students_df
     new_count = new_students_df.count()
-    print(f"No target table yet — processing all {src_count} students.")
+    print(f"🆕 No target table yet — processing all {src_count} students.")
 
 if new_count == 0:
-    print("No new students to process. Exiting gracefully.")
+    print("✅ No new students to process. Exiting gracefully.")
     dbutils.notebook.exit("No new rows detected.")
 
 # COMMAND ----------
@@ -97,10 +94,11 @@ for sid in new_student_ids:
         "zipcode": zipcode
     })
 
+# Convert to Spark DataFrame
 df_location = pd.DataFrame(location_data)
 spark_df_location = spark.createDataFrame(df_location)
 
-print(f"Generated {spark_df_location.count()} new location records.")
+print(f"🏙️ Generated {spark_df_location.count()} new location records.")
 
 # COMMAND ----------
 
@@ -111,15 +109,15 @@ print(f"Generated {spark_df_location.count()} new location records.")
 
 if spark.catalog.tableExists(TARGET_TABLE):
     spark_df_location.write.format("delta").mode("append").saveAsTable(TARGET_TABLE)
-    print(f"Appended {spark_df_location.count()} records into {TARGET_TABLE}")
+    print(f"✅ Appended {spark_df_location.count()} records into {TARGET_TABLE}")
 else:
     spark_df_location.write.format("delta").mode("overwrite").saveAsTable(TARGET_TABLE)
-    print(f"Created new Delta table and inserted {spark_df_location.count()} records into {TARGET_TABLE}")
+    print(f"✅ Created new Delta table and inserted {spark_df_location.count()} records into {TARGET_TABLE}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 4️⃣ Enrich Valid DQX Students + Clean and Normalize Names (Silver Layer)
+# MAGIC ### 4️⃣ Enrich Valid DQX Students with Location Data + Clean Names (Silver Layer)
 
 # COMMAND ----------
 
@@ -146,35 +144,17 @@ enriched_df = (
     )
 )
 
-# --- Step 1: Remove digits & extra whitespace ---
+# ✅ Name cleanup transformation — remove digits and extra spaces
 enriched_df_cleaned = (
     enriched_df
-    .withColumn("name", regexp_replace(col("name"), "[0-9]", ""))
-    .withColumn("name", trim(col("name")))
+    .withColumn("name", regexp_replace(col("name"), "[0-9]", ""))  # remove numbers
+    .withColumn("name", trim(col("name")))                         # remove extra spaces
 )
 
-# --- Step 2: Normalize capitalization and suffixes ---
-def normalize_name(name: str) -> str:
-    if not name or not isinstance(name, str):
-        return name
-    name = " ".join(name.split())
-    parts = name.split(" ")
-    normalized = [p.capitalize() for p in parts]
-    suffixes = {"Jr", "Sr", "Ii", "Iii", "Iv"}
-    if normalized[-1] in suffixes:
-        normalized[-1] = normalized[-1].upper()
-    return " ".join(normalized)
-
-normalize_name_udf = udf(normalize_name, StringType())
-enriched_df_normalized = enriched_df_cleaned.withColumn("name", normalize_name_udf(col("name")))
-
 # Write to Silver table (overwrite for freshness)
-silver_before = spark.table(ENRICHED_TABLE).count() if spark.catalog.tableExists(ENRICHED_TABLE) else 0
-enriched_df_normalized.write.format("delta").mode("overwrite").saveAsTable(ENRICHED_TABLE)
-silver_after = enriched_df_normalized.count()
-silver_added = silver_after - silver_before
+enriched_df_cleaned.write.format("delta").mode("overwrite").saveAsTable(ENRICHED_TABLE)
 
-print(f"Enriched & cleaned dataset written to {ENRICHED_TABLE} ({silver_added} new or updated records).")
+print(f"💎 Enriched & cleaned dataset written to {ENRICHED_TABLE} ({enriched_df_cleaned.count()} records).")
 
 # COMMAND ----------
 
@@ -183,14 +163,11 @@ print(f"Enriched & cleaned dataset written to {ENRICHED_TABLE} ({silver_added} n
 
 # COMMAND ----------
 
-gold_df = enriched_df_normalized.filter(col("student_status") == "current")
+gold_df = enriched_df_cleaned.filter(col("student_status") == "current")
 
-gold_before = spark.table(GOLD_TABLE).count() if spark.catalog.tableExists(GOLD_TABLE) else 0
 gold_df.write.format("delta").mode("overwrite").saveAsTable(GOLD_TABLE)
-gold_after = gold_df.count()
-gold_added = gold_after - gold_before
 
-print(f"Gold dataset created: {GOLD_TABLE} ({gold_added} new or updated current students).")
+print(f"🏆 Gold dataset created: {GOLD_TABLE} ({gold_df.count()} current students).")
 
 # COMMAND ----------
 
@@ -199,11 +176,18 @@ print(f"Gold dataset created: {GOLD_TABLE} ({gold_added} new or updated current 
 
 # COMMAND ----------
 
+final_count = spark.table(TARGET_TABLE).count()
+enriched_count = spark.table(ENRICHED_TABLE).count()
+gold_count = spark.table(GOLD_TABLE).count()
+
 print(f"\n{'='*70}")
 print(f"📊 STUDENT LOCATION + ENRICHMENT + GOLD SUMMARY")
 print(f"🏁 Run Completed: {datetime.now()}")
-print(f"💎 Records Added to Silver: {silver_added}")
-print(f"🏆 Records Added to Gold: {gold_added}")
+print(f"📦 Total in Source: {src_count}")
+print(f"🆕 Location Records Added: {spark_df_location.count()}")
+print(f"📘 Total in Location Table: {final_count}")
+print(f"💎 Total in Silver Table: {enriched_count}")
+print(f"🏆 Total in Gold Table: {gold_count}")
 print(f"{'='*70}")
 
 display(spark.table(GOLD_TABLE).limit(10))
