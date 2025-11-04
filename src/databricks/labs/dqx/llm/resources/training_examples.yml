@@ -80,7 +80,7 @@
       - name: "discount"
         type: "decimal"
   business_description: "Discount value must never exceed price"
-  quality_rules: '[{"criticality":"error","check":{"function":"sql_expression","arguments":{"expression":"discount <= price","msg":"Discount is greater than price"}}}]'
+  quality_rules: '[{"criticality":"error","check":{"function":"sql_expression","arguments":{"expression":"discount <= price","msg":"Discount is greater than price", "columns":["price","discount"]}}}]'
   reasoning: "A discount higher than price is invalid business logic"
 
 - name: "event_timestamp_recent"

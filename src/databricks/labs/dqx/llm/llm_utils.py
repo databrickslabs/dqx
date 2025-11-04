@@ -13,7 +13,7 @@ from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 logger = logging.getLogger(__name__)
 
 
-def get_check_function_definition(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:
+def get_check_function_definitions(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:
     """
     A utility function to get the definition of all check functions.
     This function is primarily used to generate a prompt for the LLM to generate check functions.
@@ -48,7 +48,7 @@ def get_check_function_definition(custom_check_functions: dict[str, Callable] | 
     return function_docs
 
 
-def get_required_check_functions_info(
+def get_required_check_functions_definitions(
     custom_check_functions: dict[str, Callable] | None = None
 ) -> list[dict[str, str]]:
     """
@@ -58,7 +58,7 @@ def get_required_check_functions_info(
         list[dict[str, str]]: A list of dictionaries containing the required fields for each check function.
     """
     required_function_docs: list[dict[str, str]] = []
-    for func in get_check_function_definition(custom_check_functions):
+    for func in get_check_function_definitions(custom_check_functions):
         # Tests showed that using function name and parameters alone yields better results
         # compared to full specification while reducing token count.
         # LLMs often dilute attention given too much specification.
@@ -90,7 +90,7 @@ def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | 
         example = dspy.Example(
             schema_info=schema_info_json,
             business_description=example_data["business_description"],
-            available_functions=json.dumps(get_required_check_functions_info(custom_check_functions)),
+            available_functions=json.dumps(get_required_check_functions_definitions(custom_check_functions)),
             quality_rules=example_data["quality_rules"],
             reasoning=example_data["reasoning"],
         ).with_inputs("schema_info", "business_description", "available_functions")

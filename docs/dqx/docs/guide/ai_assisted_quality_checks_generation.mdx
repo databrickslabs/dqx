@@ -130,12 +130,12 @@ Custom Python check functions can be passed to the generator, allowing the LLM t
 
     @register_rule("row")
     def not_ends_with_suffix(column: str, suffix: str):
-    """
-    Example fo custom python row-level check function.
-    """
-    return make_condition(
-      F.col(column).endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}"
-    )
+      """
+      Example fo custom python row-level check function.
+      """
+      return make_condition(
+        F.col(column).endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}"
+      )
 
     custom_check_functions = {"ends_with_suffix": not_ends_with_suffix}
 

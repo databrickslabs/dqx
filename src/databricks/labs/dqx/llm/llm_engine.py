@@ -6,7 +6,7 @@ import dspy  # type: ignore
 
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.llm.llm_core import LLMRuleCompiler
-from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_info
+from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class DQLLMEngine:
         Args:
             custom_check_functions: Optional custom check functions to include.
         """
-        self._available_check_functions = json.dumps(get_required_check_functions_info(custom_check_functions))
+        self._available_check_functions = json.dumps(get_required_check_functions_definitions(custom_check_functions))
 
         self._llm_compiler = LLMRuleCompiler(
             model_config=model_config,

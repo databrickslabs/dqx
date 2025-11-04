@@ -4,8 +4,9 @@ import dspy  # type: ignore
 import pyspark.sql.functions as F
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from databricks.labs.dqx.llm.llm_utils import (
-    get_check_function_definition,
+    get_check_function_definitions,
     create_optimizer_training_set,
+    get_required_check_functions_definitions,
 )
 
 
@@ -19,12 +20,12 @@ def dummy_custom_check_function_test(column: str, suffix: str):
     )
 
 
-def test_get_check_function_definition():
+def test_get_check_function_definitions():
     custom_check_functions = {"dummy_custom_check_function_test": dummy_custom_check_function_test}
     result = list(
         filter(
             lambda x: x['name'] == 'dummy_custom_check_function_test',
-            get_check_function_definition(custom_check_functions),
+            get_check_function_definitions(custom_check_functions),
         )
     )
     sig = inspect.signature(dummy_custom_check_function_test)
@@ -38,25 +39,63 @@ def test_get_check_function_definition():
     }
 
 
-def test_get_check_function_definition_with_missing_custom_check_functions():
+def test_get_check_function_definitions_with_missing_custom_check_functions():
     result = list(
         filter(
             lambda x: x['name'] == 'dummy_custom_check_function_test',
-            get_check_function_definition(),
+            get_check_function_definitions(),
         )
     )
     assert not result
 
 
-def test_get_check_function_definition_with_custom_check_functions_missing_specific_function():
-    """Test case when custom_check_functions is provided but doesn't contain the specific function."""
+def test_get_check_function_definitions_with_custom_check_functions_missing_specific_function():
     # Provide custom_check_functions dict but without the function we're looking for
     custom_check_functions = {"some_other_function": dummy_custom_check_function_test}
 
     result = list(
         filter(
             lambda x: x['name'] == 'dummy_custom_check_function_test',
-            get_check_function_definition(custom_check_functions),
+            get_check_function_definitions(custom_check_functions),
+        )
+    )
+    assert not result
+
+
+def test_get_required_check_function_definitions():
+    custom_check_functions = {"dummy_custom_check_function_test": dummy_custom_check_function_test}
+    print(get_required_check_functions_definitions(custom_check_functions))
+    result = list(
+        filter(
+            lambda x: x['check_function_name'] == 'dummy_custom_check_function_test',
+            get_required_check_functions_definitions(custom_check_functions),
+        )
+    )
+    sig = inspect.signature(dummy_custom_check_function_test)
+    assert result[0] == {
+        'check_function_name': 'dummy_custom_check_function_test',
+        'parameters': str(sig.parameters),
+    }
+
+
+def test_get_required_check_functions_definitions_with_missing_custom_check_functions():
+    result = list(
+        filter(
+            lambda x: x['check_function_name'] == 'dummy_custom_check_function_test',
+            get_required_check_functions_definitions(),
+        )
+    )
+    assert not result
+
+
+def test_get_required_check_function_definition_with_custom_check_functions_missing_specific_function():
+    # Provide custom_check_functions dict but without the function we're looking for
+    custom_check_functions = {"some_other_function": dummy_custom_check_function_test}
+
+    result = list(
+        filter(
+            lambda x: x['check_function_name'] == 'dummy_custom_check_function_test',
+            get_required_check_functions_definitions(custom_check_functions),
         )
     )
     assert not result
@@ -94,3 +133,18 @@ def test_get_training_examples():
 
         # Verify quality_rules is a string containing YAML
         assert isinstance(example.quality_rules, str)
+
+
+def test_get_training_examples_with_custom_check_functions():
+    custom_check_functions = {"dummy_custom_check_function_test": dummy_custom_check_function_test}
+    examples = create_optimizer_training_set(custom_check_functions)
+
+    filtered_examples = [
+        example
+        for example in examples
+        if any(
+            func.get("check_function_name") == "dummy_custom_check_function_test"
+            for func in json.loads(example.available_functions)
+        )
+    ]
+    assert filtered_examples
