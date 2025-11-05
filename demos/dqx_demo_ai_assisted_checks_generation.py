@@ -17,7 +17,7 @@
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
 
 if dbutils.widgets.get("test_library_ref") != "":
-    %pip install '{dbutils.widgets.get("test_library_ref")}'
+    %pip install '{dbutils.widgets.get("test_library_ref")}[llm]'
 else:
     %pip install databricks-labs-dqx[llm]
 
@@ -49,7 +49,7 @@ from databricks.sdk import WorkspaceClient
 
 # Instantiate DQX engine
 ws = WorkspaceClient()
-dq_engine = DQEngine(ws)
+dq_engine = DQEngine(ws, spark)
 
 
 # COMMAND ----------
@@ -63,17 +63,17 @@ dq_engine = DQEngine(ws)
 # MAGIC   By default, DQX uses the `databricks/databricks-claude-sonnet-4-5` model serving endpoint to generate rules. However, users can specify a different model endpoint if they prefer to use another one.
 # MAGIC
 # MAGIC - **Table Name**:  
-# MAGIC   Users can optionally provide the fully qualified name of a table. DQX will use the table’s schema to generate rules. If no table name is provided, the schema will be inferred based on the user's input.
+# MAGIC   Users can optionally provide the fully qualified name of a table. DQX will use the table's schema to generate rules. If no table name is provided, the schema will be inferred based on the user's input.
 # MAGIC
 
 # COMMAND ----------
 
-# Creating model config with user defined model name
+# Creating model config with optional model name (default Databricks Foundational model endpoint is used if not provided)
 llm_model_config = LLMModelConfig(model_name=model_name)
 
 # COMMAND ----------
 
-generator = DQGenerator(ws,llm_model_config=llm_model_config)
+generator = DQGenerator(ws, llm_model_config=llm_model_config)
 
 # COMMAND ----------
 
@@ -85,7 +85,8 @@ generator = DQGenerator(ws,llm_model_config=llm_model_config)
 
 # COMMAND ----------
 
-ai_assisted_rules_without_user_specified_table_name = generator.generate_dq_rules_ai_assisted(user_input=user_requirement)
+checks = generator.generate_dq_rules_ai_assisted(user_input=user_requirement)
+display(checks)
 
 # COMMAND ----------
 
@@ -97,4 +98,5 @@ ai_assisted_rules_without_user_specified_table_name = generator.generate_dq_rule
 
 # COMMAND ----------
 
-ai_assisted_rules_with_user_specified_table_name = generator.generate_dq_rules_ai_assisted(user_input=user_requirement, table_name=table_name)
+checks = generator.generate_dq_rules_ai_assisted(user_input=user_requirement, table_name=table_name)
+display(checks)
