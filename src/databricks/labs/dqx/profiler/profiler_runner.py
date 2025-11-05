@@ -12,6 +12,7 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     InstallationChecksStorageConfig,
 )
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.profiler.generator import DQGenerator
@@ -33,32 +34,35 @@ class ProfilerRunner:
         dq_engine: DQEngine,
         installation: Installation,
         profiler: DQProfiler,
-        generator: DQGenerator,
     ):
         self.ws = ws
         self.spark = spark
         self.dq_engine = dq_engine
         self.installation = installation
         self.profiler = profiler
-        self.generator = generator
+        self._config_serializer = ConfigSerializer(ws)
 
     def run(
         self,
+        generator: DQGenerator,
         run_config_name: str,
         input_config: InputConfig,
         profiler_config: ProfilerConfig,
         product: str,
         install_folder: str,
+        user_input: str | None = None,
     ) -> None:
         """
         Run the DQX profiler for the given run configuration and save the generated checks and profile summary stats.
 
         Args:
+            generator: DQGenerator instance to generate data quality rules.
             run_config_name: Name of the run configuration (used in storage config).
             input_config: Input data configuration.
             profiler_config: Profiler configuration.
             product: Product name for the installation (used in storage config).
             install_folder: Installation folder path (used in storage config).
+            user_input: Optional natural language input for AI-assisted rule generation.
 
         Returns:
             A tuple containing the generated checks and profile summary statistics.
@@ -73,10 +77,13 @@ class ProfilerRunner:
                 "filter": profiler_config.filter,
             },
         )
-        checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
+        checks = generator.generate_dq_rules(profiles)  # use default criticality level "error"
         logger.info(f"Using options: \n{profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
         logger.info(f"Generated summary statistics: \n{summary_stats}")
+
+        if user_input:
+            checks += generator.generate_dq_rules_ai_assisted(user_input, table_name=input_config.location)
 
         storage_config = InstallationChecksStorageConfig(
             run_config_name=run_config_name,
@@ -88,6 +95,7 @@ class ProfilerRunner:
 
     def run_for_patterns(
         self,
+        generator: DQGenerator,
         patterns: list[str],
         exclude_patterns: list[str],
         profiler_config: ProfilerConfig,
@@ -95,11 +103,13 @@ class ProfilerRunner:
         install_folder: str,
         product: str,
         max_parallelism: int,
+        user_input: str | None = None,
     ) -> None:
         """
         Run the DQX profiler for the given table patterns and save the generated checks and profile summary stats.
 
         Args:
+            generator: DQGenerator instance to generate data quality rules.
             patterns: List of table patterns to profile (e.g. ["catalog.schema.table*"]).
             exclude_patterns: List of table patterns to exclude from profiling (e.g. ["*output", "*quarantine"]).
             profiler_config: Profiler configuration.
@@ -107,6 +117,7 @@ class ProfilerRunner:
             install_folder: Installation folder path.
             product: Product name for the installation.
             max_parallelism: Maximum number of parallel threads to use for profiling.
+            user_input: Optional natural language input for AI-assisted rule generation.
         """
         options = [
             {
@@ -126,9 +137,12 @@ class ProfilerRunner:
         )
 
         for table, (summary_stats, profiles) in results.items():
-            checks = self.generator.generate_dq_rules(profiles)  # use default criticality level "error"
+            checks = generator.generate_dq_rules(profiles)  # use default criticality level "error"
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
+
+            if user_input:
+                checks += generator.generate_dq_rules_ai_assisted(user_input, table_name=table)
 
             storage_config = InstallationChecksStorageConfig(
                 location=(

@@ -30,14 +30,14 @@ class LLMModelConfigurator:
     def configure(self) -> None:
         """Configure the DSPy language model with the provided settings."""
         language_model = dspy.LM(
-            model=self._model_config.model,
+            model=self._model_config.model_name,
             model_type="chat",
             api_key=self._model_config.api_key or "",
             api_base=self._model_config.api_base or "",
             max_retries=3,
         )
         dspy.configure(lm=language_model)
-        logger.info(f"Configured DSPy model: {self._model_config.model}")
+        logger.info(f"Configured DSPy model: {self._model_config.model_name}")
 
 
 class DspySchemaGuesserSignature(dspy.Signature):

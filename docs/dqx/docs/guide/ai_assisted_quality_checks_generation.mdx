@@ -176,13 +176,13 @@ You can configure the generator to use custom models or API endpoints:
 
     # Option 1: Using Databricks Foundation Model API
     model_config = LLMModelConfig(
-      model="databricks/databricks-claude-sonnet-4-5"  # default
+      model_name="databricks/databricks-claude-sonnet-4-5"  # default
     )
     generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
 
     # Option 2: Using Databricks Foundation Model API with explicit credentials
     model_config = LLMModelConfig(
-      model="databricks/databricks-claude-sonnet-4-5",
+      model_name="databricks/databricks-claude-sonnet-4-5",
       api_key="your-api-key",
       api_base="https://your-workspace.azuredatabricks.net/serving-endpoints"
     )
@@ -190,7 +190,7 @@ You can configure the generator to use custom models or API endpoints:
 
     # Option 3: Using an arbitrary LLM model
     model_config = LLMModelConfig(
-      model="databricks/meta-llama-3-1-70b-instruct",
+      model_name="databricks/meta-llama-3-1-70b-instruct",
       api_key="your-api-key",
       api_base="https://your-workspace.azuredatabricks.net/serving-endpoints"
     )

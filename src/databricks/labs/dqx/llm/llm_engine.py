@@ -28,6 +28,7 @@ class DQLLMEngine:
         Initialize the LLM engine.
 
         Args:
+            model_config: Configuration for the LLM model.
             custom_check_functions: Optional custom check functions to include.
         """
         self._available_check_functions = json.dumps(get_required_check_functions_definitions(custom_check_functions))
@@ -37,7 +38,7 @@ class DQLLMEngine:
             custom_check_functions=custom_check_functions,
         )
 
-        logger.info(f"LLM engine initialized with model: {model_config.model}")
+        logger.info(f"LLM engine initialized with model: {model_config.model_name}")
 
     def get_business_rules_with_llm(
         self, user_input: str, schema_info: str = ""

@@ -12,7 +12,6 @@ from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from databricks.labs.dqx.quality_checker.quality_checker_runner import QualityCheckerRunner
@@ -135,7 +134,6 @@ class WorkflowContext(GlobalContext):
     def profiler(self) -> ProfilerRunner:
         """Returns the ProfilerRunner instance."""
         profiler = DQProfiler(self.workspace_client)
-        generator = DQGenerator(self.workspace_client)
         dq_engine = DQEngine(
             workspace_client=self.workspace_client, spark=self.spark, extra_params=self.config.extra_params
         )
@@ -146,7 +144,6 @@ class WorkflowContext(GlobalContext):
             dq_engine,
             installation=self.installation,
             profiler=profiler,
-            generator=generator,
         )
 
     @cached_property

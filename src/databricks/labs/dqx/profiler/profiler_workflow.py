@@ -4,6 +4,7 @@ from concurrent import futures
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
+from databricks.labs.dqx.profiler.generator import DQGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,9 @@ class ProfilerWorkflow(Workflow):
             patterns, exclude_patterns = ctx.resolved_patterns
             run_config = ctx.run_config
 
+            generator = ProfilerWorkflow._create_generator(ctx, run_config)
             ctx.profiler.run_for_patterns(
+                generator=generator,
                 patterns=patterns,
                 exclude_patterns=exclude_patterns,
                 profiler_config=run_config.profiler_config,
@@ -45,6 +48,7 @@ class ProfilerWorkflow(Workflow):
                 product=ctx.installation.product(),
                 install_folder=ctx.installation.install_folder(),
                 max_parallelism=ctx.config.profiler_max_parallelism,
+                user_input=run_config.user_input,
             )
         elif ctx.runnable_for_run_config:
             self._profile_for_run_config(ctx, ctx.run_config)
@@ -67,10 +71,19 @@ class ProfilerWorkflow(Workflow):
     def _profile_for_run_config(ctx, run_config):
         logger.info(f"Running profiler workflow for run config: {run_config.name}")
 
+        generator = ProfilerWorkflow._create_generator(ctx, run_config)
         ctx.profiler.run(
+            generator=generator,
+            run_config=run_config,
             run_config_name=run_config.name,
             input_config=run_config.input_config,
             profiler_config=run_config.profiler_config,
             product=ctx.installation.product(),
             install_folder=ctx.installation.install_folder(),
+            user_input=run_config.user_input,
         )
+
+    @staticmethod
+    def _create_generator(ctx, run_config):
+        llm_model_config = ctx.config.llm_config.model if ctx.config.llm_config else None
+        return DQGenerator(ctx.workspace_client, ctx.spark, llm_model_config, run_config.custom_check_functions)

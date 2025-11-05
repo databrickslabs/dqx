@@ -57,7 +57,7 @@ def test_generate_dq_rules_ai_assisted_with_input_table(ws, spark, make_table, m
 
 
 def test_generate_dq_rules_ai_assisted_custom_model(ws, spark):
-    llm_model_config = LLMModelConfig(model="databricks/databricks-llama-4-maverick")
+    llm_model_config = LLMModelConfig(model_name="databricks/databricks-llama-4-maverick")
     generator = DQGenerator(ws, spark, llm_model_config=llm_model_config)
     actual_checks = generator.generate_dq_rules_ai_assisted(user_input=USER_INPUT)
     assert not DQEngineCore.validate_checks(actual_checks).has_errors
