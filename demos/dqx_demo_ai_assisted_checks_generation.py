@@ -17,7 +17,7 @@
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
 
 if dbutils.widgets.get("test_library_ref") != "":
-    %pip install '{dbutils.widgets.get("test_library_ref")}[llm]'
+    %pip install 'databricks-labs-dqx[llm] @ {dbutils.widgets.get("test_library_ref")}'
 else:
     %pip install databricks-labs-dqx[llm]
 
