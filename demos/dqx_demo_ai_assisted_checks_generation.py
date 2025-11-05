@@ -25,14 +25,6 @@ else:
 
 # COMMAND ----------
 
-# MAGIC %pip  install /Volumes/test_sg_0424/misc/my_volume/dqx/databricks_labs_dqx-0.9.3-py3-none-any.whl[llm]
-
-# COMMAND ----------
-
-# MAGIC %restart_python
-
-# COMMAND ----------
-
 model_name = "databricks/databricks-claude-sonnet-4-5"
 default_user_input = "customername should not start with s and account balance should be positive"
 default_table_name = "samples.tpch.customer"
