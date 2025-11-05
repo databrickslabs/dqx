@@ -86,6 +86,7 @@ generator = DQGenerator(ws, llm_model_config=llm_model_config)
 # COMMAND ----------
 
 checks = generator.generate_dq_rules_ai_assisted(user_input=user_requirement)
+print("======== Generated checks =========")
 print(checks)
 
 # COMMAND ----------
@@ -99,4 +100,5 @@ print(checks)
 # COMMAND ----------
 
 checks = generator.generate_dq_rules_ai_assisted(user_input=user_requirement, table_name=table_name)
+print("======== Generated checks =========")
 print(checks)
