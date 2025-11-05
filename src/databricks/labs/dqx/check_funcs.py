@@ -18,6 +18,7 @@ from databricks.labs.dqx.utils import (
     is_sql_query_safe,
     normalize_col_str,
     get_columns_as_strings,
+    to_lowercase,
 )
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
 
@@ -156,8 +157,14 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
-    col_expr_compare = F.lower(col_expr) if not case_sensitive else col_expr
-    allowed_cols_compare = [F.lower(c) if not case_sensitive else c for c in allowed_cols]
+    if not case_sensitive:
+        has_arrays = any(isinstance(item, (list, tuple)) for item in allowed if not isinstance(item, Column))
+        col_expr_compare = to_lowercase(col_expr, is_array=has_arrays)
+        allowed_cols_compare = [
+            to_lowercase(c, is_array=isinstance(allowed[i], (list, tuple))) for i, c in enumerate(allowed_cols)
+        ]
+    else:
+        col_expr_compare, allowed_cols_compare = col_expr, allowed_cols
 
     condition = col_expr.isNull() | ~col_expr_compare.isin(*allowed_cols_compare)
 
@@ -168,7 +175,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
             F.lit("Value '"),
             F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
             F.lit(f"' in Column '{col_expr_str}' is null or not in the allowed list: ["),
-            F.concat_ws(", ", *allowed_cols),  # Use original allowed_cols for display
+            F.concat_ws(", ", *[c.cast("string") for c in allowed_cols]),
             F.lit("]"),
         ),
         f"{col_str_norm}_is_null_or_is_not_in_the_list",
@@ -203,8 +210,14 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
-    col_expr_compare = F.lower(col_expr) if not case_sensitive else col_expr
-    allowed_cols_compare = [F.lower(c) if not case_sensitive else c for c in allowed_cols]
+    if not case_sensitive:
+        has_arrays = any(isinstance(item, (list, tuple)) for item in allowed if not isinstance(item, Column))
+        col_expr_compare = to_lowercase(col_expr, is_array=has_arrays)
+        allowed_cols_compare = [
+            to_lowercase(c, is_array=isinstance(allowed[i], (list, tuple))) for i, c in enumerate(allowed_cols)
+        ]
+    else:
+        col_expr_compare, allowed_cols_compare = col_expr, allowed_cols
 
     condition = ~col_expr_compare.isin(*allowed_cols_compare)
 
@@ -215,7 +228,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
             F.lit("Value '"),
             F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
             F.lit(f"' in Column '{col_expr_str}' is not in the allowed list: ["),
-            F.concat_ws(", ", *allowed_cols),  # Use original allowed_cols for display
+            F.concat_ws(", ", *[c.cast("string") for c in allowed_cols]),
             F.lit("]"),
         ),
         f"{col_str_norm}_is_not_in_the_list",

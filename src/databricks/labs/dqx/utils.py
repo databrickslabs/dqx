@@ -18,7 +18,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk.errors import NotFound
-
+import pyspark.sql.functions as F
 
 logger = logging.getLogger(__name__)
 
@@ -433,3 +433,19 @@ def _match_table_patterns(table: str, patterns: list[str]) -> bool:
         bool: True if the table name matches any of the patterns, False otherwise.
     """
     return any(fnmatch(table, pattern) for pattern in patterns)
+
+
+def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
+    """Converts a column expression to lowercase, handling both scalar and array types.
+
+    Args:
+        col_expr: Column expression to convert
+        is_array: Whether the column contains array values
+
+    Returns:
+        Column expression with lowercase transformation applied
+    """
+    if is_array:
+        return F.transform(col_expr, lambda x: F.lower(x))
+    else:
+        return F.lower(col_expr)

@@ -162,6 +162,7 @@ def test_col_is_not_null_and_is_in_list(spark):
             ["str2", None, {"val": "str2"}, [None, "a"]],
             [" ", 3, {"val": " "}, [None, " "]],
             ["STR1", 4, {"val": "A"}, ["B", "c"]],
+            ["str5", 5, {"val": "e"}, ["b", "C"]],  # New test case for array case-insensitive match
         ],
         input_schema,
     )
@@ -174,6 +175,7 @@ def test_col_is_not_null_and_is_in_list(spark):
         is_not_null_and_is_in_list("a", ["str1"], case_sensitive=False),
         is_not_null_and_is_in_list(F.col("c").getItem("val"), [F.lit("a")], case_sensitive=False),
         is_not_null_and_is_in_list(F.try_element_at("d", F.lit(2)), ["b"], case_sensitive=False),
+        is_not_null_and_is_in_list("d", [["a", "b"], ["B", "c"]], case_sensitive=False),
     )
 
     checked_schema = (
@@ -183,11 +185,21 @@ def test_col_is_not_null_and_is_in_list(spark):
         + "try_element_at_d_2_is_null_or_is_not_in_the_list: string, "
         + "a_is_null_or_is_not_in_the_list: string, "
         + "unresolvedextractvalue_c_val_is_null_or_is_not_in_the_list: string, "
-        + "try_element_at_d_2_is_null_or_is_not_in_the_list: string"
+        + "try_element_at_d_2_is_null_or_is_not_in_the_list: string, "
+        + "d_is_null_or_is_not_in_the_list: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, "Value '1' in Column 'b' is null or not in the allowed list: [3]", None, None, None, None, None],
+            [
+                None,
+                "Value '1' in Column 'b' is null or not in the allowed list: [3]",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
             [
                 "Value 'str2' in Column 'a' is null or not in the allowed list: [str1]",
                 "Value 'null' in Column 'b' is null or not in the allowed list: [3]",
@@ -196,6 +208,7 @@ def test_col_is_not_null_and_is_in_list(spark):
                 "Value 'str2' in Column 'a' is null or not in the allowed list: [str1]",
                 "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
                 "Value 'a' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value '[null, a]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
             ],
             [
                 "Value ' ' in Column 'a' is null or not in the allowed list: [str1]",
@@ -205,15 +218,27 @@ def test_col_is_not_null_and_is_in_list(spark):
                 "Value ' ' in Column 'a' is null or not in the allowed list: [str1]",
                 "Value ' ' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
                 "Value ' ' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value '[null,  ]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
             ],
             [
                 "Value 'STR1' in Column 'a' is null or not in the allowed list: [str1]",
                 "Value '4' in Column 'b' is null or not in the allowed list: [3]",
                 "Value 'A' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
                 "Value 'c' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
-                None,  # STR1 matches str1 (case-insensitive)
-                None,  # A matches a (case-insensitive)
+                None,
+                None,
                 "Value 'c' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                None,
+            ],
+            [
+                "Value 'str5' in Column 'a' is null or not in the allowed list: [str1]",
+                "Value '5' in Column 'b' is null or not in the allowed list: [3]",
+                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'C' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value 'str5' in Column 'a' is null or not in the allowed list: [str1]",
+                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'C' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                None,
             ],
         ],
         checked_schema,
@@ -230,6 +255,7 @@ def test_col_is_not_in_list(spark):
             ["str2", None, {"val": "str2"}, [None, "a"]],
             [" ", 3, {"val": None}, [None, "a"]],
             ["STR1", 4, {"val": "A"}, ["B", "c"]],
+            ["str5", 5, {"val": "e"}, ["b", "C"]],  # New test case for array case-insensitive match
         ],
         input_schema,
     )
@@ -241,6 +267,7 @@ def test_col_is_not_in_list(spark):
         is_in_list("a", ["str1"], case_sensitive=False),
         is_in_list(F.col("c").getItem("val"), [F.lit("a")], case_sensitive=False),
         is_in_list(F.try_element_at("d", F.lit(2)), ["b"], case_sensitive=False),
+        is_in_list("d", [["a", "b"], ["B", "c"]], case_sensitive=False),  # New: array case-insensitive
     )
     checked_schema = (
         "a_is_not_in_the_list: string, "
@@ -249,11 +276,12 @@ def test_col_is_not_in_list(spark):
         + "try_element_at_d_2_is_not_in_the_list: string, "
         + "a_is_not_in_the_list: string, "
         + "unresolvedextractvalue_c_val_is_not_in_the_list: string, "
-        + "try_element_at_d_2_is_not_in_the_list: string"
+        + "try_element_at_d_2_is_not_in_the_list: string, "
+        + "d_is_not_in_the_list: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, "Value '1' in Column 'b' is not in the allowed list: [3]", None, None, None, None, None],
+            [None, "Value '1' in Column 'b' is not in the allowed list: [3]", None, None, None, None, None, None],
             [
                 "Value 'str2' in Column 'a' is not in the allowed list: [str1]",
                 None,
@@ -262,6 +290,7 @@ def test_col_is_not_in_list(spark):
                 "Value 'str2' in Column 'a' is not in the allowed list: [str1]",
                 "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
                 "Value 'a' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value '[null, a]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
             ],
             [
                 "Value ' ' in Column 'a' is not in the allowed list: [str1]",
@@ -271,6 +300,7 @@ def test_col_is_not_in_list(spark):
                 "Value ' ' in Column 'a' is not in the allowed list: [str1]",
                 None,
                 "Value 'a' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value '[null, a]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
             ],
             [
                 "Value 'STR1' in Column 'a' is not in the allowed list: [str1]",
@@ -280,6 +310,17 @@ def test_col_is_not_in_list(spark):
                 None,
                 None,
                 "Value 'c' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                None,  # ["B", "c"] matches case-insensitively
+            ],
+            [
+                "Value 'str5' in Column 'a' is not in the allowed list: [str1]",
+                "Value '5' in Column 'b' is not in the allowed list: [3]",
+                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'C' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value 'str5' in Column 'a' is not in the allowed list: [str1]",
+                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'C' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                None,  # ["b", "C"] matches ["B", "c"] case-insensitively
             ],
         ],
         checked_schema,
