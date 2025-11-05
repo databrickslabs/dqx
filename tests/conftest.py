@@ -31,7 +31,7 @@ from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
 logger = logging.getLogger(__name__)
 
 
-TEST_CATALOG = "main"
+TEST_CATALOG = "dqx"
 
 
 @pytest.fixture(scope="session")
