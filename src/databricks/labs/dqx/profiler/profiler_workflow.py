@@ -41,14 +41,12 @@ class ProfilerWorkflow(Workflow):
             generator = ProfilerWorkflow._create_generator(ctx, run_config)
             ctx.profiler.run_for_patterns(
                 generator=generator,
+                run_config=run_config,
                 patterns=patterns,
                 exclude_patterns=exclude_patterns,
-                profiler_config=run_config.profiler_config,
-                checks_location=run_config.checks_location,
                 product=ctx.installation.product(),
                 install_folder=ctx.installation.install_folder(),
                 max_parallelism=ctx.config.profiler_max_parallelism,
-                user_input=run_config.user_input,
             )
         elif ctx.runnable_for_run_config:
             self._profile_for_run_config(ctx, ctx.run_config)
@@ -75,12 +73,8 @@ class ProfilerWorkflow(Workflow):
         ctx.profiler.run(
             generator=generator,
             run_config=run_config,
-            run_config_name=run_config.name,
-            input_config=run_config.input_config,
-            profiler_config=run_config.profiler_config,
             product=ctx.installation.product(),
             install_folder=ctx.installation.install_folder(),
-            user_input=run_config.user_input,
         )
 
     @staticmethod

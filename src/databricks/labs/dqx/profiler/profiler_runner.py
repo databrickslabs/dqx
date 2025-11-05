@@ -7,10 +7,9 @@ from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.checks_storage import is_table_location
 from databricks.labs.dqx.config import (
-    InputConfig,
-    ProfilerConfig,
     BaseChecksStorageConfig,
     InstallationChecksStorageConfig,
+    RunConfig,
 )
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.engine import DQEngine
@@ -45,87 +44,81 @@ class ProfilerRunner:
     def run(
         self,
         generator: DQGenerator,
-        run_config_name: str,
-        input_config: InputConfig,
-        profiler_config: ProfilerConfig,
+        run_config: RunConfig,
         product: str,
         install_folder: str,
-        user_input: str | None = None,
     ) -> None:
         """
         Run the DQX profiler for the given run configuration and save the generated checks and profile summary stats.
 
         Args:
             generator: DQGenerator instance to generate data quality rules.
-            run_config_name: Name of the run configuration (used in storage config).
-            input_config: Input data configuration.
-            profiler_config: Profiler configuration.
+            run_config: Run configuration.
             product: Product name for the installation (used in storage config).
             install_folder: Installation folder path (used in storage config).
-            user_input: Optional natural language input for AI-assisted rule generation.
 
         Returns:
             A tuple containing the generated checks and profile summary statistics.
         """
-        df = read_input_data(self.spark, input_config)
+        assert run_config.input_config  # should be validated before
+
+        df = read_input_data(self.spark, run_config.input_config)
         summary_stats, profiles = self.profiler.profile(
             df,
             options={
-                "sample_fraction": profiler_config.sample_fraction,
-                "sample_seed": profiler_config.sample_seed,
-                "limit": profiler_config.limit,
-                "filter": profiler_config.filter,
+                "sample_fraction": run_config.profiler_config.sample_fraction,
+                "sample_seed": run_config.profiler_config.sample_seed,
+                "limit": run_config.profiler_config.limit,
+                "filter": run_config.profiler_config.filter,
             },
         )
         checks = generator.generate_dq_rules(profiles)  # use default criticality level "error"
-        logger.info(f"Using options: \n{profiler_config}")
+        logger.info(f"Using options: \n{run_config.profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
         logger.info(f"Generated summary statistics: \n{summary_stats}")
 
-        if user_input:
-            checks += generator.generate_dq_rules_ai_assisted(user_input, table_name=input_config.location)
+        if run_config.user_input:
+            checks += generator.generate_dq_rules_ai_assisted(
+                run_config.user_input, table_name=run_config.input_config.location
+            )
 
         storage_config = InstallationChecksStorageConfig(
-            run_config_name=run_config_name,
+            run_config_name=run_config.name,
             assume_user=True,
             product_name=product,
             install_folder=install_folder,
         )
-        self.save(checks, summary_stats, storage_config, profiler_config.summary_stats_file)
+        self.save(checks, summary_stats, storage_config, run_config.profiler_config.summary_stats_file)
 
     def run_for_patterns(
         self,
         generator: DQGenerator,
+        run_config: RunConfig,
         patterns: list[str],
         exclude_patterns: list[str],
-        profiler_config: ProfilerConfig,
-        checks_location: str,
         install_folder: str,
         product: str,
         max_parallelism: int,
-        user_input: str | None = None,
     ) -> None:
         """
         Run the DQX profiler for the given table patterns and save the generated checks and profile summary stats.
 
         Args:
             generator: DQGenerator instance to generate data quality rules.
+            run_config: Run configuration.
             patterns: List of table patterns to profile (e.g. ["catalog.schema.table*"]).
             exclude_patterns: List of table patterns to exclude from profiling (e.g. ["*output", "*quarantine"]).
-            profiler_config: Profiler configuration.
-            checks_location: Delta table to save the generated checks, otherwise an absolute directory.
             install_folder: Installation folder path.
             product: Product name for the installation.
             max_parallelism: Maximum number of parallel threads to use for profiling.
-            user_input: Optional natural language input for AI-assisted rule generation.
         """
         options = [
             {
                 "table": "*",  # Matches all tables
                 "options": {
-                    "sample_fraction": profiler_config.sample_fraction,
-                    "sample_seed": profiler_config.sample_seed,
-                    "limit": profiler_config.limit,
+                    "sample_fraction": run_config.profiler_config.sample_fraction,
+                    "sample_seed": run_config.profiler_config.sample_seed,
+                    "limit": run_config.profiler_config.limit,
                 },
             }
         ]
@@ -141,21 +134,21 @@ class ProfilerRunner:
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
-            if user_input:
-                checks += generator.generate_dq_rules_ai_assisted(user_input, table_name=table)
+            if run_config.user_input:
+                checks += generator.generate_dq_rules_ai_assisted(run_config.user_input, table_name=table)
 
             storage_config = InstallationChecksStorageConfig(
                 location=(
-                    checks_location
-                    if is_table_location(checks_location)
-                    else f"{safe_strip_file_from_path(checks_location)}/{table}.yml"
+                    run_config.checks_location
+                    if is_table_location(run_config.checks_location)
+                    else f"{safe_strip_file_from_path(run_config.checks_location)}/{table}.yml"
                 ),
                 overwrite_location=True,
                 product_name=product,
                 install_folder=install_folder,
                 run_config_name=table,
             )
-            self.save(checks, summary_stats, storage_config, profiler_config.summary_stats_file)
+            self.save(checks, summary_stats, storage_config, run_config.profiler_config.summary_stats_file)
 
     def save(
         self,
