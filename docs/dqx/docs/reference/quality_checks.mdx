@@ -8,8 +8,10 @@ import TabItem from '@theme/TabItem';
 
 # Quality Checks
 
-This page provides a reference for the quality check functions available in DQX.
+This page provides a reference for the quality check functions available in DQX. Checks are the core of DQX, allowing you to define and apply data quality rules to your datasets.
 The terms `checks` and `rules` are used interchangeably in the documentation, as they are synonymous in DQX.
+
+DQX provides a collection of predefined built-in quality rules (checks). Additionally, you can define custom checks using sql or python to meet specific requirements.
 
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 All rule types, including row-level and dataset-level rules, can be defined and applied simultaneously in a single execution.

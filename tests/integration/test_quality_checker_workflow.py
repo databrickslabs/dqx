@@ -1,10 +1,8 @@
 import copy
-from io import BytesIO
 
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.blueprint.parallel import ManyError
-from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import (
@@ -20,6 +18,7 @@ from tests.integration.conftest import (
     REPORTING_COLUMNS,
     assert_output_df,
     assert_quarantine_and_output_dfs,
+    setup_custom_check_func,
 )
 
 from tests.conftest import TEST_CATALOG
@@ -208,7 +207,7 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
     checks_location = f"{installation_dir}/{run_config.checks_location}"
 
     _setup_custom_checks(ws, spark, checks_location, installation_ctx.product_info.product_name())
-    _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location)
+    setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location)
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
@@ -235,11 +234,11 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
                         "user_metadata": user_metadata,
                     },
                     {
-                        "name": "id_is_not_null_custom",
-                        "message": "Column 'id' value is null",
-                        "columns": ["id"],
+                        "name": "name_ends_with_c",
+                        "message": "Column 'name' ends with 'c'",
+                        "columns": ["name"],
                         "filter": None,
-                        "function": "is_not_null_custom_func",
+                        "function": "not_ends_with_suffix",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": user_metadata,
@@ -250,7 +249,23 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
             [3, None, None, None],
             [1, "a", None, None],
             [6, "a", None, None],
-            [2, "c", None, None],
+            [
+                2,
+                "c",
+                [
+                    {
+                        "name": "name_ends_with_c",
+                        "message": "Column 'name' ends with 'c'",
+                        "columns": ["name"],
+                        "filter": None,
+                        "function": "not_ends_with_suffix",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": user_metadata,
+                    },
+                ],
+                None,
+            ],
             [4, "a", None, None],
             [5, "d", None, None],
         ],
@@ -520,36 +535,6 @@ def _make_second_input_table(spark, catalog_name, schema_name, first_table, make
     return second_table
 
 
-def _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location):
-    content = '''from databricks.labs.dqx.check_funcs import make_condition, register_rule
-from pyspark.sql import functions as F
-
-@register_rule("row")
-def is_not_null_custom_func(column: str):
-    return make_condition(F.col(column).isNull(), f"Column '{column}' value is null", f"{column}_is_null")
-'''
-    if custom_checks_funcs_location.startswith("/Workspace/"):
-        ws.workspace.upload(
-            path=custom_checks_funcs_location, format=ImportFormat.AUTO, content=content.encode(), overwrite=True
-        )
-    elif custom_checks_funcs_location.startswith("/Volumes/"):
-        binary_data = BytesIO(content.encode("utf-8"))
-        ws.files.upload(custom_checks_funcs_location, binary_data, overwrite=True)
-    else:  # relative workspace path
-        installation_dir = installation_ctx.installation.install_folder()
-        ws.workspace.upload(
-            path=f"{installation_dir}/{custom_checks_funcs_location}",
-            format=ImportFormat.AUTO,
-            content=content.encode(),
-            overwrite=True,
-        )
-
-    config = installation_ctx.config
-    run_config = config.get_run_config()
-    run_config.custom_check_functions = {"is_not_null_custom_func": custom_checks_funcs_location}
-    installation_ctx.installation.save(config)
-
-
 def _setup_ref_table(spark, installation_ctx, make_random, run_config):
     schema_and_catalog = run_config.input_config.location.split(".")
     catalog, schema = schema_and_catalog[0], schema_and_catalog[1]
@@ -602,9 +587,9 @@ def _setup_custom_checks(ws, spark, checks_location, product):
             "check": {"function": "is_not_null", "arguments": {"column": "id"}},
         },
         {
-            "name": "id_is_not_null_custom",
+            "name": "name_ends_with_c",
             "criticality": "error",
-            "check": {"function": "is_not_null_custom_func", "arguments": {"column": "id"}},
+            "check": {"function": "not_ends_with_suffix", "arguments": {"column": "name", "suffix": "c"}},
         },
     ]
 

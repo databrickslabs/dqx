@@ -55,7 +55,7 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false  # if enabled, it creates an issue for each test failure; disabled to reduce noise
           codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
