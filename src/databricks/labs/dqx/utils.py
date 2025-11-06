@@ -14,11 +14,11 @@ try:
 except ImportError:
     ConnectColumn = None  # type: ignore
 
+import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk.errors import NotFound
-import pyspark.sql.functions as F
 
 logger = logging.getLogger(__name__)
 
@@ -447,5 +447,4 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     """
     if is_array:
         return F.transform(col_expr, lambda x: F.lower(x))
-    else:
-        return F.lower(col_expr)
+    return F.lower(col_expr)

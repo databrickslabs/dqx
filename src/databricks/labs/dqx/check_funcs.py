@@ -133,6 +133,7 @@ def is_not_null(column: str | Column) -> Column:
 def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
     Can optionally perform a case-insensitive comparison.
+    This check is not suited for `MapType` or `StructType` columns.
 
     Args:
         column: column to check; can be a string column name or a column expression
@@ -186,6 +187,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
 def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are present in the list of allowed values
     (null values are allowed). Can optionally perform a case-insensitive comparison.
+    This check is not suited for `MapType` or `StructType` columns.
 
     Args:
         column: column to check; can be a string column name or a column expression
