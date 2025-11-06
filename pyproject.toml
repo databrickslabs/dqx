@@ -6,6 +6,11 @@ description = 'Data Quality eXtended (DQX) is a Python library for data quality 
 license-files = { paths = ["LICENSE", "NOTICE"] }
 requires-python = ">=3.10"
 keywords = ["Databricks"]
+authors = [
+    {name = "Databricks Labs", email = "labs-oss@databricks.com"},
+    { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
+    { name = "Alex Ott", email = "alexey.ott@databricks.com" },
+]
 maintainers = [
     { name = "Databricks Labs", email = "labs-oss@databricks.com" },
     { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
