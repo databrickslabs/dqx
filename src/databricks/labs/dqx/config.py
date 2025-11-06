@@ -107,9 +107,9 @@ class LLMModelConfig:
     # The model to use for the DSPy language model
     model_name: str = "databricks/databricks-claude-sonnet-4-5"
     # Optional API key for the model as text or secret scope/key. Not required by foundational models
-    api_key: str = ""  # when used with Profiler Workflow, this should be a secret: scope/key
+    api_key: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
     # Optional API base URL for the model. Not required by foundational models
-    api_base: str = ""  # when used with Profiler Workflow, this should be a secret: scope/key
+    api_base: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
 
 
 @dataclass(frozen=True)

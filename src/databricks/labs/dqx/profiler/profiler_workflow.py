@@ -85,11 +85,11 @@ class ProfilerWorkflow(Workflow):
         if llm_model_config:
             if llm_model_config.api_base and "/" in llm_model_config.api_base:
                 logger.info("Retrieving LLM API base from secret store")
-                # if api api base stored as secret: scope/key
+                # if api api base stored as secret: secret_scope/secret_key
                 api_base = ProfilerWorkflow._get_secret_value(ctx, llm_model_config.api_base)
                 llm_model_config.api_base = api_base
             if llm_model_config.api_key and "/" in llm_model_config.api_key:
-                # if api key stored as secret: scope/key
+                # if api key stored as secret: secret_scope/secret_key
                 logger.info("Retrieving LLM API key from secret store")
                 api_key = ProfilerWorkflow._get_secret_value(ctx, llm_model_config.api_key)
                 llm_model_config.api_key = api_key

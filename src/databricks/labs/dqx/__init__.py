@@ -7,7 +7,7 @@ from databricks.labs.dqx.__about__ import __version__
 
 install_logger(logging.INFO)
 
-logging.root.setLevel(logging.INFO)
+logging.getLogger("databricks").setLevel(logging.INFO)
 
 ua.semver_pattern = re.compile(
     r"^"

@@ -212,8 +212,8 @@ extra_params:                       # <- optional extra parameters to pass to th
 llm_config:                         # <- configuration for the llm-assisted features
   model:
     model_name: "databricks/databricks-claude-sonnet-4-5"
-    api_key: xxx                    # <- optional API key for the model as secret scope/key. Not required by foundational models
-    api_base: xxx                   # <- optional API base for the model as secret scope/key. Not required by foundational models
+    api_key: xxx                    # <- optional API key for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+    api_base: xxx                   # <- optional API base for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
 
 run_configs:                        # <- list of run configurations, each run config defines one specific input and output location
 

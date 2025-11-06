@@ -309,11 +309,13 @@ The following fields from the [configuration file](/docs/installation/#configura
 
 Example of the configuration file (relevant fields only):
 ```yaml
-  serverless_clusters: true   # <- default is true, set to false to use standard clusters
-  profiler_max_parallelism: 4 # <- max parallelism for profiling multiple tables
-  llm_config:                 # <- configuration for the llm-assisted features
+  serverless_clusters: true   # default is true, set to false to use standard clusters
+  profiler_max_parallelism: 4 # max parallelism for profiling multiple tables
+  llm_config:                 # configuration for the llm-assisted features
     model:
       model_name: "databricks/databricks-claude-sonnet-4-5"
+      api_key: xxx    # optional API key for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+      api_base: xxx   # optional API base for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -326,7 +328,7 @@ Example of the configuration file (relevant fields only):
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
       filter: "maintenance_type = 'preventive'"
-    checks_user_requirements: "business rules description"
+    checks_user_requirements: "business rules description"  # optional user input for the llm-assisted features
 ```
 
 ## Profiling options

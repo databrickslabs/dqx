@@ -70,18 +70,14 @@ dq_engine = DQEngine(ws, spark)
 
 # Creating model config with optional model name (default Databricks Foundational model endpoint is used if not provided)
 llm_model_config = LLMModelConfig(model_name=model_name)
-
-# COMMAND ----------
-
 generator = DQGenerator(ws, llm_model_config=llm_model_config)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ###
-# MAGIC - Generate DQ rules using AI Assisted approach using user requirement
-# MAGIC - Schema Will Be guessed at run time
+# MAGIC ### Generate DQ rules using AI-Assisted approach using user requirement
 # MAGIC
+# MAGIC Schema of the data will be guessed.
 
 # COMMAND ----------
 
@@ -92,9 +88,9 @@ print(checks)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Generate DQ rules using AI-Assisted approach using user requirement and user specified table name
 # MAGIC
-# MAGIC - Generate DQ rules using AI Assisted approach using user requirement and user specified table name. 
-# MAGIC - Schema of table specified by user will be used 
+# MAGIC Schema will be fetched from the table specified by the user.
 # MAGIC
 
 # COMMAND ----------
