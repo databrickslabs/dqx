@@ -387,7 +387,7 @@ from pyspark.sql import functions as F
 @register_rule("row")
 def not_ends_with_suffix(column: str, suffix: str):
     """
-    Example fo custom python row-level check function.
+    Example of custom python row-level check function.
     """
     return make_condition(
         F.col(column).endswith(suffix), f"Column '{column}' ends with '{suffix}'", f"{column}_ends_with_{suffix}"

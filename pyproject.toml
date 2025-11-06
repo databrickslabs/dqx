@@ -399,7 +399,7 @@ good-names = [
     "ex", "e",      # use for exceptions
     "fn", "cb",     # use for callbacks
     "_",            # use for ignores
-    "a",            # use for databricks.sdkdatabricks.sdk.AccountClient
+    "a",            # use for databricks.sdk.AccountClient
     "w", "ws",      # use for databricks.sdk.WorkspaceClient
     "me"            # use for current user
 ]
