@@ -23,6 +23,7 @@
 # COMMAND ----------
 
 # MAGIC %pip install databricks-labs-dqx pyyaml
+# MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -30,7 +31,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, year, current_timestamp, max as spark_max, size
 from delta.tables import DeltaTable
 from datetime import datetime
-import yaml
+import yaml, os
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
@@ -96,8 +97,13 @@ print(f"✅ Rows ready for profiling: {students_df_filtered.count()}")
 
 # COMMAND ----------
 
+# Initialize profiler and generate rules
 profiler = DQProfiler(ws)
-summary_stats, profiles = profiler.profile(students_df_filtered, options={"sample_fraction": 0.7, "limit": 10000})
+summary_stats, profiles = profiler.profile(
+    students_df_filtered,
+    options={"sample_fraction": 0.7, "limit": 10000, "seed": 42}  # optional seed for reproducibility
+)
+
 auto_rules = DQGenerator(ws).generate_dq_rules(profiles)
 print(f"✅ Profiling complete and {len(auto_rules)} auto rules generated.")
 
@@ -126,7 +132,7 @@ def paid_status_consistency(paid_col: str, status_col: str):
         "paid_status_consistency"
     )
 
-manual_rules = yaml.safe_load("""
+manual_rules = yaml.safe_load(r"""
 - check:
     function: is_not_null_and_not_empty
     for_each_column:
@@ -147,7 +153,7 @@ manual_rules = yaml.safe_load("""
     function: regex_match
     for_each_column: [student_id]
     arguments:
-      regex: '^(?i)(?!INVALID|_|NULL)[A-Z]{3}[0-9]{8}$'
+      regex: "^(?i)(?!INVALID|_|NULL)[A-Z]{3}[0-9]{8}$"
       negate: false
   criticality: error
   name: valid_student_id_pattern_strict
@@ -156,7 +162,7 @@ manual_rules = yaml.safe_load("""
     function: regex_match
     for_each_column: [email]
     arguments:
-      regex: '^(?i)(?!.*\\.\\.)(?!.*\\.@)(?!.*@\\.)[A-Z0-9](?:[A-Z0-9._%+-]{0,63}[A-Z0-9])?@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\\.[A-Z]{2,})+$'
+      regex: "^(?i)(?!.*\\.\\.)(?!.*\\.@)(?!.*@\\.)[A-Z0-9](?:[A-Z0-9._%+-]{0,63}[A-Z0-9])?@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\\.[A-Z]{2,})+$"
       negate: false
   criticality: warn
   name: valid_email_format_strict
@@ -181,10 +187,10 @@ manual_rules = yaml.safe_load("""
     function: regex_match
     for_each_column: [name]
     arguments:
-      regex: '.*[0-9].*'
-      negate: true
-  criticality: warn
-  name: name_no_numeric_chars
+      regex: "^[A-Za-z][A-Za-z\\s'\\-]*$"
+      negate: false
+  criticality: error
+  name: valid_name_format
 """)
 
 print("✅ Manual and custom rules registered successfully.")
