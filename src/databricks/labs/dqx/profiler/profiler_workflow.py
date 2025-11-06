@@ -1,6 +1,7 @@
 import logging
 from concurrent import futures
 
+from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
@@ -80,4 +81,27 @@ class ProfilerWorkflow(Workflow):
     @staticmethod
     def _create_generator(ctx, run_config):
         llm_model_config = ctx.config.llm_config.model if ctx.config.llm_config else None
-        return DQGenerator(ctx.workspace_client, ctx.spark, llm_model_config, run_config.custom_check_functions)
+
+        if llm_model_config:
+            if llm_model_config.api_base and "/" in llm_model_config.api_base:
+                logger.info("Retrieving LLM API base from secret store")
+                # if api api base stored as secret: scope/key
+                api_base = ProfilerWorkflow._get_secret_value(ctx, llm_model_config.api_base)
+                llm_model_config.api_base = api_base
+            if llm_model_config.api_key and "/" in llm_model_config.api_key:
+                # if api key stored as secret: scope/key
+                logger.info("Retrieving LLM API key from secret store")
+                api_key = ProfilerWorkflow._get_secret_value(ctx, llm_model_config.api_key)
+                llm_model_config.api_key = api_key
+
+        custom_check_functions = resolve_custom_check_functions_from_path(run_config.custom_check_functions)
+        return DQGenerator(ctx.workspace_client, ctx.spark, llm_model_config, custom_check_functions)
+
+    @staticmethod
+    def _get_secret_value(ctx, scope_key):
+        scope_key_data = scope_key.split("/")
+
+        scope = scope_key_data[0]
+        key = scope_key_data[1]
+
+        return ctx.workspace_client.secrets.get_secret(scope, key).value

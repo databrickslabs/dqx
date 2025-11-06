@@ -740,7 +740,7 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
    - `filter`: filter for the input data as a string SQL expression (default: None).
-- `user_input`: (optional) user input for AI-assisted rule generation
+- `checks_user_requirements`: (optional) user input for AI-assisted rule generation
 - `llm_config`: (optional) configuration for the AI-assisted features
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 - `custom_metrics`: (optional) list of Spark SQL expressions for capturing custom summary metrics. By default, the number of input, warning, and error rows will be tracked. When custom metrics are defined, they will be tracked in addition to the default metrics.
@@ -755,8 +755,8 @@ Example of the configuration file (relevant fields only):
   llm_config:                        # <- configuration for the llm-assisted features
     model:
       model_name: "databricks/databricks-claude-sonnet-4-5"
-      api_key: xxx                  # <- optional API key for the model as text or secret scope/key. Not required by foundational models
-      api_base: xxx                 # <- optional API base URL for the model. Not required by foundational models
+      api_key: xxx                  # <- optional API key for the model as secret scope/key. Not required by foundational models
+      api_base: xxx                 # <- optional API base for the model as secret scope/key. Not required by foundational models
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -786,7 +786,7 @@ Example of the configuration file (relevant fields only):
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
-    user_input: "business rules description"
+    checks_user_requirements: "business rules description"
     custom_check_functions:  # optional
       my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
       my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path

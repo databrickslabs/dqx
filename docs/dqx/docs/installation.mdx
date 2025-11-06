@@ -212,8 +212,8 @@ extra_params:                       # <- optional extra parameters to pass to th
 llm_config:                         # <- configuration for the llm-assisted features
   model:
     model_name: "databricks/databricks-claude-sonnet-4-5"
-    api_key: xxx                    # <- optional API key for the model as text or secret scope/key. Not required by foundational models
-    api_base: xxx                   # <- optional API base URL for the model. Not required by foundational models
+    api_key: xxx                    # <- optional API key for the model as secret scope/key. Not required by foundational models
+    api_base: xxx                   # <- optional API base for the model as secret scope/key. Not required by foundational models
 
 run_configs:                        # <- list of run configurations, each run config defines one specific input and output location
 
@@ -282,7 +282,7 @@ run_configs:                        # <- list of run configurations, each run co
     limit: 1000                               # <- limit the number of records to profile
     filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source
 
-  user_input: business rules description      # <- optional user input for AI-assisted rule generation
+  checks_user_requirements: business rules description  # <- optional user input for AI-assisted rule generation; only supported if `serverless_clusters` is enabled
 
   warehouse_id: your-warehouse-id             # <- warehouse id for refreshing dashboard
 

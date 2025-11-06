@@ -81,7 +81,7 @@ class RunConfig:
     quarantine_config: OutputConfig | None = None  # quarantined data table
     metrics_config: OutputConfig | None = None  # summary metrics table
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
-    user_input: str | None = None  # user input for AI-assisted rule generation
+    checks_user_requirements: str | None = None  # user input for AI-assisted rule generation
 
     checks_location: str = (
         "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
@@ -100,16 +100,16 @@ class RunConfig:
     lakebase_port: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class LLMModelConfig:
     """Configuration for LLM model"""
 
     # The model to use for the DSPy language model
     model_name: str = "databricks/databricks-claude-sonnet-4-5"
     # Optional API key for the model as text or secret scope/key. Not required by foundational models
-    api_key: str = ""
+    api_key: str = ""  # when used with Profiler Workflow, this should be a secret: scope/key
     # Optional API base URL for the model. Not required by foundational models
-    api_base: str = ""
+    api_base: str = ""  # when used with Profiler Workflow, this should be a secret: scope/key
 
 
 @dataclass(frozen=True)

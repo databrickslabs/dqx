@@ -77,9 +77,9 @@ class ProfilerRunner:
         logger.info(f"Generated checks: \n{checks}")
         logger.info(f"Generated summary statistics: \n{summary_stats}")
 
-        if run_config.user_input:
+        if run_config.checks_user_requirements:
             checks += generator.generate_dq_rules_ai_assisted(
-                run_config.user_input, table_name=run_config.input_config.location
+                run_config.checks_user_requirements, table_name=run_config.input_config.location
             )
 
         storage_config = InstallationChecksStorageConfig(
@@ -134,8 +134,8 @@ class ProfilerRunner:
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
-            if run_config.user_input:
-                checks += generator.generate_dq_rules_ai_assisted(run_config.user_input, table_name=table)
+            if run_config.checks_user_requirements:
+                checks += generator.generate_dq_rules_ai_assisted(run_config.checks_user_requirements, table_name=table)
 
             storage_config = InstallationChecksStorageConfig(
                 location=(

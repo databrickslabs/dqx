@@ -1,12 +1,14 @@
 import logging
 import os
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import Any
 from unittest.mock import patch
 
 from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame
 import pytest
+from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
@@ -376,6 +378,41 @@ def _setup_quality_checks(ctx, spark, ws):
 
     InstallationChecksStorageHandler(ws, spark).save(checks=checks, config=config)
     return checks_location
+
+
+def setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location):
+    content = '''from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from pyspark.sql import functions as F
+
+@register_rule("row")
+def not_ends_with_suffix(column: str, suffix: str):
+    """
+    Example fo custom python row-level check function.
+    """
+    return make_condition(
+        F.col(column).endswith(suffix), f"Column '{column}' ends with '{suffix}'", f"{column}_ends_with_{suffix}"
+    )
+'''
+    if custom_checks_funcs_location.startswith("/Workspace/"):
+        ws.workspace.upload(
+            path=custom_checks_funcs_location, format=ImportFormat.AUTO, content=content.encode(), overwrite=True
+        )
+    elif custom_checks_funcs_location.startswith("/Volumes/"):
+        binary_data = BytesIO(content.encode("utf-8"))
+        ws.files.upload(custom_checks_funcs_location, binary_data, overwrite=True)
+    else:  # relative workspace path
+        installation_dir = installation_ctx.installation.install_folder()
+        ws.workspace.upload(
+            path=f"{installation_dir}/{custom_checks_funcs_location}",
+            format=ImportFormat.AUTO,
+            content=content.encode(),
+            overwrite=True,
+        )
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.custom_check_functions = {"not_ends_with_suffix": custom_checks_funcs_location}
+    installation_ctx.installation.save(config)
 
 
 def contains_expected_workflows(workflows, state):

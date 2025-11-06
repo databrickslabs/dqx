@@ -300,7 +300,7 @@ The following fields from the [configuration file](/docs/installation/#configura
     - `sample_seed`: seed for reproducible sampling.
     - `limit`: maximum number of records to analyze.
     - `filter`: filter for the input data as a string SQL expression
-- `user_input`: (optional) user input for AI-assisted rule generation
+- `checks_user_requirements`: (optional) user input for AI-assisted rule generation. Only supported if `serverless_clusters` is enabled.
 - `llm_config`: (optional) configuration for the llm-assisted features
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: 'true'). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `profiler_spark_conf`: (optional) spark configuration to use for the profiler workflow, only applicable if `serverless_clusters` is set to 'false'.
@@ -326,7 +326,7 @@ Example of the configuration file (relevant fields only):
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
       filter: "maintenance_type = 'preventive'"
-    user_input: "business rules description"
+    checks_user_requirements: "business rules description"
 ```
 
 ## Profiling options

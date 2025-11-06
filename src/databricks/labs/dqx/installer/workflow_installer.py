@@ -381,7 +381,11 @@ class WorkflowDeployment(InstallationMixin):
         for task in self._tasks:
             # If override_clusters is set, use regular clusters (not serverless)
             use_serverless = self._config.serverless_clusters and not task.override_clusters
-            settings = self._job_settings(task.workflow, remote_wheels, use_serverless, task.spark_conf)
+            remote_wheels_with_extras = remote_wheels
+            if use_serverless:
+                # installing extras from a file is only possible with serverless
+                remote_wheels_with_extras = [f"{wheel}[llm,pii]" for wheel in remote_wheels]
+            settings = self._job_settings(task.workflow, remote_wheels_with_extras, use_serverless, task.spark_conf)
             if task.override_clusters:
                 settings = self._apply_cluster_overrides(
                     settings,
