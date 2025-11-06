@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # DQX - AI Assisted Checks Generation Demo 
+# MAGIC # DQX - AI Assisted Checks Generation Demo
 # MAGIC
 
 # COMMAND ----------

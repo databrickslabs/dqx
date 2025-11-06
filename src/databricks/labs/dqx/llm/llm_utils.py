@@ -101,7 +101,7 @@ def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | 
 
 
 def _load_training_examples() -> list[dict[str, Any]]:
-    """A function to Load the training examples from the llm/resources/training_examples.yml file.
+    """A function to load the training examples from the llm/resources/training_examples.yml file.
 
     Returns:
         list[dict[str, Any]]: Training examples as a list of dictionaries.

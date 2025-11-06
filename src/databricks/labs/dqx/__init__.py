@@ -5,7 +5,7 @@ import databricks.sdk.useragent as ua
 from databricks.labs.blueprint.logger import install_logger
 from databricks.labs.dqx.__about__ import __version__
 
-install_logger(logging.INFO)
+install_logger()
 
 logging.getLogger("databricks").setLevel(logging.INFO)
 
