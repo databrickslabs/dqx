@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
 
@@ -38,21 +38,27 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.15.0
 
       - name: Run unit tests and generate test coverage report
         run: make test
 
       # Integration tests are run from within tests/integration folder.
-      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
+      # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for integration tests
-        run: cp .coveragerc tests/integration
+        run: |
+          cat > tests/integration/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          EOF
 
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
+      # Run 10 tests in parallel: https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
       - name: Run integration tests and generate test coverage report
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -63,8 +69,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      - name: Merge coverage reports and convert them to XML
+        run: |
+          hatch run combine_coverage
+
+      # Recursively search the entire workspace directory for all coverage reports.
+      # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -90,10 +102,20 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.15.0
+
+      # Integration tests are run from within tests/integration folder.
+      # Create .coveragerc with correct relative path to source code.
+      - name: Prepare code coverage configuration for integration tests
+        run: |
+          cat > tests/integration/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          EOF
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
@@ -106,6 +128,17 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+
+      - name: Merge coverage reports and convert them to XML
+        run: |
+          hatch run combine_coverage
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   e2e:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
@@ -122,10 +155,10 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.15.0
 
       - name: Install Databricks CLI
         run: |
@@ -174,10 +207,10 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.15.0
 
       - name: Install dbt
         run: |

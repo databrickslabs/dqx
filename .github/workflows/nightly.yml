@@ -13,6 +13,7 @@ permissions:
 
 concurrency:
   group: single-acceptance-job-per-repo
+  cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
   integration:
@@ -29,18 +30,23 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.15.0
 
       - name: Run unit tests and generate test coverage report
         run: make test
 
-      # Acceptance tests are run from within tests/integration folder.
-      # We need to make sure .coveragerc is there so that code coverage is generated for the right modules.
-      - name: Prepare .coveragerc for integration tests
-        run: cp .coveragerc tests/integration
+      # Integration tests are run from within tests/integration folder.
+      # Create .coveragerc with correct relative path to source code.
+      - name: Prepare code coverage configuration for integration tests
+        run: |
+          cat > tests/integration/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          EOF
 
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
@@ -49,14 +55,19 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false  # if enabled, it creates an issue for each test failure; disabled to reduce noise
           codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
 
-      # collects all coverage reports: coverage.xml from integration tests, coverage-unit.xml from unit tests
+      - name: Merge coverage reports and convert them to XML
+        run: |
+          hatch run combine_coverage
+
+      # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
         with:
@@ -78,10 +89,20 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.15.0
+
+      # Integration tests are run from within tests/integration folder.
+      # Create .coveragerc with correct relative path to source code.
+      - name: Prepare code coverage configuration for integration tests
+        run: |
+          cat > tests/integration/.coveragerc << EOF
+          [run]
+          source = ../../src
+          relative_files = true
+          EOF
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
@@ -95,9 +116,19 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+
+      - name: Merge coverage reports and convert them to XML
+        run: |
+          hatch run combine_coverage
+
+      # collects all coverage reports
+      - name: Publish test coverage
+        uses: codecov/codecov-action@v5
+        with:
+          use_oidc: true
 
   e2e:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     steps:
@@ -111,10 +142,10 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.15.0
 
       - name: Install Databricks CLI
         run: |
@@ -147,7 +178,6 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
   e2e_serverless:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     env:
@@ -163,10 +193,10 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.9.4
+        run: pip install hatch==1.15.0
 
       - name: Install Databricks CLI
         run: |
@@ -198,3 +228,50 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+
+  benchmark:
+    environment: tool
+    runs-on: larger
+    env:
+      DATABRICKS_SERVERLESS_COMPUTE_ID: auto
+      BENCHMARKS_DIR: tests/perf/.benchmarks
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          cache: 'pip'
+          cache-dependency-path: '**/pyproject.toml'
+          python-version: '3.12'
+
+      - name: Install hatch
+        run: pip install hatch==1.15.0
+
+      - name: Login to Azure for azure-cli authentication
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Run performance tests and compare with baseline
+        timeout-minutes: 120
+        env:
+          DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
+        run: |
+          export DATABRICKS_HOST=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          export DATABRICKS_AUTH_TYPE=azure-cli
+
+          # We are not using acceptance action as it does not show the comparison results.
+          # The run fails if performance degrades by more than 25%.
+          # Tests are run sequentially to reduce variability.
+          # Do at least 5 rounds to get more stable results.
+          hatch run pytest tests/perf -v -n 1 \
+            --benchmark-storage=$BENCHMARKS_DIR \
+            --benchmark-compare=baseline \
+            --benchmark-compare-fail=mean:25% \
+            --benchmark-min-rounds=5

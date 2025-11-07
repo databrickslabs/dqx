@@ -5,12 +5,15 @@ import logging
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.profiler.common import val_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
+from databricks.labs.dqx.telemetry import telemetry_logger
+from databricks.labs.dqx.errors import InvalidParameterError
 
 __name_sanitize_re__ = re.compile(r"[^a-zA-Z0-9]+")
 logger = logging.getLogger(__name__)
 
 
 class DQDltGenerator(DQEngineBase):
+    @telemetry_logger("generator", "generate_dlt_rules")
     def generate_dlt_rules(
         self, rules: list[DQProfile], action: str | None = None, language: str = "SQL"
     ) -> list[str] | str | dict:
@@ -27,7 +30,7 @@ class DQDltGenerator(DQEngineBase):
             the Lakeflow Pipelines rules in Python, or dictionary with expressions.
 
         Raises:
-            ValueError: If the specified language is not supported.
+            InvalidParameterError: If the specified language is not supported.
         """
 
         lang = language.lower()
@@ -41,7 +44,7 @@ class DQDltGenerator(DQEngineBase):
         if lang == "python_dict":
             return self._generate_dlt_rules_python_dict(rules)
 
-        raise ValueError(f"Unsupported language '{language}'. Only 'SQL' and 'Python' are supported.")
+        raise InvalidParameterError(f"Unsupported language '{language}'. Only 'SQL' and 'Python' are supported.")
 
     @staticmethod
     def _dlt_generate_is_in(column: str, **params: dict):
@@ -183,9 +186,6 @@ class DQDltGenerator(DQEngineBase):
 
         Returns:
             A list of Lakeflow Pipelines rules.
-
-        Raises:
-            ValueError: If the specified language is not supported.
         """
         dlt_rules = []
         act_str = ""

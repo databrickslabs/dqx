@@ -1,27 +1,35 @@
+import os
 import json
+import datetime
 import logging
 import re
 from typing import Any
-import datetime
+from fnmatch import fnmatch
 
 from pyspark.sql import Column, SparkSession
-from pyspark.sql.dataframe import DataFrame
-from pyspark.sql.connect.column import Column as ConnectColumn
-from databricks.labs.dqx.config import InputConfig, OutputConfig
+
+# Import spark connect column if spark session is created using spark connect
+try:
+    from pyspark.sql.connect.column import Column as ConnectColumn
+except ImportError:
+    ConnectColumn = None  # type: ignore
+
+from databricks.sdk import WorkspaceClient
+from databricks.labs.blueprint.limiter import rate_limited
+from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.sdk.errors import NotFound
+
 
 logger = logging.getLogger(__name__)
 
 
-STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
-# catalog.schema.table or schema.table or database.table
-TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
 
 
 def get_column_name_or_alias(
-    column: str | Column | ConnectColumn, normalize: bool = False, allow_simple_expressions_only: bool = False
+    column: "str | Column | ConnectColumn", normalize: bool = False, allow_simple_expressions_only: bool = False
 ) -> str:
     """
     Extracts the column alias or name from a PySpark Column or ConnectColumn expression.
@@ -32,9 +40,10 @@ def get_column_name_or_alias(
     - Supports columns with one or multiple aliases.
     - Ensures the extracted expression is truncated to 255 characters.
     - Provides an optional normalization step for consistent naming.
+    - Supports ConnectColumn when PySpark Connect is available (falls back gracefully when not available).
 
     Args:
-        column: Column, ConnectColumn or string representing a column.
+        column: Column, ConnectColumn (if PySpark Connect available), or string representing a column.
         normalize: If True, normalizes the column name (removes special characters, converts to lowercase).
         allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
             Complex PySpark expressions (e.g., conditionals, arithmetic, or nested transformations), cannot be fully
@@ -45,8 +54,7 @@ def get_column_name_or_alias(
         The extracted column alias or name.
 
     Raises:
-        ValueError: If the column expression is invalid.
-        TypeError: If the column type is unsupported.
+        InvalidParameterError: If the column expression is invalid or unsupported.
     """
     if isinstance(column, str):
         col_str = column
@@ -54,7 +62,7 @@ def get_column_name_or_alias(
         # Extract the last alias or column name from the PySpark Column string representation
         match = COLUMN_PATTERN.search(str(column))
         if not match:
-            raise ValueError(f"Invalid column expression: {column}")
+            raise InvalidParameterError(f"Invalid column expression: {column}")
         col_expr, alias = match.groups()
         if alias:
             return alias
@@ -64,7 +72,7 @@ def get_column_name_or_alias(
             col_str = normalize_col_str(col_str)
 
     if allow_simple_expressions_only and not is_simple_column_expression(col_str):
-        raise ValueError(
+        raise InvalidParameterError(
             "Unable to interpret column expression. Only simple references are allowed, e.g: F.col('name')"
         )
     return col_str
@@ -75,13 +83,17 @@ def get_columns_as_strings(columns: list[str | Column], allow_simple_expressions
     Extracts column names from a list of PySpark Column or ConnectColumn expressions.
 
     This function processes each column, ensuring that only valid column names are returned.
+    Supports ConnectColumn when PySpark Connect is available (falls back gracefully when not available).
 
     Args:
-        columns: List of columns, ConnectColumns or strings representing columns.
+        columns: List of columns, ConnectColumns (if PySpark Connect available), or strings representing columns.
         allow_simple_expressions_only: If True, raises an error if the column expression is not a simple expression.
 
     Returns:
         List of column names as strings.
+
+    Raises:
+        InvalidParameterError: If any column expression is invalid or unsupported.
     """
     columns_as_strings = []
     for col in columns:
@@ -122,7 +134,6 @@ def normalize_bound_args(val: Any) -> Any:
         Normalized value or collection.
 
     Raises:
-        ValueError: If a column resolves to an invalid name.
         TypeError: If a column type is unsupported.
     """
     if isinstance(val, (list, tuple, set)):
@@ -135,7 +146,12 @@ def normalize_bound_args(val: Any) -> Any:
     if isinstance(val, (datetime.date, datetime.datetime)):
         return str(val)
 
-    if isinstance(val, (Column, ConnectColumn)):
+    if ConnectColumn is not None:
+        column_types: tuple[type[Any], ...] = (Column, ConnectColumn)
+    else:
+        column_types = (Column,)
+
+    if isinstance(val, column_types):
         col_str = get_column_name_or_alias(val, allow_simple_expressions_only=True)
         return col_str
     raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")
@@ -156,136 +172,6 @@ def normalize_col_str(col_str: str) -> str:
     """
     max_chars = 255
     return re.sub(COLUMN_NORMALIZE_EXPRESSION, "_", col_str[:max_chars].lower()).rstrip("_")
-
-
-def read_input_data(
-    spark: SparkSession,
-    input_config: InputConfig,
-) -> DataFrame:
-    """
-    Reads input data from the specified location and format.
-
-    Args:
-        spark: SparkSession
-        input_config: InputConfig with source location/table name, format, and options
-
-    Returns:
-        DataFrame with values read from the input data
-    """
-    if not input_config.location:
-        raise ValueError("Input location not configured")
-
-    if TABLE_PATTERN.match(input_config.location):
-        return _read_table_data(spark, input_config)
-
-    if STORAGE_PATH_PATTERN.match(input_config.location):
-        return _read_file_data(spark, input_config)
-
-    raise ValueError(
-        f"Invalid input location. It must be a 2 or 3-level table namespace or storage path, given {input_config.location}"
-    )
-
-
-def _read_file_data(spark: SparkSession, input_config: InputConfig) -> DataFrame:
-    """
-    Reads input data from files (e.g. JSON). Streaming reads must use auto loader with a 'cloudFiles' format.
-    Args:
-        spark: SparkSession
-        input_config: InputConfig with source location, format, and options
-
-    Returns:
-        DataFrame with values read from the file data
-    """
-    if not input_config.is_streaming:
-        return spark.read.options(**input_config.options).load(
-            input_config.location, format=input_config.format, schema=input_config.schema
-        )
-
-    if input_config.format != "cloudFiles":
-        raise ValueError("Streaming reads from file sources must use 'cloudFiles' format")
-
-    return spark.readStream.options(**input_config.options).load(
-        input_config.location, format=input_config.format, schema=input_config.schema
-    )
-
-
-def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFrame:
-    """
-    Reads input data from a table registered in Unity Catalog.
-    Args:
-        spark: SparkSession
-        input_config: InputConfig with source location, format, and options
-
-    Returns:
-        DataFrame with values read from the table data
-    """
-    if not input_config.is_streaming:
-        return spark.read.options(**input_config.options).table(input_config.location)
-    return spark.readStream.options(**input_config.options).table(input_config.location)
-
-
-def get_reference_dataframes(
-    spark: SparkSession, reference_tables: dict[str, InputConfig] | None = None
-) -> dict[str, DataFrame] | None:
-    """
-    Get reference DataFrames from the provided reference tables configuration.
-
-    Args:
-        spark: SparkSession
-        reference_tables: A dictionary mapping of reference table names to their input configurations.
-
-    Examples:
-    ```
-    reference_tables = {
-        "reference_table_1": InputConfig(location="db.schema.table1", format="delta"),
-        "reference_table_2": InputConfig(location="db.schema.table2", format="delta")
-    }
-    ```
-
-    Returns:
-        A dictionary mapping reference table names to their DataFrames.
-    """
-    if not reference_tables:
-        return None
-
-    logger.info("Reading reference tables.")
-    return {name: read_input_data(spark, input_config) for name, input_config in reference_tables.items()}
-
-
-def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
-    """
-    Helper method to save a DataFrame to a Delta table.
-    Args:
-        df: The DataFrame to save
-        output_config: Output table name, write mode, and options
-    """
-    logger.info(f"Saving data to {output_config.location} table")
-
-    if df.isStreaming:
-        if not output_config.trigger:
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .toTable(output_config.location)
-            )
-        else:
-            trigger: dict[str, Any] = output_config.trigger
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .trigger(**trigger)
-                .toTable(output_config.location)
-            )
-        query.awaitTermination()
-    else:
-        (
-            df.write.format(output_config.format)
-            .mode(output_config.mode)
-            .options(**output_config.options)
-            .saveAsTable(output_config.location)
-        )
 
 
 def is_sql_query_safe(query: str) -> bool:
@@ -326,3 +212,241 @@ def safe_json_load(value: str):
         return json.loads(value)  # load as json if possible
     except json.JSONDecodeError:
         return value
+
+
+def safe_strip_file_from_path(path: str) -> str:
+    """
+    Safely removes the file name from a given path, treating it as a directory if no file extension is present.
+    - Hidden directories (e.g., .folder) are preserved.
+    - Hidden files with extensions (e.g., .file.yml) are treated as files.
+
+    Args:
+        path: The input path from which to remove the file name.
+
+    Returns:
+        The path without the file name, or the original path if it is already a directory.
+    """
+    if not path:
+        return ""
+
+    # Remove trailing slash
+    path = path.rstrip("/")
+
+    head, tail = os.path.split(path)
+
+    if not tail:
+        return path  # it's already a directory
+
+    # If it looks like a file:
+    # - contains a dot and (doesn't start with '.' OR has another dot after the first char)
+    if "." in tail and (not tail.startswith(".") or tail.count(".") > 1):
+        return head
+
+    # Otherwise, treat as directory
+    return path
+
+
+@rate_limited(max_requests=100)
+def list_tables(
+    workspace_client: WorkspaceClient,
+    patterns: list[str] | None,
+    exclude_matched: bool = False,
+    exclude_patterns: list[str] | None = None,
+) -> list[str]:
+    """
+    Gets a list of table names from Unity Catalog given a list of wildcard patterns.
+
+    Args:
+        workspace_client (WorkspaceClient): Databricks SDK WorkspaceClient.
+        patterns (list[str] | None): A list of wildcard patterns to match against the table name.
+        exclude_matched (bool): Specifies whether to include tables matched by the pattern.
+            If True, matched tables are excluded. If False, matched tables are included.
+        exclude_patterns (list[str] | None): A list of wildcard patterns to exclude from the table names.
+
+    Returns:
+        list[str]: A list of fully qualified table names.
+        DataFrame with values read from the input data
+
+    Raises:
+        NotFound: If no tables are found matching the include or exclude criteria.
+    """
+    allowed_catalogs, allowed_schemas = _get_allowed_catalogs_and_schemas(patterns, exclude_matched)
+    tables = _get_tables_from_catalogs(workspace_client, allowed_catalogs, allowed_schemas)
+
+    if patterns:
+        tables = _filter_tables_by_patterns(tables, patterns, exclude_matched)
+
+    if exclude_patterns:
+        tables = _filter_tables_by_patterns(tables, exclude_patterns, exclude_matched=True)
+
+    if tables:
+        return tables
+    raise NotFound("No tables found matching include or exclude criteria")
+
+
+def get_column_metadata(spark: SparkSession, table_name: str) -> str:
+    """
+    Get the column metadata for a given table.
+
+    Args:
+        table_name (str): The name of the table to retrieve metadata for.
+        spark (SparkSession): The Spark session used to access the table.
+
+    Returns:
+        str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
+    """
+    df = spark.table(table_name)
+    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+    schema_info = {"columns": columns}
+    return json.dumps(schema_info)
+
+
+def _split_pattern(pattern: str) -> tuple[str, str, str]:
+    """
+    Splits a wildcard pattern into its catalog, schema, and table components.
+
+    Args:
+        pattern (str): A wildcard pattern in the form 'catalog.schema.table'.
+
+    Returns:
+        tuple[str, str, str]: A tuple containing the catalog, schema, and table components.
+        DataFrame with values read from the file data
+    """
+    parts = pattern.split(".")
+    catalog = parts[0] if len(parts) > 0 else "*"
+    schema = parts[1] if len(parts) > 1 else "*"
+    table = ".".join(parts[2:]) if len(parts) > 2 else "*"
+    return catalog, schema, table
+
+
+def _build_include_scope_for_patterns(patterns: list[str]) -> tuple[set[str] | None, dict[str, set[str]] | None]:
+    """
+    Builds allowed catalogs and schemas from a list of wildcard patterns.
+
+    Args:
+        patterns (list[str]): A list of wildcard patterns to match against the table name.
+
+    Returns:
+        tuple[set[str] | None, dict[str, set[str]] | None]: A tuple containing:
+            - A set of allowed catalogs or None if no specific catalogs are constrained.
+            - A dictionary mapping allowed catalogs to their respective sets of allowed schemas or
+              None if no specific schemas are constrained.
+    """
+    parts = [_split_pattern(p) for p in patterns]
+    # If any pattern uses '*' at catalog → don’t constrain catalogs
+    if any(cat == "*" for cat, _, _ in parts):
+        return None, None
+    allowed_catalogs: set[str] = set()
+    allowed_schemas: dict[str, set[str]] = {}
+    for catalog, schema, _ in parts:
+        if catalog != "*":
+            allowed_catalogs.add(catalog)
+            if schema != "*":
+                allowed_schemas.setdefault(catalog, set()).add(schema)
+    return (allowed_catalogs or None), (allowed_schemas or None)
+
+
+def _get_allowed_catalogs_and_schemas(
+    patterns: list[str] | None, exclude_matched: bool
+) -> tuple[set[str] | None, dict[str, set[str]] | None]:
+    """
+    Determines allowed catalogs and schemas based on provided patterns and exclusion flag.
+
+    Args:
+        patterns (list[str] | None): A list of wildcard patterns to match against the table name.
+        exclude_matched (bool): Specifies whether to include tables matched by the pattern.
+            If True, matched tables are excluded. If False, matched tables are included.
+
+    Returns:
+        tuple[set[str] | None, dict[str, set[str]] | None]: A tuple containing:
+            - A set of allowed catalogs or None if no specific catalogs are constrained.
+            - A dictionary mapping allowed catalogs to their respective sets of allowed schemas or
+              None if no specific schemas are constrained.
+    """
+    if patterns and not exclude_matched:
+        return _build_include_scope_for_patterns(patterns)
+    return None, None
+
+
+def _get_tables_from_catalogs(
+    client: WorkspaceClient, allowed_catalogs: set[str] | None, allowed_schemas: dict[str, set[str]] | None
+) -> list[str]:
+    """
+    Retrieves tables from Unity Catalog based on allowed catalogs and schemas.
+
+    Args:
+        client (WorkspaceClient): Databricks SDK WorkspaceClient.
+        allowed_catalogs (set[str] | None): A set of allowed catalogs or None if no specific catalogs are constrained.
+        allowed_schemas (dict[str, set[str]] | None): A dictionary mapping allowed catalogs to their respective sets
+            of allowed schemas or None if no specific schemas are constrained.
+
+    Returns:
+        list[str]: A list of fully qualified table names.
+    """
+    tables: list[str] = []
+    for catalog in client.catalogs.list():
+        catalog_name = catalog.name
+        if not catalog_name or (allowed_catalogs and catalog_name not in allowed_catalogs):
+            continue
+
+        schema_filter = allowed_schemas.get(catalog_name) if allowed_schemas else None
+        tables.extend(_get_tables_from_schemas(client, catalog_name, schema_filter))
+    return tables
+
+
+def _get_tables_from_schemas(client: WorkspaceClient, catalog_name: str, schema_filter: set[str] | None) -> list[str]:
+    """
+    Retrieves tables from schemas within a specified catalog.
+
+    Args:
+        client (WorkspaceClient): Databricks SDK WorkspaceClient.
+        catalog_name (str): The name of the catalog to retrieve tables from.
+        schema_filter (set[str] | None): A set of allowed schemas within the catalog or None if no specific schemas are constrained.
+
+    Returns:
+        list[str]: A list of fully qualified table names within the specified catalog and schemas.
+    """
+    tables: list[str] = []
+    for schema in client.schemas.list(catalog_name=catalog_name):
+        schema_name = schema.name
+        if not schema_name or (schema_filter and schema_name not in schema_filter):
+            continue
+
+        tables.extend(
+            table.full_name
+            for table in client.tables.list_summaries(catalog_name=catalog_name, schema_name_pattern=schema_name)
+            if table.full_name
+        )
+    return tables
+
+
+def _filter_tables_by_patterns(tables: list[str], patterns: list[str], exclude_matched: bool) -> list[str]:
+    """
+    Filters a list of table names based on provided wildcard patterns.
+
+    Args:
+        tables (list[str]): A list of fully qualified table names.
+        patterns (list[str]): A list of wildcard patterns to match against the table name.
+        exclude_matched (bool): Specifies whether to include tables matched by the pattern.
+            If True, matched tables are excluded. If False, matched tables are included.
+
+    Returns:
+        list[str]: A filtered list of table names based on the matching criteria.
+    """
+    if exclude_matched:
+        return [table for table in tables if not _match_table_patterns(table, patterns)]
+    return [table for table in tables if _match_table_patterns(table, patterns)]
+
+
+def _match_table_patterns(table: str, patterns: list[str]) -> bool:
+    """
+    Checks if a table name matches any of the provided wildcard patterns.
+
+    Args:
+        table (str): The table name to check.
+        patterns (list[str]): A list of wildcard patterns (e.g., 'catalog.schema.*') to match against the table name.
+
+    Returns:
+        bool: True if the table name matches any of the patterns, False otherwise.
+    """
+    return any(fnmatch(table, pattern) for pattern in patterns)

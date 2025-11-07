@@ -3,7 +3,7 @@
 # MAGIC # Using DQX for PII Detection
 # MAGIC Increased regulation makes Databricks customers responsible for any Personally Identifiable Information (PII) stored in Unity Catalog. Companies need to be able to perform PII detection for data at-rest and in-transit to proactively quarantine or anonymize PII before persisting the data.
 # MAGIC
-# MAGIC DQX provides in-flight data quality monitoring for Spark `DataFrames`. You can apply checks, get row-level metadata, and quarantine failing records. Workloads can also use DQX's built-in functions to check `DataFrames` for PII.
+# MAGIC DQX provides in-transit data quality monitoring for Spark `DataFrames`. You can apply checks, get row-level metadata, and quarantine failing records. Workloads can also use DQX's built-in functions to check `DataFrames` for PII.
 
 # COMMAND ----------
 

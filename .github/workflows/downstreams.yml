@@ -39,11 +39,11 @@ jobs:
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install toolchain
         run: |
-          pip install hatch==1.9.4
+          pip install hatch==1.15.0
 
       - name: Check downstream compatibility
         uses: databrickslabs/sandbox/downstreams@downstreams/v0.0.1

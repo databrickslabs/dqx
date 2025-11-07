@@ -8,15 +8,14 @@ import Admonition from '@theme/Admonition';
 
 The framework can be installed on a Databricks workspace as a tool or used as a standalone library.
 
-## Prerequisites
+## DQX installation as a Library
 
-- Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
+### Prerequisites
+
 - [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
-- Network access to your Databricks Workspace used for the installation process.
-- (Optional if wanting to install DQX as a tool) Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
 - Databricks cluster with Spark 3.5.0 or higher. It is recommended to use Databricks Runtime >= 15.4. See [instructions](https://docs.databricks.com/clusters/create.html).
 
-## DQX installation as a Library
+### Installing DQX in a cluster or notebook
 
 Install the library via `pip` in a cluster or notebook:
 ```commandline
@@ -43,10 +42,42 @@ resources:
                 package: databricks-labs-dqx==0.8.0
 ```
 
+Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
+
+### Optional dependencies
+
+DQX provides optional extras for specific features:
+
+#### AI-Assisted Quality Checks Generation
+
+To use AI-assisted rule generation with LLM support, install the `llm` extras:
+```commandline
+pip install 'databricks-labs-dqx[llm]'
+```
+
+This installs additional dependencies including DSPy for LLM integration. See the [AI-Assisted Generation Guide](/docs/guide/ai_assisted_quality_checks_generation) for more details.
+
+#### PII detection capabilities
+
+To use built-in pii detection rules, install the `pii` extras:
+```commandline
+pip install 'databricks-labs-dqx[pii]'
+```
+
+This installs additional dependencies including Microsoft Presidio library.
+
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
 However, installing DQX in the workspace offers additional benefits such as profiling and quality checker workflows allowing for no-code quality checking, a pre-configured dashboard, and convenient configuration management.
+
+### Prerequisites
+
+- Python 3.10 or later. See [instructions](https://www.python.org/downloads/).
+- [Databricks workspace](https://docs.databricks.com/en/getting-started/index.html).
+- Network access to your Databricks Workspace used for the installation process.
+- Databricks CLI v0.241 or later. See [instructions](https://docs.databricks.com/dev-tools/cli/databricks-cli.html).
+- On Windows, Build Tools for Visual Studio (see [Tool for Visual Studio](https://visualstudio.microsoft.com/downloads/)).
 
 ### Authenticate Databricks CLI
 
@@ -66,8 +97,15 @@ Install DQX in your Databricks workspace via Databricks CLI:
 databricks labs install dqx
 ```
 
+As a best practice, you should always pin the version so that your code is not affected by future changes:
+```commandline
+databricks labs install dqx@v0.8.0
+```
+
 You'll be prompted to provide several configuration options.
 You can use standard Databricks CLI options like `--profile` for authentication.
+
+Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
 
 <Admonition type="tip" title="Execution Environment">
 * Make sure to have Databricks CLI v0.241 or later installed locally to avoid encountering the error: ModuleNotFoundError: No module named 'pyspark'.
@@ -82,8 +120,7 @@ Install a specific version of DQX in your Databricks workspace via Databricks CL
 databricks labs install dqx@v0.8.0
 ```
 
-You'll be prompted to select a [configuration profile](https://docs.databricks.com/en/dev-tools/auth.html#databricks-client-unified-authentication) created by `databricks auth login` command,
-and other configuration options.
+You'll be prompted to select a [configuration profile](https://docs.databricks.com/en/dev-tools/auth.html#databricks-client-unified-authentication) created by `databricks auth login` command, and other configuration options.
 
 The cli command will install the following components in the workspace installation folder:
 - A Python [wheel file](https://peps.python.org/pep-0427/) with the library packaged.
@@ -98,19 +135,38 @@ It is recommended to use serverless clusters for the workflows, as it allows for
 If serverless clusters are not used, a default cluster configuration will be used for the workflows.
 Alternatively, you can override the cluster configuration for each workflow in the `config.yml` file after the installation, to provide existing clusters to use.
 
-#### User vs Global Installation
+#### Installation Options
 
-DQX is installed by default in the user home directory (under `/Users/<user>/.dqx`). You can also install DQX globally
-by setting the 'DQX_FORCE_INSTALL' environment variable. The following options are available:
+DQX offers flexible installation options. By default, DQX is installed in the user home directory under `/Users/<user>/.dqx`.
+You can also install DQX in a global folder or any custom workspace folder.
 
-* `DQX_FORCE_INSTALL=global databricks labs install dqx`: will force the installation to be for root only (`/Applications/dqx`)
-* `DQX_FORCE_INSTALL=user databricks labs install dqx`: will force the installation to be for user only (`/Users/<user>/.dqx`)
+**Environment Variable Override:**
+
+You can force global or user installation using the 'DQX_FORCE_INSTALL' environment variable:
+  * `DQX_FORCE_INSTALL=global databricks labs install dqx`: forces installation to `/Applications/dqx`
+  * `DQX_FORCE_INSTALL=user databricks labs install dqx`: forces installation to `/Users/<user>/.dqx` (default behaviour)
+
+**Custom Workspace Folder:**
+
+If you provide a custom path during installation (e.g., `/Shared/dqx-team` or `/Users/shared-user/dqx-project`), DQX will be installed there.
+You will be prompted to optionally enter a workspace path when installing DQX.
+
+The custom folder installation is required when using [Group Assigned cluster](https://docs.databricks.com/aws/en/compute/group-access),
+as the concept of a user home directory does not exist in this setup.
+
+<Admonition type="info" title="Complete Profiling Guide">
+If a custom folder is provided during installation, the installation folder will take precedence over any environment variables (e.g. `DQX_FORCE_INSTALL`).
+</Admonition> 
 
 #### Configuration file
 
 DQX configuration file can contain multiple run configurations for different pipelines or projects, each defining specific input, output and quarantine locations, etc.
-By default, the config is created in the installation directory under `/Users/<user>/.dqx/config.yml` or `/Applications/dqx/config.yml` if installed globally.
-The "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved.
+The configuration file is created in the installation directory depending on installation options (see above):
+- User home (default): `/Users/<user>/.dqx/config.yml`
+- Global: `/Applications/dqx/config.yml` (when DQX_FORCE_INSTALL=global)
+- Custom folder: `<your-installation-folder>/config.yml` (when provided during installation)
+
+A "default" run configuration is created during the installation. When DQX is upgraded, the configuration is preserved.
 The configuration can be updated / extended manually by the user after the installation. Each run config defines configuration for one specific input and output location.
 
 Open the configuration file:
@@ -133,11 +189,13 @@ profiler_override_clusters:         # <- optional dictionary mapping job cluster
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 profiler_spark_conf:                # <- optional spark configuration to use for the profiler workflow
   spark.sql.ansi.enabled: true      # <- example setting
+profiler_max_parallelism: 4         # <- max parallelism for profiling multiple tables
 
 quality_checker_override_clusters:  # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
 quality_checker_spark_conf:         # <- optional spark configuration to use for the quality checker workflow
   spark.sql.ansi.enabled: true      # <- example setting
+quality_checker_max_parallelism: 4  # <- max parallelism for quality checking multiple tables
 
 e2e_override_clusters:              # <- optional dictionary mapping job cluster names to existing cluster IDs
   default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
@@ -151,9 +209,15 @@ extra_params:                       # <- optional extra parameters to pass to th
     user_metadata:
         custom_metadata: custom_value # <- optional user metadata to be added to the results
 
+llm_config:                         # <- configuration for the llm-assisted features
+  model:
+    model_name: "databricks/databricks-claude-sonnet-4-5"
+    api_key: xxx                    # <- optional API key for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+    api_base: xxx                   # <- optional API base for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+
 run_configs:                        # <- list of run configurations, each run config defines one specific input and output location
 
-- name: default                     # <- unique name of the run config (default used during installation)
+- name: default                     # <- unique name of the run config (it can be any string), e.g. input table or job name (use "default" during installation)
 
   input_config:                     # <- optional input data configuration
     location: s3://iot-ingest/raw   # <- input location of the data (table or cloud path)
@@ -183,12 +247,23 @@ run_configs:                        # <- list of run configurations, each run co
     trigger:                             # <- optional streaming trigger, only applicable if input_config.is_streaming is enabled
       availableNow: true
 
+  metrics_config:                        # <-  optional summary metrics storage
+    format: delta
+    location: main.iot.dq_metrics
+    mode: append
+
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
-  custom_check_functions:                # <- optional mapping of custom check function name to Python file (module) containing check function definition
+  # if wanting to store checks in lakebase table
+  # checks_location: dqx.config.checks                  # <- fully qualified Lakebase table for storing quality rules (checks)
+  # lakebase_instance_name: my-lakebase-instance        # <- the name of the lakebase instance to use for storing checks
+  # lakebase_user: 00000000-0000-0000-0000-000000000000 # <- the user to connect to the lakebase, e.g., user@domain.com or a Databricks service principal client ID
+  # lakebase_port: 5432                                 # <- optional port to connect to Lakebase, default is 5432
+
+  custom_check_functions:                               # <- optional mapping of custom check function name to Python file (module) containing check function definition
     my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
-    my_other: /Workspace/Shared/MyApp/my_funcs.py       # absolute workspace path
-    email_mask: /Volumes/main/dqx_utils/custom/email.py # UC volume path
+    my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
+    email_mask: /Volumes/main/dqx_utils/custom/email.py # or UC volume path
 
   reference_tables:                      # <- optional mapping of reference table names to reference table locations (e.g. required for foreign key check)
     reference_table_1:                   # <- name of the reference table
@@ -205,10 +280,13 @@ run_configs:                        # <- list of run configurations, each run co
     sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
     sample_seed: 30                           # <- optional seed for reproducible sampling
     limit: 1000                               # <- limit the number of records to profile
+    filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source
 
-  warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
+  checks_user_requirements: business rules description  # <- optional user input for AI-assisted rule generation; only supported if `serverless_clusters` is enabled
 
-- name: another_run_config                # <- unique name of the run config
+  warehouse_id: your-warehouse-id             # <- warehouse id for refreshing dashboard
+
+- name: another_run_config                    # <- unique name of the run config
   ...
 ```
 

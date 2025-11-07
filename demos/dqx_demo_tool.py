@@ -7,7 +7,7 @@
 # MAGIC
 # MAGIC Run in your terminal: `databricks labs install dqx`
 # MAGIC
-# MAGIC When prompt provide the following:
+# MAGIC When prompt provide the following and leave other options as default:
 # MAGIC * Input data location: `/databricks-datasets/delta-sharing/samples/nyctaxi_2019`
 # MAGIC * Input format: `delta`
 # MAGIC * Output table: valid fully qualified table name (catalog.schema.table when using Unity Catalog or schema.table). The output data will be saved there as part of the demo.
@@ -24,6 +24,8 @@
 # MAGIC log_level: INFO
 # MAGIC version: 1
 # MAGIC serverless_clusters: true # optional
+# MAGIC profiler_max_parallelism: 4
+# MAGIC quality_checker_max_parallelism: 4
 # MAGIC run_configs:
 # MAGIC - name: default
 # MAGIC   checks_location: checks.yml
@@ -44,6 +46,14 @@
 # MAGIC     summary_stats_file: profile_summary_stats.yml
 # MAGIC   warehouse_id: your-warehouse-id
 # MAGIC ```
+# MAGIC
+# MAGIC If you install DQX using custom installation path you must update `custom_install_path` variable below. Installation using custom path is required when using [group assigned cluster](https://docs.databricks.com/aws/en/compute/group-access)!
+
+# COMMAND ----------
+
+# Updated the installation path if you install DQX in a custom folder!
+custom_install_path: str = ""
+dbutils.widgets.text("dqx_custom_installation_path", custom_install_path, "DQX Custom Installation Path")
 
 # COMMAND ----------
 
@@ -60,10 +70,14 @@
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
+# MAGIC # run for all configured run configs (default)
+# MAGIC databricks labs dqx profile
+# MAGIC
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx profile --run-config "default"
 # MAGIC ```
 # MAGIC
-# MAGIC This will profile the data defined in the `input_config` field of the config. The generated quality rule candidates and summary statistics are saved in the installation folder as per the `checks_location`, `profiler_config` fields.
+# MAGIC This will profile the data defined in the `input_config` field of the run config. The generated quality rule candidates and summary statistics are saved in the installation folder as per the `checks_location`, `profiler_config` fields.
 
 # COMMAND ----------
 
@@ -72,24 +86,37 @@
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
+# MAGIC # run for all configured run configs (default)
+# MAGIC databricks labs dqx apply-checks
+# MAGIC
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx apply-checks --run-config "default"
 # MAGIC ```
 # MAGIC
-# MAGIC This will apply quality checks defined in the `checks_location` field of the config to the data defined in the `input_config`. The results are written to the output as defined in the `output_config` and `quarantine_config` fields.
+# MAGIC This will apply quality checks defined in the `checks_location` field of the run config to the data defined in the `input_config`. The results are written to the output as defined in the `output_config` and `quarantine_config` fields.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Run end-to-end (e2e) workflow
 # MAGIC
-# MAGIC You can optionally, run both profiler and quality checker in a sequency using the e2e workflow.
+# MAGIC You can optionally, run both profiler and quality checker in a sequence using the e2e workflow.
 # MAGIC
 # MAGIC Run in the terminal:
 # MAGIC ```
+# MAGIC # run for all configured run configs (default)
+# MAGIC databricks labs dqx e2e
+# MAGIC
+# MAGIC # or run for a specific run config
 # MAGIC databricks labs dqx e2e --run-config "default"
 # MAGIC ```
 # MAGIC
 # MAGIC This will use the settings from the profiler and quality checker as explained before.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC You can also profile and run quality checking across multiple tables in a single method call (see multi table demo).
 
 # COMMAND ----------
 
@@ -100,15 +127,21 @@
 
 # MAGIC %md
 # MAGIC ### Installation of DQX in the Databricks cluster
-# MAGIC Once DQX is installed in the workspace, we install it in the DQX library in the cluster.
+# MAGIC Once DQX is installed in the workspace as a tool, it must be installed in the cluster.
 
 # COMMAND ----------
 
 import glob
 import os
 
-user_name = spark.sql("select current_user() as user").collect()[0]["user"]
-default_dqx_installation_path = f"/Workspace/Users/{user_name}/.dqx"
+if custom_install_path:
+  default_dqx_installation_path = custom_install_path
+  print(f"Using custom installation path: {custom_install_path}")
+else:
+  user_name = spark.sql("select current_user() as user").collect()[0]["user"]
+  default_dqx_installation_path = f"/Workspace/Users/{user_name}/.dqx"
+  print(f"Using default user's home installation path: {default_dqx_installation_path}")
+
 default_dqx_product_name = "dqx"
 
 dbutils.widgets.text("dqx_installation_path", default_dqx_installation_path, "DQX Installation Folder")
@@ -116,6 +149,7 @@ dbutils.widgets.text("dqx_product_name", default_dqx_product_name, "DQX Product 
 
 dqx_wheel_files_path = f"{dbutils.widgets.get('dqx_installation_path')}/wheels/databricks_labs_dqx-*.whl"
 dqx_wheel_files = glob.glob(dqx_wheel_files_path)
+
 try:
   dqx_latest_wheel = max(dqx_wheel_files, key=os.path.getctime)
 except:
@@ -123,6 +157,10 @@ except:
 
 %pip install {dqx_latest_wheel}
 %restart_python
+
+# COMMAND ----------
+
+custom_install_path = dbutils.widgets.get('dqx_custom_installation_path') or None
 
 # COMMAND ----------
 
@@ -151,8 +189,8 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
-from databricks.labs.dqx.config_loader import RunConfigLoader
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.config_serializer import ConfigSerializer
+from databricks.labs.dqx.io import read_input_data
 from databricks.sdk import WorkspaceClient
 
 
@@ -162,7 +200,9 @@ ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 
 # load the run configuration
-run_config = RunConfigLoader(ws).load_run_config(run_config_name="default", product_name=dqx_product_name)
+run_config = ConfigSerializer(ws).load_run_config(
+  run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
+)
 
 # read the input data, limit to 1000 rows for demo purpose
 input_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -180,7 +220,10 @@ checks = generator.generate_dq_rules(profiles)  # with default level "error"
 print(yaml.safe_dump(checks))
 
 # save generated checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(run_config_name="default", product_name=dqx_product_name))
+dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(
+    run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
+  )
+)
 
 # or save checks in arbitrary workspace location
 #dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
@@ -245,7 +288,10 @@ assert not status.has_errors
 dq_engine = DQEngine(WorkspaceClient())
 
 # save checks to location specified in the default run configuration inside workspace installation folder
-dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(run_config_name="default", product_name=dqx_product_name))
+dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(
+    run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
+  )
+)
 
 # or save checks in arbitrary workspace location
 #dq_engine.save_checks(checks, config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
@@ -258,16 +304,18 @@ dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(run_config_
 # COMMAND ----------
 
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.utils import read_input_data
+from databricks.labs.dqx.io import read_input_data
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
-from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 
 
 dq_engine = DQEngine(WorkspaceClient())
 
 # load the run configuration
-run_config = RunConfigLoader(ws).load_run_config(run_config_name="default", assume_user=True, product_name=dqx_product_name)
+run_config = ConfigSerializer(ws).load_run_config(
+  run_config_name="default", assume_user=True, product_name=dqx_product_name, install_folder=custom_install_path
+)
 
 # read the data, limit to 1000 rows for demo purpose
 bronze_df = read_input_data(spark, run_config.input_config).limit(1000)
@@ -276,8 +324,10 @@ bronze_df = read_input_data(spark, run_config.input_config).limit(1000)
 bronze_transformed_df = bronze_df.filter("vendor_id in (1, 2)")
 
 # load checks from location defined in the run configuration
-
-checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(assume_user=True, run_config_name="default", product_name=dqx_product_name))
+checks = dq_engine.load_checks(config=InstallationChecksStorageConfig(
+    assume_user=True, run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
+  )
+)
 
 # or load checks from arbitrary workspace file
 #checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location="/Shared/App1/checks.yml"))
@@ -312,7 +362,7 @@ display(spark.sql(f"SELECT * FROM {run_config.quarantine_config.location}"))
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### End-to-end programmatic approach 
+# MAGIC ### End-to-end programmatic approach
 # MAGIC
 # MAGIC You can use a single method call to apply checks and save the results.
 
@@ -330,6 +380,11 @@ dq_engine.apply_checks_by_metadata_and_save_in_table(
 
 display(spark.sql(f"SELECT * FROM {run_config.output_config.location}"))
 display(spark.sql(f"SELECT * FROM {run_config.quarantine_config.location}"))
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC You can also profile and run quality checking across multiple tables in a single method call (see multi table demo).
 
 # COMMAND ----------
 

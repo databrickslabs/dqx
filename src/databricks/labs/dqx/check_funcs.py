@@ -1,15 +1,17 @@
 import datetime
 import re
+import warnings
+import ipaddress
 import uuid
 from collections.abc import Callable
-import operator as py_operator
 from enum import Enum
-
+from itertools import zip_longest
+import operator as py_operator
+import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
@@ -17,15 +19,19 @@ from databricks.labs.dqx.utils import (
     normalize_col_str,
     get_columns_as_strings,
 )
+from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
+_IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
+IPV4_MAX_OCTET_COUNT = 4
+IPV4_BIT_LENGTH = 32
 
 
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
 
     IPV4_ADDRESS = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}$"
-    IPV4_CIDR_BLOCK = rf"^{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\.{_IPV4_OCTET}\/(3[0-2]|[12]?\d)$"
+    IPV4_CIDR_BLOCK = rf"{IPV4_ADDRESS[:-1]}/{_IPV4_CIDR_SUFFIX}$"
 
 
 def make_condition(condition: Column, message: Column | str, alias: str) -> Column:
@@ -61,7 +67,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
         Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    condition = ~col_expr.rlike(pattern.value)
+    condition = _does_not_match_pattern(col_expr, pattern)
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
     condition_str = f"' in Column '{col_expr_str}' does not match pattern '{pattern.name}'"
@@ -132,9 +138,19 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list) -> Column:
 
     Returns:
         Column object for condition
+
+    Raises:
+        MissingParameterError: If the allowed list is not provided.
+        InvalidParameterError: If the allowed parameter is not a list, or if the list is empty.
     """
+    if allowed is None:
+        raise MissingParameterError("allowed list is not provided.")
+
+    if not isinstance(allowed, list):
+        raise InvalidParameterError(f"allowed parameter must be a list, got {str(type(allowed))} instead.")
+
     if not allowed:
-        raise ValueError("allowed list is not provided.")
+        raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
@@ -164,9 +180,19 @@ def is_in_list(column: str | Column, allowed: list) -> Column:
 
     Returns:
         Column object for condition
+
+    Raises:
+        MissingParameterError: If the allowed list is not provided.
+        InvalidParameterError: If the allowed parameter is not a list.
     """
+    if allowed is None:
+        raise MissingParameterError("allowed list is not provided.")
+
+    if not isinstance(allowed, list):
+        raise InvalidParameterError(f"allowed parameter must be a list, got {str(type(allowed))} instead.")
+
     if not allowed:
-        raise ValueError("allowed list is not provided.")
+        raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
@@ -196,12 +222,13 @@ def sql_expression(
     """Checks whether the condition provided as an SQL expression is met.
 
     Args:
-        expression: SQL expression. Fail if expression evaluates to True, pass if it evaluates to False.
+        expression: SQL expression. Fail if expression evaluates to False, pass if it evaluates to True.
         msg: optional message of the *Column* type, automatically generated if None
         name: optional name of the resulting column, automatically generated if None
         negate: if the condition should be negated (true) or not. For example, "col is not null" will mark null
-            values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to False
-        columns: optional list of columns to be used for reporting. Unused in the actual logic.
+            values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to True
+        columns: optional list of columns to be used for validation against the actual input DataFrame,
+            reporting and for constructing name prefix if check name is not provided.
 
     Returns:
         new Column
@@ -704,33 +731,40 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
 @register_rule("row")
 def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     """
-    Checks if an IP column value falls within the given CIDR block.
+    Checks if an IPv4 column value falls within the given CIDR block.
 
     Args:
         column: column to check; can be a string column name or a column expression
         cidr_block: CIDR block string (e.g., '192.168.1.0/24')
 
-    Raises:
-        ValueError: If cidr_block is not a valid string in CIDR notation.
-
     Returns:
         Column object for condition
+
+    Raises:
+        MissingParameterError: if *cidr_block* is None.
+        InvalidParameterError: if *cidr_block* is an empty string.
+        InvalidParameterError: if *cidr_block* is provided but not in valid IPv4 CIDR notation.
     """
+    if cidr_block is None:
+        raise MissingParameterError("'cidr_block' is not provided.")
+
+    if not isinstance(cidr_block, str):
+        raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
 
     if not cidr_block:
-        raise ValueError("'cidr_block' must be a non-empty string.")
+        raise InvalidParameterError("'cidr_block' must be a non-empty string.")
 
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
-        raise ValueError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
+        raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
     col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
     ipv4_msg_col = is_valid_ipv4_address(column)
 
     ip_bits_col = _convert_ipv4_to_bits(col_expr)
-    cidr_ip_bits_col, cidr_prefix_length_col = _convert_cidr_to_bits_and_prefix(cidr_col_expr)
-    ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col)
-    cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col)
+    cidr_ip_bits_col, cidr_prefix_length_col = _convert_ipv4_cidr_to_bits_and_prefix(cidr_col_expr)
+    ip_net = _get_network_address(ip_bits_col, cidr_prefix_length_col, IPV4_BIT_LENGTH)
+    cidr_net = _get_network_address(cidr_ip_bits_col, cidr_prefix_length_col, IPV4_BIT_LENGTH)
 
     cidr_msg = F.concat_ws(
         "",
@@ -742,6 +776,97 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         condition=ipv4_msg_col.isNotNull() | (ip_net != cidr_net),
         message=F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg),
         alias=f"{col_str_norm}_is_not_ipv4_in_cidr",
+    )
+
+
+@register_rule("row")
+def is_valid_ipv6_address(column: str | Column) -> Column:
+    """
+    Validate if the column contains properly formatted IPv6 addresses.
+
+    Args:
+        column: The column to check; can be a string column name or a Column expression.
+
+    Returns:
+        Column object for condition indicating whether a value is a valid IPv6 address.
+    """
+    warnings.warn(
+        "IPv6 Address validation uses pandas user-defined functions which may degrade performance. "
+        "Sample or limit large datasets when running IPV6 address validation.",
+        UserWarning,
+    )
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+
+    is_valid_ipv6_address_udf = _build_is_valid_ipv6_address_udf()
+    ipv6_match_condition = is_valid_ipv6_address_udf(col_expr)
+    final_condition = F.when(col_expr.isNotNull(), ~ipv6_match_condition).otherwise(F.lit(None))
+    condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
+
+    return make_condition(
+        final_condition,
+        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
+        f"{col_str_norm}_does_not_match_pattern_ipv6_address",
+    )
+
+
+@register_rule("row")
+def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
+    """
+    Fail if IPv6 is invalid OR (valid AND not in CIDR). Null for null inputs.
+
+    Args:
+        column: The column to check; can be a string column name or a Column expression.
+        cidr_block: The CIDR block to check against.
+
+    Returns:
+        Column: A Column expression indicating whether each value is not a valid IPv6 address or not in the CIDR block.
+
+    Raises:
+        MissingParameterError: If *cidr_block* is None.
+        InvalidParameterError: If *cidr_block* is an empty string.
+        InvalidParameterError: if *cidr_block* is provided but not in valid IPv6 CIDR notation.
+    """
+    warnings.warn(
+        "Checking if an IPv6 Address is in CIDR block uses pandas user-defined functions "
+        "which may degrade performance. Sample or limit large datasets when running IPv6 validation.",
+        UserWarning,
+    )
+
+    if cidr_block is None:
+        raise MissingParameterError("'cidr_block' is not provided.")
+
+    if not isinstance(cidr_block, str):
+        raise InvalidParameterError(f"'cidr_block' must be a string, got {type(cidr_block)} instead.")
+
+    if not cidr_block:
+        raise InvalidParameterError("'cidr_block' must be a non-empty string.")
+
+    if not _is_valid_ipv6_cidr_block(cidr_block):
+        raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    cidr_lit = F.lit(cidr_block)
+    ipv6_msg_col = is_valid_ipv6_address(column)
+    is_valid_ipv6 = ipv6_msg_col.isNull()
+    in_cidr = _build_is_ipv6_address_in_cidr_udf()(col_expr, cidr_lit)
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(
+        F.when(~is_valid_ipv6, F.lit(True)).otherwise(~in_cidr)
+    )
+    cidr_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit("' in Column '"),
+        F.lit(col_expr_str),
+        F.lit(f"' is not in the CIDR block '{cidr_block}'"),
+    )
+    message = F.when(~is_valid_ipv6, ipv6_msg_col).otherwise(cidr_msg)
+
+    return make_condition(
+        condition=condition,
+        message=message,
+        alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
     )
 
 
@@ -917,6 +1042,14 @@ def foreign_key(
         A tuple of:
             - A Spark Column representing the condition for foreign key violations.
             - A closure that applies the foreign key validation by joining against the reference.
+
+    Raises:
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
+            - if *ref_df_name* is not found in the provided *ref_dfs* dictionary.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
 
@@ -1020,14 +1153,13 @@ def sql_query(
 
     Returns:
         Tuple (condition column, apply function).
-    """
-    if not merge_columns:
-        raise ValueError("merge_columns must contain at least one column.")
 
-    if not is_sql_query_safe(query):
-        raise ValueError(
-            "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
-        )
+    Raises:
+        MissingParameterError: if *merge_columns* is None.
+        InvalidParameterError: if *merge_columns* is an empty list.
+        UnsafeSqlQueryError: if the SQL query fails the safety check (e.g., contains disallowed operations).
+    """
+    _validate_sql_query_params(query, merge_columns)
 
     alias_name = name if name else "_".join(merge_columns) + f"_query_{condition_column}_violation"
 
@@ -1062,7 +1194,7 @@ def sql_query(
         if not is_sql_query_safe(query_resolved):
             # we only replace dict keys so there is no risk of SQL injection here,
             # but we still want to ensure the query is safe to execute
-            raise ValueError(
+            raise UnsafeSqlQueryError(
                 "Resolved SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
             )
 
@@ -1267,6 +1399,8 @@ def compare_datasets(
     null_safe_row_matching: bool | None = True,
     null_safe_column_value_matching: bool | None = True,
     row_filter: str | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -1315,13 +1449,37 @@ def compare_datasets(
         If enabled, (NULL, NULL) column values are equal and matching.
       row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected
         from the check filter.
+      abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
+            Example: abs(a - b) <= tolerance
+            With tolerance=0.01:
+            2.001 and 2.0099 → equal (diff = 0.0089)
+            2.001 and 2.02 → not equal (diff = 0.019)
+      rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
+            Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+            With tolerance=0.01 (1%):
+            100 vs 101 → equal (diff = 1, tolerance = 1)
+            2.001 vs 2.0099 → equal
+
 
     Returns:
       Tuple[Column, Callable]:
         - A Spark Column representing the condition for comparison violations.
         - A closure that applies the comparison validation.
+
+    Raises:
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
+            - if *abs_tolerance* or *rel_tolerance* is negative.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
+
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
 
     # convert all input columns to strings
     pk_column_names = get_columns_as_strings(columns, allow_simple_expressions_only=True)
@@ -1369,7 +1527,9 @@ def compare_datasets(
             df, ref_df, pk_column_names, ref_pk_column_names, check_missing_records, null_safe_row_matching
         )
         results = _add_row_diffs(results, pk_column_names, ref_pk_column_names, row_missing_col, row_extra_col)
-        results = _add_column_diffs(results, compare_columns, columns_changed_col, null_safe_column_value_matching)
+        results = _add_column_diffs(
+            results, compare_columns, columns_changed_col, null_safe_column_value_matching, abs_tolerance, rel_tolerance
+        )
         results = _add_compare_condition(
             results, condition_col, row_missing_col, row_extra_col, columns_changed_col, filter_col
         )
@@ -1428,6 +1588,10 @@ def is_data_fresh_per_time_window(
         A tuple of:
             - A Spark Column representing the condition for missing data within a time window.
             - A closure that applies the completeness check and adds the necessary condition columns.
+
+    Raises:
+        InvalidParameterError: If min_records_per_window or window_minutes are not positive integers,
+            or if lookback_windows is provided and is not a positive integer.
     """
     col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
 
@@ -1437,11 +1601,11 @@ def is_data_fresh_per_time_window(
     count_col = f"__count_{col_str_norm}_{unique_str}"
 
     if lookback_windows is not None and lookback_windows <= 0:
-        raise ValueError("lookback_windows must be a positive integer if provided")
+        raise InvalidParameterError("lookback_windows must be a positive integer if provided")
     if min_records_per_window is None or min_records_per_window <= 0:
-        raise ValueError("min_records_per_window must be a positive integer")
+        raise InvalidParameterError("min_records_per_window must be a positive integer")
     if window_minutes is None or window_minutes <= 0:
-        raise ValueError("window_minutes must be a positive integer")
+        raise InvalidParameterError("window_minutes must be a positive integer")
 
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
@@ -1506,6 +1670,307 @@ def is_data_fresh_per_time_window(
     )
 
     return condition, apply
+
+
+@register_rule("dataset")
+def has_valid_schema(
+    expected_schema: str | types.StructType,
+    columns: list[str | Column] | None = None,
+    strict: bool = False,
+) -> tuple[Column, Callable]:
+    """
+    Build a schema compatibility check condition and closure for dataset-level validation.
+
+    This function checks whether the DataFrame schema is compatible with the expected schema.
+    In non-strict mode, validates that all expected columns exist with compatible types.
+    In strict mode, validates that the schema matches exactly (same columns, same order, same types)
+    for the columns specified in `columns` or for all columns if `columns` is not specified.
+
+    Args:
+        expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
+        columns: Optional list of columns to validate (default: all columns are considered)
+        strict: Whether to perform strict schema validation (default: False).
+            - False: Validates that all expected columns exist with compatible types (allows extra columns)
+            - True: Validates exact schema match (same columns, same order, same types)
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for schema compatibility violations.
+            - A closure that applies the schema check and adds the necessary condition columns.
+
+    Raises:
+        InvalidParameterError: If the schema string is invalid or cannot be parsed, or if
+             the input schema is neither a string nor a StructType.
+    """
+
+    column_names: list[str] | None = None
+    if columns:
+        column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
+
+    _expected_schema = _get_schema(expected_schema, column_names)
+    unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
+    condition_col = f"__schema_condition_{unique_str}"
+    message_col = f"__schema_message_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the schema compatibility check logic to the DataFrame.
+
+        Adds columns indicating whether the DataFrame schema is incompatible with the expected schema.
+
+        Args:
+            df: The input DataFrame to validate for schema compatibility.
+
+        Returns:
+            The DataFrame with additional condition and message columns for schema validation.
+        """
+        actual_schema = df.select(*columns).schema if columns else df.schema
+
+        if strict:
+            errors = _get_strict_schema_comparison(actual_schema, _expected_schema)
+        else:
+            errors = _get_permissive_schema_comparison(actual_schema, _expected_schema)
+
+        has_errors = len(errors) > 0
+        error_message = "; ".join(errors) if errors else None
+
+        df = df.withColumn(condition_col, F.lit(has_errors))
+        df = df.withColumn(message_col, F.lit(error_message))
+
+        return df
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws("", F.lit("Schema validation failed: "), F.col(message_col)),
+        alias="has_invalid_schema",
+    )
+
+    return condition, apply
+
+
+def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
+    """
+    Normalize the input schema into a Spark StructType schema.
+
+    Args:
+        input_schema: Schema definition, either as a DDL string or a StructType.
+        columns: Optional list of columns to keep (default: all).
+
+    Returns:
+        StructType schema.
+
+    Raises:
+        InvalidParameterError: If the schema string is invalid or cannot be parsed, or if
+             the input schema is neither a string nor a StructType.
+    """
+    if isinstance(input_schema, types.StructType):
+        expected_schema = input_schema
+    elif isinstance(input_schema, str):
+        try:
+            parsed_schema = types.StructType.fromDDL(input_schema)
+        except Exception as e:  # Catch schema parsing errors from Spark
+            raise InvalidParameterError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
+
+        if not isinstance(parsed_schema, types.StructType):  # Handles cases like input_schema="STRING"
+            raise InvalidParameterError(f"Invalid schema string '{input_schema}' (not a StructType)")
+
+        expected_schema = parsed_schema
+    else:
+        raise InvalidParameterError(f"'input_schema' must be str or StructType, got {type(input_schema).__name__}")
+
+    if columns:
+        return types.StructType([f for f in expected_schema.fields if f.name in columns])
+
+    return expected_schema
+
+
+def _get_strict_schema_comparison(actual_schema: types.StructType, expected_schema: types.StructType) -> list[str]:
+    """
+    Performs a strict schema comparison between actual and expected DataFrame schemas.
+
+    Args:
+        actual_schema: Actual DataFrame Schema as a Spark `StructType`
+        expected_schema: Expected DataFrame Schema as a Spark `StructType`
+
+    Return:
+        List of differences between the actual and expected schemas
+    """
+
+    errors = []
+
+    if actual_schema == expected_schema:
+        return []
+
+    for i, (actual_field, expected_field) in enumerate(zip_longest(actual_schema.fields, expected_schema.fields)):
+        if not actual_field:
+            errors.append(f"Column '{expected_field.name}' in expected schema not present in checked data")
+            continue
+
+        if not expected_field:
+            errors.append(f"Column '{actual_field.name}' in checked data not present in expected schema")
+            continue
+
+        if actual_field.name != expected_field.name:
+            errors.append(
+                f"Column with index {i} has incorrect name, expected '{expected_field.name}', got '{actual_field.name}'"
+            )
+
+        if actual_field.dataType != expected_field.dataType:
+            errors.append(
+                f"Column '{actual_field.name}' has incorrect type, "
+                f"expected '{expected_field.dataType.typeName()}', got '{actual_field.dataType.typeName()}'"
+            )
+
+        if actual_field.nullable != expected_field.nullable:
+            errors.append(
+                f"Column '{actual_field.name}' has incorrect nullability, "
+                f"expected '{expected_field.nullable}', got '{actual_field.nullable}'"
+            )
+
+    return errors
+
+
+def _get_permissive_schema_comparison(actual_schema: types.StructType, expected_schema: types.StructType) -> list[str]:
+    """
+    Performs a permissive schema comparison between actual and expected DataFrame schemas.
+    Checks that all expected columns exist with compatible data types. Allows for differences
+    in the exact column type, nullability, and order.
+
+    Args:
+        actual_schema: Actual DataFrame Schema as a Spark `StructType`
+        expected_schema: Expected DataFrame Schema as a Spark `StructType`
+
+    Return:
+        List of differences between the actual and expected schemas
+    """
+
+    errors = []
+    actual_fields_map = {field.name: field for field in actual_schema.fields}
+
+    for expected_field in expected_schema.fields:
+        if expected_field.name not in actual_fields_map:
+            errors.append(f"Column '{expected_field.name}' in expected schema not present in checked data")
+            continue
+
+        actual_field = actual_fields_map[expected_field.name]
+        if not _is_compatible_type(actual_field.dataType, expected_field.dataType):
+            errors.append(
+                f"Column '{expected_field.name}' has incompatible type, "
+                f"expected '{expected_field.dataType.typeName()}', got '{actual_field.dataType.typeName()}'"
+            )
+
+    return errors
+
+
+def _is_compatible_type(actual_type: types.DataType, expected_type: types.DataType) -> bool:
+    """
+    Checks if two Spark `DataTypes` are compatible. Allows for type-widening.
+
+    Args:
+        actual_type: The actual data type
+        expected_type: The expected data type
+
+    Returns:
+        True if types are compatible, False otherwise
+    """
+
+    if actual_type == expected_type:
+        return True
+
+    if isinstance(actual_type, types.AtomicType) and isinstance(expected_type, types.AtomicType):
+        return _is_compatible_atomic_type(actual_type, expected_type)
+
+    if isinstance(actual_type, types.ArrayType) and isinstance(expected_type, types.ArrayType):
+        return _is_compatible_type(actual_type.elementType, expected_type.elementType)
+
+    if isinstance(actual_type, types.MapType) and isinstance(expected_type, types.MapType):
+        has_compatible_keys = _is_compatible_type(actual_type.keyType, expected_type.keyType)
+        has_compatible_values = _is_compatible_type(actual_type.valueType, expected_type.valueType)
+        return has_compatible_keys and has_compatible_values
+
+    if isinstance(actual_type, types.StructType) and isinstance(expected_type, types.StructType):
+        return _is_compatible_struct_type(actual_type, expected_type)
+
+    if isinstance(actual_type, types.VariantType):
+        # NOTE: `VariantType` can be parsed to any `AtomicType`, `StructType`, `MapType`, or `ArrayType`
+        return True
+
+    return False
+
+
+def _is_compatible_struct_type(actual_type: types.StructType, expected_type: types.StructType) -> bool:
+    """
+    Check if two Spark `StructTypes` are compatible. Allows for type-widening.
+
+    Args:
+        actual_type: The actual data type
+        expected_type: The expected data type
+
+    Returns:
+        True if types are compatible, False otherwise
+    """
+
+    if len(actual_type.fields) != len(expected_type.fields):
+        return False
+
+    for actual_field, expected_field in zip(actual_type.fields, expected_type.fields):
+        if actual_field.name != expected_field.name:
+            return False
+        if not _is_compatible_type(actual_field.dataType, expected_field.dataType):
+            return False
+    return True
+
+
+def _is_compatible_atomic_type(actual_type: types.AtomicType, expected_type: types.AtomicType) -> bool:
+    """
+    Check if two Spark `AtomicTypes` are compatible. Allows for type-widening.
+
+    Args:
+        actual_type: The actual data type
+        expected_type: The expected data type
+
+    Returns:
+        True if types are compatible, False otherwise
+    """
+
+    numeric_types = [
+        types.ByteType,
+        types.ShortType,
+        types.IntegerType,
+        types.LongType,
+        types.DecimalType,
+        types.FloatType,
+        types.DoubleType,
+    ]
+
+    string_types = [
+        types.CharType,
+        types.VarcharType,
+        types.StringType,
+    ]
+
+    datetime_types = [
+        types.DateType,
+        types.TimestampNTZType,
+        types.TimestampType,
+    ]
+
+    if actual_type == expected_type:
+        return True
+
+    if type(actual_type) in numeric_types and type(expected_type) in numeric_types:
+        # Allow widening conversions for numeric types
+        return True
+
+    if type(actual_type) in string_types and type(expected_type) in string_types:
+        # Allow widening conversions for string types
+        return True
+
+    if type(actual_type) in datetime_types and type(expected_type) in datetime_types:
+        # Allow widening conversions for datetime types
+        return True
+
+    return False
 
 
 def _match_rows(
@@ -1576,11 +2041,51 @@ def _add_row_diffs(
     return df
 
 
+def _add_numeric_tolerance_condition(
+    col_name: str, abs_tolerance: float, rel_tolerance: float, null_safe_column_value_matching: bool | None = None
+) -> Column:
+    df_col = F.col(f"df.{col_name}")
+    ref_col = F.col(f"ref_df.{col_name}")
+
+    # Handle NULL cases explicitly based on null_safe_column_value_matching
+    if null_safe_column_value_matching:
+        # NULL safety: (NULL, NULL) should be considered equal
+        both_null = df_col.isNull() & ref_col.isNull()
+        either_null = df_col.isNull() | ref_col.isNull()
+
+        # For non-NULL values, apply tolerance logic
+        tolerance_match = _match_values_with_tolerance(df_col, ref_col, abs_tolerance, rel_tolerance)
+
+        # Values are considered equal if:
+        # 1. Both are NULL (null safety), OR
+        # 2. Neither is NULL AND they're within tolerance
+        values_match = both_null | (~either_null & tolerance_match)
+    else:
+        # Null safety disabled: if either value is NULL, consider them matching
+        either_null = df_col.isNull() | ref_col.isNull()
+
+        tolerance_match = _match_values_with_tolerance(df_col, ref_col, abs_tolerance, rel_tolerance)
+
+        # Values are considered equal if: either is NULL OR both non-NULL and within tolerance
+        values_match = either_null | tolerance_match
+
+    # Return True if values are NOT within tolerance (indicating a difference)
+    return ~values_match
+
+
+def _match_values_with_tolerance(df_col: Column, ref_col: Column, abs_tolerance: float, rel_tolerance: float) -> Column:
+    abs_diff = F.abs(df_col - ref_col)
+    tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
+    return (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
+
+
 def _add_column_diffs(
     df: DataFrame,
     compare_columns: list[str],
     columns_changed_col: str,
     null_safe_column_value_matching: bool | None = True,
+    abs_tolerance: float = 0.0,
+    rel_tolerance: float = 0.0,
 ) -> DataFrame:
     """
     Adds a column to the DataFrame that contains a map of changed columns and their differences.
@@ -1596,29 +2101,43 @@ def _add_column_diffs(
         null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
             If enabled (NULL, NULL) column values are equal and matching.
             If False, uses a standard inequality comparison (`!=`), where (NULL, NULL) values are not considered equal.
-
+        abs_tolerance: Absolute tolerance for numeric comparisons. Differences within this absolute tolerance are ignored.
+            Example: abs(a - b) <= abs_tolerance
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored.
+            Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
     Returns:
         A DataFrame with the added *columns_changed_col* containing the map of changed columns and differences.
     """
+    columns_changed = []
     if compare_columns:
-        columns_changed = [
-            F.when(
-                # with null-safe comparison values are matching if they are equal or both are NULL
-                (
-                    ~F.col(f"df.{col}").eqNullSafe(F.col(f"ref_df.{col}"))
+
+        for col_name in compare_columns:
+            is_numeric = isinstance(df.schema[col_name].dataType, types.NumericType)
+
+            if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and is_numeric:
+                # Absolute and relative difference
+                condition = _add_numeric_tolerance_condition(
+                    col_name, abs_tolerance, rel_tolerance, null_safe_column_value_matching
+                )
+            else:
+                condition = (
+                    ~F.col(f"df.{col_name}").eqNullSafe(F.col(f"ref_df.{col_name}"))
                     if null_safe_column_value_matching
-                    else F.col(f"df.{col}") != F.col(f"ref_df.{col}")
-                ),
-                F.struct(
-                    F.lit(col).alias("col_changed"),
+                    else F.col(f"df.{col_name}") != F.col(f"ref_df.{col_name}")
+                )
+
+            columns_changed.append(
+                F.when(
+                    condition,
                     F.struct(
-                        F.col(f"df.{col}").cast("string").alias("df"),
-                        F.col(f"ref_df.{col}").cast("string").alias("ref"),
-                    ).alias("diff"),
-                ),
-            ).otherwise(None)
-            for col in compare_columns
-        ]
+                        F.lit(col_name).alias("col_changed"),
+                        F.struct(
+                            F.col(f"df.{col_name}").cast("string").alias("df"),
+                            F.col(f"ref_df.{col_name}").cast("string").alias("ref"),
+                        ).alias("diff"),
+                    ),
+                ).otherwise(None)
+            )
 
         df = df.withColumn(columns_changed_col, F.array_compact(F.array(*columns_changed)))
 
@@ -1706,10 +2225,13 @@ def _is_aggr_compare(
         A tuple of:
             - A Spark Column representing the condition for the aggregation check.
             - A closure that applies the aggregation check logic.
+
+    Raises:
+        InvalidParameterError: If an unsupported aggregation type is provided.
     """
     supported_aggr_types = {"count", "sum", "avg", "min", "max"}
     if aggr_type not in supported_aggr_types:
-        raise ValueError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
+        raise InvalidParameterError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
 
@@ -1808,18 +2330,19 @@ def _get_ref_df(
         A Spark DataFrame representing the reference dataset.
 
     Raises:
-        ValueError: If neither or both of *ref_df_name* and *ref_table* are provided,
-            or if the specified reference DataFrame is not found.
+        MissingParameterError: If neither or both of *ref_df_name* and *ref_table* are provided,
+            or if the specified reference DataFrame is not found, or ref_table is not provided.
+        InvalidParameterError: If *ref_table* is provided but is an empty string.
     """
     if ref_df_name:
-        if not ref_dfs:
-            raise ValueError(
+        if ref_dfs is None:
+            raise MissingParameterError(
                 "Reference DataFrames dictionary not provided. "
                 f"Provide '{ref_df_name}' reference DataFrame when applying the checks."
             )
 
         if ref_df_name not in ref_dfs:
-            raise ValueError(
+            raise MissingParameterError(
                 f"Reference DataFrame with key '{ref_df_name}' not found. "
                 f"Provide reference '{ref_df_name}' DataFrame when applying the checks."
             )
@@ -1827,7 +2350,7 @@ def _get_ref_df(
         return ref_dfs[ref_df_name]
 
     if not ref_table:
-        raise ValueError("The 'ref_table' must be provided.")
+        raise InvalidParameterError("'ref_table' must be a non-empty string.")
 
     return spark.table(ref_table)
 
@@ -1866,10 +2389,10 @@ def _get_limit_expr(
         A Spark Column expression representing the limit.
 
     Raises:
-        ValueError: If the limit is not provided (None).
+        MissingParameterError: If the limit is not provided (None).
     """
     if limit is None:
-        raise ValueError("Limit is not provided.")
+        raise MissingParameterError("Limit is not provided.")
 
     if isinstance(limit, str):
         return F.expr(limit)
@@ -1895,11 +2418,24 @@ def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Col
             - Original column name as a string.
             - Spark Column expression corresponding to the input.
     """
-    col_expr = F.expr(column) if isinstance(column, str) else column
+    col_expr = _get_column_expr(column)
     column_str = get_column_name_or_alias(col_expr)
     col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
+
+
+def _get_column_expr(column: Column | str) -> Column:
+    """
+    Convert a column input (string or Column) into a Spark Column expression.
+
+    Args:
+        column: The input column, provided as either a string column name or a Spark Column expression.
+
+    Returns:
+        A Spark Column expression corresponding to the input.
+    """
+    return F.expr(column) if isinstance(column, str) else column
 
 
 def _handle_fk_composite_keys(columns: list[str | Column], ref_columns: list[str | Column], not_null_condition: Column):
@@ -1976,26 +2512,44 @@ def _validate_ref_params(
         ref_table: Optional name of the reference table.
 
     Raises:
-        ValueError: If both or neither of *ref_df_name* and *ref_table* are provided,
-            or if the lengths of *columns* and *ref_columns* do not match.
+        MissingParameterError:
+            - if neither *ref_df_name* nor *ref_table* is provided.
+        InvalidParameterError:
+            - if both *ref_df_name* and *ref_table* are provided.
+            - if the number of *columns* and *ref_columns* do not match.
     """
-    if ref_df_name and ref_table:
-        raise ValueError(
-            "Both 'ref_df_name' and 'ref_table' are provided. Please provide only one of them to avoid ambiguity."
+    if ref_df_name is not None and ref_table is not None:
+        raise InvalidParameterError(
+            "Both 'ref_df_name' and 'ref_table' were provided. Please provide only one to avoid ambiguity."
         )
 
     if not ref_df_name and not ref_table:
-        raise ValueError("Either 'ref_df_name' or 'ref_table' must be provided to specify the reference DataFrame.")
+        raise MissingParameterError("Either 'ref_df_name' or 'ref_table' is required but neither was provided.")
+
+    if not isinstance(columns, list) or not isinstance(ref_columns, list):
+        raise InvalidParameterError("'columns' and 'ref_columns' must be lists.")
 
     if len(columns) != len(ref_columns):
-        raise ValueError("The number of columns to check against the reference columns must be equal.")
+        raise InvalidParameterError(
+            f"'columns' has {len(columns)} entries but 'ref_columns' has {len(ref_columns)}. "
+            "Both must have the same length to allow comparison."
+        )
+
+
+def _does_not_match_pattern(column: Column, pattern: DQPattern) -> Column:
+    """
+    Internal function that returns a Boolean Column indicating if values
+    in the column do NOT match the given pattern.
+    """
+    col_expr = _get_column_expr(column)
+    return ~col_expr.rlike(pattern.value)
 
 
 def _extract_octets_to_bits(column: Column, pattern: str) -> Column:
     """Extracts 4 octets from an IP column and returns the binary string."""
     ip_match = F.regexp_extract(column, pattern, 0)
     octets = F.split(ip_match, r"\.")
-    octets_bin = [F.lpad(F.conv(octets[i], 10, 2), 8, "0") for i in range(4)]
+    octets_bin = [F.lpad(F.conv(octets[i], 10, 2), 8, "0") for i in range(IPV4_MAX_OCTET_COUNT)]
     return F.concat(*octets_bin).alias("ip_bits")
 
 
@@ -2004,7 +2558,7 @@ def _convert_ipv4_to_bits(ip_col: Column) -> Column:
     return _extract_octets_to_bits(ip_col, DQPattern.IPV4_ADDRESS.value)
 
 
-def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
+def _convert_ipv4_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
     """Returns binary IP and prefix length from CIDR (e.g., '192.168.1.0/24')."""
     ip_bits = _extract_octets_to_bits(cidr_col, DQPattern.IPV4_CIDR_BLOCK.value)
     # The 5th capture group in the regex pattern corresponds to the CIDR prefix length.
@@ -2012,15 +2566,116 @@ def _convert_cidr_to_bits_and_prefix(cidr_col: Column) -> tuple[Column, Column]:
     return ip_bits, prefix_length
 
 
-def _get_network_address(ip_bits: Column, prefix_length: Column) -> Column:
+def _get_network_address(ip_bits: Column, prefix_length: Column, total_bits: int) -> Column:
     """
     Returns the network address from IP bits using the CIDR prefix length.
 
     Args:
-        ip_bits: 32-bit binary string representation of the IPv4 address
+        ip_bits: Binary string representation of the IP address (32 or 128 bits)
         prefix_length: Prefix length for CIDR notation
+        total_bits: Total number of bits in the IP address (32 for IPv4)
 
     Returns:
-        Network address as a 32-bit binary string
+        Network address as a binary string of the same total length
     """
-    return F.rpad(F.substring(ip_bits, 1, prefix_length), 32, "0")
+    return F.rpad(F.substring(ip_bits, 1, prefix_length), total_bits, "0")
+
+
+def _build_is_valid_ipv6_address_udf() -> Callable:
+    """
+    Build a user-defined function (UDF) to check if a string is a valid IPv6 address.
+
+    Returns:
+        Callable: A UDF that checks if a string is a valid IPv6 address
+    """
+
+    @F.pandas_udf("boolean")  # type: ignore[call-overload]
+    def _is_valid_ipv6_address_udf(column: pd.Series) -> pd.Series:
+        # Self-contained validation logic to avoid serialization issues
+        def is_valid_ipv6_local(ip_str):
+            if pd.isna(ip_str) or ip_str is None:
+                return False
+
+            try:
+                # Import inside UDF to avoid serialization issues
+                ipaddress.IPv6Address(str(ip_str))
+                return True
+            except (ipaddress.AddressValueError, TypeError):
+                return False
+
+        return column.apply(is_valid_ipv6_local)
+
+    return _is_valid_ipv6_address_udf
+
+
+def _build_is_ipv6_address_in_cidr_udf() -> Callable:
+    """
+    Build a user-defined function (UDF) to check if an IPv6 address is in a CIDR block.
+
+    Returns:
+        Callable: A UDF that checks if an IPv6 address is in a CIDR block
+    """
+
+    @F.pandas_udf("boolean")  # type: ignore[call-overload]
+    def handler(ipv6_column: pd.Series, cidr_column: pd.Series) -> pd.Series:
+        # Self-contained CIDR checking logic to avoid serialization issues
+        def ipv6_in_cidr_local(ip_str, cidr_str):
+            if pd.isna(ip_str) or pd.isna(cidr_str) or ip_str is None or cidr_str is None:
+                return False
+
+            try:
+                # Import inside UDF to avoid serialization issues
+                ip_obj = ipaddress.IPv6Address(str(ip_str))
+                network = ipaddress.IPv6Network(str(cidr_str), strict=False)
+                return ip_obj in network
+            except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, TypeError):
+                return False
+
+        return ipv6_column.combine(cidr_column, ipv6_in_cidr_local)
+
+    return handler
+
+
+def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
+    """Validate if the string is a valid IPv6 CIDR block.
+
+    Args:
+        cidr: The CIDR block string to validate.
+    Returns:
+        True if the string is a valid CIDR block, False otherwise.
+    """
+
+    try:
+        if "/" not in cidr:
+            return False
+        ipaddress.IPv6Network(cidr, strict=False)
+        return True
+    except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
+        return False
+
+
+def _validate_sql_query_params(query: str, merge_columns: list[str]) -> None:
+    """
+    Validate SQL query parameters to ensure correctness and safety.
+    This helper verifies that:
+    - The SQL query is provided and is a non-empty string.
+    - The 'merge_columns' parameter is provided and is a non-empty list of column names.
+    - The 'merge_columns' list contains valid column names.
+
+    Args:
+        query: The SQL query string to validate.
+        merge_columns: The list of column names to validate.
+
+    Raises:
+        MissingParameterError: If any required parameter is missing.
+        InvalidParameterError: If any parameter is invalid.
+        UnsafeSqlQueryError: If the SQL query is unsafe.
+    """
+    if merge_columns is None:
+        raise MissingParameterError("'merge_columns' is required and must be a non-empty list of column names.")
+    if not merge_columns:
+        raise InvalidParameterError("'merge_columns' must contain at least one column.")
+    if not is_sql_query_safe(query):
+        raise UnsafeSqlQueryError(
+            "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
+        )

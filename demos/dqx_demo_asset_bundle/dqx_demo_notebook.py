@@ -17,20 +17,20 @@
 # COMMAND ----------
 
 # DBTITLE 1,Set Catalog and Schema for Demo Dataset
-default_database = "main"
+default_catalog = "main"
 default_schema = "default"
 
-dbutils.widgets.text("demo_database", default_database, "Catalog Name")
+dbutils.widgets.text("demo_catalog", default_catalog, "Catalog Name")
 dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
 
-database = dbutils.widgets.get("demo_database")
+catalog = dbutils.widgets.get("demo_catalog")
 schema = dbutils.widgets.get("demo_schema")
 
-print(f"Selected Catalog for Demo Dataset: {database}")
+print(f"Selected Catalog for Demo Dataset: {catalog}")
 print(f"Selected Schema for Demo Dataset: {schema}")
 
-sensor_table = f"{database}.{schema}.sensor_data"
-maintenance_table = f"{database}.{schema}.maintenance_data"
+sensor_table = f"{catalog}.{schema}.sensor_data"
+maintenance_table = f"{catalog}.{schema}.maintenance_data"
 
 # COMMAND ----------
 

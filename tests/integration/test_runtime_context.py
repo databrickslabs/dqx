@@ -4,6 +4,7 @@ import yaml
 import pytest
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
+from databricks.labs.dqx.errors import InvalidConfigError
 
 
 @pytest.fixture
@@ -11,7 +12,7 @@ def save_local(ws, make_random):
     temp_files = []
 
     def _save_local(config_path):
-        temp_file = f"{make_random}.yml"
+        temp_file = f"{make_random(10)}.yml"
         export = ws.workspace.export(config_path)
         content = base64.b64decode(export.content).decode('utf-8')
         yaml_content = yaml.safe_load(content)
@@ -32,14 +33,21 @@ def test_runtime_config(ws, installation_ctx, save_local):
     run_config = installation_ctx.config.get_run_config()
 
     install_config_path = f"{installation_ctx.installation.install_folder()}/{WorkspaceConfig.__file__}"
+    # need to bring the config locally since the context is expected to run in the workspace with local access
     local_config_path = save_local(install_config_path)
 
     runtime_context = WorkflowContext(
-        named_parameters={"config": local_config_path, "run_config_name": run_config.name}
+        named_parameters={
+            "config": local_config_path,
+            "run_config_name": run_config.name,
+        }
     )
 
     actual_config = runtime_context.config
     actual_run_config = runtime_context.run_config
+
+    # the actual context prefix relative path with installation folder
+    actual_run_config.checks_location = os.path.basename(actual_run_config.checks_location)
 
     assert actual_config
     assert actual_config.get_run_config() == run_config
@@ -51,6 +59,6 @@ def test_runtime_config(ws, installation_ctx, save_local):
 
 def test_runtime_config_when_missing_run_config():
     runtime_context = WorkflowContext(named_parameters={"config": "temp"})
-    with pytest.raises(ValueError, match="Run config flag is required"):
+    with pytest.raises(InvalidConfigError, match="Run config flag is required"):
         run_config = runtime_context.run_config
         assert not run_config

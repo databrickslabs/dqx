@@ -1,18 +1,21 @@
 import os
 import json
-
-import pytest
 import yaml
 
+import pytest
+
 from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.errors import InvalidConfigError
 
 
 TEST_CHECKS = [
     {
+        "name": "id_is_null",
         "criticality": "error",
         "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
     },
     {
+        "name": "name_is_null",
         "criticality": "error",
         "check": {
             "function": "is_not_null",
@@ -45,8 +48,8 @@ def test_save_checks_to_local_file_as_json(make_local_check_file_as_json):
 @pytest.mark.parametrize(
     "filename, expected_exception, expected_message",
     [
-        ("", ValueError, "The file path \\('location' field\\) must not be empty or None"),
-        (None, ValueError, "The file path \\('location' field\\) must not be empty or None"),
+        ("", InvalidConfigError, "The file path \\('location' field\\) must not be empty or None"),
+        (None, InvalidConfigError, "The file path \\('location' field\\) must not be empty or None"),
     ],
 )
 def test_load_checks_from_local_file_exceptions(filename, expected_exception, expected_message):
