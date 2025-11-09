@@ -49,7 +49,8 @@ from databricks.labs.dqx.checks_serializer import (
     get_file_deserializer,
     FILE_SERIALIZERS,
 )
-from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.config_serializer import ConfigSerializer
+from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.io import TABLE_PATTERN
 from databricks.labs.dqx.telemetry import telemetry_logger
 
@@ -530,18 +531,24 @@ class FileChecksStorageHandler(ChecksStorageHandler[FileChecksStorageConfig]):
             raise FileNotFoundError(msg) from None
 
 
-class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksStorageConfig]):
+class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksStorageConfig], InstallationMixin):
     """
     Handler for storing quality rules (checks) defined in the installation configuration.
     """
 
-    def __init__(self, ws: WorkspaceClient, spark: SparkSession, run_config_loader: RunConfigLoader | None = None):
+    def __init__(
+        self,
+        ws: WorkspaceClient,
+        spark: SparkSession,
+        config_serializer: ConfigSerializer | None = None,
+    ):
         self.ws = ws
-        self._run_config_loader = run_config_loader or RunConfigLoader(ws)
+        self._config_serializer = config_serializer or ConfigSerializer(ws)
         self.workspace_file_handler = WorkspaceFileChecksStorageHandler(ws)
         self.table_handler = TableChecksStorageHandler(ws, spark)
         self.volume_handler = VolumeFileChecksStorageHandler(ws)
         self.lakebase_handler = LakebaseChecksStorageHandler(ws, spark, None)
+        super().__init__(ws)
 
     @telemetry_logger("load_checks", "installation")
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
@@ -581,7 +588,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         if config.overwrite_location:
             checks_location = config.location
         else:
-            run_config = self._run_config_loader.load_run_config(
+            run_config = self._config_serializer.load_run_config(
                 run_config_name=config.run_config_name,
                 assume_user=config.assume_user,
                 product_name=config.product_name,
@@ -599,8 +606,8 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
             if run_config.lakebase_port and config.port != run_config.lakebase_port:
                 config.port = run_config.lakebase_port
 
-        installation = self._run_config_loader.get_installation(
-            config.assume_user, config.product_name, config.install_folder
+        installation = self._get_installation(
+            product_name=config.product_name, assume_user=config.assume_user, install_folder=config.install_folder
         )
 
         config.location = checks_location

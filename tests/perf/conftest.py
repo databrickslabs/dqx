@@ -9,6 +9,9 @@ from pyspark.sql.types import _parse_datatype_string
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import ExtraParams
 
+from tests.conftest import TEST_CATALOG
+
+
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
@@ -77,7 +80,7 @@ def all_dataset_checks():
 
 @pytest.fixture
 def table_name(make_schema, make_random):
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     return f"{catalog}.{schema}.{make_random(10).lower()}"
 

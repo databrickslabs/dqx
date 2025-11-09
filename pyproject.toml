@@ -6,10 +6,16 @@ description = 'Data Quality eXtended (DQX) is a Python library for data quality 
 license-files = { paths = ["LICENSE", "NOTICE"] }
 requires-python = ">=3.10"
 keywords = ["Databricks"]
+authors = [
+    {name = "Databricks Labs", email = "labs-oss@databricks.com"},
+    { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
+    { name = "Alex Ott", email = "alexey.ott@databricks.com" },
+]
 maintainers = [
     { name = "Databricks Labs", email = "labs-oss@databricks.com" },
     { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
     { name = "Alex Ott", email = "alexey.ott@databricks.com" },
+    { name = "Greg Hansen", email = "gregory.hansen@databricks.com" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -29,7 +35,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
-                "databricks-sdk~=0.67",
+                "databricks-sdk~=0.71",
                 "databricks-labs-lsql>=0.5,<=0.16",
                 "sqlalchemy>=1.4,<3.0",
 ]
@@ -55,6 +61,9 @@ pii = [
     # This may be required for the larger models due to Databricks connect memory limitations.
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
+llm = [
+    "dspy~=3.0.3"
+]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.workflows_runner:main"
@@ -77,7 +86,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
-features = ["pii"]
+features = ["pii", "llm"]
 dependencies = [
     "black~=24.8.0",
     "chispa~=0.10.1",
@@ -128,7 +137,6 @@ verify          = ["black --check .",
                     "mypy .",
                     "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
-extract_checks_examples = "python src/databricks/labs/dqx/llm/extract_checks_examples.py"
 combine_coverage = [
   "coverage combine", # combine binary coverage data files
   "coverage xml -o coverage-integration.xml",  # generate XML report

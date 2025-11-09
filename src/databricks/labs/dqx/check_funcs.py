@@ -870,6 +870,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     )
 
 
+@register_rule("row")
 def is_data_fresh(
     column: str | Column,
     max_age_minutes: int,

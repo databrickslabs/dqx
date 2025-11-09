@@ -1,9 +1,11 @@
 import logging
 from concurrent import futures
 
+from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.config import RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
+from databricks.labs.dqx.profiler.generator import DQGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +39,12 @@ class ProfilerWorkflow(Workflow):
             patterns, exclude_patterns = ctx.resolved_patterns
             run_config = ctx.run_config
 
+            generator = ProfilerWorkflow._create_generator(ctx, run_config)
             ctx.profiler.run_for_patterns(
+                generator=generator,
+                run_config=run_config,
                 patterns=patterns,
                 exclude_patterns=exclude_patterns,
-                profiler_config=run_config.profiler_config,
-                checks_location=run_config.checks_location,
                 product=ctx.installation.product(),
                 install_folder=ctx.installation.install_folder(),
                 max_parallelism=ctx.config.profiler_max_parallelism,
@@ -67,10 +70,38 @@ class ProfilerWorkflow(Workflow):
     def _profile_for_run_config(ctx, run_config):
         logger.info(f"Running profiler workflow for run config: {run_config.name}")
 
+        generator = ProfilerWorkflow._create_generator(ctx, run_config)
         ctx.profiler.run(
-            run_config_name=run_config.name,
-            input_config=run_config.input_config,
-            profiler_config=run_config.profiler_config,
+            generator=generator,
+            run_config=run_config,
             product=ctx.installation.product(),
             install_folder=ctx.installation.install_folder(),
         )
+
+    @staticmethod
+    def _create_generator(ctx, run_config):
+        llm_model_config = ctx.config.llm_config.model if ctx.config.llm_config else None
+
+        if llm_model_config:
+            if llm_model_config.api_base and "/" in llm_model_config.api_base:
+                logger.info("Retrieving LLM API base from secret store")
+                # if api api base stored as secret: secret_scope/secret_key
+                api_base = ProfilerWorkflow._get_secret_value(ctx, llm_model_config.api_base)
+                llm_model_config.api_base = api_base
+            if llm_model_config.api_key and "/" in llm_model_config.api_key:
+                # if api key stored as secret: secret_scope/secret_key
+                logger.info("Retrieving LLM API key from secret store")
+                api_key = ProfilerWorkflow._get_secret_value(ctx, llm_model_config.api_key)
+                llm_model_config.api_key = api_key
+
+        custom_check_functions = resolve_custom_check_functions_from_path(run_config.custom_check_functions)
+        return DQGenerator(ctx.workspace_client, ctx.spark, llm_model_config, custom_check_functions)
+
+    @staticmethod
+    def _get_secret_value(ctx, scope_key):
+        scope_key_data = scope_key.split("/")
+
+        scope = scope_key_data[0]
+        key = scope_key_data[1]
+
+        return ctx.workspace_client.secrets.get_secret(scope, key).value
