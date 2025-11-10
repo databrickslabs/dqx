@@ -1,15 +1,59 @@
 import logging
+import json
+from collections.abc import Callable
 
+from pyspark.sql import SparkSession
+
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
+from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
+from databricks.labs.dqx.errors import MissingParameterError
+from databricks.labs.dqx.utils import get_column_metadata
+
+# Conditional imports for LLM-assisted rules generation
+try:
+    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
+
+    LLM_ENABLED = True
+except ImportError:
+    LLM_ENABLED = False
 
 logger = logging.getLogger(__name__)
 
 
 class DQGenerator(DQEngineBase):
+    def __init__(
+        self,
+        workspace_client: WorkspaceClient,
+        spark: SparkSession | None = None,
+        llm_model_config: LLMModelConfig | None = None,
+        custom_check_functions: dict[str, Callable] | None = None,
+    ):
+        """
+        Initializes the DQGenerator with optional Spark session and LLM model configuration.
+
+        Args:
+            workspace_client: Databricks WorkspaceClient instance.
+            spark: Optional SparkSession instance. If not provided, a new session will be created.
+            llm_model_config: Optional LLM model configuration for AI-assisted rule generation.
+            custom_check_functions: Optional dictionary of custom check functions.
+        """
+        super().__init__(workspace_client=workspace_client)
+        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+
+        self.custom_check_functions = custom_check_functions
+        llm_model_config = llm_model_config or LLMModelConfig()
+
+        self.llm_engine = (
+            DQLLMEngine(model_config=llm_model_config, custom_check_functions=custom_check_functions)
+            if LLM_ENABLED
+            else None
+        )
+
     @telemetry_logger("generator", "generate_dq_rules")
     def generate_dq_rules(self, profiles: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
         """
@@ -40,8 +84,47 @@ class DQGenerator(DQEngineBase):
                     expr["filter"] = dataset_filter
                 dq_rules.append(expr)
 
-        status = DQEngine.validate_checks(dq_rules)
+        status = DQEngine.validate_checks(dq_rules, self.custom_check_functions)
         assert not status.has_errors
+
+        return dq_rules
+
+    @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
+    def generate_dq_rules_ai_assisted(self, user_input: str, table_name: str = "") -> list[dict]:
+        """
+        Generates data quality rules using LLM based on natural language input.
+
+        Args:
+            user_input: Natural language description of data quality requirements.
+            table_name: Optional fully qualified table name.
+                        If not provided, LLM will be used to guess the table schema.
+
+        Returns:
+            A list of dictionaries representing the generated data quality rules.
+
+        Raises:
+            MissingParameterError: If DSPy compiler is not available.
+        """
+        if self.llm_engine is None:
+            raise MissingParameterError(
+                "LLM engine not available. Make sure LLM dependencies are installed: "
+                "pip install 'databricks-labs-dqx[llm]'"
+            )
+
+        logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
+        schema_info = get_column_metadata(self.spark, table_name) if table_name else ""
+
+        # Generate rules using pre-initialized LLM compiler
+        prediction = self.llm_engine.get_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
+
+        # Validate the generated rules
+        dq_rules = json.loads(prediction.quality_rules)
+        status = DQEngine.validate_checks(checks=dq_rules, custom_check_functions=self.custom_check_functions)
+        if status.has_errors:
+            logger.warning(f"Generated rules have validation errors: {status.errors}")
+        else:
+            logger.info(f"Generated {len(dq_rules)} rules with LLM: {dq_rules}")
+            logger.info(f"LLM reasoning: {prediction.reasoning}")
 
         return dq_rules
 
