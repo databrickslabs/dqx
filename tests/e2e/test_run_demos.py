@@ -347,16 +347,13 @@ def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
         dbt_profiles_dir = Path(temp_dir) / "dbt"
         dbt_profiles_dir.mkdir(parents=True, exist_ok=True)
 
-        if debug_env.get("DATABRICKS_CLIENT_ID") and debug_env.get("DATABRICKS_CLIENT_SECRET"):
+        client_id = debug_env.get("TOOLS_CLIENT_ID")
+        client_secret = debug_env.get("TOOLS_DATABRICKS_SECRET")
+        token = debug_env.get("DATABRICKS_TOKEN")  # for local execution
+        auth_type = "token"  # for local execution
+
+        if client_id and client_secret:  # for CI execution
             auth_type = "oauth"
-            client_id = debug_env.get("DATABRICKS_CLIENT_ID")
-            client_secret = debug_env.get("DATABRICKS_CLIENT_SECRET")
-            token = None
-        else:  # for local execution
-            auth_type = "token"
-            client_id = None
-            client_secret = None
-            token = debug_env.get("DATABRICKS_TOKEN")
 
         # Create the profiles.yml file
         profiles_yml_content = f"""
@@ -370,9 +367,9 @@ def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
               catalog: "{catalog}"
               schema: "{schema}"
               auth_type: {auth_type}
-              {"client_id: " + client_id if client_id else ""}
-              {"client_secret: " + client_secret if client_secret else ""}
-              {"token: " + token if token else ""}
+              client_id: {client_id}
+              client_secret: {client_secret}
+              token: {token}
               threads: 1
               connect_timeout: 30
         """
