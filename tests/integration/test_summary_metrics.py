@@ -1,11 +1,15 @@
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 import pytest
+
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.rule import ColumnArguments
 from tests.integration.conftest import EXTRA_PARAMS
+
+from tests.conftest import TEST_CATALOG
+
 
 TEST_SCHEMA = StructType(
     [
@@ -194,7 +198,7 @@ def test_observer_custom_metrics(ws, spark, apply_checks_method):
 )
 def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_random, apply_checks_method):
     """Test that no metrics are saved when observer is not configured."""
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table_name = f"{catalog_name}.{schema.name}.input_{make_random(6).lower()}"
     output_table_name = f"{catalog_name}.{schema.name}.output_{make_random(6).lower()}"
@@ -239,7 +243,7 @@ def test_apply_checks_by_metadata_and_save_in_table_raises_error_for_sparkconnec
     ws, spark, make_schema, make_random, apply_checks_method
 ):
     """Test that apply_checks_by_metadata_and_save_in_table raises TypeError for SparkConnect DataFrames when observer is configured."""
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table_name = f"{catalog_name}.{schema.name}.input_{make_random(6).lower()}"
     output_table_name = f"{catalog_name}.{schema.name}.output_{make_random(6).lower()}"
@@ -287,7 +291,7 @@ def test_apply_checks_by_metadata_and_save_in_table_raises_error_for_sparkconnec
 
 def test_save_results_in_table_raises_error_for_sparkconnect(ws, spark, make_schema, make_random):
     """Test that save_results_in_table raises TypeError for SparkConnect DataFrames when observer is configured."""
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table_name = f"{catalog_name}.{schema.name}.output_{make_random(6).lower()}"
     quarantine_table_name = f"{catalog_name}.{schema.name}.quarantine_{make_random(6).lower()}"

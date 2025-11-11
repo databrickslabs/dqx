@@ -22,9 +22,9 @@ from databricks.sdk.errors import (
     PermissionDenied,
 )
 
-from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.installer.config_provider import ConfigProvider
 from databricks.labs.dqx.installer.dashboard_installer import DashboardInstaller
+from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.installer.version_checker import VersionChecker
 from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 with_user_agent_extra("cmd", "install")
 
 
-class WorkspaceInstaller(WorkspaceContext):
+class WorkspaceInstaller(WorkspaceContext, InstallationMixin):
     """
     Installer for DQX workspace. Orchestrates install flow (config, version checks, upgrades, dependency wiring).
 
@@ -83,10 +83,9 @@ class WorkspaceInstaller(WorkspaceContext):
             NotFound: If the installation is not found.
         """
         if self._install_folder:
-            return RunConfigLoader.get_custom_installation(
-                self.workspace_client, self.product_info.product_name(), self._install_folder
+            return self._get_installation(
+                product_name=self.product_info.product_name(), install_folder=self._install_folder
             )
-
         try:
             return self.product_info.current_installation(self.workspace_client)
         except NotFound:

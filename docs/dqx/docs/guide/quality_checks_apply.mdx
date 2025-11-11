@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 8
 ---
 
 import Admonition from '@theme/Admonition';
@@ -197,8 +197,8 @@ In the example below, checks are defined in YAML syntax for convenience and then
 
 <Admonition type="note" title="Note">
 Checks are applied to a `column` specified in the `arguments` of the `check`. This can be either a column name as `string` or column expression.
-Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (e.g. `sql_expression`).
-Alternatively, `for_each_column` can be used to define a list of columns that the check should be applied for one by one.
+Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (e.g. `sql_expression` and `sql_query`).
+Alternatively, `for_each_column` can be used to define a list of columns for which the same check should be applied. The `for_each_column` is supported for quality rules that take `column` or `columns` as arguments (e.g. not supported by `sql_expression` and `sql_query`).
 For details on each check, please refer to the documentation [here](/docs/reference/quality_checks).
 </Admonition>
 
@@ -740,6 +740,8 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
    - `filter`: filter for the input data as a string SQL expression (default: None).
+- `checks_user_requirements`: (optional) user input for AI-assisted rule generation
+- `llm_config`: (optional) configuration for the AI-assisted features
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
 - `custom_metrics`: (optional) list of Spark SQL expressions for capturing custom summary metrics. By default, the number of input, warning, and error rows will be tracked. When custom metrics are defined, they will be tracked in addition to the default metrics.
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
@@ -748,8 +750,13 @@ The following fields from the [configuration file](/docs/installation/#configura
 Example of the configuration file (relevant fields only):
 ```yaml
   serverless_clusters: true          # default is true, set to false to use standard clusters
-  profiler_max_parallelism: 4        # <- max parallelism for profiling multiple tables
-  quality_checker_max_parallelism: 4 # <- max parallelism for quality checking multiple tables
+  profiler_max_parallelism: 4        # max parallelism for profiling multiple tables
+  quality_checker_max_parallelism: 4 # max parallelism for quality checking multiple tables
+  llm_config:                        # configuration for the llm-assisted features
+    model:
+      model_name: "databricks/databricks-claude-sonnet-4-5"
+      api_key: xxx                  # optional API key for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+      api_base: xxx                 # optional API base for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -779,6 +786,7 @@ Example of the configuration file (relevant fields only):
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
+    checks_user_requirements: "business rules description" # optional user input for the llm-assisted features
     custom_check_functions:  # optional
       my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
       my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
@@ -884,7 +892,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 ```
 
 The structure of the result columns is an array of struct containing the following fields
-(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.9.3/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.10.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
 - `columns`: name of the column(s) where the quality issue was found (string type).
