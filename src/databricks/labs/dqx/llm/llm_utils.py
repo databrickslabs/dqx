@@ -108,7 +108,7 @@ def get_column_metadata(spark: SparkSession, input_config: InputConfig) -> str:
     Get the column metadata for a given table.
 
     Args:
-        input_config (str): Input configuration for the table.
+        input_config (InputConfig): Input configuration for the table.
         spark (SparkSession): The Spark session used to access the table.
 
     Returns:
