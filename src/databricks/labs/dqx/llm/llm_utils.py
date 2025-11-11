@@ -7,8 +7,11 @@ from typing import Any
 import json
 import yaml
 import dspy  # type: ignore
+from pyspark.sql import SparkSession
 from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
+from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.io import read_input_data
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +101,23 @@ def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | 
         examples.append(example)
 
     return examples
+
+
+def get_column_metadata(spark: SparkSession, input_config: InputConfig) -> str:
+    """
+    Get the column metadata for a given table.
+
+    Args:
+        input_config (str): Input configuration for the table.
+        spark (SparkSession): The Spark session used to access the table.
+
+    Returns:
+        str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
+    """
+    df = read_input_data(spark, input_config)
+    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+    schema_info = {"columns": columns}
+    return json.dumps(schema_info)
 
 
 def _load_training_examples() -> list[dict[str, Any]]:

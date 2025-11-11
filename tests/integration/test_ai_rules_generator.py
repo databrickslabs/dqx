@@ -2,7 +2,7 @@ import pyspark.sql.functions as F
 from tests.conftest import TEST_CATALOG
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 
@@ -52,7 +52,26 @@ def test_generate_dq_rules_ai_assisted_with_input_table(ws, spark, make_table, m
         columns=[("user_id", "string"), ("username", "string"), ("email", "string"), ("age", "int")],
     )
     generator = DQGenerator(ws, spark)
-    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=USER_INPUT, table_name=input_table.full_name)
+    actual_checks = generator.generate_dq_rules_ai_assisted(
+        user_input=USER_INPUT, input_config=InputConfig(location=input_table.full_name)
+    )
+    assert actual_checks == EXPECTED_CHECKS
+
+
+def test_generate_dq_rules_ai_assisted_with_input_path(ws, spark, make_directory):
+    folder = make_directory()
+    workspace_file_path = str(folder.absolute()) + "/input_data.parquet"
+
+    test_data = [
+        ("user1", "john_doe", "john@example.com", 25),
+    ]
+    df = spark.createDataFrame(test_data, ["user_id", "username", "email", "age"])
+    df.write.mode("overwrite").parquet(workspace_file_path)
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(
+        user_input=USER_INPUT, input_config=InputConfig(location=workspace_file_path, format="parquet")
+    )
     assert actual_checks == EXPECTED_CHECKS
 
 

@@ -10,6 +10,7 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     InstallationChecksStorageConfig,
     RunConfig,
+    InputConfig,
 )
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.engine import DQEngine
@@ -79,7 +80,7 @@ class ProfilerRunner:
 
         if run_config.checks_user_requirements:
             checks += generator.generate_dq_rules_ai_assisted(
-                run_config.checks_user_requirements, table_name=run_config.input_config.location
+                user_input=run_config.checks_user_requirements, input_config=run_config.input_config
             )
 
         storage_config = InstallationChecksStorageConfig(
@@ -135,7 +136,9 @@ class ProfilerRunner:
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
             if run_config.checks_user_requirements:
-                checks += generator.generate_dq_rules_ai_assisted(run_config.checks_user_requirements, table_name=table)
+                checks += generator.generate_dq_rules_ai_assisted(
+                    user_input=run_config.checks_user_requirements, input_config=InputConfig(location=table)
+                )
 
             storage_config = InstallationChecksStorageConfig(
                 location=(

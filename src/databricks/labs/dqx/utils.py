@@ -6,7 +6,7 @@ import re
 from typing import Any
 from fnmatch import fnmatch
 
-from pyspark.sql import Column, SparkSession
+from pyspark.sql import Column
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -282,23 +282,6 @@ def list_tables(
     if tables:
         return tables
     raise NotFound("No tables found matching include or exclude criteria")
-
-
-def get_column_metadata(spark: SparkSession, table_name: str) -> str:
-    """
-    Get the column metadata for a given table.
-
-    Args:
-        table_name (str): The name of the table to retrieve metadata for.
-        spark (SparkSession): The Spark session used to access the table.
-
-    Returns:
-        str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
-    """
-    df = spark.table(table_name)
-    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
-    schema_info = {"columns": columns}
-    return json.dumps(schema_info)
 
 
 def _split_pattern(pattern: str) -> tuple[str, str, str]:
