@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
 
@@ -159,6 +159,10 @@ jobs:
 
       - name: Install hatch
         run: pip install hatch==1.15.0
+      
+      - name: Install dbt
+        run: |
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
 
       - name: Install Databricks CLI
         run: |
@@ -211,6 +215,10 @@ jobs:
 
       - name: Install hatch
         run: pip install hatch==1.15.0
+
+      - name: Install dbt
+        run: |
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
 
       - name: Install Databricks CLI
         run: |

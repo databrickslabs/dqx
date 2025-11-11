@@ -6,7 +6,7 @@ import re
 from typing import Any
 from fnmatch import fnmatch
 
-from pyspark.sql import Column
+from pyspark.sql import Column, SparkSession
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -14,11 +14,11 @@ try:
 except ImportError:
     ConnectColumn = None  # type: ignore
 
+import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk.errors import NotFound
-
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +284,23 @@ def list_tables(
     raise NotFound("No tables found matching include or exclude criteria")
 
 
+def get_column_metadata(spark: SparkSession, table_name: str) -> str:
+    """
+    Get the column metadata for a given table.
+
+    Args:
+        table_name (str): The name of the table to retrieve metadata for.
+        spark (SparkSession): The Spark session used to access the table.
+
+    Returns:
+        str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
+    """
+    df = spark.table(table_name)
+    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+    schema_info = {"columns": columns}
+    return json.dumps(schema_info)
+
+
 def _split_pattern(pattern: str) -> tuple[str, str, str]:
     """
     Splits a wildcard pattern into its catalog, schema, and table components.
@@ -433,3 +450,18 @@ def _match_table_patterns(table: str, patterns: list[str]) -> bool:
         bool: True if the table name matches any of the patterns, False otherwise.
     """
     return any(fnmatch(table, pattern) for pattern in patterns)
+
+
+def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
+    """Converts a column expression to lowercase, handling both scalar and array types.
+
+    Args:
+        col_expr: Column expression to convert
+        is_array: Whether the column contains array values
+
+    Returns:
+        Column expression with lowercase transformation applied
+    """
+    if is_array:
+        return F.transform(col_expr, F.lower)
+    return F.lower(col_expr)

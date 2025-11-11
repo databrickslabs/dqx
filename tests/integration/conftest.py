@@ -1,18 +1,25 @@
 import logging
 import os
 from datetime import datetime, timezone
+from io import BytesIO
 from typing import Any
 from unittest.mock import patch
 
 from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame
 import pytest
+from databricks.sdk.service.workspace import ImportFormat
+from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk.service.compute import DataSecurityMode, Kind
+
+from tests.conftest import TEST_CATALOG
+
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -144,7 +151,7 @@ def setup_workflows_with_metrics(ws, spark, installation_ctx, make_schema, make_
         config = installation_ctx.config
         run_config = config.get_run_config()
 
-        catalog_name = "main"
+        catalog_name = TEST_CATALOG
         schema_name = run_config.output_config.location.split(".")[1]
         metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
         run_config.metrics_config = OutputConfig(location=metrics_table_name)
@@ -200,6 +207,19 @@ def setup_workflows_with_custom_folder(
     yield from factory("workflows", lambda **kw: create(spark, **kw), delete)
 
 
+class TestInstallationMixin(InstallationMixin):
+    def get_my_username(self):
+        return self._my_username
+
+    def get_me(self):
+        return self._me
+
+    def get_installation(
+        self, product_name: str, assume_user: bool = True, install_folder: str | None = None
+    ) -> Installation:
+        return self._get_installation(product_name, assume_user, install_folder)
+
+
 def _setup_workflows_deps(
     ctx,
     make_schema,
@@ -211,7 +231,7 @@ def _setup_workflows_deps(
     is_continuous_streaming: bool = False,
 ):
     # prepare test data
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     input_table = make_table(
@@ -358,6 +378,41 @@ def _setup_quality_checks(ctx, spark, ws):
 
     InstallationChecksStorageHandler(ws, spark).save(checks=checks, config=config)
     return checks_location
+
+
+def setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location):
+    content = '''from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from pyspark.sql import functions as F
+
+@register_rule("row")
+def not_ends_with_suffix(column: str, suffix: str):
+    """
+    Example of custom python row-level check function.
+    """
+    return make_condition(
+        F.col(column).endswith(suffix), f"Column '{column}' ends with '{suffix}'", f"{column}_ends_with_{suffix}"
+    )
+'''
+    if custom_checks_funcs_location.startswith("/Workspace/"):
+        ws.workspace.upload(
+            path=custom_checks_funcs_location, format=ImportFormat.AUTO, content=content.encode(), overwrite=True
+        )
+    elif custom_checks_funcs_location.startswith("/Volumes/"):
+        binary_data = BytesIO(content.encode("utf-8"))
+        ws.files.upload(custom_checks_funcs_location, binary_data, overwrite=True)
+    else:  # relative workspace path
+        installation_dir = installation_ctx.installation.install_folder()
+        ws.workspace.upload(
+            path=f"{installation_dir}/{custom_checks_funcs_location}",
+            format=ImportFormat.AUTO,
+            content=content.encode(),
+            overwrite=True,
+        )
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.custom_check_functions = {"not_ends_with_suffix": custom_checks_funcs_location}
+    installation_ctx.installation.save(config)
 
 
 def contains_expected_workflows(workflows, state):

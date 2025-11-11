@@ -87,20 +87,20 @@ if os.path.exists(quality_rules_path):
 # COMMAND ----------
 
 # DBTITLE 1,Set Catalog and Schema for Demo Dataset
-default_database_name = "main"
+default_catalog_name = "main"
 default_schema_name = "default"
 
-dbutils.widgets.text("demo_database_name", default_database_name, "Catalog Name")
-dbutils.widgets.text("demo_schema_name", default_schema_name, "Schema Name")
+dbutils.widgets.text("demo_catalog", default_catalog_name, "Catalog Name")
+dbutils.widgets.text("demo_schema", default_schema_name, "Schema Name")
 
-database = dbutils.widgets.get("demo_database_name")
-schema = dbutils.widgets.get("demo_schema_name")
+catalog = dbutils.widgets.get("demo_catalog")
+schema = dbutils.widgets.get("demo_schema")
 
-print(f"Selected Catalog for Demo Dataset: {database}")
+print(f"Selected Catalog for Demo Dataset: {catalog}")
 print(f"Selected Schema for Demo Dataset: {schema}")
 
-sensor_table = f"{database}.{schema}.sensor_data"
-maintenance_table = f"{database}.{schema}.maintenance_data"
+sensor_table = f"{catalog}.{schema}.sensor_data"
+maintenance_table = f"{catalog}.{schema}.maintenance_data"
 
 # COMMAND ----------
 
@@ -706,7 +706,7 @@ displayHTML(f'<a href="/#workspace{maintenance_dq_rules_yaml}" target="_blank">M
 
 # DBTITLE 1,Save the quality rules in delta table
 # or save in delta table
-maintenance_quality_rules_table = f"{database}.{schema}.maintenance_inferred_quality_rules"
+maintenance_quality_rules_table = f"{catalog}.{schema}.maintenance_inferred_quality_rules"
 dq_engine.save_checks(maintenance_checks, config=TableChecksStorageConfig(location=maintenance_quality_rules_table, run_config_name="maintenance"))
 
 # COMMAND ----------
@@ -908,7 +908,7 @@ valid_df, quarantined_df = dq_engine.apply_checks_by_metadata_and_split(sensor_b
 print("=== Quarantined Data Sample ===")
 display(quarantined_df)
 
-sensor_quarantine_table = f"{database}.{schema}.sensor_quarantine"
+sensor_quarantine_table = f"{catalog}.{schema}.sensor_quarantine"
 quarantined_df.write.mode("overwrite").saveAsTable(sensor_quarantine_table)
 
 # COMMAND ----------

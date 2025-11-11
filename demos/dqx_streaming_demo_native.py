@@ -148,8 +148,8 @@ checks = yaml.safe_load("""
 default_catalog_name = "main"
 default_schema_name = "default"
 
-dbutils.widgets.text("demo_catalog_name", default_catalog_name, "Catalog Name")
-dbutils.widgets.text("demo_schema_name", default_schema_name, "Schema Name")
+dbutils.widgets.text("demo_catalog", default_catalog_name, "Catalog Name")
+dbutils.widgets.text("demo_schema", default_schema_name, "Schema Name")
 
 dbutils.widgets.text("silver_checkpoint", "/tmp/dq/structured/bronze_to_silver_checkpoint")
 dbutils.widgets.text("quarantine_checkpoint", "/tmp/dq/structured/bronze_to_quarantine_checkpoint")
@@ -158,8 +158,8 @@ dbutils.widgets.text("quarantine_checkpoint", "/tmp/dq/structured/bronze_to_quar
 
 from uuid import uuid4
 
-catalog = dbutils.widgets.get("demo_catalog_name")
-schema = dbutils.widgets.get("demo_schema_name")
+catalog = dbutils.widgets.get("demo_catalog")
+schema = dbutils.widgets.get("demo_schema")
 
 print(f"Selected Catalog for Demo Dataset: {catalog}")
 print(f"Selected Schema for Demo Dataset: {schema}")

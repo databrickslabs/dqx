@@ -1,6 +1,6 @@
 import abc
 from functools import cached_property
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -12,6 +12,8 @@ __all__ = [
     "OutputConfig",
     "ExtraParams",
     "ProfilerConfig",
+    "LLMModelConfig",
+    "LLMConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
@@ -79,6 +81,7 @@ class RunConfig:
     quarantine_config: OutputConfig | None = None  # quarantined data table
     metrics_config: OutputConfig | None = None  # summary metrics table
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+    checks_user_requirements: str | None = None  # user input for AI-assisted rule generation
 
     checks_location: str = (
         "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
@@ -95,6 +98,25 @@ class RunConfig:
     lakebase_instance_name: str | None = None
     lakebase_user: str | None = None
     lakebase_port: str | None = None
+
+
+@dataclass
+class LLMModelConfig:
+    """Configuration for LLM model"""
+
+    # The model to use for the DSPy language model
+    model_name: str = "databricks/databricks-claude-sonnet-4-5"
+    # Optional API key for the model as text or secret scope/key. Not required by foundational models
+    api_key: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
+    # Optional API base URL for the model. Not required by foundational models
+    api_base: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
+
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """Configuration for LLM usage"""
+
+    model: LLMModelConfig = field(default_factory=LLMModelConfig)
 
 
 @dataclass(frozen=True)
@@ -134,6 +156,19 @@ class WorkspaceConfig:
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
     custom_metrics: list[str] | None = None  # custom summary metrics tracked by the observer when applying checks
+
+    llm_config: LLMConfig = field(default_factory=LLMConfig)
+
+    def as_dict(self) -> dict:
+        """
+        Convert the WorkspaceConfig to a dictionary for serialization.
+        This method ensures that all fields, including boolean False values, are properly serialized.
+        Used by blueprint's installation when saving the config (Installation.save()).
+
+        Returns:
+            A dictionary representation of the WorkspaceConfig.
+        """
+        return asdict(self)
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.

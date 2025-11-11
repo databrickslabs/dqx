@@ -4,7 +4,6 @@ from databricks.labs.dqx.config import (
     WorkspaceFileChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from databricks.labs.dqx.profiler.profiler_workflow import ProfilerWorkflow
@@ -12,9 +11,8 @@ from databricks.labs.dqx.profiler.profiler_workflow import ProfilerWorkflow
 
 def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws, spark, installation_ctx):
     profiler = DQProfiler(ws)
-    generator = DQGenerator(ws)
     dq_engine = DQEngine(ws, spark)
-    runner = ProfilerRunner(ws, spark, dq_engine, installation_ctx.installation, profiler, generator)
+    runner = ProfilerRunner(ws, spark, dq_engine, installation_ctx.installation, profiler)
 
     checks = [
         {

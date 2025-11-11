@@ -11,6 +11,7 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
+from tests.integration.conftest import setup_custom_check_func
 
 
 def test_profiler_workflow_when_missing_input_location_in_config(ws, setup_serverless_workflows):
@@ -327,6 +328,123 @@ def test_profiler_workflow_filter_out_all_data(ws, spark, setup_workflows, make_
     engine = DQEngine(ws, spark)
     checks = engine.load_checks(config=workspace_file_storage_config)
     assert checks == [], "Checks should be empty when profiling an empty input dataset"
+
+
+def test_profiler_workflow_with_ai_rules_generation(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.checks_user_requirements = "name should not start with 'c'"
+    installation_ctx.installation.save(installation_ctx.config)
+
+    installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
+
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(config=config)
+    assert checks, "Checks were not loaded correctly"
+
+    actual_ai_generated_check = None
+    for check in checks:
+        if check["check"]["function"] == "regex_match":
+            actual_ai_generated_check = check
+            break
+
+    expected_ai_generated_check = {
+        'check': {'arguments': {'column': 'name', 'negate': False, 'regex': '^[^cC].*'}, 'function': 'regex_match'},
+        'criticality': 'error',
+    }
+
+    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
+
+
+def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secrets(
+    ws, spark, setup_serverless_workflows, make_secret_scope
+):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    scope_name = make_secret_scope()
+    api_key = f"{scope_name}/api_key"
+    ws.secrets.put_secret(scope=scope_name, key="api_key", string_value="")
+    api_base = f"{scope_name}/api_base"
+    ws.secrets.put_secret(scope=scope_name, key="api_base", string_value="")
+
+    config = installation_ctx.config
+    config.llm_config.model.api_key = api_key  # test secret retrieval
+    config.llm_config.model.api_base = api_base  # test secret retrieval
+
+    run_config = config.get_run_config()
+    run_config.checks_user_requirements = "name should not start with 'c'"
+    installation_ctx.installation.save(installation_ctx.config)
+
+    installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
+
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(config=config)
+    assert checks, "Checks were not loaded correctly"
+
+    actual_ai_generated_check = None
+    for check in checks:
+        if check["check"]["function"] == "regex_match":
+            actual_ai_generated_check = check
+            break
+
+    expected_ai_generated_check = {
+        'check': {'arguments': {'column': 'name', 'negate': False, 'regex': '^[^cC].*'}, 'function': 'regex_match'},
+        'criticality': 'error',
+    }
+
+    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
+
+
+def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    config = installation_ctx.config
+    config.llm_config.model.model_name = "databricks/databricks-llama-4-maverick"  # test different model
+    run_config = config.get_run_config()
+    run_config.checks_user_requirements = "name should not end with 'c'"
+    installation_ctx.installation.save(installation_ctx.config)
+
+    custom_checks_funcs_location = "custom_check_funcs.py"  # path relative to the installation folder
+    setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location)
+
+    installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
+
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(config=config)
+    assert checks, "Checks were not loaded correctly"
+    print(checks)
+    actual_ai_generated_check = None
+    for check in checks:
+        if check["check"]["function"] == "not_ends_with_suffix":
+            actual_ai_generated_check = check
+            break
+
+    expected_ai_generated_check = {
+        'check': {'arguments': {'column': 'name', 'suffix': 'c'}, 'function': 'not_ends_with_suffix'},
+        'criticality': 'error',
+    }
+
+    assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
 
 
 def _make_second_input_table(spark, catalog_name, schema_name, source_table, make_random, suffix=""):

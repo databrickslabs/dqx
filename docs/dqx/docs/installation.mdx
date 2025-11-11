@@ -44,6 +44,28 @@ resources:
 
 Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
 
+### Optional dependencies
+
+DQX provides optional extras for specific features:
+
+#### AI-Assisted Quality Checks Generation
+
+To use AI-assisted rule generation with LLM support, install the `llm` extras:
+```commandline
+pip install 'databricks-labs-dqx[llm]'
+```
+
+This installs additional dependencies including DSPy for LLM integration. See the [AI-Assisted Generation Guide](/docs/guide/ai_assisted_quality_checks_generation) for more details.
+
+#### PII detection capabilities
+
+To use built-in pii detection rules, install the `pii` extras:
+```commandline
+pip install 'databricks-labs-dqx[pii]'
+```
+
+This installs additional dependencies including Microsoft Presidio library.
+
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
@@ -187,6 +209,12 @@ extra_params:                       # <- optional extra parameters to pass to th
     user_metadata:
         custom_metadata: custom_value # <- optional user metadata to be added to the results
 
+llm_config:                         # <- configuration for the llm-assisted features
+  model:
+    model_name: "databricks/databricks-claude-sonnet-4-5"
+    api_key: xxx                    # <- optional API key for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+    api_base: xxx                   # <- optional API base for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+
 run_configs:                        # <- list of run configurations, each run config defines one specific input and output location
 
 - name: default                     # <- unique name of the run config (it can be any string), e.g. input table or job name (use "default" during installation)
@@ -232,7 +260,7 @@ run_configs:                        # <- list of run configurations, each run co
   # lakebase_user: 00000000-0000-0000-0000-000000000000 # <- the user to connect to the lakebase, e.g., user@domain.com or a Databricks service principal client ID
   # lakebase_port: 5432                                 # <- optional port to connect to Lakebase, default is 5432
 
-  custom_check_functions:                # <- optional mapping of custom check function name to Python file (module) containing check function definition
+  custom_check_functions:                               # <- optional mapping of custom check function name to Python file (module) containing check function definition
     my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
     my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
     email_mask: /Volumes/main/dqx_utils/custom/email.py # or UC volume path
@@ -252,11 +280,13 @@ run_configs:                        # <- list of run configurations, each run co
     sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
     sample_seed: 30                           # <- optional seed for reproducible sampling
     limit: 1000                               # <- limit the number of records to profile
-    filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source 
+    filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source
 
-  warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
+  checks_user_requirements: business rules description  # <- optional user input for AI-assisted rule generation; only supported if `serverless_clusters` is enabled
 
-- name: another_run_config                            # <- unique name of the run config
+  warehouse_id: your-warehouse-id             # <- warehouse id for refreshing dashboard
+
+- name: another_run_config                    # <- unique name of the run config
   ...
 ```
 
