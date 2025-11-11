@@ -114,7 +114,7 @@ In all cases, the full test suite is executed on code merged into `main` branch 
 
 This section provides a step-by-step guide for setting up your local environment and dependencies for efficient development.
 
-To start with, install the required python version on your computer (see `python=<version>` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.9.3/pyproject.toml)).
+To start with, install the required python version on your computer (see `python=<version>` field in [pyproject.toml](https://github.com/databrickslabs/dqx/blob/v0.10.0/pyproject.toml)).
 On MacOSX, run:
 ```
 # double check the required version in pyproject.toml
@@ -153,12 +153,15 @@ You can also trigger the tests from a local machine by configuring authenticatio
 
 If you want to run the tests from your local machine in the terminal, you need to set up the following environment variables:
 ```shell
-export DATABRICKS_HOST=https://<workspace-url>
+export DATABRICKS_HOST=<workspace-url>
 export DATABRICKS_CLUSTER_ID=<cluster-id>
 
 # Authenticate to Databricks using OAuth generated for a service principal (recommended)
 export DATABRICKS_CLIENT_ID=<oauth-client-id>
 export DATABRICKS_CLIENT_SECRET=<oauth-client-secret>
+
+# Specify Default Warehouse HTTP path for local testing of dbt demo 
+export TEST_DEFAULT_WAREHOUSE_HTTP_PATH=/sql/1.0/warehouses/<warehouse-id>
 
 # Optionally enable serverless compute to be used for the tests.
 # Note that we run integration tests on standard and serverless compute clusters as part of the CI/CD pipelines
@@ -191,7 +194,7 @@ Create the `~/.databricks/debug-env.json` with the following content, replacing 
   "ws": {
     "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
     "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
-    "DATABRICKS_HOST": "https://<workspace-url>",
+    "DATABRICKS_HOST": "<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
   }
 }
@@ -210,7 +213,7 @@ To run integration tests on serverless compute, add the `DATABRICKS_SERVERLESS_C
   "ws": {
     "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
     "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
-    "DATABRICKS_HOST": "https://<workspace-url>",
+    "DATABRICKS_HOST": "<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>",
     "DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"
   }

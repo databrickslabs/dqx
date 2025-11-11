@@ -16,7 +16,7 @@ from pyspark.sql.streaming import StreamingQuery
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.checks_serializer import deserialize_checks
-from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
     BaseChecksStorageHandlerFactory,
@@ -448,6 +448,16 @@ class DQEngine(DQEngineBase):
 
     This class delegates core checking logic to *DQEngineCore* while providing helpers to
     read inputs, persist results, and work with different storage backends for checks.
+
+    Args:
+        workspace_client: WorkspaceClient instance used to access the Databricks workspace.
+        spark: Optional SparkSession to use. If not provided, the active session is used.
+        engine: Optional DQEngineCore instance to use. If not provided, a new instance is created.
+        extra_params: Optional extra parameters for the engine, such as result column names and run metadata.
+        checks_handler_factory: Optional factory to create checks storage handlers. If not provided,
+            a default factory is created.
+        config_serializer: Optional ConfigSerializer instance to use. If not provided, a new instance is created.
+        observer: Optional DQMetricsObserver for tracking data quality summary metrics.
     """
 
     def __init__(
@@ -457,14 +467,14 @@ class DQEngine(DQEngineBase):
         engine: DQEngineCore | None = None,
         extra_params: ExtraParams | None = None,
         checks_handler_factory: BaseChecksStorageHandlerFactory | None = None,
-        run_config_loader: RunConfigLoader | None = None,
+        config_serializer: ConfigSerializer | None = None,
         observer: DQMetricsObserver | None = None,
     ):
         super().__init__(workspace_client)
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
         self._engine = engine or DQEngineCore(workspace_client, spark, extra_params, observer)
-        self._run_config_loader = run_config_loader or RunConfigLoader(workspace_client)
+        self._config_serializer = config_serializer or ConfigSerializer(workspace_client)
         self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
         )
@@ -484,7 +494,7 @@ class DQEngine(DQEngineBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        self._log_telemetry_for_streaming(df)
         return self._engine.apply_checks(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_split")
@@ -507,7 +517,7 @@ class DQEngine(DQEngineBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
-        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        self._log_telemetry_for_streaming(df)
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_by_metadata")
@@ -534,7 +544,7 @@ class DQEngine(DQEngineBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        self._log_telemetry_for_streaming(df)
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
@@ -563,7 +573,7 @@ class DQEngine(DQEngineBase):
             with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
             quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        self._log_telemetry_for_streaming(df)
         return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
@@ -944,7 +954,7 @@ class DQEngine(DQEngineBase):
             raise InvalidConfigError("At least one of 'output_df' or 'quarantine_df' Dataframe must be present.")
 
         if output_df is not None and output_config is None:
-            run_config = self._run_config_loader.load_run_config(
+            run_config = self._config_serializer.load_run_config(
                 run_config_name=run_config_name,
                 assume_user=assume_user,
                 product_name=product_name,
@@ -953,7 +963,7 @@ class DQEngine(DQEngineBase):
             output_config = run_config.output_config
 
         if quarantine_df is not None and quarantine_config is None:
-            run_config = self._run_config_loader.load_run_config(
+            run_config = self._config_serializer.load_run_config(
                 run_config_name=run_config_name,
                 assume_user=assume_user,
                 product_name=product_name,
@@ -962,7 +972,7 @@ class DQEngine(DQEngineBase):
             quarantine_config = run_config.quarantine_config
 
         if self._engine.observer and metrics_config is None:
-            run_config = self._run_config_loader.load_run_config(
+            run_config = self._config_serializer.load_run_config(
                 run_config_name=run_config_name,
                 assume_user=assume_user,
                 product_name=product_name,
@@ -1222,3 +1232,16 @@ class DQEngine(DQEngineBase):
             output_query.awaitTermination()
         if quarantine_query and quarantine_config and is_one_time_trigger(quarantine_config.trigger):
             quarantine_query.awaitTermination()
+
+    def _log_telemetry_for_streaming(self, df):
+        log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
+        log_telemetry(self.ws, "dlt", str(self._is_dlt_pipeline()).lower())
+
+    def _is_dlt_pipeline(self) -> bool:
+        try:
+            # Attempt to retrieve the DLT pipeline ID from the Spark configuration
+            dlt_pipeline_id = self.spark.conf.get('pipelines.id', None)
+            return bool(dlt_pipeline_id)  # Return True if the ID exists, otherwise False
+        except Exception:
+            # Return False if an exception occurs (e.g. in non-DLT serverless clusters)
+            return False

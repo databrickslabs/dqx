@@ -5,10 +5,13 @@ import subprocess
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
+from tempfile import TemporaryDirectory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
+
+from tests.conftest import TEST_CATALOG
 from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
 
 logger = logging.getLogger(__name__)
@@ -21,14 +24,14 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job, library_ref)
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
         directory = notebook.as_fuse().parent.as_posix()
 
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
         base_parameters={
-            "demo_database_name": catalog,
-            "demo_schema_name": schema,
+            "demo_catalog": catalog,
+            "demo_schema": schema,
             "demo_file_directory": directory,
             "test_library_ref": library_ref,
         },
@@ -52,12 +55,12 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
         folder = notebook.as_fuse().parent / "quality_rules"
         make_directory(path=folder)
 
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_database_name": catalog, "demo_schema_name": schema, "test_library_ref": library_ref},
+        base_parameters={"demo_catalog": catalog, "demo_schema": schema, "test_library_ref": library_ref},
     )
     job = make_job(tasks=[Task(task_key="dqx_manufacturing_demo", notebook_task=notebook_task)])
 
@@ -135,7 +138,7 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job, library_ref):
 
 
 def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_job):
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     installation_ctx.replace(
         extend_prompts={
@@ -177,7 +180,7 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
 
@@ -185,8 +188,8 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
     run_id = str(uuid4())
     base_output_path = tmp_path / run_id
     base_parameters = {
-        "demo_catalog_name": catalog,
-        "demo_schema_name": schema,
+        "demo_catalog": catalog,
+        "demo_schema": schema,
         "silver_checkpoint": f"{base_output_path}/silver_checkpoint",
         "quarantine_checkpoint": f"{base_output_path}/quarantine_checkpoint",
         "test_library_ref": library_ref,
@@ -233,7 +236,7 @@ def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_r
 def test_run_dqx_demo_asset_bundle(make_schema, make_random, library_ref):
     cli_path = shutil.which("databricks")
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_asset_bundle"
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     run_id = make_random(10).lower()
 
@@ -267,12 +270,12 @@ def test_run_dqx_multi_table_demo(make_notebook, make_schema, make_job, library_
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
-        base_parameters={"demo_catalog_name": catalog, "demo_schema_name": schema, "test_library_ref": library_ref},
+        base_parameters={"demo_catalog": catalog, "demo_schema": schema, "test_library_ref": library_ref},
     )
     job = make_job(tasks=[Task(task_key="dqx_multi_table_demo", notebook_task=notebook_task)])
 
@@ -291,14 +294,14 @@ def test_run_dqx_demo_summary_metrics(make_notebook, make_schema, make_job, libr
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     notebook_path = notebook.as_fuse().as_posix()
     notebook_task = NotebookTask(
         notebook_path=notebook_path,
         base_parameters={
-            "demo_catalog_name": catalog,
-            "demo_schema_name": schema,
+            "demo_catalog": catalog,
+            "demo_schema": schema,
             "test_library_ref": library_ref,
         },
     )
@@ -313,3 +316,68 @@ def test_run_dqx_demo_summary_metrics(make_notebook, make_schema, make_job, libr
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_summary_metrics")
+
+
+def test_run_dqx_ai_assisted_quality_checks_generation(make_notebook, make_job, library_ref):
+    ws = WorkspaceClient()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_ai_assisted_checks_generation.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
+    job = make_job(tasks=[Task(task_key="dqx_demo_ai_assisted_checks_generation", notebook_task=notebook_task)])
+
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
+
+
+def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
+    catalog = "main"
+    schema = make_schema(catalog_name=catalog).name
+    project_dir = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_dbt"
+
+    # Create a temporary directory for DBT profiles
+    with TemporaryDirectory() as temp_dir:
+        dbt_profiles_dir = Path(temp_dir) / "dbt"
+        dbt_profiles_dir.mkdir(parents=True, exist_ok=True)
+
+        client_id = debug_env.get("TOOLS_CLIENT_ID")
+        client_secret = debug_env.get("TOOLS_DATABRICKS_SECRET")
+        token = debug_env.get("DATABRICKS_TOKEN")  # for local execution
+        auth_type = "token"  # for local execution
+
+        if client_id and client_secret:  # for CI execution
+            auth_type = "oauth"
+
+        # Create the profiles.yml file
+        profiles_yml_content = f"""
+        dbt_demo:
+          target: ci
+          outputs:
+            ci:
+              type: databricks
+              host: "{debug_env.get("DATABRICKS_HOST")}"
+              http_path: "{debug_env.get("TEST_DEFAULT_WAREHOUSE_HTTP_PATH")}"
+              catalog: "{catalog}"
+              schema: "{schema}"
+              auth_type: {auth_type}
+              client_id: {client_id}
+              client_secret: {client_secret}
+              token: {token}
+              threads: 1
+              connect_timeout: 30
+        """
+        profiles_yml_path = dbt_profiles_dir / "profiles.yml"
+        profiles_yml_path.write_text(profiles_yml_content.strip())
+
+        # Run dbt run
+        subprocess.run(
+            ["dbt", "run", "--debug", "--project-dir", str(project_dir), "--profiles-dir", str(dbt_profiles_dir)],
+            check=True,
+        )

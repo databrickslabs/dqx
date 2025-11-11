@@ -9,6 +9,6 @@ required_specs = [
 # Check that PII detection modules are installed
 if not all(find_spec(spec) for spec in required_specs):
     raise ImportError(
-        "PII detection extras not installed; Install additional "
-        "dependencies by running `pip install databricks-labs-dqx[pii]`"
+        "PII detection extras not installed."
+        "Install additional dependencies by running `pip install databricks-labs-dqx[pii]`."
     )
