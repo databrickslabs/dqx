@@ -12,11 +12,11 @@ from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import MissingParameterError
-from databricks.labs.dqx.llm.llm_utils import get_column_metadata
 
 # Conditional imports for LLM-assisted rules generation
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
+    from databricks.labs.dqx.llm.llm_utils import get_column_metadata
 
     LLM_ENABLED = True
 except ImportError:
