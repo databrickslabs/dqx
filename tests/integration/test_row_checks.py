@@ -3,6 +3,8 @@ from decimal import Decimal
 import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.errors import AnalysisException
+
 from databricks.labs.dqx.check_funcs import (
     is_equal_to,
     is_not_equal_to,
@@ -341,6 +343,36 @@ def test_col_is_not_in_list(spark):
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_not_in_list_mismatch_datatype(spark):
+    input_schema = "a: string, d: array<string>"
+    test_df = spark.createDataFrame(
+        [
+            ["str1", ["a", "b"]],
+        ],
+        input_schema,
+    )
+    actual = test_df.select(
+        is_in_list("d", ["a", "b"]),  # wrong data type
+    )
+    with pytest.raises(AnalysisException, match="[DATATYPE_MISMATCH.DATA_DIFF_TYPES]"):
+        actual.count()
+
+
+def test_col_is_not_null_and_is_in_list_mismatch_datatype(spark):
+    input_schema = "a: string, d: array<string>"
+    test_df = spark.createDataFrame(
+        [
+            ["str1", ["a", "b"]],
+        ],
+        input_schema,
+    )
+    actual = test_df.select(
+        is_not_null_and_is_in_list("d", ["a", "b"]),  # wrong data type
+    )
+    with pytest.raises(AnalysisException, match="[DATATYPE_MISMATCH.DATA_DIFF_TYPES]"):
+        actual.count()
 
 
 def test_col_sql_expression(spark):
