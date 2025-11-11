@@ -93,7 +93,7 @@ class DspyRuleSignature(dspy.Signature):
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
     quality_rules: str = dspy.OutputField(
         desc=(
-            "Return a valid JSON array of data quality rules. Use double quotes only and capitalize keywords. "
+            "Return a valid JSON array of data quality rules. Use double quotes only and capitalize SQL keywords. "
             "Criticality can be error or warn. "
             "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
