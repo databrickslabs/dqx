@@ -3,6 +3,8 @@ from decimal import Decimal
 import pytest
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.errors import AnalysisException
+
 from databricks.labs.dqx.check_funcs import (
     is_equal_to,
     is_not_equal_to,
@@ -164,6 +166,8 @@ def test_col_is_not_null_and_is_in_list(spark):
             ["str1", 1, {"val": "a"}, ["a", "b"]],
             ["str2", None, {"val": "str2"}, [None, "a"]],
             [" ", 3, {"val": " "}, [None, " "]],
+            ["STR1", 4, {"val": "A"}, ["B", "c"]],
+            ["str5", 5, {"val": "e"}, ["b", "C"]],
         ],
         input_schema,
     )
@@ -173,28 +177,81 @@ def test_col_is_not_null_and_is_in_list(spark):
         is_not_null_and_is_in_list("b", [F.lit(3)]),
         is_not_null_and_is_in_list(F.col("c").getItem("val"), [F.lit("a")]),
         is_not_null_and_is_in_list(F.try_element_at("d", F.lit(2)), ["b"]),
+        is_not_null_and_is_in_list("a", ["str1"], case_sensitive=False),
+        is_not_null_and_is_in_list(F.col("c").getItem("val"), [F.lit("a")], case_sensitive=False),
+        is_not_null_and_is_in_list(F.try_element_at("d", F.lit(2)), ["b"], case_sensitive=False),
+        is_not_null_and_is_in_list("d", [["a", "b"], ["B", "c"]]),
+        is_not_null_and_is_in_list("d", [["a", "b"], ["B", "c"]], case_sensitive=False),
     )
 
     checked_schema = (
         "a_is_null_or_is_not_in_the_list: string, "
         + "b_is_null_or_is_not_in_the_list: string, "
         + "unresolvedextractvalue_c_val_is_null_or_is_not_in_the_list: string, "
-        + "try_element_at_d_2_is_null_or_is_not_in_the_list: string"
+        + "try_element_at_d_2_is_null_or_is_not_in_the_list: string, "
+        + "a_is_null_or_is_not_in_the_list: string, "
+        + "unresolvedextractvalue_c_val_is_null_or_is_not_in_the_list: string, "
+        + "try_element_at_d_2_is_null_or_is_not_in_the_list: string, "
+        + "d_is_null_or_is_not_in_the_list: string, "
+        + "d_is_null_or_is_not_in_the_list: string"
     )
+    col_d_null = None
     expected = spark.createDataFrame(
         [
-            [None, "Value '1' in Column 'b' is null or not in the allowed list: [3]", None, None],
+            [
+                None,
+                "Value '1' in Column 'b' is null or not in the allowed list: [3]",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                col_d_null,
+            ],
             [
                 "Value 'str2' in Column 'a' is null or not in the allowed list: [str1]",
                 "Value 'null' in Column 'b' is null or not in the allowed list: [3]",
                 "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
                 "Value 'a' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value 'str2' in Column 'a' is null or not in the allowed list: [str1]",
+                "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'a' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value '[null, a]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
+                "Value '[null, a]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
             ],
             [
                 "Value ' ' in Column 'a' is null or not in the allowed list: [str1]",
                 None,
                 "Value ' ' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
                 "Value ' ' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value ' ' in Column 'a' is null or not in the allowed list: [str1]",
+                "Value ' ' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value ' ' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value '[null,  ]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
+                "Value '[null,  ]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
+            ],
+            [
+                "Value 'STR1' in Column 'a' is null or not in the allowed list: [str1]",
+                "Value '4' in Column 'b' is null or not in the allowed list: [3]",
+                "Value 'A' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'c' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                None,
+                None,
+                "Value 'c' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                None,
+                None,
+            ],
+            [
+                "Value 'str5' in Column 'a' is null or not in the allowed list: [str1]",
+                "Value '5' in Column 'b' is null or not in the allowed list: [3]",
+                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'C' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value 'str5' in Column 'a' is null or not in the allowed list: [str1]",
+                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'C' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
+                "Value '[b, C]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
+                None,
             ],
         ],
         checked_schema,
@@ -210,43 +267,115 @@ def test_col_is_not_in_list(spark):
             ["str1", 1, {"val": "a"}, ["a", "b"]],
             ["str2", None, {"val": "str2"}, [None, "a"]],
             [" ", 3, {"val": None}, [None, "a"]],
+            ["STR1", 4, {"val": "A"}, ["B", "c"]],
+            ["str5", 5, {"val": "e"}, ["b", "C"]],
         ],
         input_schema,
     )
-
     actual = test_df.select(
         is_in_list("a", ["str1"]),
         is_in_list("b", [F.lit(3)]),
         is_in_list(F.col("c").getItem("val"), [F.lit("a")]),
         is_in_list(F.try_element_at("d", F.lit(2)), ["b"]),
+        is_in_list("a", ["str1"], case_sensitive=False),
+        is_in_list(F.col("c").getItem("val"), [F.lit("a")], case_sensitive=False),
+        is_in_list(F.try_element_at("d", F.lit(2)), ["b"], case_sensitive=False),
+        is_in_list("d", [["a", "b"], ["B", "c"]]),
+        is_in_list("d", [["a", "b"], ["B", "c"]], case_sensitive=False),
     )
-
     checked_schema = (
         "a_is_not_in_the_list: string, "
         + "b_is_not_in_the_list: string, "
         + "unresolvedextractvalue_c_val_is_not_in_the_list: string, "
-        + "try_element_at_d_2_is_not_in_the_list: string"
+        + "try_element_at_d_2_is_not_in_the_list: string, "
+        + "a_is_not_in_the_list: string, "
+        + "unresolvedextractvalue_c_val_is_not_in_the_list: string, "
+        + "try_element_at_d_2_is_not_in_the_list: string, "
+        + "d_is_not_in_the_list: string, "
+        + "d_is_not_in_the_list: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, "Value '1' in Column 'b' is not in the allowed list: [3]", None, None],
+            [None, "Value '1' in Column 'b' is not in the allowed list: [3]", None, None, None, None, None, None, None],
             [
                 "Value 'str2' in Column 'a' is not in the allowed list: [str1]",
                 None,
                 "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
                 "Value 'a' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value 'str2' in Column 'a' is not in the allowed list: [str1]",
+                "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'a' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value '[null, a]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
+                "Value '[null, a]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
             ],
             [
                 "Value ' ' in Column 'a' is not in the allowed list: [str1]",
                 None,
                 None,
                 "Value 'a' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value ' ' in Column 'a' is not in the allowed list: [str1]",
+                None,
+                "Value 'a' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value '[null, a]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
+                "Value '[null, a]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
+            ],
+            [
+                "Value 'STR1' in Column 'a' is not in the allowed list: [str1]",
+                "Value '4' in Column 'b' is not in the allowed list: [3]",
+                "Value 'A' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'c' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                None,
+                None,
+                "Value 'c' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                None,
+                None,
+            ],
+            [
+                "Value 'str5' in Column 'a' is not in the allowed list: [str1]",
+                "Value '5' in Column 'b' is not in the allowed list: [3]",
+                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'C' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value 'str5' in Column 'a' is not in the allowed list: [str1]",
+                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'C' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
+                "Value '[b, C]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
+                None,
             ],
         ],
         checked_schema,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_not_in_list_mismatch_datatype(spark):
+    input_schema = "a: string, d: array<string>"
+    test_df = spark.createDataFrame(
+        [
+            ["str1", ["a", "b"]],
+        ],
+        input_schema,
+    )
+    actual = test_df.select(
+        is_in_list("d", ["a", "b"]),  # wrong data type
+    )
+    with pytest.raises(AnalysisException, match="[DATATYPE_MISMATCH.DATA_DIFF_TYPES]"):
+        actual.count()
+
+
+def test_col_is_not_null_and_is_in_list_mismatch_datatype(spark):
+    input_schema = "a: string, d: array<string>"
+    test_df = spark.createDataFrame(
+        [
+            ["str1", ["a", "b"]],
+        ],
+        input_schema,
+    )
+    actual = test_df.select(
+        is_not_null_and_is_in_list("d", ["a", "b"]),  # wrong data type
+    )
+    with pytest.raises(AnalysisException, match="[DATATYPE_MISMATCH.DATA_DIFF_TYPES]"):
+        actual.count()
 
 
 def test_col_sql_expression(spark):
