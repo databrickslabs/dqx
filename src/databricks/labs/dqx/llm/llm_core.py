@@ -93,11 +93,12 @@ class DspyRuleSignature(dspy.Signature):
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
     quality_rules: str = dspy.OutputField(
         desc=(
-            "Return a valid JSON array of data quality rules. Use double quotes only. "
+            "Return a valid JSON array of data quality rules. Use double quotes only and capitalize keywords. "
             "Criticality can be error or warn. "
+            "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
-            "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}}}] "
-            "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}}}]"
+            "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
+            "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
         )
     )
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")

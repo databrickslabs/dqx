@@ -7,8 +7,8 @@ from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 
 USER_INPUT = """
-Username should not start with 's' if age is less than 18. Use exact wording if needed in the generated rule.
-All users must have a valid email address.
+Username should not start with 's' and should not contain more than 20 letters if user id is provided. Use exact wording for message if needed in the generated rule.
+Users at age 18 or above must have a valid email address.
 Age should be between 0 and 120.
 """
 
@@ -16,13 +16,14 @@ EXPECTED_CHECKS = [
     {
         "check": {
             "arguments": {
-                "columns": ["username", "age"],
-                "expression": "NOT (username LIKE 's%' AND age < 18)",
-                "msg": "Username should not start with 's' if age is less than 18",
+                "columns": ["username"],
+                "expression": "NOT (username LIKE 's%') AND LENGTH(username) <= 20",
+                "msg": "Username should not start with 's' and should not contain more than 20 letters if user id is provided",
             },
             "function": "sql_expression",
         },
         "criticality": "error",
+        "filter": "user_id IS NOT NULL",
     },
     {
         "check": {
@@ -30,6 +31,7 @@ EXPECTED_CHECKS = [
             "function": "regex_match",
         },
         "criticality": "error",
+        "filter": "age >= 18",
     },
     {
         "check": {"arguments": {"column": "age", "max_limit": 120, "min_limit": 0}, "function": "is_in_range"},
