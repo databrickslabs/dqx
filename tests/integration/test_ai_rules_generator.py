@@ -1,5 +1,6 @@
 import pyspark.sql.functions as F
 from tests.conftest import TEST_CATALOG
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
@@ -64,10 +65,19 @@ def test_generate_dq_rules_ai_assisted_with_input_path(ws, spark, make_directory
     folder = make_directory()
     workspace_file_path = str(folder.absolute()) + "/input_data.parquet"
 
+    schema = StructType(
+        [
+            StructField("user_id", StringType(), True),
+            StructField("username", StringType(), True),
+            StructField("email", StringType(), True),
+            StructField("age", IntegerType(), True),
+        ]
+    )
+
     test_data = [
         ("user1", "john_doe", "john@example.com", 25),
     ]
-    df = spark.createDataFrame(test_data, ["user_id", "username", "email", "age"])
+    df = spark.createDataFrame(test_data, schema=schema)
     df.write.mode("overwrite").parquet(workspace_file_path)
 
     generator = DQGenerator(ws, spark)
