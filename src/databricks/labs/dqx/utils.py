@@ -446,5 +446,5 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
         Column expression with lowercase transformation applied
     """
     if is_array:
-        return F.transform(col_expr, lambda x: F.lower(x))
+        return F.transform(col_expr, F.lower)
     return F.lower(col_expr)

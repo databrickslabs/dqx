@@ -190,6 +190,7 @@ def test_col_is_not_null_and_is_in_list(spark):
         + "d_is_null_or_is_not_in_the_list: string, "
         + "d_is_null_or_is_not_in_the_list: string"
     )
+    col_d_null = None
     expected = spark.createDataFrame(
         [
             [
@@ -201,7 +202,7 @@ def test_col_is_not_null_and_is_in_list(spark):
                 None,
                 None,
                 None,
-                None,
+                col_d_null,
             ],
             [
                 "Value 'str2' in Column 'a' is null or not in the allowed list: [str1]",
