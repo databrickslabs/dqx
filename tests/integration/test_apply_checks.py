@@ -5877,7 +5877,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
     schema = (
         "col1: string, col2: int, col3: int, col4 array<int>, col5: date, col6: timestamp, "
         "col7: map<string, int>, col8: struct<field1: int>, col10: int, col11: string, "
-        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2"
+        "col_ipv4: string, col_ipv6: string, col_json_str: string, col_json_str2: string"
     )
     test_df = spark.createDataFrame(
         [
