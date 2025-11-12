@@ -8,7 +8,8 @@ from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 
 USER_INPUT = """
-Username should not start with 's' and should not contain more than 20 letters if user id is provided. For the generated rule, use this exact message if needed: "Username should not start with 's' and should not contain more than 20 letters if user id is provided"
+Username should not start with 's' and should not contain more than 20 letters if user id is provided. Error message must be: "Username should not start with 's' and should not contain more than 20 letters if user id is provided"
+Apply validation when user_id is not null.
 Users at age 18 or above must have a valid email address.
 Age should be between 0 and 120.
 """
