@@ -358,6 +358,16 @@ resources:
             #    package: databricks-labs-dqx==0.8.0
 ```
 
+### Installing DQX with company-hosted PyPI mirror
+
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.10.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
+```
+
+DQX will automatically upload all required dependencies to the workspace during installation, ensuring that workflows can run even when the workspace blocks internet access.
+
 ### Upgrade DQX in the Databricks workspace
 
 Verify that DQX is installed:
