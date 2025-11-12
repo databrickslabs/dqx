@@ -1,12 +1,18 @@
 import inspect
 import json
+from unittest.mock import Mock
+import pytest
 import dspy  # type: ignore
 import pyspark.sql.functions as F
+from pyspark.sql.types import StructField, StringType, IntegerType
+
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.llm.llm_utils import (
     get_check_function_definitions,
     create_optimizer_training_set,
     get_required_check_functions_definitions,
+    get_column_metadata,
 )
 
 
@@ -148,3 +154,37 @@ def test_get_training_examples_with_custom_check_functions():
         )
     ]
     assert filtered_examples
+
+
+@pytest.mark.parametrize(
+    "location, spark_read_mock_method",
+    [
+        ("catalog.schema.table", "table"),
+        ("s3://bucket/path/to/data", "load"),
+    ],
+)
+def test_get_column_metadata(location, spark_read_mock_method):
+    mock_spark = Mock()
+    mock_df = Mock()
+    mock_schema = Mock()
+    mock_schema.fields = [
+        StructField("customer_id", StringType(), True),
+        StructField("first_name", StringType(), True),
+        StructField("last_name", StringType(), True),
+        StructField("age", IntegerType(), True),
+    ]
+    mock_df.schema = mock_schema
+
+    # Dynamically set the mock method (either table or load)
+    setattr(mock_spark.read.options.return_value, spark_read_mock_method, Mock(return_value=mock_df))
+
+    result = get_column_metadata(mock_spark, InputConfig(location=location))
+    expected_result = {
+        "columns": [
+            {"name": "customer_id", "type": "string"},
+            {"name": "first_name", "type": "string"},
+            {"name": "last_name", "type": "string"},
+            {"name": "age", "type": "int"},
+        ]
+    }
+    assert result == json.dumps(expected_result)
