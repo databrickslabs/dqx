@@ -7,7 +7,6 @@ import sys
 from collections.abc import Iterator
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
-from importlib.metadata import requires, PackageNotFoundError
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -52,63 +51,6 @@ from databricks.labs.dqx.installer.logs import PartialLogRecord, parse_logs
 from databricks.labs.dqx.errors import InvalidConfigError
 
 logger = logging.getLogger(__name__)
-
-
-def get_dependency_prefixes(requirements_func=None) -> list[str]:
-    """Get the list of dependency prefixes for wheel file names.
-
-    This function reads the package metadata to dynamically determine which dependencies
-    need to be uploaded to the workspace. It excludes optional dependencies (extras)
-    and converts package names to wheel filename prefixes.
-
-    Args:
-        requirements_func (callable, optional): Function to get requirements, defaults to requires()
-
-    Returns:
-        list[str]: List of dependency prefixes for wheel file matching
-    """
-    if requirements_func is None:
-        requirements_func = requires
-    try:
-        package_requirements = requirements_func('databricks-labs-dqx')
-        if not package_requirements:
-            logger.warning("No dependencies found in package metadata, using defaults")
-            return _get_default_dependencies()
-        return _parse_requirements(package_requirements)
-    except PackageNotFoundError:
-        logger.warning("Package metadata not found, using default dependencies")
-        return _get_default_dependencies()
-
-
-def _parse_requirements(package_requirements: list[str]) -> list[str]:
-    """Parse package requirements and convert to wheel prefixes.
-
-    Args:
-        package_requirements: List of requirement strings from package metadata
-
-    Returns:
-        list[str]: List of dependency prefixes for wheel file matching
-    """
-    dependency_prefixes = []
-    for req in package_requirements:
-        # Skip optional dependencies (those with extras markers like "; extra == 'llm'")
-        if 'extra ==' in req:
-            continue
-        # Extract package name and convert to wheel prefix
-        package_name = re.split(r'[<>=!~\s;]', req)[0].strip()
-        wheel_prefix = package_name.replace('-', '_')
-        dependency_prefixes.append(wheel_prefix)
-    return dependency_prefixes
-
-
-def _get_default_dependencies() -> list[str]:
-    """Get default dependency list as fallback.
-
-    Returns:
-        list[str]: Default list of dependency prefixes
-    """
-    return ['databricks_sdk', 'databricks_labs_blueprint', 'databricks_labs_lsql', 'SQLAlchemy']
-
 
 TEST_RESOURCE_PURGE_TIMEOUT = timedelta(hours=1)
 TEST_NIGHTLY_CI_RESOURCES_PURGE_TIMEOUT = timedelta(hours=3)  # Buffer for debugging nightly integration test runs
@@ -546,24 +488,8 @@ class WorkflowDeployment(InstallationMixin):
                 return 2
 
     def _upload_wheel(self):
-        """Upload the DQX wheel and its dependencies to the workspace.
-
-        This method uploads both the main DQX wheel and its core dependencies to the workspace.
-        This ensures that workflows can run even when installed from private PyPI mirrors or
-        in environments without direct internet access from the cluster.
-
-        The dependencies are automatically discovered from the package metadata, ensuring that
-        any changes to dependencies in pyproject.toml are reflected without code changes.
-
-        Returns:
-            list[str]: List of remote wheel paths in the workspace, prefixed with /Workspace
-        """
         wheel_paths = []
         with self._wheels:
-            # Dynamically determine dependencies from package metadata
-            dependency_prefixes = get_dependency_prefixes()
-            logger.debug(f"Uploading dependencies: {dependency_prefixes}")
-            wheel_paths.extend(self._wheels.upload_wheel_dependencies(dependency_prefixes))
             wheel_paths.sort(key=WorkflowDeployment._library_dep_order)
             wheel_paths.append(self._wheels.upload_to_wsfs())
             wheel_paths = [f"/Workspace{wheel}" for wheel in wheel_paths]
