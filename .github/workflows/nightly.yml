@@ -147,6 +147,10 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      - name: Install dbt
+        run: |
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
+
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
@@ -198,6 +202,10 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      - name: Install dbt
+        run: |
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
+      
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
