@@ -360,41 +360,23 @@ resources:
 
 ### Installing DQX with company-hosted PyPI mirror
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.10.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/main/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
 ```
 
-During installation, reply **yes** to the question "Does the given workspace block Internet access?". DQX will automatically upload all required dependencies to the workspace during installation, ensuring that workflows can run even when the workspace blocks internet access.
+During installation reply *yes* to the question "Does the given workspace block Internet access"?
 
-### Offline Installation
-
-In case the host has no access to GitHub, the DQX installation will not be able to download files locally and will fail. To address this, follow these steps:
-
-1. Install DQX on a host that has access to GitHub using the instructions above:
-   ```commandline
-   PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
-   ```
-
-2. Zip the installation from `~/.databricks/labs/dqx`:
-   ```commandline
-   cd ~/.databricks/labs
-   zip -r dqx.zip dqx
-   ```
-
-3. Copy the zip file to the target host and unzip it:
-   ```commandline
-   cd ~/.databricks/labs
-   unzip dqx.zip
-   ```
-
-4. Now the installation can be done in offline mode (ensure Databricks CLI is upgraded to version v0.244.0 or higher):
-   ```commandline
-   PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx --offline=true
-   ```
-
-During offline installation, reply **yes** to the question "Does the given workspace block Internet access?" to ensure dependencies are uploaded to the workspace.
+In case if host has no access to github, then dqx installation will not be able to download the files locally and fail.
+In order to address that, follow the steps below
+ - install dqx on a host which has access to github using the instruction above
+ - zip the installation from ~/.databricks/labs/dqx
+ - copy the zip file to the target host and unzip
+Now the installation can be done in offline mode (ensure databricks cli is upgrade to version v0.244.0 or higher)
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx --offline=true
+```
 
 ### Upgrade DQX in the Databricks workspace
 
