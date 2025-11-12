@@ -1,14 +1,16 @@
 import pyspark.sql.functions as F
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from tests.conftest import TEST_CATALOG
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 
 USER_INPUT = """
-Username should not start with 's' if age is less than 18. Use exact wording if needed in the generated rule.
-All users must have a valid email address.
+Username should not start with 's' and should not contain more than 20 letters if user id is provided. Error message must be: "Username should not start with 's' and should not contain more than 20 letters if user id is provided"
+Apply validation when user_id is not null.
+Users at age 18 or above must have a valid email address.
 Age should be between 0 and 120.
 """
 
@@ -16,13 +18,14 @@ EXPECTED_CHECKS = [
     {
         "check": {
             "arguments": {
-                "columns": ["username", "age"],
-                "expression": "NOT (username LIKE 's%' AND age < 18)",
-                "msg": "Username should not start with 's' if age is less than 18",
+                "columns": ["username"],
+                "expression": "NOT (username LIKE 's%') AND LENGTH(username) <= 20",
+                "msg": "Username should not start with 's' and should not contain more than 20 letters if user id is provided",
             },
             "function": "sql_expression",
         },
         "criticality": "error",
+        "filter": "user_id IS NOT NULL",
     },
     {
         "check": {
@@ -30,6 +33,7 @@ EXPECTED_CHECKS = [
             "function": "regex_match",
         },
         "criticality": "error",
+        "filter": "age >= 18",
     },
     {
         "check": {"arguments": {"column": "age", "max_limit": 120, "min_limit": 0}, "function": "is_in_range"},
@@ -52,7 +56,35 @@ def test_generate_dq_rules_ai_assisted_with_input_table(ws, spark, make_table, m
         columns=[("user_id", "string"), ("username", "string"), ("email", "string"), ("age", "int")],
     )
     generator = DQGenerator(ws, spark)
-    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=USER_INPUT, table_name=input_table.full_name)
+    actual_checks = generator.generate_dq_rules_ai_assisted(
+        user_input=USER_INPUT, input_config=InputConfig(location=input_table.full_name)
+    )
+    assert actual_checks == EXPECTED_CHECKS
+
+
+def test_generate_dq_rules_ai_assisted_with_input_path(ws, spark, make_directory):
+    folder = make_directory()
+    workspace_file_path = str(folder.absolute()) + "/input_data.parquet"
+
+    schema = StructType(
+        [
+            StructField("user_id", StringType(), True),
+            StructField("username", StringType(), True),
+            StructField("email", StringType(), True),
+            StructField("age", IntegerType(), True),
+        ]
+    )
+
+    test_data = [
+        ("user1", "john_doe", "john@example.com", 25),
+    ]
+    df = spark.createDataFrame(test_data, schema=schema)
+    df.write.mode("overwrite").parquet(workspace_file_path)
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(
+        user_input=USER_INPUT, input_config=InputConfig(location=workspace_file_path, format="parquet")
+    )
     assert actual_checks == EXPECTED_CHECKS
 
 
