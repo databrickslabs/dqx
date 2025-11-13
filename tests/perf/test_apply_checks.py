@@ -1639,3 +1639,19 @@ def test_benchmark_has_json_keys_require_all_true(benchmark, ws, generated_df):
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.benchmark(group="test_benchmark_has_valid_json_schema")
+def test_benchmark_has_valid_json_schema(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_valid_json_schema,
+            column="col_json_str",
+            check_func_kwargs={"schema": "STRUCT<key1: STRING, key2: STRING>"},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
