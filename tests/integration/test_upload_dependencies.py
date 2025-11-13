@@ -1,6 +1,6 @@
 import logging
 import importlib.metadata
-from unittest.mock import patch
+from unittest.mock import patch, create_autospec
 import pytest
 
 from databricks.labs.blueprint.installation import Installation
@@ -77,7 +77,9 @@ def test_workflow_deployment_uploads_dependencies(ws, installation_with_upload_d
     installation, config = installation_with_upload_deps()
 
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    install_state = InstallState.from_installation(installation)
+    # Mock install state since we're just testing wheel upload behavior
+    install_state = create_autospec(InstallState)
+    install_state.jobs = {}
     wheels = product_info.wheels(ws)
 
     # Create a simple task for testing
@@ -140,7 +142,9 @@ def test_dependency_discovery_includes_extras(ws, installation_with_upload_deps)
     installation, config = installation_with_upload_deps()
 
     product_info = ProductInfo.for_testing(WorkspaceConfig)
-    install_state = InstallState.from_installation(installation)
+    # Mock install state since we're just testing wheel upload behavior
+    install_state = create_autospec(InstallState)
+    install_state.jobs = {}
     wheels = product_info.wheels(ws)
 
     tasks = [
