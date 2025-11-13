@@ -109,7 +109,7 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false
           codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,6 +147,10 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      - name: Install dbt
+        run: |
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
+
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
@@ -170,7 +174,7 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false
           codegen_path: tests/e2e/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -198,6 +202,10 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      - name: Install dbt
+        run: |
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
+      
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
@@ -221,7 +229,7 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false
           codegen_path: tests/e2e/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
