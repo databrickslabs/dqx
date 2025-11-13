@@ -1,6 +1,7 @@
 import os
 import json
 import datetime
+import functools
 import logging
 import re
 from typing import Any
@@ -448,3 +449,8 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     if is_array:
         return F.transform(col_expr, F.lower)
     return F.lower(col_expr)
+
+
+@functools.cache
+def get_workspace_client() -> WorkspaceClient:
+    return WorkspaceClient()

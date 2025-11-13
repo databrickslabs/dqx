@@ -52,7 +52,9 @@ from databricks.labs.dqx.checks_serializer import (
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.io import TABLE_PATTERN
+from databricks.labs.dqx.mixins import WorkspaceClientSerDeMixin
 from databricks.labs.dqx.telemetry import telemetry_logger
+from databricks.labs.dqx.utils import get_workspace_client
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
@@ -82,14 +84,18 @@ class ChecksStorageHandler(ABC, Generic[T]):
         """Save quality rules to the target."""
 
 
-class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
+class TableChecksStorageHandler(WorkspaceClientSerDeMixin, ChecksStorageHandler[TableChecksStorageConfig]):
     """
     Handler for storing quality rules (checks) in a Delta table in the workspace.
     """
 
-    def __init__(self, ws: WorkspaceClient, spark: SparkSession):
-        self.ws = ws
-        self.spark = spark
+    def __init__(self, ws: WorkspaceClient | None = None, spark: SparkSession | None = None):
+        self._ws = ws
+        self.spark = spark or SparkSession.builder.getOrCreate()
+
+    @property
+    def ws(self) -> WorkspaceClient:
+        return self._ws or get_workspace_client()
 
     @telemetry_logger("load_checks", "table")
     def load(self, config: TableChecksStorageConfig) -> list[dict]:
@@ -130,15 +136,21 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         )
 
 
-class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):
+class LakebaseChecksStorageHandler(WorkspaceClientSerDeMixin, ChecksStorageHandler[LakebaseChecksStorageConfig]):
     """
     Handler for storing dq rules (checks) in a Lakebase table.
     """
 
-    def __init__(self, ws: WorkspaceClient, spark: SparkSession, engine: Engine | None = None):
-        self.ws = ws
-        self.spark = spark
+    def __init__(
+        self, ws: WorkspaceClient | None = None, spark: SparkSession | None = None, engine: Engine | None = None
+    ):
+        self._ws = ws
+        self.spark = spark if spark is not None else SparkSession.builder.getOrCreate()
         self.engine = engine
+
+    @property
+    def ws(self) -> WorkspaceClient:
+        return self._ws or get_workspace_client()
 
     def _get_connection_url(self, config: LakebaseChecksStorageConfig) -> str:
         """
@@ -418,13 +430,19 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 engine.dispose()
 
 
-class WorkspaceFileChecksStorageHandler(ChecksStorageHandler[WorkspaceFileChecksStorageConfig]):
+class WorkspaceFileChecksStorageHandler(
+    WorkspaceClientSerDeMixin, ChecksStorageHandler[WorkspaceFileChecksStorageConfig]
+):
     """
     Handler for storing quality rules (checks) in a file (json or yaml) in the workspace.
     """
 
-    def __init__(self, ws: WorkspaceClient):
-        self.ws = ws
+    def __init__(self, ws: WorkspaceClient | None = None):
+        self._ws = ws
+
+    @property
+    def ws(self) -> WorkspaceClient:
+        return self._ws or get_workspace_client()
 
     @telemetry_logger("load_checks", "workspace_file")
     def load(self, config: WorkspaceFileChecksStorageConfig) -> list[dict]:
@@ -538,17 +556,22 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
 
     def __init__(
         self,
-        ws: WorkspaceClient,
-        spark: SparkSession,
+        ws: WorkspaceClient | None = None,
+        spark: SparkSession | None = None,
         config_serializer: ConfigSerializer | None = None,
     ):
-        self.ws = ws
+        spark = spark or SparkSession.builder.getOrCreate()
+        self._ws = ws
         self._config_serializer = config_serializer or ConfigSerializer(ws)
         self.workspace_file_handler = WorkspaceFileChecksStorageHandler(ws)
         self.table_handler = TableChecksStorageHandler(ws, spark)
         self.volume_handler = VolumeFileChecksStorageHandler(ws)
         self.lakebase_handler = LakebaseChecksStorageHandler(ws, spark, None)
         super().__init__(ws)
+
+    @property
+    def ws(self) -> WorkspaceClient:
+        return self._ws or get_workspace_client()
 
     @telemetry_logger("load_checks", "installation")
     def load(self, config: InstallationChecksStorageConfig) -> list[dict]:
@@ -635,13 +658,17 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         return self.workspace_file_handler, config
 
 
-class VolumeFileChecksStorageHandler(ChecksStorageHandler[VolumeFileChecksStorageConfig]):
+class VolumeFileChecksStorageHandler(WorkspaceClientSerDeMixin, ChecksStorageHandler[VolumeFileChecksStorageConfig]):
     """
     Handler for storing quality rules (checks) in a file (json or yaml) in a Unity Catalog volume.
     """
 
-    def __init__(self, ws: WorkspaceClient):
-        self.ws = ws
+    def __init__(self, ws: WorkspaceClient | None = None):
+        self._ws = ws
+
+    @property
+    def ws(self) -> WorkspaceClient:
+        return self._ws or get_workspace_client()
 
     @telemetry_logger("load_checks", "volume")
     def load(self, config: VolumeFileChecksStorageConfig) -> list[dict]:
@@ -749,10 +776,24 @@ class BaseChecksStorageHandlerFactory(ABC):
         """
 
 
-class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
-    def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession):
-        self.workspace_client = workspace_client
-        self.spark = spark
+class ChecksStorageHandlerFactory(WorkspaceClientSerDeMixin, BaseChecksStorageHandlerFactory):
+    def __init__(self, workspace_client: WorkspaceClient | None = None, spark: SparkSession | None = None):
+        self._workspace_client = workspace_client
+        self.spark = spark or SparkSession.builder.getOrCreate()
+
+    @property
+    def workspace_client(self) -> WorkspaceClient:
+        return self._workspace_client or get_workspace_client()
+
+    def __getstate__(self):
+        """Removes the WorkspaceClient when `ChecksStorageHandlerFactory` is pickled."""
+        state = self.__dict__.copy()
+        state['_workspace_client'] = None
+        return state
+
+    def __setstate__(self, state):
+        """Recreates the WorkspaceClient when `ChecksStorageHandlerFactory` is unpickled."""
+        self.__dict__.update(state)
 
     def create(self, config: BaseChecksStorageConfig) -> ChecksStorageHandler:
         """
