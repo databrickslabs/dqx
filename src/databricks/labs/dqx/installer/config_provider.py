@@ -98,6 +98,9 @@ class ConfigProvider:
 
         warehouse_id = self._warehouse_configurator.create()
 
+        # Ask if the workspace blocks Internet access to determine if dependencies should be uploaded
+        upload_dependencies = self._prompts.confirm("Does the given workspace block Internet access?")
+
         return WorkspaceConfig(
             log_level=log_level,
             run_configs=[
@@ -114,6 +117,7 @@ class ConfigProvider:
                 )
             ],
             serverless_clusters=serverless_clusters,
+            upload_dependencies=upload_dependencies,
             profiler_spark_conf=profiler_spark_conf,
             profiler_override_clusters=profiler_override_clusters,
             quality_checker_spark_conf=quality_checker_spark_conf,
