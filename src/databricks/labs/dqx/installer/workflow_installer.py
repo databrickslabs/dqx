@@ -499,7 +499,7 @@ class WorkflowDeployment(InstallationMixin):
         Returns:
             Package name prefix with underscores, or None if invalid.
         """
-        match = re.match(r'^([a-zA-Z0-9_-]+)', requirement)
+        match = re.match(r'^([a-zA-Z0-9-]+)', requirement)
         if match:
             pkg_name = match.group(1)
             return pkg_name.replace('-', '_')
