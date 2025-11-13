@@ -1,5 +1,6 @@
 import logging
 import importlib.metadata
+from datetime import timedelta
 from unittest.mock import patch, create_autospec
 import pytest
 
@@ -7,10 +8,11 @@ from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo
-from databricks.labs.dqx.config import WorkspaceConfig
-from databricks.labs.dqx.installer.install import WorkspaceInstaller
-from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
+from databricks.labs.dqx.config import WorkspaceConfig, InputConfig, OutputConfig, ProfilerConfig
+from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
+from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment, DeployedWorkflows
 from databricks.labs.dqx.installer.workflow_task import Task
+from databricks.sdk.service.jobs import RunResultState
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,7 @@ def test_workflow_deployment_uploads_dependencies(ws, installation_with_upload_d
     # Mock install state since we're just testing wheel upload behavior
     install_state = create_autospec(InstallState)
     install_state.jobs = {}
+    install_state.save.return_value = None  # Mock save to avoid NotInstalled error
     wheels = product_info.wheels(ws)
 
     # Create a simple task for testing
@@ -145,6 +148,7 @@ def test_dependency_discovery_includes_extras(ws, installation_with_upload_deps)
     # Mock install state since we're just testing wheel upload behavior
     install_state = create_autospec(InstallState)
     install_state.jobs = {}
+    install_state.save.return_value = None  # Mock save to avoid NotInstalled error
     wheels = product_info.wheels(ws)
 
     tasks = [
@@ -221,3 +225,102 @@ def test_config_upload_dependencies_persists(ws, installation_with_upload_deps):
     config_dict = loaded_config.as_dict()
     assert "upload_dependencies" in config_dict
     assert config_dict["upload_dependencies"] is True
+
+
+def _configure_test_workspace(installer, input_table, catalog_name, schema_name, make_random):
+    """Helper to configure workspace with test data."""
+    workspace_config = installer.configure()
+    assert workspace_config.upload_dependencies is True, "upload_dependencies should be True"
+
+    run_config = workspace_config.get_run_config()
+    run_config.input_config = InputConfig(location=input_table.full_name, options={"versionAsOf": "0"})
+    output_table = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    run_config.output_config = OutputConfig(location=output_table)
+    run_config.profiler_config = ProfilerConfig(sample_fraction=1.0, sample_seed=100)
+
+    return workspace_config
+
+
+def _run_and_verify_workflow(ws, installation):
+    """Helper to run and verify profiler workflow execution."""
+    install_state = InstallState.from_installation(installation)
+    assert len(install_state.jobs) > 0, "Jobs should be created"
+
+    deployed_workflows = DeployedWorkflows(ws, install_state)
+    run_id = deployed_workflows.run_workflow("profiler", run_config_name="default", max_wait=timedelta(minutes=15))
+
+    assert run_id is not None, "Workflow should return a run_id"
+
+    job_runs = list(ws.jobs.list_runs(run_id=run_id, limit=1))
+    assert len(job_runs) > 0, "Job run should exist"
+
+    run_state = job_runs[0].state
+    assert run_state is not None, "Job run should have a state"
+
+    assert run_state.result_state in [
+        RunResultState.SUCCESS,
+        RunResultState.CANCELED,
+    ], f"Job should complete successfully, got: {run_state.result_state}"
+
+    return run_id
+
+
+def test_end_to_end_installation_and_workflow_with_upload_dependencies(
+    ws, make_schema, make_table, make_random, env_or_skip
+):
+    """
+    End-to-end integration test: Install DQX with upload_dependencies=True and run a workflow.
+    This verifies that dependencies are properly uploaded and workflows can execute successfully.
+    """
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+
+    # Prepare test data
+    catalog_name = "main"
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = make_table(
+        catalog_name=catalog_name,
+        schema_name=schema.name,
+        ctas="SELECT * FROM VALUES (1, 'a'), (2, 'b'), (3, NULL) AS data(id, name)",
+    )
+
+    # Create prompts with upload_dependencies enabled
+    prompts = MockPrompts(
+        {
+            r'Provide location for the input data .*': input_table.full_name,
+            r'Provide output table .*': f'{catalog_name}.{schema.name}.{make_random(10).lower()}',
+            r'Do you want to uninstall DQX .*': 'yes',
+            r".*PRO or SERVERLESS SQL warehouse.*": "1",
+            r"Does the given workspace block Internet access\?": "yes",  # Enable upload_dependencies
+            r".*": "",
+        }
+    )
+
+    installation = Installation(ws, product_info.product_name())
+    installer = WorkspaceInstaller(ws).replace(
+        installation=installation,
+        product_info=product_info,
+        prompts=prompts,
+    )
+
+    try:
+        # Configure workspace
+        workspace_config = _configure_test_workspace(installer, input_table, catalog_name, schema.name, make_random)
+        installation.save(workspace_config)
+    except Exception:
+        installation.remove()
+        raise
+
+    try:
+        # Run installation (creates jobs and uploads dependencies)
+        installation_service = InstallationService.current(ws)
+        installation_service.run()
+
+        # Run and verify profiler workflow
+        run_id = _run_and_verify_workflow(ws, installation)
+        logger.info(f"✅ End-to-end test passed: Workflow {run_id} completed with upload_dependencies=True")
+
+    finally:
+        try:
+            installation.remove()
+        except Exception as e:
+            logger.warning(f"Failed to cleanup installation: {e}")
