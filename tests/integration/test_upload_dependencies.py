@@ -7,9 +7,9 @@ import pytest
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.tui import MockPrompts
-from databricks.labs.blueprint.wheels import ProductInfo
+from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.labs.dqx.config import WorkspaceConfig, InputConfig, OutputConfig, ProfilerConfig
-from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
+from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment, DeployedWorkflows
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.sdk.service.jobs import RunResultState
@@ -81,9 +81,10 @@ def test_workflow_deployment_uploads_dependencies(ws, installation_with_upload_d
     product_info = ProductInfo.for_testing(WorkspaceConfig)
     # Mock install state since we're just testing wheel upload behavior
     install_state = create_autospec(InstallState)
-    install_state.jobs = {}
+    install_state.jobs = {}  # Empty dict for jobs
     install_state.save.return_value = None  # Mock save to avoid NotInstalled error
-    wheels = product_info.wheels(ws)
+    # Use the installation from our fixture to create WheelsV2 instead of product_info.wheels(ws)
+    wheels = WheelsV2(installation, product_info)
 
     # Create a simple task for testing
     tasks = [
@@ -108,6 +109,7 @@ def test_workflow_deployment_uploads_dependencies(ws, installation_with_upload_d
 
     # Mock the wheels methods and job creation to test upload behavior
     with (
+        patch.object(InstallState, 'from_installation', return_value=install_state),
         patch.object(wheels, 'upload_wheel_dependencies') as mock_upload_deps,
         patch.object(wheels, 'upload_to_wsfs') as mock_upload_main,
         patch.object(ws.jobs, 'create') as mock_create_job,
@@ -147,9 +149,10 @@ def test_dependency_discovery_includes_extras(ws, installation_with_upload_deps)
     product_info = ProductInfo.for_testing(WorkspaceConfig)
     # Mock install state since we're just testing wheel upload behavior
     install_state = create_autospec(InstallState)
-    install_state.jobs = {}
+    install_state.jobs = {}  # Empty dict for jobs
     install_state.save.return_value = None  # Mock save to avoid NotInstalled error
-    wheels = product_info.wheels(ws)
+    # Use the installation from our fixture to create WheelsV2 instead of product_info.wheels(ws)
+    wheels = WheelsV2(installation, product_info)
 
     tasks = [
         Task(
@@ -182,6 +185,7 @@ def test_dependency_discovery_includes_extras(ws, installation_with_upload_deps)
     ]
 
     with (
+        patch.object(InstallState, 'from_installation', return_value=install_state),
         patch.object(importlib.metadata, 'requires', return_value=mock_requires),
         patch.object(wheels, 'upload_wheel_dependencies') as mock_upload_deps,
         patch.object(wheels, 'upload_to_wsfs') as mock_upload_main,
@@ -251,10 +255,11 @@ def _run_and_verify_workflow(ws, installation):
 
     assert run_id is not None, "Workflow should return a run_id"
 
-    job_runs = list(ws.jobs.list_runs(run_id=run_id, limit=1))
-    assert len(job_runs) > 0, "Job run should exist"
+    # Get the run details using get_run instead of list_runs
+    job_run = ws.jobs.get_run(run_id=run_id)
+    assert job_run is not None, "Job run should exist"
 
-    run_state = job_runs[0].state
+    run_state = job_run.state
     assert run_state is not None, "Job run should have a state"
 
     assert run_state.result_state in [
@@ -303,17 +308,13 @@ def test_end_to_end_installation_and_workflow_with_upload_dependencies(
     )
 
     try:
-        # Configure workspace
+        # Configure and run installation (creates jobs and uploads dependencies)
         workspace_config = _configure_test_workspace(installer, input_table, catalog_name, schema.name, make_random)
         installation.save(workspace_config)
-    except Exception:
-        installation.remove()
-        raise
 
-    try:
-        # Run installation (creates jobs and uploads dependencies)
-        installation_service = InstallationService.current(ws)
-        installation_service.run()
+        # Complete the installation by running the installer
+        # This creates jobs, uploads dependencies, etc.
+        installer.run(default_config=workspace_config)
 
         # Run and verify profiler workflow
         run_id = _run_and_verify_workflow(ws, installation)
