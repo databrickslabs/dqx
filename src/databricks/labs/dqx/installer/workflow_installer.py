@@ -525,6 +525,9 @@ class WorkflowDeployment(InstallationMixin):
         """
         Dynamically retrieve dependency prefixes from package metadata.
 
+        Includes both core and optional (extras) dependencies to ensure workflows
+        have access to all required packages.
+
         Returns:
             List of dependency package name prefixes for wheel files.
         """
@@ -540,16 +543,14 @@ class WorkflowDeployment(InstallationMixin):
 
         prefixes = []
         for req in requires:
-            # Skip optional dependencies (those with markers like extra == 'pii' or 'llm')
-            if 'extra ==' in req:
-                continue
-
             prefix = WorkflowDeployment._extract_dependency_prefix(req)
             if prefix:
                 prefixes.append(prefix)
 
-        logger.info(f"Discovered {len(prefixes)} dependencies from package metadata")
-        return prefixes
+        # Remove duplicates while preserving order
+        unique_prefixes = list(dict.fromkeys(prefixes))
+        logger.info(f"Discovered {len(unique_prefixes)} dependencies from package metadata (including extras)")
+        return unique_prefixes
 
     def _upload_wheel(self):
         wheel_paths = []
