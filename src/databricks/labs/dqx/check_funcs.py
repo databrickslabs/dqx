@@ -1853,6 +1853,10 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
     """
     Validates that JSON strings in the specified column conform to an expected schema.
 
+    Note:
+        This check is **not strict**. Extra fields in the JSON that are not defined
+        in the schema are ignored due to Spark's permissive parsing behavior.
+
     Args:
         column: Column name or Column expression containing JSON strings.
         schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType.
