@@ -430,9 +430,7 @@ class LakebaseChecksStorageHandler(PickleableMixin, ChecksStorageHandler[Lakebas
                 engine.dispose()
 
 
-class WorkspaceFileChecksStorageHandler(
-    PickleableMixin, ChecksStorageHandler[WorkspaceFileChecksStorageConfig]
-):
+class WorkspaceFileChecksStorageHandler(PickleableMixin, ChecksStorageHandler[WorkspaceFileChecksStorageConfig]):
     """
     Handler for storing quality rules (checks) in a file (json or yaml) in the workspace.
     """

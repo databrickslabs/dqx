@@ -1,7 +1,7 @@
 class PickleableMixin:
     """
     Mixin to make classes with WorkspaceClient pickleable. Used to broadcast objects to Spark executors.
-    
+
     This mixin removes WorkspaceClient instances during pickling to avoid serialization of thread locks and network
     connections. The WorkspaceClient is recreated lazily on first access after unpickling.
     """
