@@ -8532,21 +8532,18 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
 
 def test_apply_checks_foreachBatch(spark):
     engine = DQEngine(spark=spark)
+    input_df = spark.readStream.format("rate").load()
     checks = [
-        DQRowRule(
-            name="a_is_null_or_empty",
+        DQRowRule(  # 'rate' source has a non-null 'value' column of type 'long'
+            name="value_is_null_or_empty",
             criticality="warn",
             check_func=check_funcs.is_not_null_and_not_empty,
-            column="a",
+            column="value",
         ),
     ]
-    input_schema = "a int"
-    input_df = spark.createDataFrame([[1], [2], [3]], schema=input_schema)
-
-    expected_schema = input_schema + REPORTING_COLUMNS
-    expected = spark.createDataFrame([[1, None, None], [2, None, None], [3, None, None]], schema=expected_schema)
 
     def batch_handler_function(batch_df: DataFrame, _: int) -> None:
+        expected = batch_df.select("*", F.lit(None).alias("_warnings"), F.lit(None).alias("_errors"))
         actual = engine.apply_checks(batch_df, checks)
         assert_df_equality(actual, expected)
 
