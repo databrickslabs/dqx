@@ -1,5 +1,10 @@
 # Sample ODCS v3.0.2 Data Contract for Demo
-# This demonstrates how to use ODCS with DQX for automated quality rule generation
+# ==================================================
+# This demonstrates how to use ODCS with DQX for automated quality rule generation.
+# Includes examples of:
+#   - Implicit rules from schema properties
+#   - Text-based rules (natural language → LLM)
+#   - Custom DQX rules (row-level and dataset-level)
 
 apiVersion: v3.0.2
 kind: DataContract
@@ -124,4 +129,26 @@ schema:
       description: Error code if sensor reported an issue
       required: false
       pattern: '^E[0-9]{4}$'
+    
+    # Dataset-level quality rule example using DQX custom format
+    last_update_time:
+      logicalType: timestamp
+      physicalType: TIMESTAMP
+      description: Last update timestamp for freshness checks
+      required: true
+      quality:
+        custom:
+          # Dataset-level freshness check
+          criticality: error
+          name: sensor_data_freshness
+          check:
+            function: is_data_fresh_per_time_window
+            arguments:
+              column: last_update_time
+              window_minutes: 30
+              min_records_per_window: 10
+              lookback_windows: 12
+          user_metadata:
+            dimension: timeliness
+            description: Ensure sensor data is updated at least 10 times per 30-minute window
 
