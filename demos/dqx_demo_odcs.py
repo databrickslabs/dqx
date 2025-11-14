@@ -299,33 +299,31 @@ if error_cols:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 8. Custom Criticality Mapping
+# MAGIC ## 8. Custom Criticality Level
 # MAGIC
-# MAGIC You can customize the severity level for different quality dimensions.
+# MAGIC You can customize the default severity level for all generated implicit rules.
 
 # COMMAND ----------
 
-# Generate rules with custom criticality mapping
-custom_rules = generator.generate_rules_from_contract(
+# Generate rules with custom criticality level
+warn_rules = generator.generate_rules_from_contract(
     contract=contract,
     format="odcs",
     generate_implicit_rules=True,
     process_text_rules=False,
-    criticality_mapping={
-        "completeness": "error",  # Missing required fields = error
-        "validity": "warn",       # Format/range issues = warning
-        "uniqueness": "error",    # Duplicate values = error
-    }
+    default_criticality="warn",  # All implicit rules = warning
 )
 
-print(f"📊 Generated {len(custom_rules)} rules with custom criticality")
+print(f"📊 Generated {len(warn_rules)} rules with 'warn' criticality")
 
-# Show criticality distribution
+# Show that all rules have the specified criticality
 from collections import Counter
-criticality_counts = Counter(r['criticality'] for r in custom_rules)
+criticality_counts = Counter(r['criticality'] for r in warn_rules)
 print(f"\nCriticality Distribution:")
 for level, count in criticality_counts.items():
     print(f"  {level}: {count} rules")
+
+# Note: To set different criticalities per rule, use explicit custom rules in the contract
 
 # COMMAND ----------
 

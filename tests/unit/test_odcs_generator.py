@@ -387,26 +387,23 @@ class TestDQGeneratorODCS:
         assert "is_not_null_and_not_empty" in functions
         assert "regex_match" in functions
 
-    def test_criticality_mapping(self, generator):
-        """Test custom criticality mapping for dimensions."""
+    def test_default_criticality(self, generator):
+        """Test that default_criticality is applied to all generated rules."""
         contract_dict = {
             "apiVersion": "v3.0.2",
             "name": "test",
             "version": "1.0.0",
             "schema": {
                 "properties": {
-                    "user_id": {"required": True},
+                    "user_id": {"required": True, "unique": True},
                     "email": {"pattern": "^.+@.+$"},
                 }
             },
         }
-        rules = generator.generate_rules_from_contract(
-            contract=contract_dict, criticality_mapping={"completeness": "error", "validity": "warn"}
-        )
-        completeness_rule = [r for r in rules if r["user_metadata"]["odcs_dimension"] == "completeness"][0]
-        validity_rule = [r for r in rules if r["user_metadata"]["odcs_dimension"] == "validity"][0]
-        assert completeness_rule["criticality"] == "error"
-        assert validity_rule["criticality"] == "warn"
+        rules = generator.generate_rules_from_contract(contract=contract_dict, default_criticality="warn")
+        # All implicit rules should have the default criticality
+        assert len(rules) == 3  # is_not_null, is_unique, regex_match
+        assert all(r["criticality"] == "warn" for r in rules)
 
     def test_skip_implicit_rules(self, generator):
         """Test skipping implicit rule generation."""

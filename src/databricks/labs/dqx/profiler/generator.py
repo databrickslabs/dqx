@@ -137,7 +137,6 @@ class DQGenerator(DQEngineBase):
         generate_implicit_rules: bool = True,
         process_text_rules: bool = True,
         default_criticality: str = "error",
-        criticality_mapping: dict[str, str] | None = None,
     ) -> list[dict]:
         """
         Generate DQX quality rules from a data contract specification.
@@ -150,8 +149,7 @@ class DQGenerator(DQEngineBase):
             format: Contract format specification (default is "odcs").
             generate_implicit_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
-            default_criticality: Default criticality level (default is "error").
-            criticality_mapping: Optional mapping of quality dimensions to criticality levels.
+            default_criticality: Default criticality level for generated rules (default is "error").
 
         Returns:
             A list of dictionaries representing the generated DQX quality rules.
@@ -174,7 +172,6 @@ class DQGenerator(DQEngineBase):
             generate_implicit_rules=generate_implicit_rules,
             process_text_rules=process_text_rules,
             default_criticality=default_criticality,
-            criticality_mapping=criticality_mapping,
         )
 
     @staticmethod

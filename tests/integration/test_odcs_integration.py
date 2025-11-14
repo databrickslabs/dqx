@@ -215,31 +215,27 @@ class TestODCSIntegration:
         assert "is_in_range" in functions
         assert "is_in_list" in functions
 
-    def test_criticality_mapping_applied(self, ws, spark):
-        """Test that custom criticality mapping is correctly applied."""
+    def test_default_criticality_applied(self, ws, spark):
+        """Test that default_criticality is correctly applied to all implicit rules."""
         contract_dict = {
             "apiVersion": "v3.0.2",
             "name": "test",
             "version": "1.0.0",
             "schema": {
                 "properties": {
-                    "id": {"required": True},  # completeness
-                    "email": {"pattern": "^.+@.+$"},  # validity
+                    "id": {"required": True, "unique": True},
+                    "email": {"pattern": "^.+@.+$"},
+                    "age": {"minValue": 0, "maxValue": 120},
                 }
             },
         }
 
         generator = DQGenerator(workspace_client=ws, spark=spark)
-        rules = generator.generate_rules_from_contract(
-            contract=contract_dict, criticality_mapping={"completeness": "error", "validity": "warn"}
-        )
+        rules = generator.generate_rules_from_contract(contract=contract_dict, default_criticality="warn")
 
-        # Find rules by dimension
-        completeness_rules = [r for r in rules if r["user_metadata"]["odcs_dimension"] == "completeness"]
-        validity_rules = [r for r in rules if r["user_metadata"]["odcs_dimension"] == "validity"]
-
-        assert all(r["criticality"] == "error" for r in completeness_rules)
-        assert all(r["criticality"] == "warn" for r in validity_rules)
+        # All implicit rules should have the default criticality
+        assert len(rules) == 4  # is_not_null, is_unique, regex_match, is_in_range
+        assert all(r["criticality"] == "warn" for r in rules)
 
     def test_contract_metadata_preserved(self, ws, spark, sample_contract):
         """Test that contract metadata is preserved in generated rules."""

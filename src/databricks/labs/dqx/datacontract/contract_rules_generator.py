@@ -66,7 +66,6 @@ class DataContractRulesGenerator(DQEngineBase):
         generate_implicit_rules: bool = True,
         process_text_rules: bool = True,
         default_criticality: str = "error",
-        criticality_mapping: dict[str, str] | None = None,
     ) -> list[dict]:
         """
         Generate DQX quality rules from a data contract specification.
@@ -79,8 +78,7 @@ class DataContractRulesGenerator(DQEngineBase):
             format: Contract format specification (default is "odcs").
             generate_implicit_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
-            default_criticality: Default criticality level (default is "error").
-            criticality_mapping: Optional mapping of quality dimensions to criticality levels.
+            default_criticality: Default criticality level for generated rules (default is "error").
 
         Returns:
             A list of dictionaries representing the generated DQX quality rules.
@@ -108,13 +106,12 @@ class DataContractRulesGenerator(DQEngineBase):
         logger.info(f"Parsing ODCS contract '{odcs_contract.name}' v{odcs_contract.version}")
 
         dq_rules = []
-        criticality_mapping = criticality_mapping or {}
 
         # Generate implicit rules from schema properties
         if generate_implicit_rules:
             for prop in odcs_contract.properties:
                 implicit_rules = self._generate_implicit_rules_for_property(
-                    prop, odcs_contract, default_criticality, criticality_mapping
+                    prop, odcs_contract, default_criticality
                 )
                 dq_rules.extend(implicit_rules)
 
@@ -138,7 +135,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return dq_rules
 
     def _generate_implicit_rules_for_property(
-        self, prop: ODCSProperty, contract: ODCSContract, default_criticality: str, criticality_mapping: dict
+        self, prop: ODCSProperty, contract: ODCSContract, default_criticality: str
     ) -> list[dict]:
         """Generate implicit DQ rules from a property's schema definition."""
         rules = []
@@ -151,7 +148,7 @@ class DataContractRulesGenerator(DQEngineBase):
         # Completeness: required/not_null checks
         if prop.required or prop.not_null:
             dimension = "completeness"
-            criticality = criticality_mapping.get(dimension, default_criticality)
+            criticality = default_criticality
 
             if prop.not_empty and prop.logical_type in ('string', 'text', None):
                 # For strings, check both null and empty
@@ -187,7 +184,7 @@ class DataContractRulesGenerator(DQEngineBase):
         # Validity: valid_values (enum) check
         if prop.valid_values:
             dimension = "validity"
-            criticality = criticality_mapping.get(dimension, default_criticality)
+            criticality = default_criticality
             rules.append(
                 {
                     "check": {
@@ -207,7 +204,7 @@ class DataContractRulesGenerator(DQEngineBase):
         # Validity: pattern/regex check
         if prop.pattern:
             dimension = "validity"
-            criticality = criticality_mapping.get(dimension, default_criticality)
+            criticality = default_criticality
             rules.append(
                 {
                     "check": {"function": "regex_match", "arguments": {"column": prop.name, "regex": prop.pattern}},
@@ -224,7 +221,7 @@ class DataContractRulesGenerator(DQEngineBase):
         # Validity: range checks
         if prop.min_value is not None or prop.max_value is not None:
             dimension = "validity"
-            criticality = criticality_mapping.get(dimension, default_criticality)
+            criticality = default_criticality
 
             if prop.min_value is not None and prop.max_value is not None:
                 rules.append(
@@ -282,7 +279,7 @@ class DataContractRulesGenerator(DQEngineBase):
         # Uniqueness: unique constraint
         if prop.unique:
             dimension = "uniqueness"
-            criticality = criticality_mapping.get(dimension, default_criticality)
+            criticality = default_criticality
             rules.append(
                 {
                     "check": {"function": "is_unique", "arguments": {"column": prop.name}},
@@ -299,7 +296,7 @@ class DataContractRulesGenerator(DQEngineBase):
         # Validity: date/timestamp format checks
         if prop.format:
             dimension = "validity"
-            criticality = criticality_mapping.get(dimension, default_criticality)
+            criticality = default_criticality
 
             if prop.logical_type in ('date', 'datetime', 'timestamp'):
                 if prop.logical_type == 'date':
