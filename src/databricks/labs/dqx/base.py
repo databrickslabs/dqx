@@ -5,13 +5,13 @@ from typing import final
 from pyspark.sql import DataFrame, Observation
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
-from databricks.labs.dqx.mixins import WorkspaceClientSerDeMixin
+from databricks.labs.dqx.mixins import PickleableMixin
 from databricks.labs.dqx.rule import DQRule
 from databricks.labs.dqx.utils import get_workspace_client
 from databricks.sdk import WorkspaceClient
 
 
-class DQEngineBase(WorkspaceClientSerDeMixin, abc.ABC):
+class DQEngineBase(PickleableMixin, abc.ABC):
     def __init__(self, workspace_client: WorkspaceClient | None = None):
         self._ws = workspace_client
         self._verify_workspace_client(workspace_client or get_workspace_client())

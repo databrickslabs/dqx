@@ -52,7 +52,7 @@ from databricks.labs.dqx.checks_serializer import (
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.io import TABLE_PATTERN
-from databricks.labs.dqx.mixins import WorkspaceClientSerDeMixin
+from databricks.labs.dqx.mixins import PickleableMixin
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.utils import get_workspace_client
 
@@ -84,7 +84,7 @@ class ChecksStorageHandler(ABC, Generic[T]):
         """Save quality rules to the target."""
 
 
-class TableChecksStorageHandler(WorkspaceClientSerDeMixin, ChecksStorageHandler[TableChecksStorageConfig]):
+class TableChecksStorageHandler(PickleableMixin, ChecksStorageHandler[TableChecksStorageConfig]):
     """
     Handler for storing quality rules (checks) in a Delta table in the workspace.
     """
@@ -136,7 +136,7 @@ class TableChecksStorageHandler(WorkspaceClientSerDeMixin, ChecksStorageHandler[
         )
 
 
-class LakebaseChecksStorageHandler(WorkspaceClientSerDeMixin, ChecksStorageHandler[LakebaseChecksStorageConfig]):
+class LakebaseChecksStorageHandler(PickleableMixin, ChecksStorageHandler[LakebaseChecksStorageConfig]):
     """
     Handler for storing dq rules (checks) in a Lakebase table.
     """
@@ -431,7 +431,7 @@ class LakebaseChecksStorageHandler(WorkspaceClientSerDeMixin, ChecksStorageHandl
 
 
 class WorkspaceFileChecksStorageHandler(
-    WorkspaceClientSerDeMixin, ChecksStorageHandler[WorkspaceFileChecksStorageConfig]
+    PickleableMixin, ChecksStorageHandler[WorkspaceFileChecksStorageConfig]
 ):
     """
     Handler for storing quality rules (checks) in a file (json or yaml) in the workspace.
@@ -658,7 +658,7 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
         return self.workspace_file_handler, config
 
 
-class VolumeFileChecksStorageHandler(WorkspaceClientSerDeMixin, ChecksStorageHandler[VolumeFileChecksStorageConfig]):
+class VolumeFileChecksStorageHandler(PickleableMixin, ChecksStorageHandler[VolumeFileChecksStorageConfig]):
     """
     Handler for storing quality rules (checks) in a file (json or yaml) in a Unity Catalog volume.
     """
@@ -776,7 +776,7 @@ class BaseChecksStorageHandlerFactory(ABC):
         """
 
 
-class ChecksStorageHandlerFactory(WorkspaceClientSerDeMixin, BaseChecksStorageHandlerFactory):
+class ChecksStorageHandlerFactory(PickleableMixin, BaseChecksStorageHandlerFactory):
     def __init__(self, workspace_client: WorkspaceClient | None = None, spark: SparkSession | None = None):
         self._workspace_client = workspace_client
         self.spark = spark or SparkSession.builder.getOrCreate()
@@ -784,16 +784,6 @@ class ChecksStorageHandlerFactory(WorkspaceClientSerDeMixin, BaseChecksStorageHa
     @property
     def workspace_client(self) -> WorkspaceClient:
         return self._workspace_client or get_workspace_client()
-
-    def __getstate__(self):
-        """Removes the WorkspaceClient when `ChecksStorageHandlerFactory` is pickled."""
-        state = self.__dict__.copy()
-        state['_workspace_client'] = None
-        return state
-
-    def __setstate__(self, state):
-        """Recreates the WorkspaceClient when `ChecksStorageHandlerFactory` is unpickled."""
-        self.__dict__.update(state)
 
     def create(self, config: BaseChecksStorageConfig) -> ChecksStorageHandler:
         """

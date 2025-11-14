@@ -2,14 +2,14 @@ import logging
 import os
 
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.dqx.mixins import WorkspaceClientSerDeMixin
+from databricks.labs.dqx.mixins import PickleableMixin
 from databricks.labs.dqx.utils import get_workspace_client
 from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
 
 
-class InstallationMixin(WorkspaceClientSerDeMixin):
+class InstallationMixin(PickleableMixin):
     def __init__(self, ws: WorkspaceClient | None = None):
         self._ws = ws
 
