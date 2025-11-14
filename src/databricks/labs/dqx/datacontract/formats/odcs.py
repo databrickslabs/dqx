@@ -5,11 +5,14 @@ This module provides classes and utilities for parsing and working with
 ODCS data contracts.
 """
 
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from databricks.labs.dqx.datacontract.formats.base import BaseContract, BaseProperty
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -91,20 +94,45 @@ class ODCSContract(BaseContract):
         Raises:
             ValueError: If required fields are missing or invalid from the contract.
         """
-        # Validate required fields
-        if 'name' not in data:
-            raise ValueError("Failed to parse ODCS contract: Missing required field 'name'")
-        if 'version' not in data:
-            raise ValueError("Failed to parse ODCS contract: Missing required field 'version'")
+        # Validate contract against ODCS JSON Schema
+        from databricks.labs.dqx.datacontract.validator import validate_contract, ODCSValidationError
+
+        try:
+            validate_contract(data)
+        except ODCSValidationError as e:
+            # Provide detailed error message with all validation errors
+            error_details = "\n  - ".join(e.errors) if e.errors else str(e)
+            raise ValueError(f"ODCS contract validation failed:\n  - {error_details}") from e
 
         # Parse schema properties
+        # ODCS v3.0.x uses array of schema objects format
         properties = []
-        schema = data.get('schema', {})
+        schema_list = data.get('schema', [])
+        
+        if not isinstance(schema_list, list):
+            raise ValueError("ODCS schema must be an array of schema objects")
 
-        # Handle both table/column format and object/property format
-        if 'columns' in schema or 'properties' in schema:
-            props = schema.get('columns', schema.get('properties', {}))
-            for prop_name, prop_data in props.items():
+        # Iterate through schema objects (typically one table/dataset)
+        for schema_obj in schema_list:
+            if not isinstance(schema_obj, dict):
+                continue
+                
+            # Get properties array from schema object
+            props_list = schema_obj.get('properties', [])
+            if not isinstance(props_list, list):
+                logger.warning(f"Schema object properties must be an array, got {type(props_list)}")
+                continue
+                
+            # Parse each property
+            for prop_data in props_list:
+                if not isinstance(prop_data, dict):
+                    continue
+                    
+                prop_name = prop_data.get('name')
+                if not prop_name:
+                    logger.warning("Property missing 'name' field, skipping")
+                    continue
+                    
                 properties.append(cls._parse_property(prop_name, prop_data))
 
         # Extract dataset-level quality rules
@@ -126,6 +154,9 @@ class ODCSContract(BaseContract):
         """
         Parse a single property/column from ODCS schema.
 
+        ODCS v3.0.x format has quality as an array of quality check objects.
+        Each quality check has a 'type' field: text, library, sql, or custom.
+
         Args:
             name: Property name.
             data: Property definition dictionary.
@@ -133,17 +164,46 @@ class ODCSContract(BaseContract):
         Returns:
             Parsed ODCSProperty instance.
         """
-        quality_rules = data.get('quality', {})
+        # ODCS v3.0.x: quality is an array of quality checks
+        quality_array = data.get('quality', [])
+        
+        if not isinstance(quality_array, list):
+            quality_array = []
 
-        # Extract quality constraints from both top-level and quality section
-        # Use explicit None checks to handle 0 values correctly
+        # Extract constraints from quality array
+        not_null = False
+        not_empty = False
         min_value = data.get('minValue')
-        if min_value is None:
-            min_value = quality_rules.get('minValue')
-
         max_value = data.get('maxValue')
-        if max_value is None:
-            max_value = quality_rules.get('maxValue')
+        valid_values = data.get('validValues')
+        pattern = data.get('pattern')
+        
+        # Parse quality checks to extract constraints
+        for quality_check in quality_array:
+            if not isinstance(quality_check, dict):
+                continue
+                
+            check_type = quality_check.get('type')
+            
+            # For custom checks with DQX engine, extract from implementation
+            if check_type == 'custom' and quality_check.get('engine') == 'dqx':
+                implementation = quality_check.get('implementation', {})
+                if isinstance(implementation, dict):
+                    if 'notNull' in implementation:
+                        not_null = implementation.get('notNull', False)
+                    if 'notEmpty' in implementation:
+                        not_empty = implementation.get('notEmpty', False)
+                    if 'minValue' in implementation and min_value is None:
+                        min_value = implementation.get('minValue')
+                    if 'maxValue' in implementation and max_value is None:
+                        max_value = implementation.get('maxValue')
+            # Extract library-type quality attributes
+            elif check_type == 'library':
+                attribute = quality_check.get('attribute', '')
+                if attribute == 'notNull':
+                    not_null = True
+                elif attribute == 'notEmpty':
+                    not_empty = True
 
         return ODCSProperty(
             name=name,
@@ -152,14 +212,14 @@ class ODCSContract(BaseContract):
             description=data.get('description'),
             required=data.get('required', False),
             unique=data.get('unique', False),
-            not_null=quality_rules.get('notNull', data.get('notNull', False)),
-            not_empty=quality_rules.get('notEmpty', data.get('notEmpty', False)),
+            not_null=not_null or data.get('notNull', False),
+            not_empty=not_empty or data.get('notEmpty', False),
             min_value=min_value,
             max_value=max_value,
-            valid_values=data.get('validValues') or quality_rules.get('validValues'),
-            pattern=data.get('pattern') or quality_rules.get('pattern'),
+            valid_values=valid_values,
+            pattern=pattern,
             format=data.get('format'),
-            quality=quality_rules if quality_rules else None,
+            quality=quality_array if quality_array else None,
         )
 
     def get_properties(self) -> Sequence[BaseProperty]:

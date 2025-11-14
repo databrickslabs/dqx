@@ -16,7 +16,6 @@
 
 apiVersion: v3.0.2
 kind: DataContract
-
 id: 550e8400-e29b-41d4-a716-446655440000
 name: customer_orders
 version: 1.0.0
@@ -36,226 +35,241 @@ tags:
   - analytics
 
 schema:
-  type: table
-  properties:
-    # ==========================================
-    # IMPLICIT RULES - From Schema Properties
-    # ==========================================
-    
-    order_id:
-      logicalType: string
-      physicalType: VARCHAR(50)
-      description: Unique identifier for each order
-      required: true      # generates is_not_null
-      unique: true        # generates is_unique
-      pattern: '^ORD-[0-9]{8}$'  # generates regex_match
+  - name: orders_table
+    logicalType: object
+    physicalName: orders
+    properties:
+      # ==========================================
+      # IMPLICIT RULES - From Schema Properties
+      # ==========================================
       
-    customer_id:
-      logicalType: string
-      physicalType: VARCHAR(50)
-      description: Customer identifier
-      required: true      # generates is_not_null
-      pattern: '^CUST-[0-9]{6}$'  # generates regex_match
-      
-    # ==========================================
-    # EXPLICIT PROPERTY-LEVEL RULES
-    # ==========================================
-    
-    customer_email:
-      logicalType: string
-      physicalType: VARCHAR(255)
-      description: Customer email address
-      required: true
-      quality:
-        notNull: true    # Explicit property-level quality constraint
-        notEmpty: true   # generates is_not_null_and_not_empty
-        pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'  # generates regex_match
+      - name: order_id
+        logicalType: string
+        physicalType: VARCHAR(50)
+        description: Unique identifier for each order
+        required: true      # generates is_not_null
+        unique: true        # generates is_unique
+        pattern: '^ORD-[0-9]{8}$'  # generates regex_match
         
-    order_date:
-      logicalType: date
-      physicalType: DATE
-      description: Date when order was placed
-      required: true      # generates is_not_null
-      format: yyyy-MM-dd  # generates is_valid_date
-      
-    order_timestamp:
-      logicalType: timestamp
-      physicalType: TIMESTAMP
-      description: Timestamp when order was placed
-      required: true      # generates is_not_null
-      format: yyyy-MM-dd HH:mm:ss  # generates is_valid_timestamp
-      
-    order_total:
-      logicalType: numeric
-      physicalType: DECIMAL(10,2)
-      description: Total order amount in USD
-      required: true      # generates is_not_null
-      minValue: 0.01      # Combined with maxValue generates is_in_range
-      maxValue: 100000.00
-      
-    order_status:
-      logicalType: string
-      physicalType: VARCHAR(20)
-      description: Current status of the order
-      required: true      # generates is_not_null
-      validValues:        # generates is_in_list
-        - pending
-        - confirmed
-        - shipped
-        - delivered
-        - cancelled
-      
-    quantity:
-      logicalType: integer
-      physicalType: INT
-      description: Number of items in order
-      required: true      # generates is_not_null
-      minValue: 1         # Combined with maxValue generates is_in_range
-      maxValue: 1000
-      
-    discount_percentage:
-      logicalType: numeric
-      physicalType: DECIMAL(5,2)
-      description: Discount applied to order
-      required: false
-      minValue: 0         # With maxValue generates is_in_range (even with 0!)
-      maxValue: 100
-      
-    shipping_address:
-      logicalType: string
-      physicalType: VARCHAR(500)
-      description: Shipping address
-      required: true
-      quality:
-        notNull: true    # Explicit property-level quality constraint
-        notEmpty: true   # generates is_not_null_and_not_empty
+      - name: customer_id
+        logicalType: string
+        physicalType: VARCHAR(50)
+        description: Customer identifier
+        required: true      # generates is_not_null
+        pattern: '^CUST-[0-9]{6}$'  # generates regex_match
         
-    product_category:
-      logicalType: string
-      physicalType: VARCHAR(100)
-      description: Category of products in order
-      required: false
-      validValues:        # generates is_in_list (even when not required)
-        - electronics
-        - clothing
-        - home
-        - sports
-        - books
-        
-    priority_order:
-      logicalType: boolean
-      physicalType: BOOLEAN
-      description: Whether order has priority shipping
-      required: false
+      # ==========================================
+      # EXPLICIT PROPERTY-LEVEL RULES
+      # ==========================================
       
-    # ==========================================
-    # TEXT-BASED RULES (LLM Processing)
-    # ==========================================
-    
-    customer_notes:
-      logicalType: string
-      physicalType: TEXT
-      description: Customer notes on the order
-      required: false
-      quality:
-        text:
-          # Natural language expectation LLM converts to DQX rule
-          - "Customer notes should not contain profanity or offensive language"
+      - name: customer_email
+        logicalType: string
+        physicalType: VARCHAR(255)
+        description: Customer email address
+        required: true
+        quality:
+          - type: custom  # ODCS custom quality check type
+            engine: dqx  # DQX engine
+            implementation:
+              notNull: true    # Explicit property-level quality constraint
+              notEmpty: true   # generates is_not_null_and_not_empty
+            pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'  # generates regex_match
           
-    # ==========================================
-    # ROW-LEVEL CUSTOM RULES (DQX Format)
-    # ==========================================
-    
-    delivery_date:
-      logicalType: date
-      physicalType: DATE
-      description: Expected delivery date
-      required: false
-      quality:
-        custom:
-          # Custom DQX rule: Cross-column validation
-          criticality: warn
-          check:
-            function: sql_expression
-            arguments:
-              expression: delivery_date >= order_date
-              msg: Delivery date must be on or after order date
-              columns:
-                - order_date
-                - delivery_date
-    
-    # ==========================================
-    # DATASET-LEVEL CUSTOM RULES (DQX Format)
-    # ==========================================
-    # These demonstrate ODCS Custom format with DQX dataset-level functions
-    
-    created_at:
-      logicalType: timestamp
-      physicalType: TIMESTAMP
-      description: Record creation timestamp
-      required: true
-      quality:
-        custom:
-          # Dataset-level rule: Data freshness check
-          criticality: error
-          name: data_freshness_check
-          check:
-            function: is_data_fresh_per_time_window
-            arguments:
-              column: created_at
-              window_minutes: 60
-              min_records_per_window: 1
-              lookback_windows: 24
-          user_metadata:
-            dimension: timeliness
-            description: Ensure data is updated at least once per hour
-    
-    region:
-      logicalType: string
-      physicalType: VARCHAR(50)
-      description: Geographic region for the order
-      required: true
-      validValues:
-        - north
-        - south
-        - east
-        - west
-      quality:
-        custom:
-          # Dataset-level rule: Row count per region
-          criticality: warn
-          name: region_balance_check
-          check:
-            function: is_aggr_not_greater_than
-            arguments:
-              column: region
-              aggr_type: count
-              group_by:
-                - region
-              limit: 10000
-          user_metadata:
-            dimension: completeness
-            description: No single region should have more than 10k orders
-    
-    total_orders_per_customer:
-      logicalType: integer
-      physicalType: INT
-      description: Total orders per customer (aggregated)
-      required: false
-      quality:
-        custom:
-          # Dataset-level rule: Aggregate validation
-          criticality: warn
-          name: avg_orders_per_customer
-          check:
-            function: is_aggr_not_less_than
-            arguments:
-              column: customer_id
-              aggr_type: count
-              group_by:
-                - customer_id
-              limit: 1
-          user_metadata:
-            dimension: validity
-            description: Each customer must have at least 1 order
+      - name: order_date
+        logicalType: date
+        physicalType: DATE
+        description: Date when order was placed
+        required: true      # generates is_not_null
+        format: yyyy-MM-dd  # generates is_valid_date
+        
+      - name: order_timestamp
+        logicalType: date
+        physicalType: TIMESTAMP
+        description: Timestamp when order was placed
+        required: true      # generates is_not_null
+        format: yyyy-MM-dd HH:mm:ss  # generates is_valid_timestamp
+        
+      - name: order_total
+        logicalType: number
+        physicalType: DECIMAL(10,2)
+        description: Total order amount in USD
+        required: true      # generates is_not_null
+        minValue: 0.01      # Combined with maxValue generates is_in_range
+        maxValue: 100000.00
+        
+      - name: order_status
+        logicalType: string
+        physicalType: VARCHAR(20)
+        description: Current status of the order
+        required: true      # generates is_not_null
+        validValues:        # generates is_in_list
+          - pending
+          - confirmed
+          - shipped
+          - delivered
+          - cancelled
+        
+      - name: quantity
+        logicalType: integer
+        physicalType: INT
+        description: Number of items in order
+        required: true      # generates is_not_null
+        minValue: 1         # Combined with maxValue generates is_in_range
+        maxValue: 1000
+        
+      - name: discount_percentage
+        logicalType: number
+        physicalType: DECIMAL(5,2)
+        description: Discount applied to order
+        required: false
+        minValue: 0         # With maxValue generates is_in_range (even with 0!)
+        maxValue: 100
+        
+      - name: shipping_address
+        logicalType: string
+        physicalType: VARCHAR(500)
+        description: Shipping address
+        required: true
+        quality:
+          - type: custom  # ODCS custom quality check type
+            engine: dqx  # DQX engine
+            implementation:
+              notNull: true    # Explicit property-level quality constraint
+              notEmpty: true   # generates is_not_null_and_not_empty
+          
+      - name: product_category
+        logicalType: string
+        physicalType: VARCHAR(100)
+        description: Category of products in order
+        required: false
+        validValues:        # generates is_in_list (even when not required)
+          - electronics
+          - clothing
+          - home
+          - sports
+          - books
+          
+      - name: priority_order
+        logicalType: boolean
+        physicalType: BOOLEAN
+        description: Whether order has priority shipping
+        required: false
+        
+      # ==========================================
+      # TEXT-BASED RULES (LLM Processing)
+      # ==========================================
+      
+      - name: customer_notes
+        logicalType: string
+        physicalType: TEXT
+        description: Customer notes on the order
+        required: false
+        quality:
+          - type: text  # ODCS text quality check type
+            description: "Customer notes should not contain profanity or offensive language"
+            
+      # ==========================================
+      # ROW-LEVEL CUSTOM RULES (DQX Format)
+      # ==========================================
+      
+      - name: delivery_date
+        logicalType: date
+        physicalType: DATE
+        description: Expected delivery date
+        required: false
+        quality:
+          - type: custom  # ODCS custom quality check type
+            engine: dqx  # DQX engine
+            implementation:
+              # Custom DQX rule: Cross-column validation
+              criticality: warn
+              check:
+                function: sql_expression
+                arguments:
+                  expression: delivery_date >= order_date
+                  msg: Delivery date must be on or after order date
+                  columns:
+                    - order_date
+                    - delivery_date
+      
+      # ==========================================
+      # DATASET-LEVEL CUSTOM RULES (DQX Format)
+      # ==========================================
+      # These demonstrate ODCS Custom format with DQX dataset-level functions
+      
+      - name: created_at
+        logicalType: date
+        physicalType: TIMESTAMP
+        description: Record creation timestamp
+        required: true
+        quality:
+          - type: custom  # ODCS custom quality check type
+            engine: dqx  # DQX engine
+            implementation:
+              # Dataset-level rule: Data freshness check
+              criticality: error
+              name: data_freshness_check
+              check:
+                function: is_data_fresh_per_time_window
+                arguments:
+                  column: created_at
+                  window_minutes: 60
+                  min_records_per_window: 1
+                  lookback_windows: 24
+              user_metadata:
+                dimension: timeliness
+                description: Ensure data is updated at least once per hour
+      
+      - name: region
+        logicalType: string
+        physicalType: VARCHAR(50)
+        description: Geographic region for the order
+        required: true
+        validValues:
+          - north
+          - south
+          - east
+          - west
+        quality:
+          - type: custom  # ODCS custom quality check type
+            engine: dqx  # DQX engine
+            implementation:
+              # Dataset-level rule: Row count per region
+              criticality: warn
+              name: region_balance_check
+              check:
+                function: is_aggr_not_greater_than
+                arguments:
+                  column: region
+                  aggr_type: count
+                  group_by:
+                    - region
+                  limit: 10000
+              user_metadata:
+                dimension: completeness
+                description: No single region should have more than 10k orders
+      
+      - name: total_orders_per_customer
+        logicalType: integer
+        physicalType: INT
+        description: Total orders per customer (aggregated)
+        required: false
+        quality:
+          - type: custom  # ODCS custom quality check type
+            engine: dqx  # DQX engine
+            implementation:
+              # Dataset-level rule: Aggregate validation
+              criticality: warn
+              name: avg_orders_per_customer
+              check:
+                function: is_aggr_not_less_than
+                arguments:
+                  column: customer_id
+                  aggr_type: count
+                  group_by:
+                    - customer_id
+                  limit: 1
+              user_metadata:
+                dimension: validity
+                description: Each customer must have at least 1 order
 

@@ -89,18 +89,11 @@ class DataContractRulesGenerator(DQEngineBase):
         if format != "odcs":
             raise ValueError(f"Contract format '{format}' not supported. Currently only 'odcs' is supported.")
 
-        # Validate contract structure
-        if contract.get('kind') != 'DataContract':
-            logger.warning("Contract 'kind' is not 'DataContract'. Proceeding with caution.")
-
-        api_version = contract.get('apiVersion', '')
-        if not api_version.startswith('v3.0'):
-            logger.warning(f"Contract apiVersion '{api_version}' may not be fully supported. Expected v3.0.x.")
-
-        # Parse the contract
+        # Parse and validate the contract (validation happens in from_dict)
         try:
             odcs_contract = ODCSContract.from_dict(contract)
-        except Exception as e:
+        except ValueError as e:
+            # Re-raise with context
             raise ValueError(f"Failed to parse ODCS contract: {e}") from e
 
         logger.info(f"Parsing ODCS contract '{odcs_contract.name}' v{odcs_contract.version}")
@@ -299,14 +292,17 @@ class DataContractRulesGenerator(DQEngineBase):
             criticality = default_criticality
 
             if prop.logical_type in ('date', 'datetime', 'timestamp'):
-                if prop.logical_type == 'date':
+                # Detect if it's a timestamp based on format (time components: HH, mm, ss)
+                is_timestamp = prop.format and any(time_component in prop.format for time_component in ['HH', 'mm', 'ss', 'hh'])
+                
+                if is_timestamp or prop.logical_type in ('datetime', 'timestamp'):
                     rules.append(
                         {
                             "check": {
-                                "function": "is_valid_date",
-                                "arguments": {"column": prop.name, "date_format": prop.format},
+                                "function": "is_valid_timestamp",
+                                "arguments": {"column": prop.name, "timestamp_format": prop.format},
                             },
-                            "name": f"{prop.name}_invalid_date_format",
+                            "name": f"{prop.name}_invalid_timestamp_format",
                             "criticality": criticality,
                             "user_metadata": {
                                 **contract_metadata,
@@ -315,14 +311,14 @@ class DataContractRulesGenerator(DQEngineBase):
                             },
                         }
                     )
-                elif prop.logical_type in ('datetime', 'timestamp'):
+                else:
                     rules.append(
                         {
                             "check": {
-                                "function": "is_valid_timestamp",
-                                "arguments": {"column": prop.name, "timestamp_format": prop.format},
+                                "function": "is_valid_date",
+                                "arguments": {"column": prop.name, "date_format": prop.format},
                             },
-                            "name": f"{prop.name}_invalid_timestamp_format",
+                            "name": f"{prop.name}_invalid_date_format",
                             "criticality": criticality,
                             "user_metadata": {
                                 **contract_metadata,
@@ -384,13 +380,24 @@ class DataContractRulesGenerator(DQEngineBase):
         schema_info = self._build_schema_info(contract)
 
         # Extract text-based expectations from properties
+        # ODCS v3.0.x: quality is an array of quality check objects with type field
         for prop in contract.properties:
-            if prop.quality and 'text' in prop.quality:
-                text_expectations = prop.quality['text']
-                if isinstance(text_expectations, str):
-                    text_expectations = [text_expectations]
+            if not prop.quality or not isinstance(prop.quality, list):
+                continue
+            
+            for quality_check in prop.quality:
+                if not isinstance(quality_check, dict):
+                    continue
+                    
+                check_type = quality_check.get('type')
+                
+                # Handle ODCS type: text format
+                if check_type == 'text':
+                    text_expectation = quality_check.get('description', '')
+                    if not text_expectation:
+                        continue
 
-                for text_expectation in text_expectations:
+                for text_expectation in [text_expectation]:
                     try:
                         # Include property context for better LLM understanding
                         context_info = f"Property: {prop.name}"
@@ -438,9 +445,25 @@ class DataContractRulesGenerator(DQEngineBase):
         }
 
         # Check for custom properties with DQX native format
+        # ODCS v3.0.x: quality is an array of quality check objects with type field
         for prop in contract.properties:
-            if prop.quality and 'custom' in prop.quality:
-                custom_rules = prop.quality['custom']
+            if not prop.quality or not isinstance(prop.quality, list):
+                continue
+            
+            for quality_check in prop.quality:
+                if not isinstance(quality_check, dict):
+                    continue
+                    
+                check_type = quality_check.get('type')
+                
+                # Handle ODCS type: custom format with DQX engine
+                if check_type == 'custom' and quality_check.get('engine') == 'dqx':
+                    implementation = quality_check.get('implementation', {})
+                    if not isinstance(implementation, dict):
+                        continue
+                    custom_rules = implementation
+                else:
+                    continue
 
                 # Check if it's DQX format (has 'check' key with 'function')
                 if isinstance(custom_rules, dict) and 'check' in custom_rules:
