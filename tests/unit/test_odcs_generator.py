@@ -216,7 +216,7 @@ class TestDQGeneratorODCS:
     def test_generate_rules_unsupported_format(self, generator):
         """Test error for unsupported contract format."""
         with pytest.raises(ValueError, match="Contract format 'unknown' not supported"):
-            generator.generate_rules_from_contract(contract={}, format="unknown")
+            generator.generate_rules_from_contract(contract={}, contract_format="unknown")
 
     def test_generate_rules_minimal_contract(self, generator):
         """Test generating rules from minimal contract."""
