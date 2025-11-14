@@ -3,7 +3,7 @@ Unit tests for ODCS data contract integration.
 """
 
 import json
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
@@ -207,7 +207,10 @@ class TestDQGeneratorODCS:
     def generator_with_llm(self, mock_workspace_client, mock_spark):
         """Create DQGenerator instance with mocked LLM."""
         gen = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
-        gen.llm_engine = MagicMock()
+        # Create explicit Mock for LLM engine with required method
+        llm_mock = Mock()
+        llm_mock.get_business_rules_with_llm = Mock()
+        gen.llm_engine = llm_mock
         return gen
 
     def test_generate_rules_unsupported_format(self, generator):
