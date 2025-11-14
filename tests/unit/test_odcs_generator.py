@@ -180,14 +180,18 @@ class TestODCSContract:
         assert contract.properties[0].valid_values == ["active", "inactive"]
 
 
-class TestDQGeneratorODCS:
-    """Test DQGenerator ODCS contract integration."""
+class ODCSGeneratorTestBase:
+    """Base class with shared fixtures for ODCS generator tests."""
 
     @pytest.fixture
     def mock_workspace_client(self):
         """Create mock WorkspaceClient."""
         mock_ws = Mock()
-        mock_ws.config._product_info = ("dqx", "0.0.0")
+        # Configure mock config with product_info for telemetry
+        mock_config = Mock()
+        # Use setattr to avoid direct protected member access in test code
+        setattr(mock_config, '_product_info', ("dqx", "0.0.0"))
+        mock_ws.config = mock_config
         mock_ws.clusters.select_spark_version = Mock()
         return mock_ws
 
@@ -212,6 +216,10 @@ class TestDQGeneratorODCS:
         llm_mock.get_business_rules_with_llm = Mock()
         gen.llm_engine = llm_mock
         return gen
+
+
+class TestDQGeneratorODCSBasic(ODCSGeneratorTestBase):
+    """Test basic DQGenerator ODCS functionality."""
 
     def test_generate_rules_unsupported_format(self, generator):
         """Test error for unsupported contract format."""
@@ -537,6 +545,10 @@ class TestDQGeneratorODCS:
         # All implicit rules should have the default criticality
         assert len(rules) == 3  # is_not_null, is_unique, regex_match
         assert all(r["criticality"] == "warn" for r in rules)
+
+
+class TestDQGeneratorODCSExplicit(ODCSGeneratorTestBase):
+    """Test explicit rule generation and text processing."""
 
     def test_skip_implicit_rules(self, generator):
         """Test skipping implicit rule generation."""

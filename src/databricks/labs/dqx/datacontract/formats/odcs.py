@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from databricks.labs.dqx.datacontract.formats.base import BaseContract, BaseProperty
+from databricks.labs.dqx.datacontract.validator import ODCSValidationError, validate_contract
 
 logger = logging.getLogger(__name__)
 
@@ -95,8 +96,6 @@ class ODCSContract(BaseContract):
             ValueError: If required fields are missing or invalid from the contract.
         """
         # Validate contract against ODCS JSON Schema
-        from databricks.labs.dqx.datacontract.validator import validate_contract, ODCSValidationError
-
         try:
             validate_contract(data)
         except ODCSValidationError as e:
@@ -164,46 +163,12 @@ class ODCSContract(BaseContract):
         Returns:
             Parsed ODCSProperty instance.
         """
-        # ODCS v3.0.x: quality is an array of quality checks
         quality_array = data.get('quality', [])
-
         if not isinstance(quality_array, list):
             quality_array = []
 
         # Extract constraints from quality array
-        not_null = False
-        not_empty = False
-        min_value = data.get('minValue')
-        max_value = data.get('maxValue')
-        valid_values = data.get('validValues')
-        pattern = data.get('pattern')
-
-        # Parse quality checks to extract constraints
-        for quality_check in quality_array:
-            if not isinstance(quality_check, dict):
-                continue
-
-            check_type = quality_check.get('type')
-
-            # For custom checks with DQX engine, extract from implementation
-            if check_type == 'custom' and quality_check.get('engine') == 'dqx':
-                implementation = quality_check.get('implementation', {})
-                if isinstance(implementation, dict):
-                    if 'notNull' in implementation:
-                        not_null = implementation.get('notNull', False)
-                    if 'notEmpty' in implementation:
-                        not_empty = implementation.get('notEmpty', False)
-                    if 'minValue' in implementation and min_value is None:
-                        min_value = implementation.get('minValue')
-                    if 'maxValue' in implementation and max_value is None:
-                        max_value = implementation.get('maxValue')
-            # Extract library-type quality attributes
-            elif check_type == 'library':
-                attribute = quality_check.get('attribute', '')
-                if attribute == 'notNull':
-                    not_null = True
-                elif attribute == 'notEmpty':
-                    not_empty = True
+        constraints = ODCSContract._extract_constraints_from_quality(quality_array, data)
 
         return ODCSProperty(
             name=name,
@@ -212,15 +177,62 @@ class ODCSContract(BaseContract):
             description=data.get('description'),
             required=data.get('required', False),
             unique=data.get('unique', False),
-            not_null=not_null or data.get('notNull', False),
-            not_empty=not_empty or data.get('notEmpty', False),
-            min_value=min_value,
-            max_value=max_value,
-            valid_values=valid_values,
-            pattern=pattern,
+            not_null=constraints['not_null'] or data.get('notNull', False),
+            not_empty=constraints['not_empty'] or data.get('notEmpty', False),
+            min_value=constraints['min_value'],
+            max_value=constraints['max_value'],
+            valid_values=data.get('validValues'),
+            pattern=data.get('pattern'),
             format=data.get('format'),
             quality=quality_array if quality_array else None,
         )
+
+    @staticmethod
+    def _extract_constraints_from_quality(quality_array: list, data: dict) -> dict:
+        """Extract constraint values from quality checks array."""
+        constraints = {
+            'not_null': False,
+            'not_empty': False,
+            'min_value': data.get('minValue'),
+            'max_value': data.get('maxValue'),
+        }
+
+        for quality_check in quality_array:
+            if not isinstance(quality_check, dict):
+                continue
+
+            check_type = quality_check.get('type')
+            if check_type == 'custom' and quality_check.get('engine') == 'dqx':
+                ODCSContract._extract_from_custom_check(quality_check, constraints)
+            elif check_type == 'library':
+                ODCSContract._extract_from_library_check(quality_check, constraints)
+
+        return constraints
+
+    @staticmethod
+    def _extract_from_custom_check(quality_check: dict, constraints: dict) -> None:
+        """Extract constraints from custom DQX quality check."""
+        implementation = quality_check.get('implementation', {})
+        if not isinstance(implementation, dict):
+            return
+
+        if 'notNull' in implementation:
+            constraints['not_null'] = implementation.get('notNull', False)
+        if 'notEmpty' in implementation:
+            constraints['not_empty'] = implementation.get('notEmpty', False)
+        if 'minValue' in implementation and constraints['min_value'] is None:
+            constraints['min_value'] = implementation.get('minValue')
+        if 'maxValue' in implementation and constraints['max_value'] is None:
+            constraints['max_value'] = implementation.get('maxValue')
+
+    @staticmethod
+    def _extract_from_library_check(quality_check: dict, constraints: dict) -> None:
+        """Extract constraints from library-type quality check."""
+        attribute = quality_check.get('attribute', '')
+        if attribute == 'notNull':
+            constraints['not_null'] = True
+        elif attribute == 'notEmpty':
+            constraints['not_empty'] = True
 
     def get_properties(self) -> Sequence[BaseProperty]:
         """

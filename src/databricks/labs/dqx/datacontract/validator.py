@@ -152,10 +152,6 @@ class ODCSValidator:
         return formatted_errors
 
 
-# Singleton instance for reusing loaded schemas
-_validator_instance: ODCSValidator | None = None
-
-
 def validate_contract(contract: dict[str, Any]) -> None:
     """
     Validate an ODCS contract against its JSON Schema specification.
@@ -166,7 +162,5 @@ def validate_contract(contract: dict[str, Any]) -> None:
     Raises:
         ODCSValidationError: If the contract is invalid.
     """
-    global _validator_instance
-    if _validator_instance is None:
-        _validator_instance = ODCSValidator()
-    _validator_instance.validate(contract)
+    validator = ODCSValidator()
+    validator.validate(contract)

@@ -126,53 +126,60 @@ class DataContractRulesGenerator(DQEngineBase):
         self, prop: ODCSProperty, contract: ODCSContract, default_criticality: str
     ) -> list[dict]:
         """Generate implicit DQ rules from a property's schema definition."""
-        rules = []
         contract_metadata = {
             "odcs_contract_name": contract.name,
             "odcs_contract_version": contract.version,
             "odcs_property": prop.name,
         }
 
-        # Completeness: required/not_null checks
-        if prop.required or prop.not_null:
-            dimension = "completeness"
-            criticality = default_criticality
+        rules = []
+        rules.extend(self._generate_completeness_rules(prop, contract_metadata, default_criticality))
+        rules.extend(self._generate_validity_rules(prop, contract_metadata, default_criticality))
+        rules.extend(self._generate_uniqueness_rules(prop, contract_metadata, default_criticality))
+        rules.extend(self._generate_format_rules(prop, contract_metadata, default_criticality))
+        return rules
 
-            if prop.not_empty and prop.logical_type in {'string', 'text', None}:
-                # For strings, check both null and empty
-                rules.append(
-                    {
-                        "check": {
-                            "function": "is_not_null_and_not_empty",
-                            "arguments": {"column": prop.name, "trim_strings": True},
-                        },
-                        "name": f"{prop.name}_is_null_or_empty",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **contract_metadata,
-                            "odcs_dimension": dimension,
-                            "odcs_rule_type": "implicit",
-                        },
-                    }
-                )
-            else:
-                rules.append(
-                    {
-                        "check": {"function": "is_not_null", "arguments": {"column": prop.name}},
-                        "name": f"{prop.name}_is_null",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **contract_metadata,
-                            "odcs_dimension": dimension,
-                            "odcs_rule_type": "implicit",
-                        },
-                    }
-                )
+    def _generate_completeness_rules(self, prop: ODCSProperty, contract_metadata: dict, criticality: str) -> list[dict]:
+        """Generate completeness rules (required/not_null)."""
+        if not (prop.required or prop.not_null):
+            return []
 
-        # Validity: valid_values (enum) check
+        if prop.not_empty and prop.logical_type in {'string', 'text', None}:
+            return [
+                {
+                    "check": {
+                        "function": "is_not_null_and_not_empty",
+                        "arguments": {"column": prop.name, "trim_strings": True},
+                    },
+                    "name": f"{prop.name}_is_null_or_empty",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "odcs_dimension": "completeness",
+                        "odcs_rule_type": "implicit",
+                    },
+                }
+            ]
+
+        return [
+            {
+                "check": {"function": "is_not_null", "arguments": {"column": prop.name}},
+                "name": f"{prop.name}_is_null",
+                "criticality": criticality,
+                "user_metadata": {
+                    **contract_metadata,
+                    "odcs_dimension": "completeness",
+                    "odcs_rule_type": "implicit",
+                },
+            }
+        ]
+
+    def _generate_validity_rules(self, prop: ODCSProperty, contract_metadata: dict, criticality: str) -> list[dict]:
+        """Generate validity rules (valid_values, pattern, range)."""
+        rules = []
+
+        # Valid values (enum)
         if prop.valid_values:
-            dimension = "validity"
-            criticality = default_criticality
             rules.append(
                 {
                     "check": {
@@ -183,16 +190,14 @@ class DataContractRulesGenerator(DQEngineBase):
                     "criticality": criticality,
                     "user_metadata": {
                         **contract_metadata,
-                        "odcs_dimension": dimension,
+                        "odcs_dimension": "validity",
                         "odcs_rule_type": "implicit",
                     },
                 }
             )
 
-        # Validity: pattern/regex check
+        # Pattern/regex
         if prop.pattern:
-            dimension = "validity"
-            criticality = default_criticality
             rules.append(
                 {
                     "check": {"function": "regex_match", "arguments": {"column": prop.name, "regex": prop.pattern}},
@@ -200,132 +205,134 @@ class DataContractRulesGenerator(DQEngineBase):
                     "criticality": criticality,
                     "user_metadata": {
                         **contract_metadata,
-                        "odcs_dimension": dimension,
+                        "odcs_dimension": "validity",
                         "odcs_rule_type": "implicit",
                     },
                 }
             )
 
-        # Validity: range checks
-        if prop.min_value is not None or prop.max_value is not None:
-            dimension = "validity"
-            criticality = default_criticality
+        # Range checks
+        rules.extend(self._generate_range_rules(prop, contract_metadata, criticality))
 
-            if prop.min_value is not None and prop.max_value is not None:
-                rules.append(
-                    {
-                        "check": {
-                            "function": "is_in_range",
-                            "arguments": {
-                                "column": prop.name,
-                                "min_limit": prop.min_value,
-                                "max_limit": prop.max_value,
-                            },
-                        },
-                        "name": f"{prop.name}_out_of_range",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **contract_metadata,
-                            "odcs_dimension": dimension,
-                            "odcs_rule_type": "implicit",
-                        },
-                    }
-                )
-            elif prop.min_value is not None:
-                rules.append(
-                    {
-                        "check": {
-                            "function": "is_not_less_than",
-                            "arguments": {"column": prop.name, "limit": prop.min_value},
-                        },
-                        "name": f"{prop.name}_below_minimum",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **contract_metadata,
-                            "odcs_dimension": dimension,
-                            "odcs_rule_type": "implicit",
-                        },
-                    }
-                )
-            elif prop.max_value is not None:
-                rules.append(
-                    {
-                        "check": {
-                            "function": "is_not_greater_than",
-                            "arguments": {"column": prop.name, "limit": prop.max_value},
-                        },
-                        "name": f"{prop.name}_above_maximum",
-                        "criticality": criticality,
-                        "user_metadata": {
-                            **contract_metadata,
-                            "odcs_dimension": dimension,
-                            "odcs_rule_type": "implicit",
-                        },
-                    }
-                )
+        return rules
 
-        # Uniqueness: unique constraint
-        if prop.unique:
-            dimension = "uniqueness"
-            criticality = default_criticality
-            rules.append(
+    def _generate_range_rules(self, prop: ODCSProperty, contract_metadata: dict, criticality: str) -> list[dict]:
+        """Generate range validation rules."""
+        if prop.min_value is None and prop.max_value is None:
+            return []
+
+        if prop.min_value is not None and prop.max_value is not None:
+            return [
                 {
-                    "check": {"function": "is_unique", "arguments": {"column": prop.name}},
-                    "name": f"{prop.name}_not_unique",
+                    "check": {
+                        "function": "is_in_range",
+                        "arguments": {
+                            "column": prop.name,
+                            "min_limit": prop.min_value,
+                            "max_limit": prop.max_value,
+                        },
+                    },
+                    "name": f"{prop.name}_out_of_range",
                     "criticality": criticality,
                     "user_metadata": {
                         **contract_metadata,
-                        "odcs_dimension": dimension,
+                        "odcs_dimension": "validity",
                         "odcs_rule_type": "implicit",
                     },
                 }
-            )
+            ]
 
-        # Validity: date/timestamp format checks
-        if prop.format:
-            dimension = "validity"
-            criticality = default_criticality
+        if prop.min_value is not None:
+            return [
+                {
+                    "check": {
+                        "function": "is_not_less_than",
+                        "arguments": {"column": prop.name, "limit": prop.min_value},
+                    },
+                    "name": f"{prop.name}_below_minimum",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "odcs_dimension": "validity",
+                        "odcs_rule_type": "implicit",
+                    },
+                }
+            ]
 
-            if prop.logical_type in {'date', 'datetime', 'timestamp'}:
-                # Detect if it's a timestamp based on format (time components: HH, mm, ss)
-                is_timestamp = prop.format and any(
-                    time_component in prop.format for time_component in ('HH', 'mm', 'ss', 'hh')
-                )
+        return [
+            {
+                "check": {
+                    "function": "is_not_greater_than",
+                    "arguments": {"column": prop.name, "limit": prop.max_value},
+                },
+                "name": f"{prop.name}_above_maximum",
+                "criticality": criticality,
+                "user_metadata": {
+                    **contract_metadata,
+                    "odcs_dimension": "validity",
+                    "odcs_rule_type": "implicit",
+                },
+            }
+        ]
 
-                if is_timestamp or prop.logical_type in {'datetime', 'timestamp'}:
-                    rules.append(
-                        {
-                            "check": {
-                                "function": "is_valid_timestamp",
-                                "arguments": {"column": prop.name, "timestamp_format": prop.format},
-                            },
-                            "name": f"{prop.name}_invalid_timestamp_format",
-                            "criticality": criticality,
-                            "user_metadata": {
-                                **contract_metadata,
-                                "odcs_dimension": dimension,
-                                "odcs_rule_type": "implicit",
-                            },
-                        }
-                    )
-                else:
-                    rules.append(
-                        {
-                            "check": {
-                                "function": "is_valid_date",
-                                "arguments": {"column": prop.name, "date_format": prop.format},
-                            },
-                            "name": f"{prop.name}_invalid_date_format",
-                            "criticality": criticality,
-                            "user_metadata": {
-                                **contract_metadata,
-                                "odcs_dimension": dimension,
-                                "odcs_rule_type": "implicit",
-                            },
-                        }
-                    )
+    def _generate_uniqueness_rules(self, prop: ODCSProperty, contract_metadata: dict, criticality: str) -> list[dict]:
+        """Generate uniqueness rules."""
+        if not prop.unique:
+            return []
 
-        return rules
+        return [
+            {
+                "check": {"function": "is_unique", "arguments": {"column": prop.name}},
+                "name": f"{prop.name}_not_unique",
+                "criticality": criticality,
+                "user_metadata": {
+                    **contract_metadata,
+                    "odcs_dimension": "uniqueness",
+                    "odcs_rule_type": "implicit",
+                },
+            }
+        ]
+
+    def _generate_format_rules(self, prop: ODCSProperty, contract_metadata: dict, criticality: str) -> list[dict]:
+        """Generate format validation rules for dates/timestamps."""
+        if not prop.format or prop.logical_type not in {'date', 'datetime', 'timestamp'}:
+            return []
+
+        # Detect if it's a timestamp based on format (time components: HH, mm, ss)
+        is_timestamp = any(time_component in prop.format for time_component in ('HH', 'mm', 'ss', 'hh'))
+
+        if is_timestamp or prop.logical_type in {'datetime', 'timestamp'}:
+            return [
+                {
+                    "check": {
+                        "function": "is_valid_timestamp",
+                        "arguments": {"column": prop.name, "timestamp_format": prop.format},
+                    },
+                    "name": f"{prop.name}_invalid_timestamp_format",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "odcs_dimension": "validity",
+                        "odcs_rule_type": "implicit",
+                    },
+                }
+            ]
+
+        return [
+            {
+                "check": {
+                    "function": "is_valid_date",
+                    "arguments": {"column": prop.name, "date_format": prop.format},
+                },
+                "name": f"{prop.name}_invalid_date_format",
+                "criticality": criticality,
+                "user_metadata": {
+                    **contract_metadata,
+                    "odcs_dimension": "validity",
+                    "odcs_rule_type": "implicit",
+                },
+            }
+        ]
 
     def _build_schema_info(self, contract: ODCSContract) -> str:
         """Build schema info JSON string from ODCS contract for LLM context."""
@@ -359,117 +366,147 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _process_text_based_rules(self, contract: ODCSContract, _default_criticality: str) -> list[dict]:
         """Process text-based quality expectations using LLM."""
-        rules: list[dict] = []
-
         if self.llm_engine is None:
             logger.warning(
                 "Text-based rules found but LLM engine not available. "
                 "Skipping text rules. Install LLM dependencies: pip install 'databricks-labs-dqx[llm]'"
             )
-            return rules
+            return []
 
         contract_metadata = {
             "odcs_contract_name": contract.name,
             "odcs_contract_version": contract.version,
         }
-
-        # Generate schema info from contract for LLM context
         schema_info = self._build_schema_info(contract)
 
-        # Extract text-based expectations from properties
-        # ODCS v3.0.x: quality is an array of quality check objects with type field
+        rules = []
         for prop in contract.properties:
-            if not prop.quality or not isinstance(prop.quality, list):
-                continue
-
-            for quality_check in prop.quality:
-                if not isinstance(quality_check, dict):
-                    continue
-
-                check_type = quality_check.get('type')
-
-                # Handle ODCS type: text format
-                if check_type == 'text':
-                    text_expectation = quality_check.get('description', '')
-                    if not text_expectation:
-                        continue
-
-                    try:
-                        # Include property context for better LLM understanding
-                        context_info = f"Property: {prop.name}"
-                        if prop.logical_type:
-                            context_info += f", Type: {prop.logical_type}"
-                        if prop.description:
-                            context_info += f", Description: {prop.description}"
-
-                        user_input = f"{context_info}\nExpectation: {text_expectation}"
-
-                        # Generate rules using LLM with schema context
-                        logger.info(f"Processing text rule for {prop.name}: {text_expectation}")
-                        prediction = self.llm_engine.get_business_rules_with_llm(
-                            user_input=user_input, schema_info=schema_info
-                        )
-
-                        text_rules = json.loads(prediction.quality_rules)
-
-                        # Add metadata to generated rules
-                        for rule in text_rules:
-                            if 'user_metadata' not in rule:
-                                rule['user_metadata'] = {}
-                            rule['user_metadata'].update(
-                                {
-                                    **contract_metadata,
-                                    "odcs_property": prop.name,
-                                    "odcs_rule_type": "text_llm",
-                                    "odcs_text_expectation": text_expectation,
-                                }
-                            )
-                            rules.append(rule)
-
-                    except Exception as e:
-                        logger.warning(f"Failed to process text rule for {prop.name}: {e}")
+            rules.extend(self._process_text_rules_for_property(prop, contract_metadata, schema_info))
 
         return rules
+
+    def _process_text_rules_for_property(
+        self, prop: ODCSProperty, contract_metadata: dict, schema_info: str
+    ) -> list[dict]:
+        """Process text-based rules for a single property."""
+        if not prop.quality or not isinstance(prop.quality, list):
+            return []
+
+        rules = []
+        for quality_check in prop.quality:
+            if not self._is_valid_text_quality_check(quality_check):
+                continue
+
+            text_expectation = quality_check.get('description', '')
+            if not text_expectation:
+                continue
+
+            rules.extend(self._process_single_text_rule(prop, text_expectation, contract_metadata, schema_info))
+
+        return rules
+
+    def _is_valid_text_quality_check(self, quality_check: dict | list | None) -> bool:
+        """Check if quality check is a valid text type."""
+        return isinstance(quality_check, dict) and quality_check.get('type') == 'text'
+
+    def _process_single_text_rule(
+        self, prop: ODCSProperty, text_expectation: str, contract_metadata: dict, schema_info: str
+    ) -> list[dict]:
+        """Process a single text rule and add metadata."""
+        try:
+            generated_rules = self._generate_rules_from_text(prop, text_expectation, schema_info)
+            return [
+                self._add_text_rule_metadata(rule, prop.name, text_expectation, contract_metadata)
+                for rule in generated_rules
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to process text rule for {prop.name}: {e}")
+            return []
+
+    def _add_text_rule_metadata(
+        self, rule: dict, prop_name: str, text_expectation: str, contract_metadata: dict
+    ) -> dict:
+        """Add ODCS metadata to a text-generated rule."""
+        if 'user_metadata' not in rule:
+            rule['user_metadata'] = {}
+        rule['user_metadata'].update(
+            {
+                **contract_metadata,
+                "odcs_property": prop_name,
+                "odcs_rule_type": "text_llm",
+                "odcs_text_expectation": text_expectation,
+            }
+        )
+        return rule
+
+    def _generate_rules_from_text(self, prop: ODCSProperty, text_expectation: str, schema_info: str) -> list[dict]:
+        """Generate DQX rules from text expectation using LLM."""
+        if self.llm_engine is None:
+            return []
+
+        # Build context for LLM
+        context_info = f"Property: {prop.name}"
+        if prop.logical_type:
+            context_info += f", Type: {prop.logical_type}"
+        if prop.description:
+            context_info += f", Description: {prop.description}"
+
+        user_input = f"{context_info}\nExpectation: {text_expectation}"
+
+        # Generate rules using LLM
+        logger.info(f"Processing text rule for {prop.name}: {text_expectation}")
+        prediction = self.llm_engine.get_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
+
+        return json.loads(prediction.quality_rules)
 
     def _process_explicit_dqx_rules(self, contract: ODCSContract, _default_criticality: str) -> list[dict]:
         """Process explicit DQX format rules from custom properties."""
-        rules = []
-
         contract_metadata = {
             "odcs_contract_name": contract.name,
             "odcs_contract_version": contract.version,
         }
 
-        # Check for custom properties with DQX native format
-        # ODCS v3.0.x: quality is an array of quality check objects with type field
+        rules = []
         for prop in contract.properties:
-            if not prop.quality or not isinstance(prop.quality, list):
-                continue
-
-            for quality_check in prop.quality:
-                if not isinstance(quality_check, dict):
-                    continue
-
-                check_type = quality_check.get('type')
-
-                # Handle ODCS type: custom format with DQX engine
-                if check_type == 'custom' and quality_check.get('engine') == 'dqx':
-                    implementation = quality_check.get('implementation', {})
-                    if not isinstance(implementation, dict):
-                        continue
-
-                    # Check if it's DQX format (has 'check' key with 'function')
-                    if 'check' not in implementation:
-                        continue
-
-                    custom_rule = implementation
-                    # Add metadata
-                    if 'user_metadata' not in custom_rule:
-                        custom_rule['user_metadata'] = {}
-                    custom_rule['user_metadata'].update(
-                        {"odcs_property": prop.name, "odcs_rule_type": "explicit", **contract_metadata}
-                    )
-                    rules.append(custom_rule)
-                    logger.info(f"Added explicit DQX rule for {prop.name}")
+            rules.extend(self._extract_explicit_dqx_rules_for_property(prop, contract_metadata))
 
         return rules
+
+    def _extract_explicit_dqx_rules_for_property(self, prop: ODCSProperty, contract_metadata: dict) -> list[dict]:
+        """Extract explicit DQX rules from a single property's quality checks."""
+        if not prop.quality or not isinstance(prop.quality, list):
+            return []
+
+        rules = []
+        for quality_check in prop.quality:
+            if not isinstance(quality_check, dict):
+                continue
+
+            # Handle ODCS type: custom format with DQX engine
+            if quality_check.get('type') != 'custom' or quality_check.get('engine') != 'dqx':
+                continue
+
+            dqx_rule = self._extract_dqx_rule_from_quality_check(quality_check, prop.name, contract_metadata)
+            if dqx_rule:
+                rules.append(dqx_rule)
+
+        return rules
+
+    def _extract_dqx_rule_from_quality_check(
+        self, quality_check: dict, prop_name: str, contract_metadata: dict
+    ) -> dict | None:
+        """Extract a DQX rule from a custom quality check."""
+        implementation = quality_check.get('implementation', {})
+        if not isinstance(implementation, dict) or 'check' not in implementation:
+            return None
+
+        custom_rule = implementation.copy()
+        if 'user_metadata' not in custom_rule:
+            custom_rule['user_metadata'] = {}
+
+        custom_rule['user_metadata'].update(
+            {"odcs_property": prop_name, "odcs_rule_type": "explicit", **contract_metadata}
+        )
+
+        logger.info(f"Added explicit DQX rule for {prop_name}")
+        return custom_rule
