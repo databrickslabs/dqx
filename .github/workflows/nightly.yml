@@ -13,6 +13,7 @@ permissions:
 
 concurrency:
   group: single-acceptance-job-per-repo
+  cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
   integration:
@@ -49,7 +50,7 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false  # if enabled, it creates an issue for each test failure; disabled to reduce noise
           codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -88,7 +89,7 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false
           codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -115,6 +116,10 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      - name: Install dbt
+        run: |
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
+
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
@@ -138,7 +143,7 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false
           codegen_path: tests/e2e/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -166,6 +171,10 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      - name: Install dbt
+        run: |
+          pip install dbt-core==1.10.9 dbt-databricks==1.10.9
+      
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
@@ -189,7 +198,7 @@ jobs:
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
-          create_issues: true
+          create_issues: false
           codegen_path: tests/e2e/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -18,7 +18,6 @@ lint:
 fmt:
 	hatch run fmt
 	hatch run update_github_urls
-	hatch run extract_checks_examples
 
 test:
 	hatch run test

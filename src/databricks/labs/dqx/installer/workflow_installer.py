@@ -373,19 +373,23 @@ class WorkflowDeployment(InstallationMixin):
         self._product_info = product_info
         self._tasks = tasks
         self._this_file = Path(__file__)
-        super().__init__(config, installation, ws)
+        super().__init__(ws)
 
     def create_jobs(self) -> None:
         remote_wheels = self._upload_wheel()
 
         for task in self._tasks:
-            settings = self._job_settings(
-                task.workflow, remote_wheels, self._config.serverless_clusters, task.spark_conf
-            )
+            # If override_clusters is set, use regular clusters (not serverless)
+            use_serverless = self._config.serverless_clusters and not task.override_clusters
+            remote_wheels_with_extras = remote_wheels
+            if use_serverless:
+                # installing extras from a file is only possible with serverless
+                remote_wheels_with_extras = [f"{wheel}[llm,pii]" for wheel in remote_wheels]
+            settings = self._job_settings(task.workflow, remote_wheels_with_extras, use_serverless, task.spark_conf)
             if task.override_clusters:
                 settings = self._apply_cluster_overrides(
                     settings,
-                    task.override_clusters,  # e.g. {self.STANDARD_CLUSTER_KEY: "0709-132523-cnhxf2p6"}
+                    task.override_clusters,  # e.g. {self.CLUSTER_KEY: "0709-132523-cnhxf2p6"}
                 )
             self._deploy_workflow(task.workflow, settings)
 
@@ -496,7 +500,12 @@ class WorkflowDeployment(InstallationMixin):
         settings: dict[str, Any],
         overrides: dict[str, str],
     ) -> dict:
-        settings["job_clusters"] = [_ for _ in settings["job_clusters"] if _.job_cluster_key not in overrides]
+        # Filter out job_clusters that are being overridden with existing clusters
+        # Note: job_clusters should always exist when override_clusters is set (handled in create_jobs)
+        if "job_clusters" in settings:
+            settings["job_clusters"] = [_ for _ in settings["job_clusters"] if _.job_cluster_key not in overrides]
+
+        # Replace job cluster references with existing cluster IDs
         for job_task in settings["tasks"]:
             if job_task.job_cluster_key is None:
                 continue
@@ -518,7 +527,7 @@ class WorkflowDeployment(InstallationMixin):
         if serverless_clusters:
             job_tasks, envs = self._configure_serverless_tasks(step_name, remote_wheels)
             settings = {
-                "name": self._name(step_name),
+                "name": self._get_name(name=step_name, install_folder=self._installation.install_folder()),
                 "tags": tags,
                 "email_notifications": email_notifications,
                 "tasks": job_tasks,
@@ -527,7 +536,7 @@ class WorkflowDeployment(InstallationMixin):
         else:
             job_tasks, job_clusters = self._configure_cluster_tasks(step_name, remote_wheels, spark_conf)
             settings = {
-                "name": self._name(step_name),
+                "name": self._get_name(name=step_name, install_folder=self._installation.install_folder()),
                 "tags": tags,
                 "email_notifications": email_notifications,
                 "tasks": job_tasks,

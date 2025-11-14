@@ -1,12 +1,15 @@
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 
+from tests.conftest import TEST_CATALOG
+
 
 def test_read_input_data_no_input_format(spark, make_schema, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
     input_location = info.full_name
@@ -44,7 +47,7 @@ def test_read_invalid_input_table(spark):
 
 
 def test_read_input_data_from_table(spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_location = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     input_config = InputConfig(location=input_location)
@@ -58,7 +61,7 @@ def test_read_input_data_from_table(spark, make_schema, make_random):
 
 
 def test_read_input_data_from_table_with_schema_and_spark_options(spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_location = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     input_format = None
@@ -79,7 +82,7 @@ def test_read_input_data_from_table_with_schema_and_spark_options(spark, make_sc
 
 
 def test_read_input_data_from_workspace_file(spark, make_schema, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
     input_location = info.full_name
@@ -95,7 +98,7 @@ def test_read_input_data_from_workspace_file(spark, make_schema, make_volume):
 
 
 def test_read_input_data_from_workspace_file_with_spark_options(spark, make_schema, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
     input_location = info.full_name
@@ -114,7 +117,7 @@ def test_read_input_data_from_workspace_file_with_spark_options(spark, make_sche
 
 
 def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     info = make_volume(catalog_name=catalog_name, schema_name=schema_name)
     input_location = f"/Volumes/{info.catalog_name}/{info.schema_name}/{info.name}"
@@ -136,7 +139,7 @@ def test_read_input_data_from_workspace_file_in_csv_format(spark, make_schema, m
 
 
 def test_save_dataframe_as_table(spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     mode = "overwrite"
@@ -163,7 +166,7 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
 
 
 def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     random_name = make_random(10).lower()
@@ -196,7 +199,7 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
 
 
 def test_get_reference_dataframes(spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_location_1 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     input_location_2 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"

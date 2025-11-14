@@ -6,10 +6,16 @@ description = 'Data Quality eXtended (DQX) is a Python library for data quality 
 license-files = { paths = ["LICENSE", "NOTICE"] }
 requires-python = ">=3.10"
 keywords = ["Databricks"]
+authors = [
+    {name = "Databricks Labs", email = "labs-oss@databricks.com"},
+    { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
+    { name = "Alex Ott", email = "alexey.ott@databricks.com" },
+]
 maintainers = [
     { name = "Databricks Labs", email = "labs-oss@databricks.com" },
     { name = "Marcin Wojtyczka", email = "marcin.wojtyczka@databricks.com" },
     { name = "Alex Ott", email = "alexey.ott@databricks.com" },
+    { name = "Greg Hansen", email = "gregory.hansen@databricks.com" },
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -29,7 +35,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
-                "databricks-sdk~=0.67",
+                "databricks-sdk~=0.71",
                 "databricks-labs-lsql>=0.5,<=0.16",
                 "sqlalchemy>=1.4,<3.0",
 ]
@@ -55,9 +61,8 @@ pii = [
     # This may be required for the larger models due to Databricks connect memory limitations.
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
-llm = [ # LLM assisted features
-    "dspy-ai~=3.0.3",
-    "databricks-langchain~=0.8.0",
+llm = [
+    "dspy~=3.0.3"
 ]
 
 [project.entry-points.databricks]
@@ -106,8 +111,6 @@ dependencies = [
     "dbldatagen~=0.4.0",
     "pyparsing~=3.2.3",
     "jmespath~=1.0.1",
-    "dspy-ai~=3.0.3",
-    "databricks-langchain~=0.8.0",
     "psycopg2-binary~=2.9.10",
 ]
 
@@ -117,21 +120,28 @@ python="3.12" # must match the version required by databricks-connect and python
 path = ".venv"
 
 [tool.hatch.envs.default.scripts]
-test        = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
-coverage    = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
-integration = "pytest tests/integration/ -n 5 --cov --cov-report=xml --timeout 1200 --durations 20"
-e2e         = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-perf         = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-fmt         = ["black .",
-               "ruff check . --fix",
-               "mypy .",
-               "pylint --output-format=colorized -j 0 src tests"]
-verify      = ["black --check .",
-               "ruff check .",
-               "mypy .",
-               "pylint --output-format=colorized -j 0 src tests"]
+test            = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
+test_coverage   = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
+# Note that integration tests are controlled by the acceptance action (e.g. running 10 tests in parallel):
+# https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
+# This integration config is only used when running integration tests locally.
+integration     = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 1200 --durations 20"
+e2e             = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+perf            = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+fmt             = ["black .",
+                    "ruff check . --fix",
+                    "mypy .",
+                    "pylint --output-format=colorized -j 0 src tests"]
+verify          = ["black --check .",
+                    "ruff check .",
+                    "mypy .",
+                    "pylint --output-format=colorized -j 0 src tests"]
 update_github_urls = "python docs/dqx/update_github_urls.py"
-extract_checks_examples = "python src/databricks/labs/dqx/llm/extract_checks_examples.py"
+combine_coverage = [
+  "coverage combine", # combine binary coverage data files
+  "coverage xml -o coverage-integration.xml",  # generate XML report
+  "coverage erase" # remove coverage data files
+]
 
 [tool.hatch.envs.docs]
 dependencies = ["pydoc-markdown>=4.8.2"]
@@ -174,21 +184,10 @@ exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 module = ["google", "google.*"]  # Google libraries are not type annotated
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["dspy", "databricks_langchain"]  # Optional LLM dependencies
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["databricks.labs.dqx.profiler.runner"]  # Internal module without py.typed
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
-filterwarnings = [
-    "ignore::DeprecationWarning",
-    "ignore:PII detection uses pandas user-defined functions.*:UserWarning"
-]
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.black]
 target-version = ["py310"]
@@ -210,7 +209,12 @@ branch = true
 parallel = true
 
 [tool.coverage.report]
-omit = ["*/working-copy/*", 'src/databricks/labs/dqx/__main__.py']
+omit = [
+    "*/working-copy/*",
+    "src/databricks/__init__.py",
+    "src/databricks/labs/__init__.py",
+    "src/databricks/labs/dqx/__main__.py"
+]
 exclude_lines = [
     "no cov",
     "if __name__ == .__main__.:",
@@ -425,7 +429,7 @@ method-naming-style = "snake_case"
 
 # Regular expression matching correct method names. Overrides method-naming-
 # style. If left empty, method names will be checked with the set naming style.
-method-rgx = "[a-z_][a-z0-9_]{2,}$"
+method-rgx = "[a-z_][a-z0-9_]{1,}$"
 
 # Naming style matching correct module names.
 module-naming-style = "snake_case"

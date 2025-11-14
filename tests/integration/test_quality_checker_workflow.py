@@ -1,10 +1,8 @@
 import copy
-from io import BytesIO
 
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.blueprint.parallel import ManyError
-from databricks.sdk.service.workspace import ImportFormat
 
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import (
@@ -14,7 +12,16 @@ from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from tests.integration.conftest import RUN_TIME, REPORTING_COLUMNS
+from tests.integration.conftest import (
+    RUN_TIME,
+    RUN_ID,
+    REPORTING_COLUMNS,
+    assert_output_df,
+    assert_quarantine_and_output_dfs,
+    setup_custom_check_func,
+)
+
+from tests.conftest import TEST_CATALOG
 
 
 def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
@@ -22,8 +29,7 @@ def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_c
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
 def test_quality_checker_workflow_for_multiple_run_configs(
@@ -44,11 +50,8 @@ def test_quality_checker_workflow_for_multiple_run_configs(
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="")
 
     # assert results
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
-
-    checked_df = spark.table(second_run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
+    assert_output_df(spark, expected_quality_checking_output, second_run_config.output_config)
 
 
 def test_quality_checker_workflow_for_multiple_run_configs_table_checks_storage(
@@ -90,11 +93,8 @@ def test_quality_checker_workflow_for_multiple_run_configs_table_checks_storage(
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="")
 
     # assert results
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
-
-    checked_df = spark.table(second_run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
+    assert_output_df(spark, expected_quality_checking_output, second_run_config.output_config)
 
 
 def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
@@ -102,8 +102,7 @@ def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflo
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
 def test_quality_checker_workflow_table_checks_storage(
@@ -132,8 +131,7 @@ def test_quality_checker_workflow_table_checks_storage(
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
 def test_quality_checker_workflow_with_custom_install_folder(
@@ -143,8 +141,7 @@ def test_quality_checker_workflow_with_custom_install_folder(
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
 def test_quality_checker_workflow_streaming(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
@@ -152,8 +149,7 @@ def test_quality_checker_workflow_streaming(ws, spark, setup_serverless_workflow
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    checked_df = spark.table(run_config.output_config.location)
-    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+    assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
 def test_quality_checker_workflow_with_quarantine(
@@ -163,15 +159,9 @@ def test_quality_checker_workflow_with_quarantine(
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
-    dq_engine = DQEngine(ws, spark)
-    expected_output_df = dq_engine.get_valid(expected_quality_checking_output)
-    expected_quarantine_df = dq_engine.get_invalid(expected_quality_checking_output)
-
-    output_df = spark.table(run_config.output_config.location)
-    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
-
-    quarantine_df = spark.table(run_config.quarantine_config.location)
-    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+    assert_quarantine_and_output_dfs(
+        ws, spark, expected_quality_checking_output, run_config.output_config, run_config.quarantine_config
+    )
 
 
 def test_quality_checker_workflow_when_missing_checks_file(ws, setup_serverless_workflows):
@@ -198,7 +188,7 @@ def test_quality_checker_workflow_with_custom_check_func_in_volume(
 ):
     installation_ctx, run_config = setup_serverless_workflows()
 
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     custom_checks_funcs_location = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/custom_check_funcs.py"
@@ -217,12 +207,13 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
     checks_location = f"{installation_dir}/{run_config.checks_location}"
 
     _setup_custom_checks(ws, spark, checks_location, installation_ctx.product_info.product_name())
-    _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location)
+    setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location)
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     checked = spark.table(run_config.output_config.location)
 
+    user_metadata = {}
     expected = spark.createDataFrame(
         [
             [1, "a", None, None],
@@ -239,16 +230,18 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "run_id": RUN_ID,
+                        "user_metadata": user_metadata,
                     },
                     {
-                        "name": "id_is_not_null_custom",
-                        "message": "Column 'id' value is null",
-                        "columns": ["id"],
+                        "name": "name_ends_with_c",
+                        "message": "Column 'name' ends with 'c'",
+                        "columns": ["name"],
                         "filter": None,
-                        "function": "is_not_null_custom_func",
+                        "function": "not_ends_with_suffix",
                         "run_time": RUN_TIME,
-                        "user_metadata": {},
+                        "run_id": RUN_ID,
+                        "user_metadata": user_metadata,
                     },
                 ],
                 None,
@@ -256,7 +249,23 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
             [3, None, None, None],
             [1, "a", None, None],
             [6, "a", None, None],
-            [2, "c", None, None],
+            [
+                2,
+                "c",
+                [
+                    {
+                        "name": "name_ends_with_c",
+                        "message": "Column 'name' ends with 'c'",
+                        "columns": ["name"],
+                        "filter": None,
+                        "function": "not_ends_with_suffix",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": user_metadata,
+                    },
+                ],
+                None,
+            ],
             [4, "a", None, None],
             [5, "d", None, None],
         ],
@@ -297,6 +306,7 @@ def test_quality_checker_workflow_with_ref(
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -315,6 +325,7 @@ def test_quality_checker_workflow_with_ref(
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -502,7 +513,11 @@ def test_quality_checker_workflow_for_patterns_table_checks_storage(
 
     # run workflow
     installation_ctx.deployed_workflows.run_workflow(
-        "quality-checker", run_config_name=run_config.name, patterns=f"{catalog_name}.{schema_name}.*"
+        "quality-checker",
+        run_config_name=run_config.name,
+        # this will apply checks to the test tables as well as checks table
+        # there are no checks defined for the checks table
+        patterns=f"{catalog_name}.{schema_name}.*",
     )
 
     # assert first table
@@ -518,36 +533,6 @@ def _make_second_input_table(spark, catalog_name, schema_name, first_table, make
     second_table = f"{catalog_name}.{schema_name}.dummy_t{make_random(4).lower()}{suffix}"
     spark.table(first_table).write.format("delta").mode("overwrite").saveAsTable(second_table)
     return second_table
-
-
-def _setup_custom_check_func(ws, installation_ctx, custom_checks_funcs_location):
-    content = '''from databricks.labs.dqx.check_funcs import make_condition, register_rule
-from pyspark.sql import functions as F
-
-@register_rule("row")
-def is_not_null_custom_func(column: str):
-    return make_condition(F.col(column).isNull(), f"Column '{column}' value is null", f"{column}_is_null")
-'''
-    if custom_checks_funcs_location.startswith("/Workspace/"):
-        ws.workspace.upload(
-            path=custom_checks_funcs_location, format=ImportFormat.AUTO, content=content.encode(), overwrite=True
-        )
-    elif custom_checks_funcs_location.startswith("/Volumes/"):
-        binary_data = BytesIO(content.encode("utf-8"))
-        ws.files.upload(custom_checks_funcs_location, binary_data, overwrite=True)
-    else:  # relative workspace path
-        installation_dir = installation_ctx.installation.install_folder()
-        ws.workspace.upload(
-            path=f"{installation_dir}/{custom_checks_funcs_location}",
-            format=ImportFormat.AUTO,
-            content=content.encode(),
-            overwrite=True,
-        )
-
-    config = installation_ctx.config
-    run_config = config.get_run_config()
-    run_config.custom_check_functions = {"is_not_null_custom_func": custom_checks_funcs_location}
-    installation_ctx.installation.save(config)
 
 
 def _setup_ref_table(spark, installation_ctx, make_random, run_config):
@@ -602,9 +587,9 @@ def _setup_custom_checks(ws, spark, checks_location, product):
             "check": {"function": "is_not_null", "arguments": {"column": "id"}},
         },
         {
-            "name": "id_is_not_null_custom",
+            "name": "name_ends_with_c",
             "criticality": "error",
-            "check": {"function": "is_not_null_custom_func", "arguments": {"column": "id"}},
+            "check": {"function": "not_ends_with_suffix", "arguments": {"column": "name", "suffix": "c"}},
         },
     ]
 

@@ -9,6 +9,7 @@ import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
+
 from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
@@ -22,6 +23,9 @@ from databricks.labs.dqx.check_funcs import (
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError
+
+from tests.conftest import TEST_CATALOG
+
 
 SCHEMA = "a: string, b: int"
 
@@ -852,7 +856,7 @@ def test_dataset_compare_ref_as_table_and_skip_map_col(spark: SparkSession, set_
         schema_ref,
     )
 
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     ref_table_schema = make_schema(catalog_name=catalog_name)
     ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
     df_ref.write.saveAsTable(ref_table)

@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any
 from fnmatch import fnmatch
+
 from pyspark.sql import Column
 
 # Import spark connect column if spark session is created using spark connect
@@ -13,11 +14,11 @@ try:
 except ImportError:
     ConnectColumn = None  # type: ignore
 
+import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk.errors import NotFound
-
 
 logger = logging.getLogger(__name__)
 
@@ -402,20 +403,6 @@ def _get_tables_from_schemas(client: WorkspaceClient, catalog_name: str, schema_
     return tables
 
 
-def _match_table_patterns(table: str, patterns: list[str]) -> bool:
-    """
-    Checks if a table name matches any of the provided wildcard patterns.
-
-    Args:
-        table (str): The fully qualified table name to check.
-        patterns (list[str]): A list of wildcard patterns to match against.
-
-    Returns:
-        bool: True if the table matches any pattern, False otherwise.
-    """
-    return any(fnmatch(table, pattern) for pattern in patterns)
-
-
 def _filter_tables_by_patterns(tables: list[str], patterns: list[str], exclude_matched: bool) -> list[str]:
     """
     Filters a list of table names based on provided wildcard patterns.
@@ -432,3 +419,32 @@ def _filter_tables_by_patterns(tables: list[str], patterns: list[str], exclude_m
     if exclude_matched:
         return [table for table in tables if not _match_table_patterns(table, patterns)]
     return [table for table in tables if _match_table_patterns(table, patterns)]
+
+
+def _match_table_patterns(table: str, patterns: list[str]) -> bool:
+    """
+    Checks if a table name matches any of the provided wildcard patterns.
+
+    Args:
+        table (str): The table name to check.
+        patterns (list[str]): A list of wildcard patterns (e.g., 'catalog.schema.*') to match against the table name.
+
+    Returns:
+        bool: True if the table name matches any of the patterns, False otherwise.
+    """
+    return any(fnmatch(table, pattern) for pattern in patterns)
+
+
+def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
+    """Converts a column expression to lowercase, handling both scalar and array types.
+
+    Args:
+        col_expr: Column expression to convert
+        is_array: Whether the column contains array values
+
+    Returns:
+        Column expression with lowercase transformation applied
+    """
+    if is_array:
+        return F.transform(col_expr, F.lower)
+    return F.lower(col_expr)
