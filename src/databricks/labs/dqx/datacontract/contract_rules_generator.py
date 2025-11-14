@@ -461,19 +461,16 @@ class DataContractRulesGenerator(DQEngineBase):
                     implementation = quality_check.get('implementation', {})
                     if not isinstance(implementation, dict):
                         continue
-                    custom_rules = implementation
+                    
+                    # Check if it's DQX format (has 'check' key with 'function')
+                    if 'check' in implementation:
+                        custom_rules_list = [implementation]
+                    else:
+                        continue
                 else:
                     continue
 
-                # Check if it's DQX format (has 'check' key with 'function')
-                if isinstance(custom_rules, dict) and 'check' in custom_rules:
-                    custom_rules = [custom_rules]
-                elif isinstance(custom_rules, list):
-                    pass
-                else:
-                    continue
-
-                for custom_rule in custom_rules:
+                for custom_rule in custom_rules_list:
                     if isinstance(custom_rule, dict) and 'check' in custom_rule:
                         # Add metadata
                         if 'user_metadata' not in custom_rule:

@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft7Validator
+from jsonschema import Draft7Validator  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

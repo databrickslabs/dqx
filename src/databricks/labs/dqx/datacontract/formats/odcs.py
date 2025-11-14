@@ -34,7 +34,7 @@ class ODCSProperty(BaseProperty):
     valid_values: list[Any] | None = None
     pattern: str | None = None
     format: str | None = None
-    quality: dict | None = None
+    quality: list | None = None
 
     def get_quality_constraints(self) -> dict[str, Any]:
         """
