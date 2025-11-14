@@ -80,6 +80,7 @@ class ODCSValidator:
 
         Raises:
             FileNotFoundError: If the schema file is not found.
+            RuntimeError: If the schema file cannot be loaded or parsed.
         """
         if version in self._schemas:
             return self._schemas[version]

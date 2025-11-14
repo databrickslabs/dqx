@@ -394,7 +394,6 @@ class DataContractRulesGenerator(DQEngineBase):
                     if not text_expectation:
                         continue
 
-                for text_expectation in [text_expectation]:
                     try:
                         # Include property context for better LLM understanding
                         context_info = f"Property: {prop.name}"
@@ -460,26 +459,17 @@ class DataContractRulesGenerator(DQEngineBase):
                         continue
 
                     # Check if it's DQX format (has 'check' key with 'function')
-                    if 'check' in implementation:
-                        custom_rules_list = [implementation]
-                    else:
+                    if 'check' not in implementation:
                         continue
-                else:
-                    continue
 
-                for custom_rule in custom_rules_list:
-                    if isinstance(custom_rule, dict) and 'check' in custom_rule:
-                        # Add metadata
-                        if 'user_metadata' not in custom_rule:
-                            custom_rule['user_metadata'] = {}
-                        custom_rule['user_metadata'].update(
-                            {
-                                **contract_metadata,
-                                "odcs_property": prop.name,
-                                "odcs_rule_type": "explicit",
-                            }
-                        )
-                        rules.append(custom_rule)
-                        logger.info(f"Added explicit DQX rule for {prop.name}")
+                    custom_rule = implementation
+                    # Add metadata
+                    if 'user_metadata' not in custom_rule:
+                        custom_rule['user_metadata'] = {}
+                    custom_rule['user_metadata'].update(
+                        {"odcs_property": prop.name, "odcs_rule_type": "explicit", **contract_metadata}
+                    )
+                    rules.append(custom_rule)
+                    logger.info(f"Added explicit DQX rule for {prop.name}")
 
         return rules

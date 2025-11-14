@@ -16,11 +16,11 @@ def create_valid_odcs_contract(properties=None, **overrides):
     Helper function to create a valid minimal ODCS contract for testing.
 
     Args:
-        properties: Optional list of property dicts (ODCS v3 format with 'name' field).
+        properties (list[dict] | None): Optional list of property dicts (ODCS v3 format with 'name' field).
         **overrides: Optional overrides for contract fields.
 
     Returns:
-        A valid ODCS contract dictionary with all required fields.
+        dict: A valid ODCS contract dictionary with all required fields.
     """
     # Default schema with ODCS v3.0.x array format
     schema = [
