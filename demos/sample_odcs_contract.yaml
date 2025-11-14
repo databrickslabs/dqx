@@ -1,0 +1,127 @@
+# Sample ODCS v3.0.2 Data Contract for Demo
+# This demonstrates how to use ODCS with DQX for automated quality rule generation
+
+apiVersion: v3.0.2
+kind: DataContract
+
+id: demo-001-sensor-data
+name: iot_sensor_readings
+version: 2.1.0
+status: active
+domain: manufacturing
+dataProduct: sensor_analytics
+tenant: IndustrialIoT
+
+description:
+  purpose: Real-time sensor data from manufacturing floor for monitoring and predictive maintenance
+  limitations: Sensor data may have gaps during maintenance windows
+  usage: Use for equipment monitoring, anomaly detection, and predictive maintenance
+
+tags:
+  - iot
+  - manufacturing
+  - real-time
+
+schema:
+  type: table
+  properties:
+    sensor_id:
+      logicalType: string
+      physicalType: VARCHAR(50)
+      description: Unique identifier for the sensor device
+      required: true
+      pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'
+      
+    machine_id:
+      logicalType: string
+      physicalType: VARCHAR(50)
+      description: Identifier of the machine being monitored
+      required: true
+      quality:
+        notNull: true
+        notEmpty: true
+        
+    reading_timestamp:
+      logicalType: timestamp
+      physicalType: TIMESTAMP
+      description: When the sensor reading was recorded
+      required: true
+      format: yyyy-MM-dd HH:mm:ss
+      
+    temperature:
+      logicalType: numeric
+      physicalType: DECIMAL(5,2)
+      description: Temperature reading in Celsius
+      required: true
+      minValue: -50.0
+      maxValue: 150.0
+      quality:
+        text:
+          - "Temperature readings above 100C should trigger alerts"
+          
+    pressure:
+      logicalType: numeric
+      physicalType: DECIMAL(6,2)
+      description: Pressure reading in PSI
+      required: true
+      minValue: 0.0
+      maxValue: 500.0
+      
+    vibration_level:
+      logicalType: numeric
+      physicalType: DECIMAL(6,3)
+      description: Vibration measurement in mm/s
+      required: true
+      minValue: 0.0
+      maxValue: 100.0
+      
+    sensor_status:
+      logicalType: string
+      physicalType: VARCHAR(20)
+      description: Operational status of the sensor
+      required: true
+      validValues:
+        - active
+        - inactive
+        - maintenance
+        - faulty
+        
+    calibration_date:
+      logicalType: date
+      physicalType: DATE
+      description: Last calibration date of the sensor
+      required: true
+      format: yyyy-MM-dd
+      quality:
+        custom:
+          criticality: error
+          check:
+            function: sql_expression
+            arguments:
+              expression: calibration_date <= date(reading_timestamp)
+              msg: Calibration date cannot be in the future relative to reading
+              
+    location:
+      logicalType: string
+      physicalType: VARCHAR(100)
+      description: Physical location of the sensor
+      required: true
+      quality:
+        notNull: true
+        notEmpty: true
+        
+    humidity_percentage:
+      logicalType: numeric
+      physicalType: DECIMAL(5,2)
+      description: Relative humidity percentage
+      required: false
+      minValue: 0.0
+      maxValue: 100.0
+      
+    error_code:
+      logicalType: string
+      physicalType: VARCHAR(10)
+      description: Error code if sensor reported an issue
+      required: false
+      pattern: '^E[0-9]{4}$'
+

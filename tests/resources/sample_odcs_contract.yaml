@@ -1,0 +1,155 @@
+# Sample ODCS v3.0.2 Data Contract for Testing
+# This contract demonstrates various ODCS features and quality rule types
+
+apiVersion: v3.0.2
+kind: DataContract
+
+id: 550e8400-e29b-41d4-a716-446655440000
+name: customer_orders
+version: 1.0.0
+status: active
+domain: sales
+dataProduct: customer_analytics
+tenant: AcmeCorp
+
+description:
+  purpose: Customer order data for analytics and reporting
+  limitations: Contains only completed orders from last 2 years
+  usage: Use for customer behavior analysis and sales forecasting
+
+tags:
+  - sales
+  - customer
+  - analytics
+
+schema:
+  type: table
+  properties:
+    order_id:
+      logicalType: string
+      physicalType: VARCHAR(50)
+      description: Unique identifier for each order
+      required: true
+      unique: true
+      pattern: '^ORD-[0-9]{8}$'
+      
+    customer_id:
+      logicalType: string
+      physicalType: VARCHAR(50)
+      description: Customer identifier
+      required: true
+      pattern: '^CUST-[0-9]{6}$'
+      
+    customer_email:
+      logicalType: string
+      physicalType: VARCHAR(255)
+      description: Customer email address
+      required: true
+      quality:
+        notNull: true
+        notEmpty: true
+        pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'
+        
+    order_date:
+      logicalType: date
+      physicalType: DATE
+      description: Date when order was placed
+      required: true
+      format: yyyy-MM-dd
+      
+    order_timestamp:
+      logicalType: timestamp
+      physicalType: TIMESTAMP
+      description: Timestamp when order was placed
+      required: true
+      format: yyyy-MM-dd HH:mm:ss
+      
+    order_total:
+      logicalType: numeric
+      physicalType: DECIMAL(10,2)
+      description: Total order amount in USD
+      required: true
+      minValue: 0.01
+      maxValue: 100000.00
+      
+    order_status:
+      logicalType: string
+      physicalType: VARCHAR(20)
+      description: Current status of the order
+      required: true
+      validValues:
+        - pending
+        - confirmed
+        - shipped
+        - delivered
+        - cancelled
+        
+    quantity:
+      logicalType: integer
+      physicalType: INT
+      description: Number of items in order
+      required: true
+      minValue: 1
+      maxValue: 1000
+      
+    discount_percentage:
+      logicalType: numeric
+      physicalType: DECIMAL(5,2)
+      description: Discount applied to order
+      required: false
+      minValue: 0
+      maxValue: 100
+      
+    shipping_address:
+      logicalType: string
+      physicalType: VARCHAR(500)
+      description: Shipping address
+      required: true
+      quality:
+        notNull: true
+        notEmpty: true
+        
+    product_category:
+      logicalType: string
+      physicalType: VARCHAR(100)
+      description: Category of products in order
+      required: false
+      validValues:
+        - electronics
+        - clothing
+        - home
+        - sports
+        - books
+        
+    priority_order:
+      logicalType: boolean
+      physicalType: BOOLEAN
+      description: Whether order has priority shipping
+      required: false
+      
+    customer_notes:
+      logicalType: string
+      physicalType: TEXT
+      description: Customer notes on the order
+      required: false
+      quality:
+        text:
+          - "Customer notes should not contain profanity or offensive language"
+          
+    delivery_date:
+      logicalType: date
+      physicalType: DATE
+      description: Expected delivery date
+      required: false
+      quality:
+        custom:
+          criticality: warn
+          check:
+            function: sql_expression
+            arguments:
+              expression: delivery_date >= order_date
+              msg: Delivery date must be on or after order date
+              columns:
+                - order_date
+                - delivery_date
+

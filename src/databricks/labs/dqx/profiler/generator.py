@@ -7,6 +7,7 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
+from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
@@ -127,6 +128,54 @@ class DQGenerator(DQEngineBase):
             logger.info(f"LLM reasoning: {prediction.reasoning}")
 
         return dq_rules
+
+    @telemetry_logger("generator", "generate_rules_from_contract")
+    def generate_rules_from_contract(
+        self,
+        contract: dict,
+        format: str = "odcs",
+        generate_implicit_rules: bool = True,
+        process_text_rules: bool = True,
+        default_criticality: str = "error",
+        criticality_mapping: dict[str, str] | None = None,
+    ) -> list[dict]:
+        """
+        Generate DQX quality rules from a data contract specification.
+
+        Parses a data contract (currently supporting ODCS v3.0.x) and generates rules based on
+        schema properties, explicit quality definitions, and text-based expectations.
+
+        Args:
+            contract: Dictionary representation of the data contract.
+            format: Contract format specification (default is "odcs").
+            generate_implicit_rules: Whether to generate rules from schema properties.
+            process_text_rules: Whether to process text-based expectations using LLM.
+            default_criticality: Default criticality level (default is "error").
+            criticality_mapping: Optional mapping of quality dimensions to criticality levels.
+
+        Returns:
+            A list of dictionaries representing the generated DQX quality rules.
+
+        Raises:
+            ValueError: If the contract format is not supported or validation fails.
+        """
+        # Create a contract generator with the same context
+        contract_generator = DataContractRulesGenerator(
+            workspace_client=self._workspace_client,
+            spark=self.spark,
+            llm_engine=self.llm_engine,
+            custom_check_functions=self.custom_check_functions,
+        )
+
+        # Delegate to the contract generator
+        return contract_generator.generate_rules_from_contract(
+            contract=contract,
+            format=format,
+            generate_implicit_rules=generate_implicit_rules,
+            process_text_rules=process_text_rules,
+            default_criticality=default_criticality,
+            criticality_mapping=criticality_mapping,
+        )
 
     @staticmethod
     def dq_generate_is_in(column: str, level: str = "error", **params: dict):
