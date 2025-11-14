@@ -15,10 +15,13 @@
 # MAGIC
 # MAGIC ## Prerequisites
 # MAGIC
-# MAGIC ```python
-# MAGIC %pip install databricks-labs-dqx pyyaml
-# MAGIC dbutils.library.restartPython()
-# MAGIC ```
+# MAGIC Run the following cell to install DQX and dependencies:
+
+# COMMAND ----------
+
+%pip install databricks-labs-dqx pyyaml
+
+%restart_python
 
 # COMMAND ----------
 
@@ -33,20 +36,20 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
 
-# Initialize clients
-w = WorkspaceClient()
-spark
+# Initialize workspace client (spark is available as a built-in global)
+ws = WorkspaceClient()
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 1. Define an ODCS Data Contract
+# MAGIC ## 1. Load an ODCS Data Contract
 # MAGIC
-# MAGIC Here's a sample ODCS v3.0.2 data contract for IoT sensor readings.
-# MAGIC In practice, you'd load this from a YAML file or version control.
+# MAGIC ODCS contracts can be loaded from YAML files, version control, or defined inline.
+# MAGIC This example uses an inline ODCS v3.0.2 contract for IoT sensor readings.
 
 # COMMAND ----------
 
+# Example ODCS v3.0.2 contract (in practice, load from file or version control)
 odcs_contract_yaml = """
 apiVersion: v3.0.2
 kind: DataContract
@@ -62,67 +65,82 @@ description:
   purpose: Real-time sensor data from manufacturing floor
   usage: Use for equipment monitoring and predictive maintenance
 
+# Schema is an ARRAY of schema objects (ODCS v3.0.x format)
 schema:
-  type: table
-  properties:
-    sensor_id:
-      logicalType: string
-      description: Unique identifier for the sensor device
-      required: true
-      pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'
-      
-    machine_id:
-      logicalType: string
-      description: Machine being monitored
-      required: true
-      quality:
-        notNull: true
-        notEmpty: true
+  - name: sensor_readings_table
+    type: table
+    # Properties is an ARRAY of property objects
+    properties:
+      - name: sensor_id
+        logicalType: string
+        description: Unique identifier for the sensor device
+        required: true
+        pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'
         
-    reading_timestamp:
-      logicalType: timestamp
-      description: When the sensor reading was recorded
-      required: true
-      format: yyyy-MM-dd HH:mm:ss
-      
-    temperature:
-      logicalType: numeric
-      description: Temperature reading in Celsius
-      required: true
-      minValue: -50.0
-      maxValue: 150.0
-      
-    pressure:
-      logicalType: numeric
-      description: Pressure reading in PSI
-      required: true
-      minValue: 0.0
-      maxValue: 500.0
-      
-    sensor_status:
-      logicalType: string
-      description: Operational status of the sensor
-      required: true
-      validValues:
-        - active
-        - inactive
-        - maintenance
-        - faulty
+      - name: machine_id
+        logicalType: string
+        description: Machine being monitored
+        required: true
+        # Quality is an ARRAY of quality check objects
+        quality:
+          - type: custom
+            engine: dqx
+            implementation:
+              notNull: true
+              notEmpty: true
+          
+      - name: reading_timestamp
+        logicalType: date  # ODCS uses 'date' for both dates and timestamps
+        format: yyyy-MM-dd HH:mm:ss
+        description: When the sensor reading was recorded
+        required: true
         
-    location:
-      logicalType: string
-      description: Physical location of the sensor
-      required: true
-      quality:
-        notNull: true
-        notEmpty: true
+      - name: temperature
+        logicalType: number  # ODCS uses 'number' not 'numeric'
+        description: Temperature reading in Celsius
+        required: true
+        minValue: -50.0
+        maxValue: 150.0
+        
+      - name: pressure
+        logicalType: number
+        description: Pressure reading in PSI
+        required: true
+        minValue: 0.0
+        maxValue: 500.0
+        
+      - name: sensor_status
+        logicalType: string
+        description: Operational status of the sensor
+        required: true
+        validValues:
+          - active
+          - inactive
+          - maintenance
+          - faulty
+          
+      - name: location
+        logicalType: string
+        description: Physical location of the sensor
+        required: true
+        quality:
+          - type: custom
+            engine: dqx
+            implementation:
+              notNull: true
+              notEmpty: true
 """
 
 # Parse the YAML contract
 contract = yaml.safe_load(odcs_contract_yaml)
+
+# Alternative: Load from a file
+# with open('/Workspace/Users/your_email/odcs_contract.yaml', 'r') as f:
+#     contract = yaml.safe_load(f)
+
 print(f"📋 Loaded contract: {contract['name']} v{contract['version']}")
 print(f"   Domain: {contract['domain']}")
-print(f"   Properties: {len(contract['schema']['properties'])}")
+print(f"   Properties: {len(contract['schema'][0]['properties'])}")
 
 # COMMAND ----------
 
@@ -134,7 +152,7 @@ print(f"   Properties: {len(contract['schema']['properties'])}")
 # COMMAND ----------
 
 # Create generator
-generator = DQGenerator(workspace_client=w, spark=spark)
+generator = DQGenerator(ws)
 
 # Generate rules from the contract
 dqx_rules = generator.generate_rules_from_contract(
@@ -146,6 +164,15 @@ dqx_rules = generator.generate_rules_from_contract(
 )
 
 print(f"\n✅ Generated {len(dqx_rules)} DQX quality rules")
+
+# Validate the generated rules
+status = DQEngine.validate_checks(dqx_rules)
+print(f"\n🔍 Validation: {'✅ All rules valid' if not status.has_errors else '❌ Errors found'}")
+if status.has_errors:
+    print("Validation errors:")
+    for error in status.errors:
+        print(f"  - {error}")
+
 print("\nRule Functions Used:")
 for rule in dqx_rules:
     func = rule['check']['function']
@@ -231,7 +258,7 @@ display(df)
 # COMMAND ----------
 
 # Apply the generated rules
-engine = DQEngine(spark)
+engine = DQEngine(WorkspaceClient())
 result_df = engine.apply_checks_by_metadata(df, dqx_rules)
 
 print(f"✅ Applied {len(dqx_rules)} quality rules")
@@ -330,29 +357,131 @@ for level, count in criticality_counts.items():
 # MAGIC %md
 # MAGIC ## 9. Save Generated Rules for Reuse
 # MAGIC
-# MAGIC Save the generated rules to a file for later use or version control.
+# MAGIC Save the generated rules to a file or Delta table for later use or version control.
 
 # COMMAND ----------
 
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
 import json
 
-# Save rules to JSON
+# Option 1: Preview rules as JSON
 rules_json = json.dumps(dqx_rules, indent=2)
-
-# In practice, you'd save to a file or Delta table
-print("💾 Generated rules (JSON format):")
+print("💾 Generated rules (JSON format preview):")
 print(rules_json[:500] + "..." if len(rules_json) > 500 else rules_json)
 
-# You can also convert to YAML
-import yaml
+# Option 2: Preview rules as YAML
 rules_yaml = yaml.dump(dqx_rules, default_flow_style=False, sort_keys=False)
-print("\n💾 Generated rules (YAML format):")
+print("\n💾 Generated rules (YAML format preview):")
 print(rules_yaml[:500] + "..." if len(rules_yaml) > 500 else rules_yaml)
+
+# Option 3: Save to workspace file
+user_name = spark.sql("select current_user() as user").collect()[0]["user"]
+checks_file = f"/Workspace/Users/{user_name}/dqx_odcs_generated_rules.yml"
+
+dq_engine = DQEngine(WorkspaceClient())
+dq_engine.save_checks(
+    checks=dqx_rules,
+    config=WorkspaceFileChecksStorageConfig(location=checks_file)
+)
+print(f"\n✅ Saved generated rules to: {checks_file}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 10. Summary and Best Practices
+# MAGIC ## 9b. Load and Reuse Saved Rules
+# MAGIC
+# MAGIC Demonstrate loading previously saved rules from a file.
+
+# COMMAND ----------
+
+# Load the saved rules
+loaded_rules = dq_engine.load_checks(
+    config=WorkspaceFileChecksStorageConfig(location=checks_file)
+)
+
+print(f"📥 Loaded {len(loaded_rules)} rules from: {checks_file}")
+
+# Apply loaded rules to new data
+new_data = [
+    ("SENSOR-MF-0007", "MACHINE-007", "2024-01-15 11:00:00", 80.0, 125.0, "active", "Building G"),
+]
+new_df = spark.createDataFrame(new_data, schema)
+
+result_df = dq_engine.apply_checks_by_metadata(new_df, loaded_rules)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 10. Advanced: Dataset-Level Custom Rules
+# MAGIC
+# MAGIC ODCS supports embedding DQX custom rules for dataset-level checks (e.g., data freshness, aggregate validation).
+
+# COMMAND ----------
+
+# Contract with dataset-level rules
+contract_with_dataset_rules = yaml.safe_load("""
+apiVersion: v3.0.2
+kind: DataContract
+id: demo-with-dataset-rules
+name: sensor_data_with_freshness
+version: 1.0.0
+status: active
+
+schema:
+  - name: sensor_data
+    properties:
+      - name: sensor_id
+        logicalType: string
+        required: true
+        
+      - name: reading_timestamp
+        logicalType: date
+        format: yyyy-MM-dd HH:mm:ss
+        required: true
+        # Dataset-level freshness check using DQX custom format
+        quality:
+          - type: custom
+            engine: dqx
+            implementation:
+              criticality: error
+              name: data_freshness_check
+              check:
+                function: is_data_fresh_per_time_window
+                arguments:
+                  column: reading_timestamp
+                  window_minutes: 60
+                  min_records_per_window: 1
+                  lookback_windows: 24
+              user_metadata:
+                dimension: timeliness
+                description: Ensure data is updated at least once per hour
+                
+      - name: reading_value
+        logicalType: number
+        required: true
+        minValue: 0.0
+        maxValue: 1000.0
+""")
+
+# Generate rules including dataset-level checks
+dataset_rules = generator.generate_rules_from_contract(
+    contract=contract_with_dataset_rules,
+    generate_implicit_rules=True,
+    process_text_rules=False
+)
+
+print(f"✅ Generated {len(dataset_rules)} rules (including dataset-level)")
+print("\nDataset-Level Rules:")
+for rule in dataset_rules:
+    if rule['check']['function'] in ['is_data_fresh_per_time_window', 'is_aggr_not_greater_than']:
+        print(f"  - {rule['name']}: {rule['check']['function']}")
+        print(f"    Dimension: {rule['user_metadata'].get('dimension', 'N/A')}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 11. Summary and Best Practices
 # MAGIC
 # MAGIC ### Key Takeaways
 # MAGIC
@@ -369,11 +498,17 @@ print(rules_yaml[:500] + "..." if len(rules_yaml) > 500 else rules_yaml)
 # MAGIC 4. **Criticality Tuning**: Adjust criticality mappings based on business requirements
 # MAGIC 5. **Incremental Adoption**: Start with implicit rules, add explicit rules as needed
 # MAGIC
+# MAGIC ### What's Supported
+# MAGIC
+# MAGIC - ✅ Implicit rules from schema properties (required, unique, pattern, range, validValues, format)
+# MAGIC - ✅ Explicit custom rules using DQX native format (including dataset-level checks)
+# MAGIC - ✅ Full ODCS v3.0.x compliance with JSON Schema validation
+# MAGIC - ✅ Contract metadata and lineage tracking
+# MAGIC
 # MAGIC ### What's Not Supported (Yet)
 # MAGIC
+# MAGIC - Text-based quality expectations with LLM (optional, requires LLM setup)
 # MAGIC - ODCS Library format rules (use DQX custom format instead)
-# MAGIC - SQL-based checks from ODCS (coming in future release)
-# MAGIC - Dataset-level quality rules (e.g., row counts)
 # MAGIC
 # MAGIC ### Learn More
 # MAGIC

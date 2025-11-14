@@ -133,7 +133,7 @@ class DQGenerator(DQEngineBase):
     def generate_rules_from_contract(
         self,
         contract: dict,
-        format: str = "odcs",
+        contract_format: str = "odcs",
         generate_implicit_rules: bool = True,
         process_text_rules: bool = True,
         default_criticality: str = "error",
@@ -146,7 +146,7 @@ class DQGenerator(DQEngineBase):
 
         Args:
             contract: Dictionary representation of the data contract.
-            format: Contract format specification (default is "odcs").
+            contract_format: Contract format specification (default is "odcs").
             generate_implicit_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
             default_criticality: Default criticality level for generated rules (default is "error").
@@ -168,7 +168,7 @@ class DQGenerator(DQEngineBase):
         # Delegate to the contract generator
         return contract_generator.generate_rules_from_contract(
             contract=contract,
-            format=format,
+            contract_format=contract_format,
             generate_implicit_rules=generate_implicit_rules,
             process_text_rules=process_text_rules,
             default_criticality=default_criticality,

@@ -24,7 +24,7 @@ class TestODCSIntegration:
     @pytest.fixture
     def sample_contract(self, sample_contract_path):
         """Load sample ODCS contract."""
-        with open(sample_contract_path) as f:
+        with open(sample_contract_path, encoding='utf-8') as f:
             return yaml.safe_load(f)
 
     def test_generate_rules_from_sample_contract(self, ws, spark, sample_contract):
@@ -203,8 +203,7 @@ class TestODCSIntegration:
         generator = DQGenerator(workspace_client=ws, spark=spark)
         rules = generator.generate_rules_from_contract(contract=contract_dict)
 
-        # Should have: is_not_null(id), is_unique(id), is_not_null(email), regex_match(email),
-        #              is_in_range(age), is_in_list(status)
+        # Verify we have at least 6 rules generated
         assert len(rules) >= 6
 
         # Verify different rule types are present
@@ -251,7 +250,7 @@ class TestODCSIntegration:
             assert metadata["odcs_contract_version"] == contract_version
             assert "odcs_property" in metadata
             assert "odcs_rule_type" in metadata
-            assert metadata["odcs_rule_type"] in ["implicit", "explicit", "text_llm"]
+            assert metadata["odcs_rule_type"] in {"implicit", "explicit", "text_llm"}
 
     def test_skip_implicit_rules_flag(self, ws, spark):
         """Test that generate_implicit_rules=False skips implicit rules."""

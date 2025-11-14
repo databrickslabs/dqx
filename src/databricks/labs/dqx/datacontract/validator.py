@@ -55,8 +55,7 @@ class ODCSValidator:
 
         if not api_version:
             raise ODCSValidationError(
-                "Missing required field: 'apiVersion'",
-                errors=["Field 'apiVersion' is required (e.g., 'v3.0.2')"]
+                "Missing required field: 'apiVersion'", errors=["Field 'apiVersion' is required (e.g., 'v3.0.2')"]
             )
 
         # Check if we support this version
@@ -66,8 +65,7 @@ class ODCSValidator:
         # Unsupported version
         supported = ', '.join(self.SUPPORTED_VERSIONS.keys())
         raise ODCSValidationError(
-            f"Unsupported apiVersion: '{api_version}'",
-            errors=[f"Supported versions: {supported}"]
+            f"Unsupported apiVersion: '{api_version}'", errors=[f"Supported versions: {supported}"]
         )
 
     def _load_schema(self, version: str) -> dict[str, Any]:
@@ -91,8 +89,7 @@ class ODCSValidator:
 
         if not schema_path.exists():
             raise FileNotFoundError(
-                f"ODCS JSON Schema not found: {schema_path}. "
-                f"Expected bundled schema file for version {version}."
+                f"ODCS JSON Schema not found: {schema_path}. " f"Expected bundled schema file for version {version}."
             )
 
         try:
@@ -133,8 +130,7 @@ class ODCSValidator:
         if errors:
             error_messages = self._format_validation_errors(errors)
             raise ODCSValidationError(
-                f"ODCS contract validation failed with {len(errors)} error(s)",
-                errors=error_messages
+                f"ODCS contract validation failed with {len(errors)} error(s)", errors=error_messages
             )
 
     @staticmethod
@@ -173,4 +169,3 @@ def validate_contract(contract: dict[str, Any]) -> None:
     if _validator_instance is None:
         _validator_instance = ODCSValidator()
     _validator_instance.validate(contract)
-

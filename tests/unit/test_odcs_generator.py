@@ -30,7 +30,7 @@ def create_valid_odcs_contract(properties=None, **overrides):
             "properties": properties if properties is not None else [],
         }
     ]
-    
+
     contract = {
         "apiVersion": "v3.0.2",
         "kind": "DataContract",
@@ -122,7 +122,9 @@ class TestODCSContract:
                     "name": "email",
                     "logicalType": "string",
                     "required": True,
-                    "quality": [{"type": "custom", "engine": "dqx", "implementation": {"notNull": True, "notEmpty": True}}],
+                    "quality": [
+                        {"type": "custom", "engine": "dqx", "implementation": {"notNull": True, "notEmpty": True}}
+                    ],
                 },
             ],
         )
@@ -156,7 +158,9 @@ class TestODCSContract:
                 {
                     "name": "price",
                     "logicalType": "number",
-                    "quality": [{"type": "custom", "engine": "dqx", "implementation": {"minValue": 0.01, "maxValue": 10000.0}}],
+                    "quality": [
+                        {"type": "custom", "engine": "dqx", "implementation": {"minValue": 0.01, "maxValue": 10000.0}}
+                    ],
                 },
             ],
         )
@@ -235,7 +239,13 @@ class TestDQGeneratorODCS:
             "status": "active",
             "name": "test",
             "version": "1.0.0",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "user_id", "logicalType": "string", "required": True}]}],
+            "schema": [
+                {
+                    "name": "test_table",
+                    "logicalType": "object",
+                    "properties": [{"name": "user_id", "logicalType": "string", "required": True}],
+                }
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict, generate_implicit_rules=True)
         assert len(rules) == 1
@@ -263,7 +273,13 @@ class TestDQGeneratorODCS:
                             "name": "email",
                             "logicalType": "string",
                             "required": True,
-                            "quality": [{"type": "custom", "engine": "dqx", "implementation": {"notNull": True, "notEmpty": True}}],
+                            "quality": [
+                                {
+                                    "type": "custom",
+                                    "engine": "dqx",
+                                    "implementation": {"notNull": True, "notEmpty": True},
+                                }
+                            ],
                         }
                     ],
                 }
@@ -308,7 +324,13 @@ class TestDQGeneratorODCS:
             "status": "active",
             "name": "test",
             "version": "1.0.0",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "code", "logicalType": "string", "pattern": "^[A-Z]{3}-[0-9]{4}$"}]}],
+            "schema": [
+                {
+                    "name": "test_table",
+                    "logicalType": "object",
+                    "properties": [{"name": "code", "logicalType": "string", "pattern": "^[A-Z]{3}-[0-9]{4}$"}],
+                }
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict)
         assert len(rules) == 1
@@ -324,7 +346,13 @@ class TestDQGeneratorODCS:
             "status": "active",
             "name": "test",
             "version": "1.0.0",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "age", "logicalType": "integer", "minValue": 0, "maxValue": 120}]}],
+            "schema": [
+                {
+                    "name": "test_table",
+                    "logicalType": "object",
+                    "properties": [{"name": "age", "logicalType": "integer", "minValue": 0, "maxValue": 120}],
+                }
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict)
         assert len(rules) == 1
@@ -341,7 +369,13 @@ class TestDQGeneratorODCS:
             "status": "active",
             "name": "test",
             "version": "1.0.0",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "price", "logicalType": "number", "minValue": 0.01}]}],
+            "schema": [
+                {
+                    "name": "test_table",
+                    "logicalType": "object",
+                    "properties": [{"name": "price", "logicalType": "number", "minValue": 0.01}],
+                }
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict)
         assert len(rules) == 1
@@ -357,7 +391,13 @@ class TestDQGeneratorODCS:
             "status": "active",
             "name": "test",
             "version": "1.0.0",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "discount", "logicalType": "number", "maxValue": 100.0}]}],
+            "schema": [
+                {
+                    "name": "test_table",
+                    "logicalType": "object",
+                    "properties": [{"name": "discount", "logicalType": "number", "maxValue": 100.0}],
+                }
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict)
         assert len(rules) == 1
@@ -373,7 +413,13 @@ class TestDQGeneratorODCS:
             "status": "active",
             "name": "test",
             "version": "1.0.0",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "user_id", "logicalType": "string", "unique": True}]}],
+            "schema": [
+                {
+                    "name": "test_table",
+                    "logicalType": "object",
+                    "properties": [{"name": "user_id", "logicalType": "string", "unique": True}],
+                }
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict)
         assert len(rules) == 1
@@ -389,7 +435,15 @@ class TestDQGeneratorODCS:
             "status": "active",
             "name": "test",
             "version": "1.0.0",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "birth_date", "logicalType": "date", "format": "yyyy-MM-dd", "required": True}]}],
+            "schema": [
+                {
+                    "name": "test_table",
+                    "logicalType": "object",
+                    "properties": [
+                        {"name": "birth_date", "logicalType": "date", "format": "yyyy-MM-dd", "required": True}
+                    ],
+                }
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict)
         assert len(rules) == 2  # is_not_null + is_valid_date
@@ -438,7 +492,13 @@ class TestDQGeneratorODCS:
                             "logicalType": "string",
                             "required": True,
                             "pattern": r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
-                            "quality": [{"type": "custom", "engine": "dqx", "implementation": {"notNull": True, "notEmpty": True}}],
+                            "quality": [
+                                {
+                                    "type": "custom",
+                                    "engine": "dqx",
+                                    "implementation": {"notNull": True, "notEmpty": True},
+                                }
+                            ],
                         }
                     ],
                 }
@@ -484,7 +544,9 @@ class TestDQGeneratorODCS:
             "status": "active",
             "name": "test",
             "version": "1.0.0",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "user_id", "required": True}]}],
+            "schema": [
+                {"name": "test_table", "logicalType": "object", "properties": [{"name": "user_id", "required": True}]}
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict, generate_implicit_rules=False)
         assert len(rules) == 0
@@ -506,7 +568,9 @@ class TestDQGeneratorODCS:
                         {
                             "name": "description",
                             "logicalType": "string",
-                            "quality": [{"type": "text", "description": "Description should be professional and clear"}],
+                            "quality": [
+                                {"type": "text", "description": "Description should be professional and clear"}
+                            ],
                         }
                     ],
                 }
@@ -617,7 +681,13 @@ class TestDQGeneratorODCS:
             "version": "2.5.0",
             "domain": "sales",
             "dataProduct": "analytics",
-            "schema": [{"name": "test_table", "logicalType": "object", "properties": [{"name": "customer_id", "required": True}]}],
+            "schema": [
+                {
+                    "name": "test_table",
+                    "logicalType": "object",
+                    "properties": [{"name": "customer_id", "required": True}],
+                }
+            ],
         }
         rules = generator.generate_rules_from_contract(contract=contract_dict)
         assert len(rules) == 1

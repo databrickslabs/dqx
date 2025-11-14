@@ -108,7 +108,7 @@ class ODCSContract(BaseContract):
         # ODCS v3.0.x uses array of schema objects format
         properties = []
         schema_list = data.get('schema', [])
-        
+
         if not isinstance(schema_list, list):
             raise ValueError("ODCS schema must be an array of schema objects")
 
@@ -116,23 +116,23 @@ class ODCSContract(BaseContract):
         for schema_obj in schema_list:
             if not isinstance(schema_obj, dict):
                 continue
-                
+
             # Get properties array from schema object
             props_list = schema_obj.get('properties', [])
             if not isinstance(props_list, list):
                 logger.warning(f"Schema object properties must be an array, got {type(props_list)}")
                 continue
-                
+
             # Parse each property
             for prop_data in props_list:
                 if not isinstance(prop_data, dict):
                     continue
-                    
+
                 prop_name = prop_data.get('name')
                 if not prop_name:
                     logger.warning("Property missing 'name' field, skipping")
                     continue
-                    
+
                 properties.append(cls._parse_property(prop_name, prop_data))
 
         # Extract dataset-level quality rules
@@ -166,7 +166,7 @@ class ODCSContract(BaseContract):
         """
         # ODCS v3.0.x: quality is an array of quality checks
         quality_array = data.get('quality', [])
-        
+
         if not isinstance(quality_array, list):
             quality_array = []
 
@@ -177,14 +177,14 @@ class ODCSContract(BaseContract):
         max_value = data.get('maxValue')
         valid_values = data.get('validValues')
         pattern = data.get('pattern')
-        
+
         # Parse quality checks to extract constraints
         for quality_check in quality_array:
             if not isinstance(quality_check, dict):
                 continue
-                
+
             check_type = quality_check.get('type')
-            
+
             # For custom checks with DQX engine, extract from implementation
             if check_type == 'custom' and quality_check.get('engine') == 'dqx':
                 implementation = quality_check.get('implementation', {})

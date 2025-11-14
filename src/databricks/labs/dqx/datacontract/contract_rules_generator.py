@@ -8,6 +8,7 @@ specifications like ODCS (Open Data Contract Standard).
 import json
 import logging
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from pyspark.sql import SparkSession
 
@@ -17,13 +18,9 @@ from databricks.labs.dqx.datacontract.formats.odcs import ODCSContract, ODCSProp
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.telemetry import telemetry_logger
 
-# Conditional imports for LLM-assisted rules generation
-try:
+# LLM engine is imported dynamically in methods that need it
+if TYPE_CHECKING:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
-
-    LLM_ENABLED = True
-except ImportError:
-    LLM_ENABLED = False
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +59,7 @@ class DataContractRulesGenerator(DQEngineBase):
     def generate_rules_from_contract(
         self,
         contract: dict,
-        format: str = "odcs",
+        contract_format: str = "odcs",
         generate_implicit_rules: bool = True,
         process_text_rules: bool = True,
         default_criticality: str = "error",
@@ -75,7 +72,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         Args:
             contract: Dictionary representation of the data contract.
-            format: Contract format specification (default is "odcs").
+            contract_format: Contract format specification (default is "odcs").
             generate_implicit_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
             default_criticality: Default criticality level for generated rules (default is "error").
@@ -86,8 +83,8 @@ class DataContractRulesGenerator(DQEngineBase):
         Raises:
             ValueError: If the contract format is not supported or validation fails.
         """
-        if format != "odcs":
-            raise ValueError(f"Contract format '{format}' not supported. Currently only 'odcs' is supported.")
+        if contract_format != "odcs":
+            raise ValueError(f"Contract format '{contract_format}' not supported. Currently only 'odcs' is supported.")
 
         # Parse and validate the contract (validation happens in from_dict)
         try:
@@ -103,9 +100,7 @@ class DataContractRulesGenerator(DQEngineBase):
         # Generate implicit rules from schema properties
         if generate_implicit_rules:
             for prop in odcs_contract.properties:
-                implicit_rules = self._generate_implicit_rules_for_property(
-                    prop, odcs_contract, default_criticality
-                )
+                implicit_rules = self._generate_implicit_rules_for_property(prop, odcs_contract, default_criticality)
                 dq_rules.extend(implicit_rules)
 
         # Process text-based quality expectations
@@ -143,7 +138,7 @@ class DataContractRulesGenerator(DQEngineBase):
             dimension = "completeness"
             criticality = default_criticality
 
-            if prop.not_empty and prop.logical_type in ('string', 'text', None):
+            if prop.not_empty and prop.logical_type in {'string', 'text', None}:
                 # For strings, check both null and empty
                 rules.append(
                     {
@@ -291,11 +286,13 @@ class DataContractRulesGenerator(DQEngineBase):
             dimension = "validity"
             criticality = default_criticality
 
-            if prop.logical_type in ('date', 'datetime', 'timestamp'):
+            if prop.logical_type in {'date', 'datetime', 'timestamp'}:
                 # Detect if it's a timestamp based on format (time components: HH, mm, ss)
-                is_timestamp = prop.format and any(time_component in prop.format for time_component in ['HH', 'mm', 'ss', 'hh'])
-                
-                if is_timestamp or prop.logical_type in ('datetime', 'timestamp'):
+                is_timestamp = prop.format and any(
+                    time_component in prop.format for time_component in ('HH', 'mm', 'ss', 'hh')
+                )
+
+                if is_timestamp or prop.logical_type in {'datetime', 'timestamp'}:
                     rules.append(
                         {
                             "check": {
@@ -335,7 +332,7 @@ class DataContractRulesGenerator(DQEngineBase):
         columns = []
         for prop in contract.properties:
             col_info = {"name": prop.name}
-            
+
             # Map ODCS logical types to simple type names
             if prop.logical_type:
                 type_mapping = {
@@ -354,13 +351,13 @@ class DataContractRulesGenerator(DQEngineBase):
                 col_info["type"] = type_mapping.get(prop.logical_type, prop.logical_type)
             else:
                 col_info["type"] = "string"  # default
-            
+
             columns.append(col_info)
-        
+
         schema_dict = {"columns": columns}
         return json.dumps(schema_dict)
 
-    def _process_text_based_rules(self, contract: ODCSContract, default_criticality: str) -> list[dict]:
+    def _process_text_based_rules(self, contract: ODCSContract, _default_criticality: str) -> list[dict]:
         """Process text-based quality expectations using LLM."""
         rules: list[dict] = []
 
@@ -384,13 +381,13 @@ class DataContractRulesGenerator(DQEngineBase):
         for prop in contract.properties:
             if not prop.quality or not isinstance(prop.quality, list):
                 continue
-            
+
             for quality_check in prop.quality:
                 if not isinstance(quality_check, dict):
                     continue
-                    
+
                 check_type = quality_check.get('type')
-                
+
                 # Handle ODCS type: text format
                 if check_type == 'text':
                     text_expectation = quality_check.get('description', '')
@@ -435,7 +432,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return rules
 
-    def _process_explicit_dqx_rules(self, contract: ODCSContract, default_criticality: str) -> list[dict]:
+    def _process_explicit_dqx_rules(self, contract: ODCSContract, _default_criticality: str) -> list[dict]:
         """Process explicit DQX format rules from custom properties."""
         rules = []
 
@@ -449,19 +446,19 @@ class DataContractRulesGenerator(DQEngineBase):
         for prop in contract.properties:
             if not prop.quality or not isinstance(prop.quality, list):
                 continue
-            
+
             for quality_check in prop.quality:
                 if not isinstance(quality_check, dict):
                     continue
-                    
+
                 check_type = quality_check.get('type')
-                
+
                 # Handle ODCS type: custom format with DQX engine
                 if check_type == 'custom' and quality_check.get('engine') == 'dqx':
                     implementation = quality_check.get('implementation', {})
                     if not isinstance(implementation, dict):
                         continue
-                    
+
                     # Check if it's DQX format (has 'check' key with 'function')
                     if 'check' in implementation:
                         custom_rules_list = [implementation]

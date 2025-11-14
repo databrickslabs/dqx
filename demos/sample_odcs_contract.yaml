@@ -2,8 +2,8 @@
 # ==================================================
 # This demonstrates how to use ODCS with DQX for automated quality rule generation.
 # Includes examples of:
-#   - Implicit rules from schema properties
-#   - Text-based rules (natural language → LLM)
+#   - Implicit rules from schema properties (required, pattern, range, validValues, format)
+#   - Text-based rules (natural language → LLM, optional)
 #   - Custom DQX rules (row-level and dataset-level)
 
 apiVersion: v3.0.2
@@ -27,128 +27,143 @@ tags:
   - manufacturing
   - real-time
 
+# Schema is an ARRAY of schema objects (ODCS v3.0.x format)
 schema:
-  type: table
-  properties:
-    sensor_id:
-      logicalType: string
-      physicalType: VARCHAR(50)
-      description: Unique identifier for the sensor device
-      required: true
-      pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'
-      
-    machine_id:
-      logicalType: string
-      physicalType: VARCHAR(50)
-      description: Identifier of the machine being monitored
-      required: true
-      quality:
-        notNull: true
-        notEmpty: true
+  - name: sensor_readings_table
+    type: table
+    description: Main table containing sensor readings
+    # Properties is an ARRAY of property objects
+    properties:
+      - name: sensor_id
+        logicalType: string
+        physicalType: VARCHAR(50)
+        description: Unique identifier for the sensor device
+        required: true
+        pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'
         
-    reading_timestamp:
-      logicalType: timestamp
-      physicalType: TIMESTAMP
-      description: When the sensor reading was recorded
-      required: true
-      format: yyyy-MM-dd HH:mm:ss
-      
-    temperature:
-      logicalType: numeric
-      physicalType: DECIMAL(5,2)
-      description: Temperature reading in Celsius
-      required: true
-      minValue: -50.0
-      maxValue: 150.0
-      quality:
-        text:
-          - "Temperature readings above 100C should trigger alerts"
+      - name: machine_id
+        logicalType: string
+        physicalType: VARCHAR(50)
+        description: Identifier of the machine being monitored
+        required: true
+        # Quality is an ARRAY of quality check objects
+        quality:
+          - type: custom
+            engine: dqx
+            implementation:
+              notNull: true
+              notEmpty: true
           
-    pressure:
-      logicalType: numeric
-      physicalType: DECIMAL(6,2)
-      description: Pressure reading in PSI
-      required: true
-      minValue: 0.0
-      maxValue: 500.0
-      
-    vibration_level:
-      logicalType: numeric
-      physicalType: DECIMAL(6,3)
-      description: Vibration measurement in mm/s
-      required: true
-      minValue: 0.0
-      maxValue: 100.0
-      
-    sensor_status:
-      logicalType: string
-      physicalType: VARCHAR(20)
-      description: Operational status of the sensor
-      required: true
-      validValues:
-        - active
-        - inactive
-        - maintenance
-        - faulty
+      - name: reading_timestamp
+        logicalType: date  # ODCS uses 'date' for both dates and timestamps
+        physicalType: TIMESTAMP
+        format: yyyy-MM-dd HH:mm:ss
+        description: When the sensor reading was recorded
+        required: true
         
-    calibration_date:
-      logicalType: date
-      physicalType: DATE
-      description: Last calibration date of the sensor
-      required: true
-      format: yyyy-MM-dd
-      quality:
-        custom:
-          criticality: error
-          check:
-            function: sql_expression
-            arguments:
-              expression: calibration_date <= date(reading_timestamp)
-              msg: Calibration date cannot be in the future relative to reading
-              
-    location:
-      logicalType: string
-      physicalType: VARCHAR(100)
-      description: Physical location of the sensor
-      required: true
-      quality:
-        notNull: true
-        notEmpty: true
+      - name: temperature
+        logicalType: number  # ODCS uses 'number' not 'numeric'
+        physicalType: DECIMAL(5,2)
+        description: Temperature reading in Celsius
+        required: true
+        minValue: -50.0
+        maxValue: 150.0
+        quality:
+          - type: text
+            description: Temperature readings above 100C should trigger alerts
+            
+      - name: pressure
+        logicalType: number
+        physicalType: DECIMAL(6,2)
+        description: Pressure reading in PSI
+        required: true
+        minValue: 0.0
+        maxValue: 500.0
         
-    humidity_percentage:
-      logicalType: numeric
-      physicalType: DECIMAL(5,2)
-      description: Relative humidity percentage
-      required: false
-      minValue: 0.0
-      maxValue: 100.0
+      - name: vibration_level
+        logicalType: number
+        physicalType: DECIMAL(6,3)
+        description: Vibration measurement in mm/s
+        required: true
+        minValue: 0.0
+        maxValue: 100.0
+        
+      - name: sensor_status
+        logicalType: string
+        physicalType: VARCHAR(20)
+        description: Operational status of the sensor
+        required: true
+        validValues:
+          - active
+          - inactive
+          - maintenance
+          - faulty
+          
+      - name: calibration_date
+        logicalType: date
+        physicalType: DATE
+        format: yyyy-MM-dd
+        description: Last calibration date of the sensor
+        required: true
+        quality:
+          - type: custom
+            engine: dqx
+            implementation:
+              criticality: error
+              check:
+                function: sql_expression
+                arguments:
+                  expression: calibration_date <= date(reading_timestamp)
+                  msg: Calibration date cannot be in the future relative to reading
+                
+      - name: location
+        logicalType: string
+        physicalType: VARCHAR(100)
+        description: Physical location of the sensor
+        required: true
+        quality:
+          - type: custom
+            engine: dqx
+            implementation:
+              notNull: true
+              notEmpty: true
+          
+      - name: humidity_percentage
+        logicalType: number
+        physicalType: DECIMAL(5,2)
+        description: Relative humidity percentage
+        required: false
+        minValue: 0.0
+        maxValue: 100.0
+        
+      - name: error_code
+        logicalType: string
+        physicalType: VARCHAR(10)
+        description: Error code if sensor reported an issue
+        required: false
+        pattern: '^E[0-9]{4}$'
       
-    error_code:
-      logicalType: string
-      physicalType: VARCHAR(10)
-      description: Error code if sensor reported an issue
-      required: false
-      pattern: '^E[0-9]{4}$'
-    
-    # Dataset-level quality rule example using DQX custom format
-    last_update_time:
-      logicalType: timestamp
-      physicalType: TIMESTAMP
-      description: Last update timestamp for freshness checks
-      required: true
-      quality:
-        custom:
-          # Dataset-level freshness check
-          criticality: error
-          name: sensor_data_freshness
-          check:
-            function: is_data_fresh_per_time_window
-            arguments:
-              column: last_update_time
-              window_minutes: 30
-              min_records_per_window: 10
-              lookback_windows: 12
-          user_metadata:
-            dimension: timeliness
-            description: Ensure sensor data is updated at least 10 times per 30-minute window
-
+      # Dataset-level quality rule example using DQX custom format
+      - name: last_update_time
+        logicalType: date  # ODCS uses 'date' for timestamps
+        physicalType: TIMESTAMP
+        format: yyyy-MM-dd HH:mm:ss
+        description: Last update timestamp for freshness checks
+        required: true
+        quality:
+          - type: custom
+            engine: dqx
+            implementation:
+              # Dataset-level freshness check
+              criticality: error
+              name: sensor_data_freshness
+              check:
+                function: is_data_fresh_per_time_window
+                arguments:
+                  column: last_update_time
+                  window_minutes: 30
+                  min_records_per_window: 10
+                  lookback_windows: 12
+              user_metadata:
+                dimension: timeliness
+                description: Ensure sensor data is updated at least 10 times per 30-minute window
