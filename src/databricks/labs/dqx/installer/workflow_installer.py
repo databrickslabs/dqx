@@ -405,7 +405,7 @@ class WorkflowDeployment(InstallationMixin):
                     logger.warning(f"Corrupt installation state. Skipping job_id={job_id} as it is not managed by DQX")
                     continue
                 logger.info(f"Removing job_id={job_id}, as it is no longer needed")
-                self._ws.jobs.delete(job_id)
+                self.ws.jobs.delete(job_id)
             except InvalidParameterValue:
                 logger.warning(f"step={workflow_name} does not exist anymore for some reason")
                 continue
@@ -437,7 +437,7 @@ class WorkflowDeployment(InstallationMixin):
             return False
 
     def _is_managed_job(self, job_id: int) -> bool:
-        job = self._ws.jobs.get(job_id)
+        job = self.ws.jobs.get(job_id)
         if not job.settings or not job.settings.tasks:
             return False
         for task in job.settings.tasks:
@@ -466,13 +466,13 @@ class WorkflowDeployment(InstallationMixin):
             try:
                 job_id = int(self._install_state.jobs[step_name])
                 logger.info(f"Updating configuration for step={step_name} job_id={job_id}")
-                return self._ws.jobs.reset(job_id, jobs.JobSettings(**settings))
+                return self.ws.jobs.reset(job_id, jobs.JobSettings(**settings))
             except InvalidParameterValue:
                 del self._install_state.jobs[step_name]
                 logger.warning(f"step={step_name} does not exist anymore for some reason")
                 return self._deploy_workflow(step_name, settings)
         logger.info(f"Creating new job configuration for step={step_name}")
-        new_job = self._ws.jobs.create(**settings)
+        new_job = self.ws.jobs.create(**settings)
         assert new_job.job_id is not None
         self._install_state.jobs[step_name] = str(new_job.job_id)
         return None
@@ -547,7 +547,7 @@ class WorkflowDeployment(InstallationMixin):
 
     def _build_tags(self) -> dict[str, str]:
         version = self._product_info.version()
-        version = version if not self._ws.config.is_gcp else version.replace("+", "-")
+        version = version if not self.ws.config.is_gcp else version.replace("+", "-")
         tags = {"version": f"v{version}"}
         if self._is_testing():
             tags.update({"RemoveAfter": self._get_test_purge_time()})
@@ -671,8 +671,8 @@ class WorkflowDeployment(InstallationMixin):
     def _job_clusters(self, job_clusters: set[str], spark_conf: dict[str, str] | None = None):
         clusters = []
         if self.CLUSTER_KEY in job_clusters:
-            latest_lts_dbr = self._ws.clusters.select_spark_version(latest=True, long_term_support=True)
-            node_type_id = self._ws.clusters.select_node_type(
+            latest_lts_dbr = self.ws.clusters.select_spark_version(latest=True, long_term_support=True)
+            node_type_id = self.ws.clusters.select_node_type(
                 local_disk=True, min_memory_gb=16, min_cores=4, photon_worker_capable=True, is_io_cache_enabled=True
             )
             clusters = [

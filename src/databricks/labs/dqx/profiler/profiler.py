@@ -38,7 +38,7 @@ class DQProfile:
 class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
 
-    def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession | None = None):
+    def __init__(self, workspace_client: WorkspaceClient | None = None, spark: SparkSession | None = None):
         super().__init__(workspace_client=workspace_client)
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 

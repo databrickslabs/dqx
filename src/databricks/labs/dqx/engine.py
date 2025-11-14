@@ -56,7 +56,8 @@ class DQEngineCore(DQEngineCoreBase):
     """Core engine to apply data quality checks to a DataFrame.
 
     Args:
-        workspace_client: WorkspaceClient instance used to access the workspace.
+        workspace_client: Optional Databricks WorkspaceClient instance used to access the workspace. If not provided, a
+            default WorkspaceClient for the current logged-in user is used.
         spark: Optional SparkSession to use. If not provided, the active session is used.
         extra_params: Optional extra parameters for the engine, such as result column names and run metadata.
         observer: Optional DQMetricsObserver for tracking data quality summary metrics.
@@ -64,7 +65,7 @@ class DQEngineCore(DQEngineCoreBase):
 
     def __init__(
         self,
-        workspace_client: WorkspaceClient,
+        workspace_client: WorkspaceClient | None = None,
         spark: SparkSession | None = None,
         extra_params: ExtraParams | None = None,
         observer: DQMetricsObserver | None = None,
@@ -450,7 +451,8 @@ class DQEngine(DQEngineBase):
     read inputs, persist results, and work with different storage backends for checks.
 
     Args:
-        workspace_client: WorkspaceClient instance used to access the Databricks workspace.
+        workspace_client: Optional WorkspaceClient instance used to access the workspace. If not provided, a default
+            WorkspaceClient for the current logged-in user is used.
         spark: Optional SparkSession to use. If not provided, the active session is used.
         engine: Optional DQEngineCore instance to use. If not provided, a new instance is created.
         extra_params: Optional extra parameters for the engine, such as result column names and run metadata.
@@ -462,7 +464,7 @@ class DQEngine(DQEngineBase):
 
     def __init__(
         self,
-        workspace_client: WorkspaceClient,
+        workspace_client: WorkspaceClient | None = None,
         spark: SparkSession | None = None,
         engine: DQEngineCore | None = None,
         extra_params: ExtraParams | None = None,
