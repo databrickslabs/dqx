@@ -1,6 +1,7 @@
 import logging
 import json
 from collections.abc import Callable
+from typing import Any
 
 from pyspark.sql import SparkSession
 
@@ -17,6 +18,7 @@ from databricks.labs.dqx.errors import MissingParameterError
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
     from databricks.labs.dqx.llm.llm_utils import get_column_metadata
+    from databricks.labs.dqx.llm.llm_pk_detector import DatabricksPrimaryKeyDetector
 
     LLM_ENABLED = True
 except ImportError:
@@ -46,10 +48,10 @@ class DQGenerator(DQEngineBase):
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
         self.custom_check_functions = custom_check_functions
-        llm_model_config = llm_model_config or LLMModelConfig()
+        self.llm_model_config = llm_model_config or LLMModelConfig()
 
         self.llm_engine = (
-            DQLLMEngine(model_config=llm_model_config, custom_check_functions=custom_check_functions)
+            DQLLMEngine(model_config=self.llm_model_config, custom_check_functions=custom_check_functions)
             if LLM_ENABLED
             else None
         )
@@ -127,6 +129,63 @@ class DQGenerator(DQEngineBase):
             logger.info(f"LLM reasoning: {prediction.reasoning}")
 
         return dq_rules
+
+    @telemetry_logger("generator", "detect_primary_keys_with_llm")
+    def detect_primary_keys_with_llm(
+        self,
+        input_config: InputConfig,
+        validate_duplicates: bool = True,
+        fail_on_duplicates: bool = True,
+        max_retries: int = 3,
+    ) -> dict[str, Any]:
+        """
+        Detects primary keys using LLM-based analysis.
+
+        Args:
+            input_config: Input configuration containing the table location.
+            validate_duplicates: Whether to validate the detected primary keys for duplicates.
+            fail_on_duplicates: Whether to fail if duplicates are found after max retries.
+            max_retries: Maximum number of retries to find unique primary key combination.
+
+        Returns:
+            A dictionary containing the primary key detection result with the following keys:
+            - table: The table name
+            - success: Whether detection was successful
+            - primary_key_columns: List of detected primary key columns (if successful)
+            - confidence: Confidence level (high/medium/low)
+            - reasoning: LLM reasoning for the selection
+            - has_duplicates: Whether duplicates were found (if validation performed)
+            - duplicate_count: Number of duplicate combinations (if validation performed)
+            - error: Error message (if failed)
+
+        Raises:
+            MissingParameterError: If LLM engine is not available or input_config is missing.
+        """
+        if self.llm_engine is None:
+            raise MissingParameterError(
+                "LLM engine not available. Make sure LLM dependencies are installed: "
+                "pip install 'databricks-labs-dqx[llm]'"
+            )
+
+        if not input_config or not input_config.location:
+            raise MissingParameterError("Input config with location (table name) is required for PK detection")
+
+        table_name = input_config.location
+        logger.info(f"Detecting primary keys with LLM for table: {table_name}")
+
+        detector = DatabricksPrimaryKeyDetector(
+            table=table_name,
+            endpoint=self.llm_model_config.model_name,
+            validate_duplicates=validate_duplicates,
+            fail_on_duplicates=fail_on_duplicates,
+            spark_session=self.spark,
+            max_retries=max_retries,
+        )
+
+        result = detector.detect_primary_keys()
+
+        logger.info(f"Primary key detection completed for {table_name}: {result.get('success', False)}")
+        return result
 
     @staticmethod
     def dq_generate_is_in(column: str, level: str = "error", **params: dict):
