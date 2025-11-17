@@ -1,114 +1,279 @@
-# Sample Data Contract for DQX Testing (datacontract-cli format)
-# This demonstrates various field constraints that generate DQX rules
+# Comprehensive Data Contract for DQX Testing
+# This contract demonstrates ALL supported DQX rule generation patterns:
+# 1. Implicit rules from field constraints
+# 2. Explicit DQX rules (native format)
+# 3. Text-based expectations (for LLM processing)
+# 4. Dataset-level quality checks
 
 dataContractSpecification: 0.9.3
-id: urn:datacontract:orders:customer_orders
+id: urn:datacontract:sensors:iot_sensor_data
 info:
-  title: Customer Orders
-  version: 1.0.0
-  description: Customer order data for analytics
-  owner: Sales Team
+  title: IoT Sensor Data Quality Contract
+  version: 2.1.0
+  description: |
+    Comprehensive data contract for IoT sensor readings demonstrating
+    all DQX rule generation capabilities including implicit constraints,
+    explicit quality checks, and dataset-level validations.
+  owner: IoT Platform Team
   contact:
-    name: Data Team
-    email: data@example.com
+    name: Data Engineering Team
+    email: data-engineering@example.com
+  tags:
+    - iot
+    - sensors
+    - real-time
 
 models:
-  orders:
+  sensor_readings:
     type: table
-    description: Customer orders table
+    description: Real-time sensor readings from IoT devices
+    
+    # Dataset-level quality checks (explicit DQX rules)
+    quality:
+      # Check data freshness - readings should be recent
+      - type: custom
+        engine: dqx
+        specification:
+          criticality: error
+          name: sensor_data_freshness
+          check:
+            function: is_data_fresh_per_time_window
+            arguments:
+              timestamp_column: reading_timestamp
+              max_delay_hours: 24
+              groupby_columns:
+                - sensor_id
+      
+      # Check row count is reasonable
+      - type: custom
+        engine: dqx
+        specification:
+          criticality: warn
+          name: minimum_row_count
+          check:
+            function: is_aggr_not_greater_than
+            arguments:
+              expression: count(*)
+              max_limit: 0
+      
+      # Text-based expectation for LLM processing
+      - type: text
+        description: |
+          The dataset should not contain duplicate sensor readings for the same 
+          sensor_id and reading_timestamp combination within a 1-second window.
+    
     fields:
-      # Required field (generates is_not_null)
-      order_id:
+      # ===== PRIMARY KEY WITH MULTIPLE CONSTRAINTS =====
+      sensor_id:
         type: string
-        description: Unique order identifier
+        description: Unique identifier for the IoT sensor device
         required: true
         unique: true
-        pattern: '^ORD-[0-9]{8}$'
+        pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'
+        minLength: 15
+        maxLength: 15
+        quality:
+          # Explicit check with error criticality
+          - type: custom
+            engine: dqx
+            specification:
+              criticality: error
+              name: sensor_id_not_empty
+              check:
+                function: is_not_null_and_not_empty
+                arguments:
+                  column: sensor_id
+                  trim_strings: true
       
-      # Required with pattern
-      customer_id:
+      # ===== FOREIGN KEY WITH CONSTRAINTS =====
+      machine_id:
         type: string
-        description: Customer identifier
+        description: Identifier of the machine being monitored
         required: true
-        pattern: '^CUST-[0-9]{6}$'
+        pattern: '^MACHINE-[A-Z0-9]{6}$'
+        quality:
+          # Text-based expectation
+          - type: text
+            description: |
+              Machine ID should correspond to an active machine in the 
+              machine_registry table and must not reference decommissioned equipment.
       
-      # Email with pattern
-      customer_email:
-        type: string
-        description: Customer email address
-        required: true
-        pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-      
-      # Date with format
-      order_date:
-        type: date
-        description: Order placement date
-        required: true
-        format: '%Y-%m-%d'
-      
-      # Timestamp
-      order_timestamp:
+      # ===== TIMESTAMP FIELDS =====
+      reading_timestamp:
         type: timestamp
-        description: Order placement timestamp
+        description: When the sensor reading was recorded
         required: true
         format: '%Y-%m-%d %H:%M:%S'
+        quality:
+          # Explicit timestamp validation
+          - type: custom
+            engine: dqx
+            specification:
+              criticality: error
+              name: valid_reading_timestamp
+              check:
+                function: is_valid_timestamp
+                arguments:
+                  column: reading_timestamp
+                  timestamp_format: '%Y-%m-%d %H:%M:%S'
       
-      # Numeric with range
-      order_total:
+      calibration_date:
+        type: date
+        description: Last sensor calibration date
+        required: true
+        format: '%Y-%m-%d'
+        quality:
+          # Custom SQL expression check
+          - type: custom
+            engine: dqx
+            specification:
+              criticality: error
+              name: calibration_date_logical
+              check:
+                function: sql_expression
+                arguments:
+                  expression: calibration_date <= date(reading_timestamp)
+      
+      # ===== NUMERIC FIELDS WITH RANGES =====
+      temperature_celsius:
         type: decimal
-        description: Total order amount
+        description: Temperature reading in Celsius
         required: true
-        minimum: 0.01
-        maximum: 100000.00
+        minimum: -273.15  # Absolute zero
+        maximum: 200.0
+        quality:
+          # Text-based business rule
+          - type: text
+            description: |
+              Temperature readings above 100°C should be flagged as anomalies
+              and require manual review by the operations team.
       
-      # Enum values
-      order_status:
-        type: string
-        description: Current order status
-        required: true
-        enum:
-          - pending
-          - confirmed
-          - shipped
-          - delivered
-          - cancelled
-      
-      # Integer with range
-      quantity:
-        type: integer
-        description: Number of items
-        required: true
-        minimum: 1
-        maximum: 1000
-      
-      # Optional field with constraints
-      discount_percentage:
+      humidity_percentage:
         type: decimal
-        description: Discount applied
-        required: false
+        description: Relative humidity percentage
+        required: true
         minimum: 0.0
         maximum: 100.0
+        precision: 5
+        scale: 2
       
-      # String field
-      shipping_address:
-        type: string
-        description: Shipping address
+      pressure_bar:
+        type: decimal
+        description: Pressure reading in bar
         required: false
+        minimum: 0.1
+        maximum: 10.0
       
-      # Enum with optional
-      product_category:
+      vibration_level:
+        type: integer
+        description: Vibration intensity level (0-10 scale)
+        required: true
+        minimum: 0
+        maximum: 10
+      
+      # ===== CATEGORICAL FIELDS =====
+      sensor_status:
         type: string
-        description: Product category
+        description: Current operational status of the sensor
+        required: true
+        enum:
+          - active
+          - inactive
+          - maintenance
+          - faulty
+        quality:
+          # Explicit check with warn criticality
+          - type: custom
+            engine: dqx
+            specification:
+              criticality: warn
+              name: sensor_status_valid_values
+              check:
+                function: is_in_list
+                arguments:
+                  column: sensor_status
+                  allowed:
+                    - active
+                    - inactive
+                    - maintenance
+                    - faulty
+      
+      alert_level:
+        type: string
+        description: Alert severity level
         required: false
         enum:
-          - electronics
-          - clothing
-          - home
-          - books
+          - none
+          - low
+          - medium
+          - high
+          - critical
       
-      # Boolean field
-      priority_order:
-        type: boolean
-        description: Is this a priority order
+      # ===== STRING FIELDS WITH PATTERNS =====
+      location:
+        type: string
+        description: Physical location of the sensor
+        required: true
+        pattern: '^[A-Z]{3}-[A-Z]{2}-[0-9]{3}$'  # e.g., NYC-FL-001
+        minLength: 10
+        maxLength: 10
+        quality:
+          - type: text
+            description: |
+              Location codes should correspond to valid facility locations in 
+              the company's asset management system.
+      
+      device_model:
+        type: string
+        description: Sensor device model number
+        required: true
+        pattern: '^[A-Z]{2}[0-9]{4}-[A-Z]{1}$'
+      
+      # ===== OPTIONAL FIELDS =====
+      notes:
+        type: string
+        description: Optional notes or comments about the reading
         required: false
+        maxLength: 500
+      
+      technician_id:
+        type: string
+        description: ID of technician who serviced the sensor (if applicable)
+        required: false
+        pattern: '^TECH-[0-9]{5}$'
+      
+      # ===== BOOLEAN FIELD =====
+      is_anomaly:
+        type: boolean
+        description: Flag indicating if this reading is an anomaly
+        required: false
+      
+      # ===== EMAIL FIELD =====
+      alert_email:
+        type: string
+        description: Email to notify for this sensor's alerts
+        required: false
+        pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        quality:
+          - type: custom
+            engine: dqx
+            specification:
+              criticality: warn
+              name: valid_alert_email
+              check:
+                function: regex_match
+                arguments:
+                  column: alert_email
+                  regex: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+
+# Additional metadata for testing
+terms:
+  usage: |
+    This data contract is used for testing DQX rule generation.
+    It covers all supported constraint types and quality check patterns.
+  limitations: |
+    - Sensor data is collected at 1-minute intervals
+    - Historical data is retained for 90 days
+    - Anomaly detection requires manual review
+  
 

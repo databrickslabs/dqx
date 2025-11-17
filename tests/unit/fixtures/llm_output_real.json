@@ -1,0 +1,121 @@
+{
+  "description": "Real LLM output captured via Databricks Connect",
+  "llm_engine": "DQLLMEngine",
+  "workspace": "https://adb-984752964297111.11.azuredatabricks.net",
+  "text_rules": [
+    {
+      "criticality": "error",
+      "check": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "email",
+          "regex": "^[a-zA-Z0-9._%+-]+@(company\\.com|partner\\.com)$"
+        }
+      },
+      "filter": "user_id IS NOT NULL",
+      "user_metadata": {
+        "contract_id": "llm-output-test",
+        "contract_version": "1.0.0",
+        "model": "test_table",
+        "field": "email",
+        "rule_type": "text_llm",
+        "text_expectation": "Email addresses must be valid and from approved domains (company.com or partner.com)\n"
+      }
+    },
+    {
+      "criticality": "error",
+      "check": {
+        "function": "is_unique",
+        "arguments": {
+          "columns": [
+            "user_id"
+          ]
+        }
+      },
+      "user_metadata": {
+        "contract_id": "llm-output-test",
+        "contract_version": "1.0.0",
+        "model": "test_table",
+        "field": "user_id",
+        "rule_type": "text_llm",
+        "text_expectation": "User IDs must be unique across all systems and follow the format USER-XXXXXX\n"
+      }
+    },
+    {
+      "criticality": "error",
+      "check": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "user_id",
+          "regex": "^USER-[0-9]{6}$"
+        }
+      },
+      "user_metadata": {
+        "contract_id": "llm-output-test",
+        "contract_version": "1.0.0",
+        "model": "test_table",
+        "field": "user_id",
+        "rule_type": "text_llm",
+        "text_expectation": "User IDs must be unique across all systems and follow the format USER-XXXXXX\n"
+      }
+    }
+  ],
+  "all_rules": [
+    {
+      "criticality": "error",
+      "check": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "email",
+          "regex": "^[a-zA-Z0-9._%+-]+@(company\\.com|partner\\.com)$"
+        }
+      },
+      "filter": "user_id IS NOT NULL",
+      "user_metadata": {
+        "contract_id": "llm-output-test",
+        "contract_version": "1.0.0",
+        "model": "test_table",
+        "field": "email",
+        "rule_type": "text_llm",
+        "text_expectation": "Email addresses must be valid and from approved domains (company.com or partner.com)\n"
+      }
+    },
+    {
+      "criticality": "error",
+      "check": {
+        "function": "is_unique",
+        "arguments": {
+          "columns": [
+            "user_id"
+          ]
+        }
+      },
+      "user_metadata": {
+        "contract_id": "llm-output-test",
+        "contract_version": "1.0.0",
+        "model": "test_table",
+        "field": "user_id",
+        "rule_type": "text_llm",
+        "text_expectation": "User IDs must be unique across all systems and follow the format USER-XXXXXX\n"
+      }
+    },
+    {
+      "criticality": "error",
+      "check": {
+        "function": "regex_match",
+        "arguments": {
+          "column": "user_id",
+          "regex": "^USER-[0-9]{6}$"
+        }
+      },
+      "user_metadata": {
+        "contract_id": "llm-output-test",
+        "contract_version": "1.0.0",
+        "model": "test_table",
+        "field": "user_id",
+        "rule_type": "text_llm",
+        "text_expectation": "User IDs must be unique across all systems and follow the format USER-XXXXXX\n"
+      }
+    }
+  ]
+}

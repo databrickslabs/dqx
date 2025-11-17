@@ -621,10 +621,19 @@ class DataContractRulesGenerator(DQEngineBase):
         return dqx_rule
 
     def _build_schema_info_from_model(self, model: Model) -> str:
-        """Build schema info JSON string from Model for LLM context."""
+        """
+        Build schema info JSON string from Model for LLM context.
+        
+        Currently provides basic field name and type.
+        """
         columns = []
         for field_name, field in (model.fields or {}).items():
             col_info = {"name": field_name, "type": field.type or "string"}
+            
+            # TODO: Future enhancement - include field constraints for richer LLM context
+            # This would help LLM avoid duplicating implicit rules and generate
+            # more complementary business logic rules.
+            
             columns.append(col_info)
 
         schema_dict = {"columns": columns}

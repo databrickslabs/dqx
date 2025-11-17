@@ -1,9 +1,10 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # DQX Data Contract Integration Demo
+# MAGIC # DQX Data Contract Integration Demo (ODCS Compatible)
 # MAGIC
 # MAGIC This notebook demonstrates how to use DQX with data contracts to automatically generate
-# MAGIC and apply data quality rules. DQX supports the datacontract-cli specification.
+# MAGIC and apply data quality rules. DQX supports the datacontract-cli specification, which is
+# MAGIC compatible with the Open Data Contract Standard (ODCS).
 # MAGIC
 # MAGIC ## What You'll Learn
 # MAGIC
@@ -50,7 +51,7 @@ ws = WorkspaceClient()
 
 # COMMAND ----------
 
-# Example data contract (datacontract-cli format)
+# Example data contract (datacontract-cli format, ODCS compatible)
 contract_yaml = """
 dataContractSpecification: 0.9.3
 id: urn:datacontract:ecommerce:orders
@@ -244,7 +245,7 @@ else:
 
 # COMMAND ----------
 
-engine = DQEngine()
+engine = DQEngine(ws)
 result_df = engine.apply_checks_by_metadata(df, rules)
 
 # Show results (added columns prefixed with dq_)
@@ -384,4 +385,5 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 import os
 os.unlink(contract_file)
 print("✅ Demo complete!")
+
 
