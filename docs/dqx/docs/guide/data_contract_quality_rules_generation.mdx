@@ -1,0 +1,855 @@
+---
+sidebar_position: 6
+---
+
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Data Contract Quality Rules Generation
+
+DQX provides the capability to generate data quality rules directly from data contracts following the Open Data Contract Standard (ODCS). This feature enables teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
+
+## Overview
+
+The data contract-based quality rules generation is available via the `DQGenerator` class and supports three types of rule generation:
+
+- **Implicit Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, enum, format).
+- **Explicit Rules**: Custom DQX rules embedded directly in the contract's quality section using DQX native format.
+- **Text-Based Rules**: Natural language quality expectations that are processed using AI/LLM to generate appropriate checks (requires `[llm]` extra).
+
+This approach is particularly useful when you want to:
+- Implement standardized data contracts across your organization
+- Enable data product owners to define quality expectations in a familiar format
+- Maintain version-controlled quality rules alongside schema definitions
+- Trace quality checks back to contract specifications for compliance and lineage
+
+<Admonition type="tip" title="When to use Data Contract-Based Generation">
+Data contract-based generation is ideal for:
+- **Federated Data Governance**: Enable data product teams to define and own their quality contracts
+- **Standardization**: Use industry-standard ODCS format for data contracts
+- **Version Control**: Track data contracts and derived quality rules together
+- **Compliance**: Maintain auditable links between contracts and quality checks
+- **Data Mesh**: Support domain-oriented data ownership with clear contracts
+
+For automated discovery of data patterns without contracts, consider using the [Data Profiling](/docs/guide/data_profiling) approach instead.
+For generating rules from natural language without contracts, see [AI-Assisted Generation](/docs/guide/ai_assisted_quality_checks_generation).
+</Admonition>
+
+### ODCS Compatibility
+
+DQX supports the Open Data Contract Standard (ODCS) v3.0.x specification. ODCS is part of the Linux Foundation and provides a comprehensive format for defining data product contracts. DQX leverages the `datacontract-cli` library for parsing and validating contracts, ensuring full compatibility with the ODCS ecosystem.
+
+## Prerequisites
+
+To use the data contract-based quality rules generation feature, you need to install DQX with the datacontract extra dependencies:
+
+```bash
+pip install 'databricks-labs-dqx[datacontract]'
+```
+
+This will install the required packages including `datacontract-cli` for ODCS contract parsing and validation.
+
+<Admonition type="info" title="Optional: LLM Support for Text-Based Rules">
+If your contracts include text-based quality expectations (natural language descriptions), you'll also need to install the LLM dependencies:
+
+```bash
+pip install 'databricks-labs-dqx[datacontract,llm]'
+```
+
+Without the LLM dependencies, text-based expectations will be skipped with a warning, but implicit and explicit rules will still be generated.
+</Admonition>
+
+## Basic Usage
+
+### Loading from File Path
+
+Here's a simple example of generating quality rules from a data contract file:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.sdk import WorkspaceClient
+
+    # Initialize the generator
+    ws = WorkspaceClient()
+    generator = DQGenerator(workspace_client=ws)
+
+    # Generate rules from contract file
+    rules = generator.generate_rules_from_contract(
+        contract_file="/Workspace/Shared/contracts/customers.yaml"
+    )
+
+    print(f"Generated {len(rules)} quality rules")
+    for rule in rules[:3]:
+        print(f"- {rule['name']}: {rule['check']['function']}")
+    ```
+  </TabItem>
+</Tabs>
+
+### Loading from DataContract Object
+
+You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.sdk import WorkspaceClient
+    from datacontract.data_contract import DataContract
+
+    ws = WorkspaceClient()
+    generator = DQGenerator(workspace_client=ws)
+
+    # Load contract using datacontract-cli
+    contract = DataContract(data_contract_file="/path/to/contract.yaml")
+
+    # Generate rules from contract object
+    rules = generator.generate_rules_from_contract(contract=contract)
+
+    print(f"Generated {len(rules)} quality rules")
+    ```
+  </TabItem>
+</Tabs>
+
+## Implicit Rule Generation
+
+Implicit rules are automatically derived from schema field constraints defined in your data contract. DQX analyzes field properties and generates appropriate quality checks without requiring explicit rule definitions.
+
+### Supported Schema Constraints
+
+| Constraint | Description | Generated DQX Rule | Example |
+|------------|-------------|-------------------|---------|
+| `required: true` | Field cannot be null | `is_not_null` | All mandatory fields |
+| `unique: true` | Values must be unique | `is_unique` | Primary keys, identifiers |
+| `pattern: regex` | Values must match pattern | `regex_match` | Email, phone, ID formats |
+| `minimum` + `maximum` | Numeric range | `is_in_range` | Age, amount limits |
+| `minimum` only | Minimum value | `is_not_less_than` | Positive amounts |
+| `maximum` only | Maximum value | `is_not_greater_than` | Upper bounds |
+| `enum: [...]` | Values from list | `is_in_list` | Status codes, categories |
+| `format: date/datetime` | Date/timestamp format | `is_valid_date` / `is_valid_timestamp` | Dates, timestamps |
+| `minLength` + `maxLength` | String length range | `string_length_in_range` | Fixed-length codes |
+
+### Example Contract with Implicit Rules
+
+<Tabs>
+  <TabItem value="YAML" label="Contract (YAML)" default>
+    ```yaml
+    dataContractSpecification: 0.9.3
+    id: urn:datacontract:ecommerce:orders
+    info:
+      title: E-Commerce Orders
+      version: 1.0.0
+
+    models:
+      orders:
+        type: table
+        fields:
+          order_id:
+            type: string
+            required: true              # → is_not_null
+            unique: true                # → is_unique
+            pattern: '^ORD-[0-9]{8}$'   # → regex_match
+          
+          customer_email:
+            type: string
+            required: true              # → is_not_null
+            pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'  # → regex_match
+          
+          order_total:
+            type: decimal
+            required: true              # → is_not_null
+            minimum: 0.01               # → is_in_range (combined)
+            maximum: 100000.00          # → is_in_range (combined)
+          
+          order_status:
+            type: string
+            required: true              # → is_not_null
+            enum:                       # → is_in_list
+              - pending
+              - confirmed
+              - shipped
+              - delivered
+              - cancelled
+    ```
+  </TabItem>
+  <TabItem value="Python" label="Generated Rules (Python)">
+    ```python
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+    generator = DQGenerator(workspace_client=ws)
+
+    rules = generator.generate_rules_from_contract(
+        contract_file="orders_contract.yaml"
+    )
+
+    # Generated rules will include:
+    # - is_not_null for order_id, customer_email, order_total, order_status
+    # - is_unique for order_id
+    # - regex_match for order_id (pattern validation)
+    # - regex_match for customer_email (email validation)
+    # - is_in_range for order_total (0.01 to 100000.00)
+    # - is_in_list for order_status (enum validation)
+    ```
+  </TabItem>
+</Tabs>
+
+### Controlling Implicit Rule Generation
+
+You can control whether implicit rules are generated:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # Generate only explicit rules, skip implicit ones
+    rules = generator.generate_rules_from_contract(
+        contract_file="contract.yaml",
+        generate_implicit_rules=False  # Skip schema-derived rules
+    )
+
+    # Generate all rules (default behavior)
+    rules = generator.generate_rules_from_contract(
+        contract_file="contract.yaml",
+        generate_implicit_rules=True   # Include schema-derived rules
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Setting Default Criticality
+
+All implicit rules inherit a default criticality level:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # Generate implicit rules with 'warn' criticality (default is 'error')
+    rules = generator.generate_rules_from_contract(
+        contract_file="contract.yaml",
+        default_criticality="warn"  # or "error"
+    )
+
+    # All implicit rules will have criticality: "warn"
+    # Explicit rules can still define their own criticality
+    ```
+  </TabItem>
+</Tabs>
+
+## Explicit Rule Generation
+
+Explicit rules allow you to embed custom DQX quality checks directly within your data contract using DQX native YAML format. This is useful for business logic rules that cannot be expressed as simple schema constraints.
+
+### Defining Explicit Rules in Contracts
+
+Explicit rules are defined in the `quality` section of a field or model using `type: custom` with `engine: dqx`:
+
+<Tabs>
+  <TabItem value="YAML" label="Contract (YAML)" default>
+    ```yaml
+    dataContractSpecification: 0.9.3
+    id: urn:datacontract:finance:transactions
+    info:
+      title: Financial Transactions
+      version: 1.0.0
+
+    models:
+      transactions:
+        type: table
+        
+        # Model-level (dataset-level) quality checks
+        quality:
+          # Check data freshness
+          - type: custom
+            engine: dqx
+            specification:
+              name: transaction_data_freshness
+              criticality: error
+              check:
+                function: is_data_fresh_per_time_window
+                arguments:
+                  timestamp_column: transaction_timestamp
+                  max_delay_hours: 2
+                  groupby_columns:
+                    - account_id
+          
+          # Check minimum row count
+          - type: custom
+            engine: dqx
+            specification:
+              name: minimum_transactions
+              criticality: warn
+              check:
+                function: is_aggr_not_greater_than
+                arguments:
+                  expression: count(*)
+                  max_limit: 0
+        
+        fields:
+          transaction_id:
+            type: string
+            required: true
+            unique: true
+            
+          account_id:
+            type: string
+            required: true
+            quality:
+              # Field-level explicit check
+              - type: custom
+                engine: dqx
+                specification:
+                  name: account_id_format
+                  criticality: error
+                  check:
+                    function: is_not_null_and_not_empty
+                    arguments:
+                      column: account_id
+                      trim_strings: true
+          
+          amount:
+            type: decimal
+            required: true
+            minimum: 0
+            quality:
+              # Business logic rule
+              - type: custom
+                engine: dqx
+                specification:
+                  name: suspicious_transaction_flag
+                  criticality: warn
+                  check:
+                    function: sql_expression
+                    arguments:
+                      column: amount
+                      expression: amount < 10000 OR verified = true
+    ```
+  </TabItem>
+</Tabs>
+
+### Explicit Rule Structure
+
+Each explicit DQX rule must follow this structure:
+
+```yaml
+- type: custom              # Required: marks as custom quality check
+  engine: dqx              # Required: specifies DQX engine
+  specification:           # Required: contains the DQX rule
+    name: rule_name        # Required: unique rule name
+    criticality: error     # Required: "error" or "warn"
+    check:                 # Required: the actual check definition
+      function: check_function_name
+      arguments:
+        # function-specific arguments
+```
+
+<Admonition type="warning" title="Explicit Rule Criticality">
+Unlike implicit rules (which use `default_criticality`), explicit rules **must** define their own `criticality` within the `specification`. This allows fine-grained control over different business rules.
+</Admonition>
+
+## Text-Based Rule Generation
+
+Text-based rules allow you to define quality expectations in natural language, which are then processed by an LLM to generate appropriate DQX checks. This combines the power of data contracts with AI-assisted rule generation.
+
+### Prerequisites for Text-Based Rules
+
+Text-based rule generation requires both the `datacontract` and `llm` extras:
+
+```bash
+pip install 'databricks-labs-dqx[datacontract,llm]'
+```
+
+### Defining Text-Based Expectations
+
+Text-based expectations are defined using `type: text` in the quality section:
+
+<Tabs>
+  <TabItem value="YAML" label="Contract (YAML)" default>
+    ```yaml
+    dataContractSpecification: 0.9.3
+    id: urn:datacontract:compliance:user_data
+    info:
+      title: User Data (GDPR Compliant)
+      version: 1.0.0
+
+    models:
+      users:
+        type: table
+        
+        # Dataset-level text expectation
+        quality:
+          - type: text
+            description: |
+              The dataset should not contain duplicate user records based on
+              email address. Users with the same email are considered duplicates
+              and should be flagged for review.
+        
+        fields:
+          email:
+            type: string
+            required: true
+            quality:
+              # Field-level text expectation
+              - type: text
+                description: |
+                  Email addresses must be valid and from approved corporate
+                  domains only (@company.com or @partner.com). Personal email
+                  domains like gmail.com or yahoo.com should be rejected.
+          
+          consent_date:
+            type: date
+            required: true
+            quality:
+              # Another text expectation
+              - type: text
+                description: |
+                  Consent date must not be in the future and should be within
+                  the last 7 years to comply with GDPR retention policies.
+    ```
+  </TabItem>
+</Tabs>
+
+### Generating Rules with Text Expectations
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+    generator = DQGenerator(workspace_client=ws)
+
+    # Generate rules including text-based expectations (requires LLM)
+    rules = generator.generate_rules_from_contract(
+        contract_file="user_data_contract.yaml",
+        generate_implicit_rules=True,   # Include schema-derived rules
+        process_text_rules=True         # Process text expectations with LLM
+    )
+
+    # The generated rules will include:
+    # - Implicit rules from schema constraints
+    # - Explicit DQX rules (if any)
+    # - Rules generated from text expectations via LLM
+    ```
+  </TabItem>
+</Tabs>
+
+### Disabling Text Rule Processing
+
+If you don't have LLM dependencies installed or want to skip text processing:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    # Skip text-based rules, generate only implicit and explicit rules
+    rules = generator.generate_rules_from_contract(
+        contract_file="contract.yaml",
+        process_text_rules=False  # Skip LLM processing
+    )
+
+    # Text expectations will be logged as warnings and skipped
+    ```
+  </TabItem>
+</Tabs>
+
+## Complete Workflow Example
+
+Here's a complete example showing contract-based rule generation with all three rule types:
+
+<Tabs>
+  <TabItem value="YAML" label="Contract (YAML)" default>
+    ```yaml
+    dataContractSpecification: 0.9.3
+    id: urn:datacontract:iot:sensor_readings
+    info:
+      title: IoT Sensor Readings
+      version: 2.1.0
+      description: Quality contract for IoT sensor data
+      owner: IoT Platform Team
+
+    models:
+      sensor_readings:
+        type: table
+        description: Real-time sensor readings from IoT devices
+        
+        # Explicit dataset-level check
+        quality:
+          - type: custom
+            engine: dqx
+            specification:
+              name: sensor_data_freshness
+              criticality: error
+              check:
+                function: is_data_fresh_per_time_window
+                arguments:
+                  timestamp_column: reading_timestamp
+                  max_delay_hours: 24
+                  groupby_columns:
+                    - sensor_id
+          
+          # Text-based expectation
+          - type: text
+            description: |
+              The dataset should not contain duplicate sensor readings for the
+              same sensor_id and reading_timestamp combination.
+        
+        fields:
+          sensor_id:
+            type: string
+            required: true           # Implicit: is_not_null
+            unique: true             # Implicit: is_unique
+            pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'  # Implicit: regex_match
+          
+          temperature:
+            type: decimal
+            required: true           # Implicit: is_not_null
+            minimum: -40.0           # Implicit: is_in_range (combined)
+            maximum: 125.0           # Implicit: is_in_range (combined)
+            quality:
+              # Text expectation
+              - type: text
+                description: |
+                  Temperature readings outside normal operating range (-10°C to 50°C)
+                  should be flagged as warnings for manual review.
+          
+          status:
+            type: string
+            required: true           # Implicit: is_not_null
+            enum:                    # Implicit: is_in_list
+              - active
+              - maintenance
+              - offline
+    ```
+  </TabItem>
+  <TabItem value="Python" label="Python Code">
+    ```python
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    # Initialize
+    ws = WorkspaceClient()
+    generator = DQGenerator(workspace_client=ws)
+
+    # Generate all rule types from contract
+    rules = generator.generate_rules_from_contract(
+        contract_file="/Workspace/Shared/contracts/sensor_readings.yaml",
+        generate_implicit_rules=True,   # Schema-derived rules
+        process_text_rules=True,        # LLM-processed expectations
+        default_criticality="error"     # Default for implicit rules
+    )
+
+    print(f"Generated {len(rules)} quality rules:")
+    
+    # Group rules by type
+    implicit_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'implicit']
+    explicit_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'explicit']
+    text_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'text_llm']
+    
+    print(f"  - {len(implicit_rules)} implicit (from schema)")
+    print(f"  - {len(explicit_rules)} explicit (DQX native)")
+    print(f"  - {len(text_rules)} text-based (LLM-generated)")
+
+    # Apply rules to data
+    engine = DQEngine(ws)
+    df = spark.read.table("iot.production.sensor_readings")
+    result_df = engine.apply_checks_by_metadata(df, rules)
+    
+    # Save generated rules
+    from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
+    
+    engine.save_checks(
+        checks=rules,
+        config=WorkspaceFileChecksStorageConfig(
+            location="/Shared/DataQuality/sensor_readings_checks.yml"
+        )
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+## Contract Metadata and Lineage
+
+All generated rules include rich metadata that traces them back to the source contract for lineage and governance:
+
+```python
+{
+  "name": "sensor_id_not_null",
+  "criticality": "error",
+  "check": {
+    "function": "is_not_null",
+    "arguments": {"column": "sensor_id"}
+  },
+  "user_metadata": {
+    "contract_id": "urn:datacontract:iot:sensor_readings",
+    "contract_version": "2.1.0",
+    "model": "sensor_readings",
+    "field": "sensor_id",
+    "rule_type": "implicit"  # or "explicit" or "text_llm"
+  }
+}
+```
+
+### Metadata Fields
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `contract_id` | Unique identifier from contract | `urn:datacontract:iot:sensor_readings` |
+| `contract_version` | Contract version | `2.1.0` |
+| `model` | Model/table name | `sensor_readings` |
+| `field` | Field/column name (if field-level rule) | `sensor_id` |
+| `rule_type` | How rule was generated | `implicit`, `explicit`, or `text_llm` |
+| `text_expectation` | Original text (for text-based rules only) | Natural language description |
+
+This metadata enables:
+- **Traceability**: Link quality check results back to contract specifications
+- **Impact Analysis**: Understand which rules are affected by contract changes
+- **Governance**: Demonstrate compliance with data contracts
+- **Debugging**: Identify the source of quality rules during troubleshooting
+
+## Combining with Other Rule Sources
+
+Data contract-based rules can be combined with rules from other sources for comprehensive coverage:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+
+    # Step 1: Profile the data to discover statistical patterns
+    profiler = DQProfiler(ws)
+    df = spark.read.table("production.sales_data")
+    summary_stats, profiles = profiler.profile(df)
+
+    generator = DQGenerator(ws)
+
+    # Step 2: Generate profiler-based rules (technical/statistical)
+    profiler_rules = generator.generate_dq_rules(profiles)
+
+    # Step 3: Generate contract-based rules (business/compliance)
+    contract_rules = generator.generate_rules_from_contract(
+        contract_file="/Shared/contracts/sales_data_contract.yaml"
+    )
+
+    # Step 4: Combine all rules
+    all_rules = profiler_rules + contract_rules
+
+    print(f"Total rules: {len(all_rules)}")
+    print(f"  - Profiler (discovered): {len(profiler_rules)}")
+    print(f"  - Contract (specified): {len(contract_rules)}")
+
+    # Apply combined rules
+    from databricks.labs.dqx.engine import DQEngine
+    
+    engine = DQEngine(ws)
+    result_df = engine.apply_checks_by_metadata(df, all_rules)
+    ```
+  </TabItem>
+</Tabs>
+
+## Best Practices
+
+1. **Version Your Contracts**: Store data contracts in version control (Git) alongside your code and track changes over time.
+
+2. **Validate Contracts Externally**: Use `datacontract-cli` to validate contracts before using them with DQX:
+   ```bash
+   pip install datacontract-cli
+   datacontract lint /path/to/contract.yaml
+   ```
+
+3. **Start with Implicit Rules**: Begin with schema-based implicit rules, then add explicit rules for business logic that cannot be expressed as constraints.
+
+4. **Use Text Expectations Judiciously**: Text-based rules are powerful but require LLM processing. Use them for complex business logic that's easier to express in natural language.
+
+5. **Review Generated Rules**: Always review the generated rules before applying to production data, especially text-based rules generated by LLM.
+
+6. **Set Appropriate Criticality**: Use `error` for critical violations that should block pipelines and `warn` for informational checks.
+
+7. **Combine Approaches**: Use profiling for discovering technical patterns and contracts for codifying business requirements.
+
+8. **Document in Contracts**: Use the `description` fields in contracts to explain business context and rationale for constraints.
+
+9. **Track Lineage**: Leverage the contract metadata in generated rules to maintain traceability from checks back to contracts.
+
+10. **Iterate on Contracts**: Treat contracts as living documents that evolve with your data and business requirements.
+
+## Example Use Cases
+
+### Use Case 1: Federated Data Governance
+
+Enable domain teams to define and own quality contracts:
+
+```python
+# Data product team defines their contract
+contract_yaml = """
+dataContractSpecification: 0.9.3
+id: urn:datacontract:marketing:customer_360
+info:
+  title: Customer 360 View
+  version: 1.2.0
+  owner: Marketing Analytics Team
+  
+models:
+  customer_360:
+    fields:
+      customer_id:
+        type: string
+        required: true
+        unique: true
+      email:
+        type: string
+        required: true
+        pattern: '^[a-zA-Z0-9._%+-]+@.+$'
+      lifetime_value:
+        type: decimal
+        minimum: 0
+"""
+
+# Central platform team generates and applies rules
+generator = DQGenerator(workspace_client=ws)
+rules = generator.generate_rules_from_contract(contract_file="customer_360_contract.yaml")
+
+# Rules are automatically tracked back to the owning team's contract
+```
+
+### Use Case 2: GDPR Compliance
+
+Define compliance requirements in contracts:
+
+```python
+contract_yaml = """
+dataContractSpecification: 0.9.3
+id: urn:datacontract:gdpr:personal_data
+info:
+  title: GDPR Personal Data
+  version: 1.0.0
+  
+models:
+  user_data:
+    fields:
+      email:
+        type: string
+        required: true
+      consent_date:
+        type: date
+        required: true
+        quality:
+          - type: text
+            description: |
+              Consent date must be within the last 7 years to comply with
+              GDPR data retention policies. Records older than 7 years should
+              be flagged for deletion.
+"""
+
+# Generate compliance-focused rules
+rules = generator.generate_rules_from_contract(
+    contract_file="gdpr_contract.yaml",
+    process_text_rules=True
+)
+
+# Apply rules and track violations
+engine = DQEngine(ws)
+result_df = engine.apply_checks_by_metadata(df, rules)
+```
+
+### Use Case 3: Data Mesh with Contracts
+
+Implement data mesh principles with contracts as interfaces:
+
+```python
+# Producer team defines data product contract
+producer_contract = "/Volumes/catalog/schemas/contracts/sales_transactions_v2.yaml"
+
+# Consumer team generates rules from producer's contract
+generator = DQGenerator(workspace_client=ws)
+rules = generator.generate_rules_from_contract(contract_file=producer_contract)
+
+# Apply rules on consumer side to validate producer data
+df = spark.read.table("sales_domain.published.transactions")
+result_df, bad_df = engine.apply_checks_by_metadata_and_split(df, rules)
+
+# Alert if producer violates contract
+if bad_df.count() > 0:
+    print(f"Contract violation detected! {bad_df.count()} rows failed quality checks")
+    # Trigger alert to producer team
+```
+
+## Troubleshooting
+
+### Error: datacontract-cli not installed
+
+**Problem**: You receive an error saying "Data contract functionality requires datacontract-cli".
+
+**Solution**: Install the datacontract dependencies:
+```bash
+pip install 'databricks-labs-dqx[datacontract]'
+```
+
+### Contract Validation Errors
+
+**Problem**: Contract fails validation or generates unexpected rules.
+
+**Solution**:
+- Validate your contract externally using `datacontract-cli`:
+  ```bash
+  datacontract lint /path/to/contract.yaml
+  ```
+- Ensure your contract follows ODCS v3.0.x specification
+- Check field types and constraint formats match ODCS standards
+- Review the [ODCS specification](https://bitol-io.github.io/open-data-contract-standard/v3.0.2/)
+
+### Text Rules Not Generated
+
+**Problem**: Text-based expectations are skipped with warnings.
+
+**Solution**:
+- Install LLM dependencies: `pip install 'databricks-labs-dqx[datacontract,llm]'`
+- Ensure `process_text_rules=True` is set (default)
+- Check LLM model access and credentials
+- See [AI-Assisted Generation Troubleshooting](/docs/guide/ai_assisted_quality_checks_generation#troubleshooting)
+
+### Missing Rules for Some Fields
+
+**Problem**: Expected implicit rules are not generated for certain fields.
+
+**Solution**:
+- Verify field constraints are properly defined in the contract
+- Check that `generate_implicit_rules=True` (default)
+- Review supported constraint types in the [Implicit Rule Generation](#implicit-rule-generation) section
+- Some constraints may require specific formats (e.g., `format: '%Y-%m-%d'` for dates)
+
+### Explicit Rules Not Recognized
+
+**Problem**: Explicit DQX rules defined in contract are not generated.
+
+**Solution**:
+- Ensure you're using `type: custom` and `engine: dqx`
+- Verify the rule structure matches the required format (see [Explicit Rule Structure](#explicit-rule-structure))
+- Check that the rule is wrapped in a `specification` block
+- Validate YAML syntax and indentation
+
+### Contract Metadata Not Preserved
+
+**Problem**: Generated rules don't include contract metadata.
+
+**Solution**:
+- Ensure your contract includes `id` and `info.version` fields
+- Verify you're examining the `user_metadata` field of generated rules
+- Check that you're using a recent version of DQX (≥0.8.0)
+
+## Limitations
+
+- The data contract feature requires the `datacontract-cli` library which increases package size.
+- Text-based rule generation requires LLM dependencies and network access to the model endpoint.
+- Only ODCS v3.0.x format is currently supported (earlier versions are not supported).
+- Dataset-level quality checks must be defined as explicit DQX rules (custom quality checks).
+- Generated rules quality depends on the completeness and correctness of the contract definition.
+- Complex business logic may still require manual rule definition or refinement.
+

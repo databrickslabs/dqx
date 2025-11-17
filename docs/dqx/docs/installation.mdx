@@ -66,6 +66,15 @@ pip install 'databricks-labs-dqx[pii]'
 
 This installs additional dependencies including Microsoft Presidio library.
 
+#### Data Contract Support
+
+To use data contract-based rule generation with ODCS (Open Data Contract Standard) support, install the `datacontract` extras:
+```commandline
+pip install 'databricks-labs-dqx[datacontract]'
+```
+
+This installs the `datacontract-cli` library for parsing and validating ODCS contracts. See the [Data Contract Quality Rules Generation Guide](/docs/guide/data_contract_quality_rules_generation) for more details.
+
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
