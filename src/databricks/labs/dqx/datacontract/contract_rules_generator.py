@@ -180,12 +180,12 @@ class DataContractRulesGenerator(DQEngineBase):
                 logger.info(f"Successfully generated {len(dq_rules)} DQX rules from data contract")
 
     @staticmethod
-    def _get_contract_version(spec: DataContractSpecification) -> str:
+    def _get_contract_version(spec: "DataContractSpecification") -> str:
         """Extract contract version from specification."""
         return getattr(spec.info, 'version', 'unknown') if spec.info else 'unknown'
 
     def _generate_implicit_rules_for_model(
-        self, model: Model, model_name: str, spec: DataContractSpecification, default_criticality: str
+        self, model: "Model", model_name: str, spec: "DataContractSpecification", default_criticality: str
     ) -> list[dict]:
         """Generate implicit rules from all fields in a model."""
         rules = []
@@ -198,10 +198,10 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _generate_implicit_rules_for_field(
         self,
-        field: Field,
+        field: "Field",
         field_name: str,
         model_name: str,
-        spec: DataContractSpecification,
+        spec: "DataContractSpecification",
         default_criticality: str,
         parent_path: str = "",
     ) -> list[dict]:
@@ -239,7 +239,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _generate_required_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate required/not_null rules."""
         if not field.required:
@@ -259,7 +259,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_unique_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate uniqueness rules."""
         if not field.unique:
@@ -279,7 +279,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_enum_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate enum/valid values rules."""
         if not field.enum:
@@ -299,7 +299,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_pattern_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate pattern/regex rules."""
         if not field.pattern:
@@ -319,7 +319,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_range_rules_from_field(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate range rules from minimum/maximum constraints."""
         if field.minimum is None and field.maximum is None:
@@ -380,7 +380,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_length_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate string length rules from minLength/maxLength using SQL expressions."""
         rules = []
@@ -395,7 +395,6 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "column": column_path,
                             "expression": f"LENGTH({column_path}) >= {min_length}",
                         },
                     },
@@ -416,7 +415,6 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
-                            "column": column_path,
                             "expression": f"LENGTH({column_path}) <= {max_length}",
                         },
                     },
@@ -433,7 +431,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _generate_format_rules_from_field(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate format validation rules for dates/timestamps."""
         if not field.format:
@@ -479,7 +477,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _process_text_rules_for_model(
-        self, model: Model, model_name: str, spec: DataContractSpecification, _default_criticality: str
+        self, model: "Model", model_name: str, spec: "DataContractSpecification", _default_criticality: str
     ) -> list[dict]:
         """Process text-based quality expectations using LLM for a model."""
         if self.llm_engine is None:
@@ -499,7 +497,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _process_text_rules_for_field(
-        self, field: Field, field_name: str, contract_metadata: dict, schema_info: str, parent_path: str = ""
+        self, field: "Field", field_name: str, contract_metadata: dict, schema_info: str, parent_path: str = ""
     ) -> list[dict]:
         """Process text-based rules for a single field."""
         column_path = f"{parent_path}.{field_name}" if parent_path else field_name
@@ -532,12 +530,12 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return rules
 
-    def _is_text_quality(self, quality: Quality) -> bool:
+    def _is_text_quality(self, quality: "Quality") -> bool:
         """Check if quality is a text-based expectation."""
         return quality.type == "text" if hasattr(quality, "type") else False
 
     def _process_single_text_rule_from_field(
-        self, field: Field, column_path: str, text_expectation: str, contract_metadata: dict, schema_info: str
+        self, field: "Field", column_path: str, text_expectation: str, contract_metadata: dict, schema_info: str
     ) -> list[dict]:
         """Process a single text rule and add metadata."""
         try:
@@ -551,7 +549,7 @@ class DataContractRulesGenerator(DQEngineBase):
             return []
 
     def _generate_rules_from_text_field(
-        self, field: Field, column_path: str, text_expectation: str, schema_info: str
+        self, field: "Field", column_path: str, text_expectation: str, schema_info: str
     ) -> list[dict]:
         """Generate DQX rules from text expectation using LLM."""
         if self.llm_engine is None:
@@ -589,7 +587,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rule
 
     def _process_explicit_rules_for_model(
-        self, model: Model, model_name: str, spec: DataContractSpecification, _default_criticality: str
+        self, model: "Model", model_name: str, spec: "DataContractSpecification", _default_criticality: str
     ) -> list[dict]:
         """Process explicit DQX format rules from a model."""
         contract_metadata = {
@@ -605,7 +603,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _extract_explicit_rules_for_field(
-        self, field: Field, field_name: str, contract_metadata: dict, parent_path: str = ""
+        self, field: "Field", field_name: str, contract_metadata: dict, parent_path: str = ""
     ) -> list[dict]:
         """Extract explicit DQX rules from a field's quality checks."""
         column_path = f"{parent_path}.{field_name}" if parent_path else field_name
@@ -632,7 +630,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return rules
 
-    def _is_dqx_quality(self, quality: Quality) -> bool:
+    def _is_dqx_quality(self, quality: "Quality") -> bool:
         """Check if quality is a DQX custom check."""
         # Check if quality has type='custom' and specification with DQX format
         if not hasattr(quality, "type") or quality.type != "custom":
