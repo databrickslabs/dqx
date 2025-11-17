@@ -16,6 +16,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_less_than,
     is_aggr_equal,
     is_aggr_not_equal,
+    has_no_outliers,
     foreign_key,
     compare_datasets,
     is_data_fresh_per_time_window,
@@ -28,6 +29,67 @@ from tests.conftest import TEST_CATALOG
 
 
 SCHEMA = "a: string, b: int"
+
+
+def test_has_no_outliers(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            [1, 10],
+            [2, 12],
+            [3, 14],
+            [4, 13],
+            [5, 11],
+            [6, 20],  # outlier
+            [7, 9],
+            [8, 15],
+            [9, 14],
+            [10, 13],
+        ],
+        "a: int, b: int",
+    )
+
+    condition, apply_method = has_no_outliers("b")
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [1, 10, None],
+            [2, 12, None],
+            [3, 14, None],
+            [4, 13, None],
+            [5, 11, None],
+            [6, 20, "Value '20' in Column 'b' is considered an outlier, according to the MAD statistical method."],
+            [7, 9, "Value '9' in Column 'b' is considered an outlier, according to the MAD statistical method."],
+            [8, 15, None],
+            [9, 14, None],
+            [10, 13, None],
+        ],
+        "a: int, b: int, b_has_outliers: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_no_outliers_in_string_columns(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 10],
+            ["str2", 12],
+            ["str3", 14],
+            ["str4", 13],
+            ["str5", 11],
+            ["str6", 20],  # outlier
+        ],
+        "a: string, b: int",
+    )
+    apply_method = has_no_outliers("a")[1]
+
+    with pytest.raises(
+        InvalidParameterError,
+        match="Column 'a' must be of numeric type to perform outlier detection using MAD method, "
+        "but got type 'string' instead.",
+    ):
+        apply_method(test_df)
 
 
 def test_is_unique(spark: SparkSession):

@@ -79,6 +79,15 @@ def test_build_quality_rules_from_dataframe(spark):
                 "arguments": {"column": "test_col", "group_by": ["a"], "limit": 0, "aggr_type": "count"},
             },
         },
+        {
+            "name": "column_has_no_outliers",
+            "criticality": "error",
+            "filter": "test_col > 0",
+            "check": {
+                "function": "has_no_outliers",
+                "arguments": {"column": "c"},
+            },
+        },
     ]
 
     df = deserialize_checks_to_dataframe(spark, test_checks)
