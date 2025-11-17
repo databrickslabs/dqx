@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from tests.unit.datacontract_test_helpers import (
+from tests.unit.test_datacontract_utils import (
     create_basic_contract,
     create_contract_with_quality,
     create_test_contract_file,

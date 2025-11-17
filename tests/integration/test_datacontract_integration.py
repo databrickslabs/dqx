@@ -3,6 +3,7 @@ Integration tests for Data Contract to DQX rules generation.
 """
 
 import os
+from datetime import datetime
 
 import pytest
 from datacontract.data_contract import DataContract
@@ -10,7 +11,7 @@ from pyspark.sql import types as T
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
-from tests.unit.datacontract_test_helpers import (
+from tests.unit.test_datacontract_utils import (
     assert_rules_have_valid_metadata,
     assert_rules_have_valid_structure,
     create_test_contract_file,
@@ -71,8 +72,6 @@ class TestDataContractIntegration:
                 valid_rules.append(rule)
 
         # Create sample DataFrame matching the contract schema (subset of fields)
-        from datetime import datetime
-        
         schema = T.StructType(
             [
                 T.StructField("sensor_id", T.StringType(), True),
@@ -126,7 +125,7 @@ class TestDataContractIntegration:
         # Should only have explicit rules (no implicit rules)
         # Sample contract has 5 explicit DQX rules
         assert len(rules) == 5
-        
+
         # Verify all rules are explicit
         for rule in rules:
             assert rule["user_metadata"]["rule_type"] == "explicit"

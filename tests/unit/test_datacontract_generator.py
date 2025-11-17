@@ -2,14 +2,18 @@
 Unit tests for Data Contract to DQX rules generation.
 """
 
+import json
 import os
 from unittest.mock import Mock
 
 import pytest
 from datacontract.data_contract import DataContract
 
+from databricks.labs.dqx.datacontract.contract_rules_generator import (
+    DataContractRulesGenerator,
+)
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from tests.unit.datacontract_test_helpers import (
+from tests.unit.test_datacontract_utils import (
     assert_rules_have_valid_metadata,
     assert_rules_have_valid_structure,
     create_basic_contract,
@@ -27,7 +31,7 @@ class DataContractGeneratorTestBase:
         mock_ws = Mock()
         # Configure mock config with product_info for telemetry
         mock_config = Mock()
-        setattr(mock_config, '_product_info', ("dqx", "0.0.0"))
+        mock_config.configure_mock(**{"_product_info": ("dqx", "0.0.0")})
         mock_ws.config = mock_config
         mock_ws.clusters.select_spark_version = Mock()
         return mock_ws
@@ -693,15 +697,32 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
     """Test LLM-based text rule generation with mocked LLM output."""
 
+    def _load_contract_and_get_model(self, temp_path):
+        """Helper to load contract and extract first model."""
+        data_contract = DataContract(data_contract_file=temp_path)
+        spec = data_contract.get_data_contract_specification()
+        model = list(spec.models.values())[0]
+        return model
+
+    def _create_test_rules_generator(self):
+        """Helper to create a test rules generator with mocked workspace client."""
+        mock_ws = Mock()
+        mock_config = Mock()
+        mock_config.configure_mock(**{"_product_info": ("dqx", "0.0.0")})
+        mock_ws.config = mock_config
+        return DataContractRulesGenerator(workspace_client=mock_ws)
+
+    def _verify_schema_info(self, schema_info, expected_columns):
+        """Helper to verify schema info structure."""
+        schema_dict = json.loads(schema_info)
+        assert "columns" in schema_dict
+        assert len(schema_dict["columns"]) == len(expected_columns)
+        column_names = [col["name"] for col in schema_dict["columns"]]
+        for col_name in expected_columns:
+            assert col_name in column_names
+
     def test_build_schema_info_from_model(self, generator):
         """Test that schema info is correctly built from a model."""
-        # Import the DataContract and related classes
-        try:
-            from datacontract.data_contract import DataContract
-        except ImportError:
-            pytest.skip("datacontract-cli not installed")
-
-        # Create a simple contract
         contract_dict = create_basic_contract(
             fields={
                 "customer_id": {"type": "string"},
@@ -709,52 +730,52 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 "amount": {"type": "decimal"},
             }
         )
-
         temp_path = create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            # Load the contract
-            dc = DataContract(data_contract_file=temp_path)
-            spec = dc.get_data_contract_specification()
-
-            # Access the internal generator to test schema info building
-            from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
-
-            # Create a properly mocked workspace client
-            mock_ws = Mock()
-            mock_config = Mock()
-            setattr(mock_config, "_product_info", ("dqx", "0.0.0"))  # pylint: disable=protected-access
-            mock_ws.config = mock_config
-
-            gen = DataContractRulesGenerator(workspace_client=mock_ws)
-
-            # Get the first model
-            model = list(spec.models.values())[0]
-
-            # Build schema info
-            schema_info = gen._build_schema_info_from_model(model)  # pylint: disable=protected-access
-
-            # Parse and verify
-            import json
-
-            schema_dict = json.loads(schema_info)
-            assert "columns" in schema_dict
-            assert len(schema_dict["columns"]) == 3
-
-            # Verify column info
-            column_names = [col["name"] for col in schema_dict["columns"]]
-            assert "customer_id" in column_names
-            assert "order_date" in column_names
-            assert "amount" in column_names
-
+            model = self._load_contract_and_get_model(temp_path)
+            gen = self._create_test_rules_generator()
+            build_schema_info = getattr(gen, "_build_schema_info_from_model")
+            schema_info = build_schema_info(model)
+            self._verify_schema_info(schema_info, ["customer_id", "order_date", "amount"])
         finally:
             os.unlink(temp_path)
 
+    def _create_text_rule_llm_mock(self):
+        """Helper to create LLM mock for text rule tests."""
+        mock_prediction = Mock()
+        mock_prediction.quality_rules = json.dumps(
+            [
+                {
+                    "criticality": "error",
+                    "check": {
+                        "function": "regex_match",
+                        "arguments": {
+                            "column": "email",
+                            "regex": "^[a-zA-Z0-9._%+-]+@(company\\.com|partner\\.com)$",
+                        },
+                    },
+                }
+            ]
+        )
+        mock_llm_engine = Mock()
+        mock_llm_engine.get_business_rules_with_llm.return_value = mock_prediction
+        return mock_llm_engine
+
+    def _verify_text_rules(self, rules, mock_llm_engine):
+        """Helper to verify text rule generation."""
+        assert mock_llm_engine.get_business_rules_with_llm.called
+        assert len(rules) > 0
+        text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+        assert len(text_rules) > 0
+        assert text_rules[0]["check"]["function"] == "regex_match"
+        assert text_rules[0]["criticality"] == "error"
+        assert text_rules[0]["user_metadata"]["field"] == "email"
+        assert text_rules[0]["user_metadata"]["rule_type"] == "text_llm"
+        assert "text_expectation" in text_rules[0]["user_metadata"]
+
     def test_text_rules_with_mocked_llm_output(self, generator):
         """Test text rule processing with mocked LLM output (based on REAL LLM structure)."""
-        import json
-        
-        # Create contract with text-based quality rule
         contract_dict = create_contract_with_quality(
             field_name="email",
             field_type="string",
@@ -765,55 +786,15 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 }
             ],
         )
-
         temp_path = create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            # Mock LLM output based on REAL captured output structure
-            # (See: tests/unit/fixtures/llm_output_real.json)
-            mock_prediction = Mock()
-            mock_prediction.quality_rules = json.dumps([
-                {
-                    "criticality": "error",
-                    "check": {
-                        "function": "regex_match",
-                        "arguments": {
-                            "column": "email",
-                            "regex": "^[a-zA-Z0-9._%+-]+@(company\\.com|partner\\.com)$",
-                        },
-                    },
-                    # Note: 'filter' field is optional - LLM sometimes includes it
-                }
-            ])
-            
-            # Create a mock LLM engine and patch it onto the generator
-            mock_llm_engine = Mock()
-            mock_llm_engine.get_business_rules_with_llm.return_value = mock_prediction
+            mock_llm_engine = self._create_text_rule_llm_mock()
             generator.llm_engine = mock_llm_engine
-
-            # Generate rules with LLM processing enabled
             rules = generator.generate_rules_from_contract(
                 contract_file=temp_path, generate_implicit_rules=False, process_text_rules=True
             )
-
-            # Verify LLM was called
-            assert mock_llm_engine.get_business_rules_with_llm.called
-
-            # Verify rules were generated
-            assert len(rules) > 0
-
-            # Verify metadata includes text_llm rule type
-            text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
-            assert len(text_rules) > 0
-
-            # Verify the rule content matches real LLM structure
-            assert text_rules[0]["check"]["function"] == "regex_match"
-            assert text_rules[0]["criticality"] == "error"
-            assert text_rules[0]["user_metadata"]["field"] == "email"
-            assert text_rules[0]["user_metadata"]["rule_type"] == "text_llm"
-            # Verify text_expectation is preserved in metadata (real LLM behavior)
-            assert "text_expectation" in text_rules[0]["user_metadata"]
-
+            self._verify_text_rules(rules, mock_llm_engine)
         finally:
             os.unlink(temp_path)
 
@@ -863,7 +844,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             # Mock LLM engine
             mock_llm_engine = Mock()
             generator.llm_engine = mock_llm_engine
-            
+
             # Generate with process_text_rules=False
             rules = generator.generate_rules_from_contract(
                 contract_file=temp_path, generate_implicit_rules=False, process_text_rules=False
@@ -878,10 +859,51 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def _create_multiple_text_rules_llm_mock(self):
+        """Helper to create LLM mock with side_effect for multiple text rules."""
+        mock_prediction1 = Mock()
+        mock_prediction1.quality_rules = json.dumps(
+            [
+                {
+                    "criticality": "error",
+                    "check": {
+                        "function": "is_unique",
+                        "arguments": {"columns": ["order_id"]},
+                    },
+                }
+            ]
+        )
+        mock_prediction2 = Mock()
+        mock_prediction2.quality_rules = json.dumps(
+            [
+                {
+                    "criticality": "error",
+                    "check": {
+                        "function": "regex_match",
+                        "arguments": {"column": "customer_email", "regex": "^[a-zA-Z0-9._%+-]+@.+$"},
+                    },
+                }
+            ]
+        )
+        mock_llm_engine = Mock()
+        mock_llm_engine.get_business_rules_with_llm.side_effect = [mock_prediction1, mock_prediction2]
+        return mock_llm_engine
+
+    def _verify_multiple_text_rules(self, rules, mock_llm_engine):
+        """Helper to verify multiple text rules were generated."""
+        assert mock_llm_engine.get_business_rules_with_llm.call_count == 2
+        assert len(rules) == 2
+        fields_with_rules = {r["user_metadata"]["field"] for r in rules}
+        assert "order_id" in fields_with_rules
+        assert "customer_email" in fields_with_rules
+        for rule in rules:
+            assert "criticality" in rule
+            assert "check" in rule
+            assert "user_metadata" in rule
+            assert rule["user_metadata"]["rule_type"] == "text_llm"
+
     def test_multiple_text_rules_processed(self, generator):
         """Test that multiple text rules are all processed by LLM (based on REAL LLM structure)."""
-        import json
-        
         contract_dict = {
             "dataContractSpecification": "0.9.3",
             "id": "multi-text-rules",
@@ -891,77 +913,24 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     "fields": {
                         "order_id": {
                             "type": "string",
-                            "quality": [
-                                {
-                                    "type": "text",
-                                    "description": "Order IDs must be unique across all systems",
-                                }
-                            ],
+                            "quality": [{"type": "text", "description": "Order IDs must be unique across all systems"}],
                         },
                         "customer_email": {
                             "type": "string",
-                            "quality": [
-                                {
-                                    "type": "text",
-                                    "description": "Email must be valid and deliverable",
-                                }
-                            ],
+                            "quality": [{"type": "text", "description": "Email must be valid and deliverable"}],
                         },
                     }
                 }
             },
         }
-
         temp_path = create_test_contract_file(custom_contract=contract_dict)
 
         try:
-            # Mock LLM to return different rules for each call
-            # Structure matches REAL LLM output (see tests/unit/fixtures/llm_output_real.json)
-            mock_prediction1 = Mock()
-            mock_prediction1.quality_rules = json.dumps([
-                {
-                    "criticality": "error",
-                    "check": {
-                        "function": "is_unique",
-                        "arguments": {"columns": ["order_id"]},  # Real LLM uses 'columns' (list)
-                    },
-                }
-            ])
-            
-            mock_prediction2 = Mock()
-            mock_prediction2.quality_rules = json.dumps([
-                {
-                    "criticality": "error",  # Real LLM typically returns 'error', not 'warn'
-                    "check": {
-                        "function": "regex_match",
-                        "arguments": {"column": "customer_email", "regex": "^[a-zA-Z0-9._%+-]+@.+$"},
-                    },
-                }
-            ])
-            
-            mock_llm_engine = Mock()
-            mock_llm_engine.get_business_rules_with_llm.side_effect = [mock_prediction1, mock_prediction2]
+            mock_llm_engine = self._create_multiple_text_rules_llm_mock()
             generator.llm_engine = mock_llm_engine
-
             rules = generator.generate_rules_from_contract(
                 contract_file=temp_path, generate_implicit_rules=False, process_text_rules=True
             )
-
-            # Verify LLM was called twice (once per text rule)
-            assert mock_llm_engine.get_business_rules_with_llm.call_count == 2
-
-            # Verify we got rules for both fields
-            assert len(rules) == 2
-            fields_with_rules = {r["user_metadata"]["field"] for r in rules}
-            assert "order_id" in fields_with_rules
-            assert "customer_email" in fields_with_rules
-            
-            # Verify rules have expected structure from real LLM
-            for rule in rules:
-                assert "criticality" in rule
-                assert "check" in rule
-                assert "user_metadata" in rule
-                assert rule["user_metadata"]["rule_type"] == "text_llm"
-
+            self._verify_multiple_text_rules(rules, mock_llm_engine)
         finally:
             os.unlink(temp_path)
