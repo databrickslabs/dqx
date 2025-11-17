@@ -44,17 +44,17 @@ models:
               groupby_columns:
                 - sensor_id
       
-      # Check row count is reasonable
+      # Check dataset is not empty
       - type: custom
         engine: dqx
         specification:
           criticality: warn
-          name: minimum_row_count
+          name: dataset_not_empty
           check:
-            function: is_aggr_not_greater_than
+            function: is_aggr_not_less_than
             arguments:
               expression: count(*)
-              max_limit: 0
+              min_limit: 1
       
       # Text-based expectation for LLM processing
       - type: text

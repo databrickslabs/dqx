@@ -179,6 +179,11 @@ class DataContractRulesGenerator(DQEngineBase):
             else:
                 logger.info(f"Successfully generated {len(dq_rules)} DQX rules from data contract")
 
+    @staticmethod
+    def _get_contract_version(spec: DataContractSpecification) -> str:
+        """Extract contract version from specification."""
+        return getattr(spec.info, 'version', 'unknown') if spec.info else 'unknown'
+
     def _generate_implicit_rules_for_model(
         self, model: Model, model_name: str, spec: DataContractSpecification, default_criticality: str
     ) -> list[dict]:
@@ -204,12 +209,9 @@ class DataContractRulesGenerator(DQEngineBase):
         # Build full column path
         column_path = f"{parent_path}.{field_name}" if parent_path else field_name
 
-        # Get version from info.version
-        contract_version = getattr(spec.info, 'version', 'unknown') if spec.info else 'unknown'
-
         contract_metadata = {
             "contract_id": spec.id or "unknown",
-            "contract_version": contract_version,
+            "contract_version": self._get_contract_version(spec),
             "model": model_name,
             "field": column_path,
         }
@@ -438,12 +440,9 @@ class DataContractRulesGenerator(DQEngineBase):
         if self.llm_engine is None:
             return []
 
-        # Get version from info.version
-        contract_version = getattr(spec.info, 'version', 'unknown') if spec.info else 'unknown'
-
         contract_metadata = {
             "contract_id": spec.id or "unknown",
-            "contract_version": contract_version,
+            "contract_version": self._get_contract_version(spec),
             "model": model_name,
         }
         schema_info = self._build_schema_info_from_model(model)
@@ -548,12 +547,9 @@ class DataContractRulesGenerator(DQEngineBase):
         self, model: Model, model_name: str, spec: DataContractSpecification, _default_criticality: str
     ) -> list[dict]:
         """Process explicit DQX format rules from a model."""
-        # Get version from info.version
-        contract_version = getattr(spec.info, 'version', 'unknown') if spec.info else 'unknown'
-
         contract_metadata = {
             "contract_id": spec.id or "unknown",
-            "contract_version": contract_version,
+            "contract_version": self._get_contract_version(spec),
             "model": model_name,
         }
 

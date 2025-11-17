@@ -129,7 +129,6 @@ Implicit rules are automatically derived from schema field constraints defined i
 | `maximum` only | Maximum value | `is_not_greater_than` | Upper bounds |
 | `enum: [...]` | Values from list | `is_in_list` | Status codes, categories |
 | `format: date/datetime` | Date/timestamp format | `is_valid_date` / `is_valid_timestamp` | Dates, timestamps |
-| `minLength` + `maxLength` | String length range | `string_length_in_range` | Fixed-length codes |
 
 ### Example Contract with Implicit Rules
 

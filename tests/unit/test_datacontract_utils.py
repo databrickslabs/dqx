@@ -24,7 +24,22 @@ def assert_valid_rule_structure(rule: dict) -> None:
 
 
 def assert_valid_contract_metadata(metadata: dict) -> None:
-    """Assert that metadata contains expected contract information."""
+    """
+    Assert that the metadata dictionary contains the expected contract information.
+
+    The metadata dictionary must have the following keys:
+        - contract_id: Unique identifier for the contract (str)
+        - contract_version: Version of the contract (str)
+        - model: Name of the model the contract applies to (str)
+        - field: Name of the field the contract applies to (str)
+        - rule_type: Type of rule, must be one of {"implicit", "explicit", "text_llm"} (str)
+
+    Args:
+        metadata: The contract metadata to validate.
+
+    Raises:
+        AssertionError: If any required key is missing or if rule_type is invalid.
+    """
     assert "contract_id" in metadata
     assert "contract_version" in metadata
     assert "model" in metadata
@@ -34,14 +49,24 @@ def assert_valid_contract_metadata(metadata: dict) -> None:
 
 
 def assert_rules_have_valid_structure(rules: list[dict]) -> None:
-    """Assert that all rules have valid structure."""
+    """
+    Validate that all rules in the list have the expected structure.
+
+    Args:
+        rules: List of rule dictionaries to validate.
+    """
     assert len(rules) > 0
     for rule in rules:
         assert_valid_rule_structure(rule)
 
 
 def assert_rules_have_valid_metadata(rules: list[dict]) -> None:
-    """Assert that all rules have valid contract metadata."""
+    """
+    Validate that all rules contain valid contract metadata.
+
+    Args:
+        rules: List of rule dictionaries to validate.
+    """
     for rule in rules:
         assert_valid_contract_metadata(rule["user_metadata"])
 
