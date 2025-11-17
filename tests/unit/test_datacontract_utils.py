@@ -8,7 +8,14 @@ import yaml
 
 
 def assert_valid_rule_structure(rule: dict) -> None:
-    """Assert that a rule has the expected structure."""
+    """
+    Assert that a rule dictionary has the expected structure.
+
+    A valid rule must contain:
+        - "check": a dictionary with "function" and "arguments" keys
+        - "criticality": the rule's criticality level
+        - "user_metadata": metadata associated with the rule
+    """
     assert "check" in rule
     assert "function" in rule["check"]
     assert "arguments" in rule["check"]
