@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
@@ -313,8 +314,6 @@ def test_compare_datasets_with_llm_manual_columns():
         return (Mock(), Mock())
 
     # Replace compare_datasets temporarily
-    import databricks.labs.dqx.check_funcs as check_funcs
-
     original_func = check_funcs.compare_datasets
     check_funcs.compare_datasets = mock_compare_datasets
 

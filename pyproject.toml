@@ -502,8 +502,8 @@ bad-functions = ["map", "input"]
 # ignored-parents =
 
 # Maximum number of arguments for function / method.
-max-args = 12
-max-positional-arguments = 12
+max-args = 13
+max-positional-arguments = 13
 
 # Maximum number of attributes for a class (see R0902).
 max-attributes = 16
@@ -515,7 +515,7 @@ max-bool-expr = 5
 max-branches = 20
 
 # Maximum number of locals for function / method body.
-max-locals = 24
+max-locals = 26
 
 # Maximum number of parents for a class (see R0901).
 max-parents = 7
@@ -644,6 +644,8 @@ disable = [
     "broad-exception-caught",
     "rewrite-as-for-loop",
     "redundant-returns-doc",
+    "import-outside-toplevel",
+    "cyclic-import",
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can

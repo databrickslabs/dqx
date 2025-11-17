@@ -171,6 +171,9 @@ def test_detect_primary_keys_with_duplicates(ws, spark, make_schema, make_table,
 
 def test_compare_datasets_with_llm_wrapper(ws, spark, make_schema, make_table, skip_if_llm_not_available):
     """Test compare_datasets_with_llm wrapper with auto PK detection."""
+    # Use the fixture to ensure LLM is available
+    _ = skip_if_llm_not_available
+
     schema = make_schema(catalog_name=TEST_CATALOG)
 
     # Create source table
@@ -198,7 +201,7 @@ def test_compare_datasets_with_llm_wrapper(ws, spark, make_schema, make_table, s
     # pylint: disable=import-outside-toplevel
     from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
 
-    condition_col, apply_func = compare_datasets_with_llm(
+    _, apply_func = compare_datasets_with_llm(
         source_table=source_table.full_name,
         ref_table=ref_table.full_name,  # For PK detection
         ref_df_name="ref_table_for_test",  # For comparison
@@ -210,10 +213,10 @@ def test_compare_datasets_with_llm_wrapper(ws, spark, make_schema, make_table, s
     # Assertions - all rows should match (no differences)
     results = result_df.collect()
     assert len(results) == 3, "Should have 3 rows"
-    
+
     # Get the compare status column (has generated UUID in name)
     compare_col = [col for col in result_df.columns if col.startswith("__compare_status")][0]
-    
+
     # Check that all rows match
     for row in results:
         check_val = row[compare_col]
