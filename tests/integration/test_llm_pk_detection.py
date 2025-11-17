@@ -30,7 +30,7 @@ def test_detect_primary_keys_simple_table(ws, spark, make_schema, make_table, in
 
     # Profile the table
     input_config = InputConfig(location=test_table.full_name)
-    summary_stats, profiles = profiler.profile(input_config)
+    summary_stats, _ = profiler.profile(input_config)
 
     # Run PK detection
     runner.detect_primary_keys_using_llm(generator, input_config, summary_stats)
@@ -74,7 +74,7 @@ def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, insta
 
     # Profile the table
     input_config = InputConfig(location=test_table.full_name)
-    summary_stats, profiles = profiler.profile(input_config)
+    summary_stats, _ = profiler.profile(input_config)
 
     # Run PK detection
     runner.detect_primary_keys_using_llm(generator, input_config, summary_stats)
@@ -115,7 +115,7 @@ def test_detect_primary_keys_no_clear_key(ws, spark, make_schema, make_table, in
 
     # Profile the table
     input_config = InputConfig(location=test_table.full_name)
-    summary_stats, profiles = profiler.profile(input_config)
+    summary_stats, _ = profiler.profile(input_config)
 
     # Run PK detection
     runner.detect_primary_keys_using_llm(generator, input_config, summary_stats)
@@ -152,7 +152,7 @@ def test_detect_primary_keys_with_duplicates(ws, spark, make_schema, make_table,
 
     # Profile the table
     input_config = InputConfig(location=test_table.full_name)
-    summary_stats, profiles = profiler.profile(input_config)
+    summary_stats, _ = profiler.profile(input_config)
 
     # Run PK detection (with duplicate validation)
     runner.detect_primary_keys_using_llm(generator, input_config, summary_stats)
@@ -168,3 +168,53 @@ def test_detect_primary_keys_with_duplicates(ws, spark, make_schema, make_table,
             assert pk_info.get("has_duplicates", False), "Should detect duplicates in product_id"
             assert pk_info.get("duplicate_count", 0) > 0, "Should count duplicate records"
 
+
+def test_compare_datasets_with_llm_wrapper(ws, spark, make_schema, make_table, skip_if_llm_not_available):
+    """Test compare_datasets_with_llm wrapper with auto PK detection."""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+
+    # Create source table
+    source_table = make_table(
+        catalog_name=TEST_CATALOG,
+        schema_name=schema.name,
+        ctas="SELECT * FROM VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie') AS data(id, name)",
+    )
+
+    # Create reference table (same data)
+    ref_table = make_table(
+        catalog_name=TEST_CATALOG,
+        schema_name=schema.name,
+        ctas="SELECT * FROM VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie') AS data(id, name)",
+    )
+
+    # Load both DataFrames
+    source_df = spark.table(source_table.full_name)
+    ref_df = spark.table(ref_table.full_name)
+
+    # Register reference as temp view
+    ref_df.createOrReplaceTempView("ref_table_for_test")
+
+    # Test the wrapper with auto PK detection
+    # pylint: disable=import-outside-toplevel
+    from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
+
+    condition_col, apply_func = compare_datasets_with_llm(
+        source_table=source_table.full_name,
+        ref_table=ref_table.full_name,  # For PK detection
+        ref_df_name="ref_table_for_test",  # For comparison
+    )
+
+    # Apply the comparison using apply_func with all required arguments
+    result_df = apply_func(source_df, spark, {"ref_table_for_test": ref_df})
+
+    # Assertions - all rows should match (no differences)
+    results = result_df.collect()
+    assert len(results) == 3, "Should have 3 rows"
+    
+    # Get the compare status column (has generated UUID in name)
+    compare_col = [col for col in result_df.columns if col.startswith("__compare_status")][0]
+    
+    # Check that all rows match
+    for row in results:
+        check_val = row[compare_col]
+        assert check_val.matched is True, "All rows should match between identical datasets"

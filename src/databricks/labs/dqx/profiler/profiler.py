@@ -17,7 +17,7 @@ from pyspark.sql import DataFrame, SparkSession
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.io import read_input_data
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
@@ -179,6 +179,66 @@ class DQProfiler(DQEngineBase):
             columns=columns,
             options=options,
             max_parallelism=max_parallelism,
+        )
+
+    @telemetry_logger("profiler", "detect_primary_keys_with_llm")
+    def detect_primary_keys_with_llm(
+        self,
+        input_config: InputConfig,
+        llm_model_config: LLMModelConfig | None = None,
+        validate_duplicates: bool = True,
+        fail_on_duplicates: bool = True,
+        max_retries: int = 3,
+    ) -> dict[str, Any]:
+        """
+        Detects primary keys using LLM-based analysis.
+
+        This method provides a convenient way to detect primary keys from the profiler.
+        It internally uses the DQGenerator's LLM-based primary key detection capability.
+
+        Args:
+            input_config: Input configuration containing the table location.
+            llm_model_config: Optional LLM model configuration. If not provided, uses default model.
+            validate_duplicates: Whether to validate the detected primary keys for duplicates.
+            fail_on_duplicates: Whether to fail if duplicates are found after max retries.
+            max_retries: Maximum number of retries to find unique primary key combination.
+
+        Returns:
+            A dictionary containing the primary key detection result with the following keys:
+            - table: The table name
+            - success: Whether detection was successful
+            - primary_key_columns: List of detected primary key columns (if successful)
+            - confidence: Confidence level (high/medium/low)
+            - reasoning: LLM reasoning for the selection
+            - has_duplicates: Whether duplicates were found (if validation performed)
+            - duplicate_count: Number of duplicate combinations (if validation performed)
+            - error: Error message (if failed)
+
+        Raises:
+            MissingParameterError: If LLM engine is not available or input_config is missing.
+
+        Example:
+            >>> profiler = DQProfiler(ws, spark)
+            >>> input_config = InputConfig(location="catalog.schema.table")
+            >>> result = profiler.detect_primary_keys_with_llm(input_config)
+            >>> print(f"Primary Keys: {result.get('primary_key_columns')}")
+        """
+        # Import here to avoid circular dependency
+        from databricks.labs.dqx.profiler.generator import DQGenerator  # pylint: disable=import-outside-toplevel
+
+        # Create generator with LLM support
+        generator = DQGenerator(
+            workspace_client=self.ws,
+            spark=self.spark,
+            llm_model_config=llm_model_config,
+        )
+
+        # Delegate to generator's method
+        return generator.detect_primary_keys_with_llm(
+            input_config=input_config,
+            validate_duplicates=validate_duplicates,
+            fail_on_duplicates=fail_on_duplicates,
+            max_retries=max_retries,
         )
 
     def _profile_tables(

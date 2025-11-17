@@ -1414,6 +1414,137 @@ def is_aggr_not_equal(
     )
 
 
+def compare_datasets_with_llm(
+    columns: list[str | Column] | None = None,
+    ref_columns: list[str | Column] | None = None,
+    ref_df_name: str | None = None,
+    ref_table: str | None = None,
+    source_table: str | None = None,
+    check_missing_records: bool | None = False,
+    exclude_columns: list[str | Column] | None = None,
+    null_safe_row_matching: bool | None = True,
+    null_safe_column_value_matching: bool | None = True,
+    row_filter: str | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Wrapper for compare_datasets that auto-detects primary keys using LLM if enabled.
+    
+    This is a convenience function that works exactly like compare_datasets, but can
+    auto-detect primary keys using LLM when table names are provided.
+    
+    Args:
+        columns: Optional list of columns for matching. If None, will attempt LLM detection.
+        ref_columns: Optional list of reference columns. If None, will attempt LLM detection.
+        ref_df_name: Name of the reference DataFrame (alternative to ref_table)
+        ref_table: Reference table name (for comparison or PK detection)
+        source_table: Source table name (optional, only needed for PK detection)
+        check_missing_records: Whether to check for missing records in reference dataset
+        exclude_columns: Columns to exclude from comparison
+        null_safe_row_matching: Whether to treat nulls as equal when matching rows
+        null_safe_column_value_matching: Whether to treat nulls as equal in column values
+        row_filter: Optional SQL WHERE clause to filter rows
+        abs_tolerance: Absolute tolerance for numeric comparisons
+        rel_tolerance: Relative tolerance for numeric comparisons
+    
+    Returns:
+        Same as compare_datasets: Tuple[Column, Callable]
+    
+    Raises:
+        MissingParameterError: If columns not provided and LLM auto-detection fails
+        
+    Example:
+        >>> # Auto-detect PKs with LLM (requires both table names)
+        >>> compare_datasets_with_llm(
+        ...     source_table="catalog.schema.source",
+        ...     ref_table="catalog.schema.reference"
+        ... )
+        
+        >>> # Or provide manual PKs (works like compare_datasets)
+        >>> compare_datasets_with_llm(
+        ...     columns=["user_id"],
+        ...     ref_columns=["user_id"],
+        ...     ref_table="catalog.schema.reference"
+        ... )
+    """
+    # If columns not provided, try to auto-detect with LLM
+    if columns is None or ref_columns is None:
+        # Check if table names are provided for auto-detection
+        if source_table is None or ref_table is None:
+            raise MissingParameterError(
+                "Either provide 'columns' and 'ref_columns' manually, "
+                "or provide 'source_table' and 'ref_table' for LLM-based auto-detection."
+            )
+        
+        try:
+            from databricks.labs.dqx.profiler.profiler import DQProfiler
+            from databricks.labs.dqx.config import InputConfig
+            from databricks.sdk import WorkspaceClient
+            
+            ws = WorkspaceClient()
+            spark = SparkSession.getActiveSession()
+            
+            if spark is None:
+                raise MissingParameterError(
+                    "Spark session not available. "
+                    "Either start a Spark session or provide 'columns' and 'ref_columns' manually."
+                )
+            
+            profiler = DQProfiler(ws, spark)
+            
+            # Detect source PKs if needed
+            if columns is None:
+                source_result = profiler.detect_primary_keys_with_llm(
+                    InputConfig(location=source_table), validate_duplicates=False
+                )
+                if not source_result.get("success"):
+                    raise MissingParameterError(
+                        f"Failed to detect primary keys for source table '{source_table}'. "
+                        f"Please provide 'columns' manually. Error: {source_result.get('error')}"
+                    )
+                columns = source_result["primary_key_columns"]
+            
+            # Detect reference PKs if needed
+            if ref_columns is None:
+                ref_result = profiler.detect_primary_keys_with_llm(
+                    InputConfig(location=ref_table), validate_duplicates=False
+                )
+                if not ref_result.get("success"):
+                    raise MissingParameterError(
+                        f"Failed to detect primary keys for reference table '{ref_table}'. "
+                        f"Please provide 'ref_columns' manually. Error: {ref_result.get('error')}"
+                    )
+                ref_columns = ref_result["primary_key_columns"]
+                
+        except ImportError as e:
+            raise MissingParameterError(
+                "LLM dependencies not available and 'columns'/'ref_columns' not provided. "
+                "Either install LLM dependencies with 'pip install databricks-labs-dqx[llm]' "
+                "or provide 'columns' and 'ref_columns' manually."
+            ) from e
+
+    # Call the original compare_datasets with detected or provided columns
+    # Note: compare_datasets doesn't allow both ref_df_name and ref_table.
+    # If both are provided, prioritize ref_df_name for comparison (ref_table was used for PK detection)
+    final_ref_df_name = ref_df_name
+    final_ref_table = ref_table if ref_df_name is None else None
+    
+    return compare_datasets(
+        columns=columns,
+        ref_columns=ref_columns,
+        ref_df_name=final_ref_df_name,
+        ref_table=final_ref_table,
+        check_missing_records=check_missing_records,
+        exclude_columns=exclude_columns,
+        null_safe_row_matching=null_safe_row_matching,
+        null_safe_column_value_matching=null_safe_column_value_matching,
+        row_filter=row_filter,
+        abs_tolerance=abs_tolerance,
+        rel_tolerance=rel_tolerance,
+    )
+
+
 @register_rule("dataset")
 def compare_datasets(
     columns: list[str | Column],
