@@ -380,12 +380,57 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_length_rules(
-        self, _field: Field, _column_path: str, _contract_metadata: dict, _criticality: str
+        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
-        """Generate string length rules from minLength/maxLength."""
-        # Note: DQX doesn't have built-in string length checks, so we skip these for now
-        # Could be implemented as custom SQL expression checks if needed
-        return []
+        """Generate string length rules from minLength/maxLength using SQL expressions."""
+        rules = []
+
+        min_length = getattr(field, "minLength", None)
+        max_length = getattr(field, "maxLength", None)
+
+        # Generate minLength rule
+        if min_length is not None:
+            rules.append(
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "column": column_path,
+                            "expression": f"LENGTH({column_path}) >= {min_length}",
+                        },
+                    },
+                    "name": f"{column_path}_min_length",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "dimension": "validity",
+                        "rule_type": "implicit",
+                    },
+                }
+            )
+
+        # Generate maxLength rule
+        if max_length is not None:
+            rules.append(
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "column": column_path,
+                            "expression": f"LENGTH({column_path}) <= {max_length}",
+                        },
+                    },
+                    "name": f"{column_path}_max_length",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "dimension": "validity",
+                        "rule_type": "implicit",
+                    },
+                }
+            )
+
+        return rules
 
     def _generate_format_rules_from_field(
         self, field: Field, column_path: str, contract_metadata: dict, criticality: str

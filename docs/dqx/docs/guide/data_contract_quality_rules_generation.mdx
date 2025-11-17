@@ -129,6 +129,9 @@ Implicit rules are automatically derived from schema field constraints defined i
 | `maximum` only | Maximum value | `is_not_greater_than` | Upper bounds |
 | `enum: [...]` | Values from list | `is_in_list` | Status codes, categories |
 | `format: date/datetime` | Date/timestamp format | `is_valid_date` / `is_valid_timestamp` | Dates, timestamps |
+| `minLength` only | Minimum string length | `sql_expression` (LENGTH >= N) | Minimum code length |
+| `maxLength` only | Maximum string length | `sql_expression` (LENGTH <= N) | Maximum field size |
+| `minLength` + `maxLength` | String length range | `sql_expression` (both checks) | Fixed-length codes |
 
 ### Example Contract with Implicit Rules
 

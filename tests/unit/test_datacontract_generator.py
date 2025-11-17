@@ -527,6 +527,10 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+
+class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
+    """Test constraint-specific implicit rule generation."""
+
     def test_field_with_only_minimum_constraint(self, generator):
         """Test that field with only minimum (no maximum) generates is_not_less_than rule."""
         contract_dict = create_basic_contract(
@@ -687,6 +691,100 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
             range_rule = next(r for r in rules if r["check"]["function"] == "is_in_range")
             assert range_rule["check"]["arguments"]["min_limit"] == 0
             assert range_rule["check"]["arguments"]["max_limit"] == 120
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_min_length_only(self, generator):
+        """Test that field with only minLength generates sql_expression rule."""
+        contract_dict = create_basic_contract(
+            fields={
+                "code": {
+                    "type": "string",
+                    "minLength": 5,
+                }
+            }
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+            )
+
+            # Should generate sql_expression rule for minLength
+            rule_functions = [rule["check"]["function"] for rule in rules]
+            assert "sql_expression" in rule_functions, "Should have sql_expression rule for minLength"
+
+            # Verify the length rule
+            length_rule = next(r for r in rules if "min_length" in r["name"])
+            assert length_rule["check"]["function"] == "sql_expression"
+            assert "LENGTH(code) >= 5" in length_rule["check"]["arguments"]["expression"]
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_max_length_only(self, generator):
+        """Test that field with only maxLength generates sql_expression rule."""
+        contract_dict = create_basic_contract(
+            fields={
+                "description": {
+                    "type": "string",
+                    "maxLength": 200,
+                }
+            }
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+            )
+
+            # Should generate sql_expression rule for maxLength
+            rule_functions = [rule["check"]["function"] for rule in rules]
+            assert "sql_expression" in rule_functions, "Should have sql_expression rule for maxLength"
+
+            # Verify the length rule
+            length_rule = next(r for r in rules if "max_length" in r["name"])
+            assert length_rule["check"]["function"] == "sql_expression"
+            assert "LENGTH(description) <= 200" in length_rule["check"]["arguments"]["expression"]
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_min_and_max_length_together(self, generator):
+        """Test that field with both minLength and maxLength generates two sql_expression rules."""
+        contract_dict = create_basic_contract(
+            fields={
+                "postal_code": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 10,
+                }
+            }
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+            )
+
+            # Should generate two sql_expression rules (one for min, one for max)
+            length_rules = [r for r in rules if "length" in r["name"]]
+            assert len(length_rules) == 2, "Should have two length rules"
+
+            # Verify min length rule
+            min_rule = next(r for r in length_rules if "min_length" in r["name"])
+            assert "LENGTH(postal_code) >= 5" in min_rule["check"]["arguments"]["expression"]
+
+            # Verify max length rule
+            max_rule = next(r for r in length_rules if "max_length" in r["name"])
+            assert "LENGTH(postal_code) <= 10" in max_rule["check"]["arguments"]["expression"]
 
         finally:
             os.unlink(temp_path)
