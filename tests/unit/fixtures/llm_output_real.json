@@ -1,7 +1,7 @@
 {
   "description": "Real LLM output captured via Databricks Connect",
   "llm_engine": "DQLLMEngine",
-  "workspace": "https://adb-984752964297111.11.azuredatabricks.net",
+  "workspace": "https://adb-XXXXXXXXX.XX.azuredatabricks.net",
   "text_rules": [
     {
       "criticality": "error",
