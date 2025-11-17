@@ -173,9 +173,11 @@ class DQGenerator(DQEngineBase):
         table_name = input_config.location
         logger.info(f"Detecting primary keys with LLM for table: {table_name}")
 
+        # Use llama model specifically for PK detection
+        pk_model = "databricks-meta-llama-3-1-8b-instruct"
         detector = DatabricksPrimaryKeyDetector(
             table=table_name,
-            endpoint=self.llm_model_config.model_name,
+            endpoint=pk_model,
             validate_duplicates=validate_duplicates,
             fail_on_duplicates=fail_on_duplicates,
             spark_session=self.spark,

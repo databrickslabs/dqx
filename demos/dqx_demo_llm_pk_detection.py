@@ -48,7 +48,7 @@
 # MAGIC
 # MAGIC ### Model Configuration
 # MAGIC
-# MAGIC By default, DQX uses the `databricks-meta-llama-3-1-8b-instruct` foundation model endpoint. You can specify a different model endpoint if needed.
+# MAGIC The LLM-based primary key detection uses the `databricks-meta-llama-3-1-8b-instruct` foundation model endpoint by default. This is hardcoded specifically for PK detection to ensure optimal performance. Other LLM features in DQX use the global default model (`databricks/databricks-claude-sonnet-4-5`).
 # MAGIC
 # MAGIC ### Table Configuration
 # MAGIC
@@ -57,13 +57,11 @@
 # COMMAND ----------
 
 # Configuration widgets
-model_name = "databricks-meta-llama-3-1-8b-instruct"
+# Note: The model for PK detection is hardcoded to databricks-meta-llama-3-1-8b-instruct
 default_table_name = "samples.tpch.customer"
 
-dbutils.widgets.text("model_name", model_name, "Model Name")
 dbutils.widgets.text("table_name", default_table_name, "Table Name")
 
-model_name = dbutils.widgets.get("model_name")
 table_name = dbutils.widgets.get("table_name")
 
 # COMMAND ----------
@@ -124,8 +122,9 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler
 # Create profiler
 profiler = DQProfiler(ws, spark)
 
-# Configure LLM model (optional - uses default if not provided)
-llm_model_config = LLMModelConfig(model_name=model_name)
+# Note: PK detection uses databricks-meta-llama-3-1-8b-instruct (hardcoded)
+# LLMModelConfig is not needed for PK detection as the model is preset
+llm_model_config = None
 
 # Detect primary keys using profiler
 input_config = InputConfig(location=temp_table)
