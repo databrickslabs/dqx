@@ -1,6 +1,7 @@
 import logging
 import json
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from pyspark.sql import SparkSession
 
@@ -22,6 +23,10 @@ try:
     LLM_ENABLED = True
 except ImportError:
     LLM_ENABLED = False
+
+# Type checking imports
+if TYPE_CHECKING:
+    from datacontract.data_contract import DataContract
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +137,8 @@ class DQGenerator(DQEngineBase):
     @telemetry_logger("generator", "generate_rules_from_contract")
     def generate_rules_from_contract(
         self,
-        contract: dict,
+        contract: "DataContract | None" = None,
+        contract_file: str | None = None,
         contract_format: str = "odcs",
         generate_implicit_rules: bool = True,
         process_text_rules: bool = True,
@@ -145,7 +151,8 @@ class DQGenerator(DQEngineBase):
         schema properties, explicit quality definitions, and text-based expectations.
 
         Args:
-            contract: Dictionary representation of the data contract.
+            contract: Pre-loaded DataContract object from datacontract-cli.
+            contract_file: Path to contract YAML file (local, volume, or workspace).
             contract_format: Contract format specification (default is "odcs").
             generate_implicit_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
@@ -155,12 +162,14 @@ class DQGenerator(DQEngineBase):
             A list of dictionaries representing the generated DQX quality rules.
 
         Raises:
-            ValueError: If the contract format is not supported or validation fails.
+            ValueError: If neither or both parameters are provided, or format not supported.
+
+        Note:
+            Exactly one of 'contract' or 'contract_file' must be provided.
         """
         # Create a contract generator with the same context
         contract_generator = DataContractRulesGenerator(
             workspace_client=self._workspace_client,
-            spark=self.spark,
             llm_engine=self.llm_engine,
             custom_check_functions=self.custom_check_functions,
         )
@@ -168,6 +177,7 @@ class DQGenerator(DQEngineBase):
         # Delegate to the contract generator
         return contract_generator.generate_rules_from_contract(
             contract=contract,
+            contract_file=contract_file,
             contract_format=contract_format,
             generate_implicit_rules=generate_implicit_rules,
             process_text_rules=process_text_rules,

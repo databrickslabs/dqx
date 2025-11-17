@@ -1,0 +1,114 @@
+# Sample Data Contract for DQX Testing (datacontract-cli format)
+# This demonstrates various field constraints that generate DQX rules
+
+dataContractSpecification: 0.9.3
+id: urn:datacontract:orders:customer_orders
+info:
+  title: Customer Orders
+  version: 1.0.0
+  description: Customer order data for analytics
+  owner: Sales Team
+  contact:
+    name: Data Team
+    email: data@example.com
+
+models:
+  orders:
+    type: table
+    description: Customer orders table
+    fields:
+      # Required field (generates is_not_null)
+      order_id:
+        type: string
+        description: Unique order identifier
+        required: true
+        unique: true
+        pattern: '^ORD-[0-9]{8}$'
+      
+      # Required with pattern
+      customer_id:
+        type: string
+        description: Customer identifier
+        required: true
+        pattern: '^CUST-[0-9]{6}$'
+      
+      # Email with pattern
+      customer_email:
+        type: string
+        description: Customer email address
+        required: true
+        pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+      
+      # Date with format
+      order_date:
+        type: date
+        description: Order placement date
+        required: true
+        format: '%Y-%m-%d'
+      
+      # Timestamp
+      order_timestamp:
+        type: timestamp
+        description: Order placement timestamp
+        required: true
+        format: '%Y-%m-%d %H:%M:%S'
+      
+      # Numeric with range
+      order_total:
+        type: decimal
+        description: Total order amount
+        required: true
+        minimum: 0.01
+        maximum: 100000.00
+      
+      # Enum values
+      order_status:
+        type: string
+        description: Current order status
+        required: true
+        enum:
+          - pending
+          - confirmed
+          - shipped
+          - delivered
+          - cancelled
+      
+      # Integer with range
+      quantity:
+        type: integer
+        description: Number of items
+        required: true
+        minimum: 1
+        maximum: 1000
+      
+      # Optional field with constraints
+      discount_percentage:
+        type: decimal
+        description: Discount applied
+        required: false
+        minimum: 0.0
+        maximum: 100.0
+      
+      # String field
+      shipping_address:
+        type: string
+        description: Shipping address
+        required: false
+      
+      # Enum with optional
+      product_category:
+        type: string
+        description: Product category
+        required: false
+        enum:
+          - electronics
+          - clothing
+          - home
+          - books
+      
+      # Boolean field
+      priority_order:
+        type: boolean
+        description: Is this a priority order
+        required: false
+

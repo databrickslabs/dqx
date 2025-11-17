@@ -81,13 +81,17 @@ schema:
         logicalType: string
         description: Machine being monitored
         required: true
-        # Quality is an ARRAY of quality check objects
+        # Quality is an ARRAY of quality check objects using native DQX format
         quality:
           - type: custom
             engine: dqx
             implementation:
-              notNull: true
-              notEmpty: true
+              criticality: error
+              check:
+                function: is_not_null_and_not_empty
+                arguments:
+                  column: machine_id
+                  trim_strings: true
           
       - name: reading_timestamp
         logicalType: date  # ODCS uses 'date' for both dates and timestamps
@@ -127,8 +131,12 @@ schema:
           - type: custom
             engine: dqx
             implementation:
-              notNull: true
-              notEmpty: true
+              criticality: error
+              check:
+                function: is_not_null_and_not_empty
+                arguments:
+                  column: location
+                  trim_strings: true
 """
 
 # Parse the YAML contract
