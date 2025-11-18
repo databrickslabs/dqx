@@ -8,7 +8,6 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
-from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
@@ -23,6 +22,14 @@ try:
     LLM_ENABLED = True
 except ImportError:
     LLM_ENABLED = False
+
+# Conditional imports for data contract support
+try:
+    from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
+
+    DATACONTRACT_ENABLED = True
+except ImportError:
+    DATACONTRACT_ENABLED = False
 
 # Type checking imports
 if TYPE_CHECKING:
@@ -162,11 +169,18 @@ class DQGenerator(DQEngineBase):
             A list of dictionaries representing the generated DQX quality rules.
 
         Raises:
+            ImportError: If datacontract-cli is not installed.
             ValueError: If neither or both parameters are provided, or format not supported.
 
         Note:
             Exactly one of 'contract' or 'contract_file' must be provided.
         """
+        if not DATACONTRACT_ENABLED:
+            raise ImportError(
+                "Data contract support requires datacontract-cli. "
+                "Install it with: pip install 'databricks-labs-dqx[datacontract]'"
+            )
+
         # Create a contract generator with the same context
         contract_generator = DataContractRulesGenerator(
             workspace_client=self._workspace_client,

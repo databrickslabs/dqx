@@ -9,10 +9,10 @@ from unittest.mock import Mock
 import pytest
 from datacontract.data_contract import DataContract
 
-import databricks.labs.dqx.datacontract.contract_rules_generator as contract_gen_module
 from databricks.labs.dqx.datacontract.contract_rules_generator import (
     DataContractRulesGenerator,
 )
+import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from tests.unit.test_datacontract_utils import (
     assert_rules_have_valid_metadata,
@@ -249,10 +249,10 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 
     def test_missing_datacontract_cli_dependency(self, generator, monkeypatch):
         """Test error when datacontract-cli is not installed."""
-        monkeypatch.setattr(contract_gen_module, "DATACONTRACT_ENABLED", False)
+        monkeypatch.setattr(generator_module, "DATACONTRACT_ENABLED", False)
 
         # Attempt to generate rules should raise ImportError
-        with pytest.raises(ImportError, match="Data contract functionality requires datacontract-cli"):
+        with pytest.raises(ImportError, match="Data contract support requires datacontract-cli"):
             generator.generate_rules_from_contract(contract_file="dummy.yaml")
 
     def test_nested_fields_generate_rules(self, generator):
