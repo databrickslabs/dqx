@@ -27,9 +27,9 @@ def installation_with_upload_deps(ws, make_random):
 
         prompts = MockPrompts(
             {
-                r'Provide location for the input data .*': 'main.dqx_test.input_table',
-                r'Provide output table .*': 'main.dqx_test.output_table',
-                r'Do you want to uninstall DQX .*': 'yes',
+                r"Provide location for the input data .*": "main.dqx_test.input_table",
+                r"Provide output table .*": "main.dqx_test.output_table",
+                r"Do you want to uninstall DQX .*": "yes",
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r"Does the given workspace block Internet access\?": "yes",  # Enable upload_dependencies
                 r".*": "",
@@ -250,9 +250,9 @@ def test_end_to_end_installation_and_workflow_with_upload_dependencies(ws, make_
     # Create prompts with upload_dependencies enabled
     prompts = MockPrompts(
         {
-            r'Provide location for the input data .*': input_table.full_name,
-            r'Provide output table .*': f'{catalog_name}.{schema.name}.{make_random(10).lower()}',
-            r'Do you want to uninstall DQX .*': 'yes',
+            r"Provide location for the input data .*": input_table.full_name,
+            r"Provide output table .*": f"{catalog_name}.{schema.name}.{make_random(10).lower()}",
+            r"Do you want to uninstall DQX .*": "yes",
             r".*PRO or SERVERLESS SQL warehouse.*": "1",
             r"Does the given workspace block Internet access\?": "yes",  # Enable upload_dependencies
             r".*": "",
