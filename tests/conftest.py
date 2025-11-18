@@ -9,7 +9,6 @@ from dataclasses import replace, dataclass
 from functools import cached_property
 
 import pytest
-from databricks.sdk.service.compute import DataSecurityMode
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
 from databricks.sdk.retries import retried
@@ -28,6 +27,7 @@ from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
+from databricks.sdk.service.compute import DataSecurityMode
 
 logger = logging.getLogger(__name__)
 
