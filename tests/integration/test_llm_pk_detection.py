@@ -147,7 +147,9 @@ def test_detect_primary_keys_no_clear_key(
     assert isinstance(pk_info, dict), "PK result should be a dictionary"
 
 
-def test_compare_datasets_with_llm_wrapper(ws, spark, make_schema, make_table, skip_if_llm_not_available):
+def test_compare_datasets_with_llm_wrapper(
+    ws, spark, make_schema, make_table, skip_if_llm_not_available
+    ):
     """Test compare_datasets_with_llm wrapper with auto PK detection."""
     # Use the fixture to ensure LLM is available
     _ = skip_if_llm_not_available
