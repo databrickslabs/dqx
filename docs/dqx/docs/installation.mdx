@@ -66,6 +66,14 @@ pip install 'databricks-labs-dqx[pii]'
 
 This installs additional dependencies including Microsoft Presidio library.
 
+### Installing DQX with company-hosted PyPI mirror
+
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.10.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
+```
+
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
@@ -365,8 +373,6 @@ Some enterprises block the public PyPI index and host a company-controlled PyPI 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
 ```
-
-#### Installing DQX as a tool
 
 During DQX installation as a tool in the workspace reply *yes* to the question "Does the given workspace block Internet access"?
 
