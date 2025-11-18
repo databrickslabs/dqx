@@ -32,7 +32,7 @@ def assert_valid_contract_metadata(metadata: dict) -> None:
         - contract_version: Version of the contract (str)
         - model: Name of the model the contract applies to (str)
         - field: Name of the field the contract applies to (str)
-        - rule_type: Type of rule, must be one of {"implicit", "explicit", "text_llm"} (str)
+        - rule_type: Type of rule, must be one of {"predefined", "explicit", "text_llm"} (str)
 
     Args:
         metadata: The contract metadata to validate.
@@ -45,7 +45,7 @@ def assert_valid_contract_metadata(metadata: dict) -> None:
     assert "model" in metadata
     assert "field" in metadata
     assert "rule_type" in metadata
-    assert metadata["rule_type"] in {"implicit", "explicit", "text_llm"}
+    assert metadata["rule_type"] in {"predefined", "explicit", "text_llm"}
 
 
 def assert_rules_have_valid_structure(rules: list[dict]) -> None:

@@ -32,7 +32,7 @@ class TestDataContractIntegration:
         generator = DQGenerator(workspace_client=ws, spark=spark)
 
         rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_implicit_rules=True, process_text_rules=False
+            contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=False
         )
 
         # Verify generated rules
@@ -45,7 +45,7 @@ class TestDataContractIntegration:
         contract = DataContract(data_contract_file=sample_contract_path)
 
         rules = generator.generate_rules_from_contract(
-            contract=contract, generate_implicit_rules=True, process_text_rules=False
+            contract=contract, generate_predefined_rules=True, process_text_rules=False
         )
 
         # Verify rules were generated
@@ -57,9 +57,9 @@ class TestDataContractIntegration:
         """Test applying generated rules to actual DataFrame."""
         generator = DQGenerator(workspace_client=ws)
 
-        # Generate rules (only implicit rules to avoid Spark validation issues)
+        # Generate rules (only predefined rules to avoid Spark validation issues)
         rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_implicit_rules=True, process_text_rules=False
+            contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=False
         )
 
         # Filter out rules with float arguments (is_in_range with decimal values)
@@ -111,18 +111,18 @@ class TestDataContractIntegration:
         generator = DQGenerator(workspace_client=ws, spark=spark)
         rules = generator.generate_rules_from_contract(contract_file=sample_contract_path, default_criticality="warn")
 
-        # All implicit rules should have the default criticality
-        implicit_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "implicit"]
-        assert all(r["criticality"] == "warn" for r in implicit_rules)
+        # All predefined rules should have the default criticality
+        predefined_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "predefined"]
+        assert all(r["criticality"] == "warn" for r in predefined_rules)
 
-    def test_skip_implicit_rules_flag(self, ws, spark, sample_contract_path):
-        """Test that generate_implicit_rules=False skips implicit rules."""
+    def test_skip_predefined_rules_flag(self, ws, spark, sample_contract_path):
+        """Test that generate_predefined_rules=False skips predefined rules."""
         generator = DQGenerator(workspace_client=ws, spark=spark)
         rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_implicit_rules=False, process_text_rules=False
+            contract_file=sample_contract_path, generate_predefined_rules=False, process_text_rules=False
         )
 
-        # Should only have explicit rules (no implicit rules)
+        # Should only have explicit rules (no predefined rules)
         # Sample contract has 5 explicit DQX rules
         assert len(rules) == 5
 
@@ -166,7 +166,7 @@ class TestDataContractIntegration:
         """Generate rules from test contract."""
         generator = DQGenerator(workspace_client=ws, spark=spark)
         return generator.generate_rules_from_contract(
-            contract_file=contract_path, generate_implicit_rules=True, process_text_rules=False
+            contract_file=contract_path, generate_predefined_rules=True, process_text_rules=False
         )
 
     def _create_test_dataframe_with_invalid_data(self, spark):

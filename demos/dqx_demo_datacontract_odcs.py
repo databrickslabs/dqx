@@ -10,7 +10,7 @@
 # MAGIC
 # MAGIC 1. Loading a data contract from a YAML file
 # MAGIC 2. Automatically generating DQX quality rules from field constraints
-# MAGIC 3. Understanding implicit rule generation
+# MAGIC 3. Understanding predefined rule generation
 # MAGIC 4. Applying generated rules to your data
 # MAGIC 5. Viewing quality check results with contract metadata
 # MAGIC
@@ -146,7 +146,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 generator = DQGenerator(workspace_client=ws)
 rules = generator.generate_rules_from_contract(
     contract_file=contract_file,
-    generate_implicit_rules=True,
+    generate_predefined_rules=True,
     process_text_rules=False,
     default_criticality="error"
 )
@@ -276,7 +276,7 @@ display(bad_df)
 # MAGIC %md
 # MAGIC ## 8. Custom Criticality Levels
 # MAGIC
-# MAGIC You can set default criticality for all implicit rules:
+# MAGIC You can set default criticality for all predefined rules:
 # MAGIC - `error`: Critical issues that should block data (default)
 # MAGIC - `warn`: Warnings that log but don't block
 
@@ -313,7 +313,7 @@ dc = DataContract(data_contract_file=contract_file)
 # Generate rules from object
 rules_from_object = generator.generate_rules_from_contract(
     contract=dc,
-    generate_implicit_rules=True,
+    generate_predefined_rules=True,
     process_text_rules=False
 )
 

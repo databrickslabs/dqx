@@ -14,7 +14,7 @@ DQX provides the capability to generate data quality rules directly from data co
 
 The data contract-based quality rules generation is available via the `DQGenerator` class and supports three types of rule generation:
 
-- **Implicit Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, enum, format).
+- **Predefined Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, enum, format).
 - **Explicit Rules**: Custom DQX rules embedded directly in the contract's quality section using DQX native format.
 - **Text-Based Rules**: Natural language quality expectations that are processed using AI/LLM to generate appropriate checks (requires `[llm]` extra).
 
@@ -57,7 +57,7 @@ If your contracts include text-based quality expectations (natural language desc
 pip install 'databricks-labs-dqx[datacontract,llm]'
 ```
 
-Without the LLM dependencies, text-based expectations will be skipped with a warning, but implicit and explicit rules will still be generated.
+Without the LLM dependencies, text-based expectations will be skipped with a warning, but predefined and explicit rules will still be generated.
 </Admonition>
 
 ## Basic Usage
@@ -113,9 +113,9 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
   </TabItem>
 </Tabs>
 
-## Implicit Rule Generation
+## Predefined Rule Generation
 
-Implicit rules are automatically derived from schema field constraints defined in your data contract. DQX analyzes field properties and generates appropriate quality checks without requiring explicit rule definitions.
+Predefined rules are automatically derived from schema field constraints defined in your data contract. DQX analyzes field properties and generates appropriate quality checks without requiring explicit rule definitions.
 
 ### Supported Schema Constraints
 
@@ -133,7 +133,7 @@ Implicit rules are automatically derived from schema field constraints defined i
 | `maxLength` only | Maximum string length | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
 | `minLength` + `maxLength` | String length range | `sql_expression` (both checks) | Fixed-length codes |
 
-### Example Contract with Implicit Rules
+### Example Contract with Predefined Rules
 
 <Tabs>
   <TabItem value="YAML" label="Contract (YAML)" default>
@@ -199,23 +199,23 @@ Implicit rules are automatically derived from schema field constraints defined i
   </TabItem>
 </Tabs>
 
-### Controlling Implicit Rule Generation
+### Controlling Predefined Rule Generation
 
-You can control whether implicit rules are generated:
+You can control whether predefined rules are generated:
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    # Generate only explicit rules, skip implicit ones
+    # Generate only explicit rules, skip predefined ones
     rules = generator.generate_rules_from_contract(
         contract_file="contract.yaml",
-        generate_implicit_rules=False  # Skip schema-derived rules
+        generate_predefined_rules=False  # Skip schema-derived rules
     )
 
     # Generate all rules (default behavior)
     rules = generator.generate_rules_from_contract(
         contract_file="contract.yaml",
-        generate_implicit_rules=True   # Include schema-derived rules
+        generate_predefined_rules=True   # Include schema-derived rules
     )
     ```
   </TabItem>
@@ -223,18 +223,18 @@ You can control whether implicit rules are generated:
 
 ### Setting Default Criticality
 
-All implicit rules inherit a default criticality level:
+All predefined rules inherit a default criticality level:
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    # Generate implicit rules with 'warn' criticality (default is 'error')
+    # Generate predefined rules with 'warn' criticality (default is 'error')
     rules = generator.generate_rules_from_contract(
         contract_file="contract.yaml",
         default_criticality="warn"  # or "error"
     )
 
-    # All implicit rules will have criticality: "warn"
+    # All predefined rules will have criticality: "warn"
     # Explicit rules can still define their own criticality
     ```
   </TabItem>
@@ -348,7 +348,7 @@ Each explicit DQX rule must follow this structure:
 ```
 
 <Admonition type="warning" title="Explicit Rule Criticality">
-Unlike implicit rules (which use `default_criticality`), explicit rules **must** define their own `criticality` within the `specification`. This allows fine-grained control over different business rules.
+Unlike predefined rules (which use `default_criticality`), explicit rules **must** define their own `criticality` within the `specification`. This allows fine-grained control over different business rules.
 </Admonition>
 
 ## Text-Based Rule Generation
@@ -427,12 +427,12 @@ Text-based expectations are defined using `type: text` in the quality section:
     # Generate rules including text-based expectations (requires LLM)
     rules = generator.generate_rules_from_contract(
         contract_file="user_data_contract.yaml",
-        generate_implicit_rules=True,   # Include schema-derived rules
+        generate_predefined_rules=True,   # Include schema-derived rules
         process_text_rules=True         # Process text expectations with LLM
     )
 
     # The generated rules will include:
-    # - Implicit rules from schema constraints
+    # - Predefined rules from schema constraints
     # - Explicit DQX rules (if any)
     # - Rules generated from text expectations via LLM
     ```
@@ -446,7 +446,7 @@ If you don't have LLM dependencies installed or want to skip text processing:
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    # Skip text-based rules, generate only implicit and explicit rules
+    # Skip text-based rules, generate only predefined and explicit rules
     rules = generator.generate_rules_from_contract(
         contract_file="contract.yaml",
         process_text_rules=False  # Skip LLM processing
@@ -501,15 +501,15 @@ Here's a complete example showing contract-based rule generation with all three 
         fields:
           sensor_id:
             type: string
-            required: true           # Implicit: is_not_null
-            unique: true             # Implicit: is_unique
-            pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'  # Implicit: regex_match
+            required: true           # Predefined: is_not_null
+            unique: true             # Predefined: is_unique
+            pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'  # Predefined: regex_match
           
           temperature:
             type: decimal
-            required: true           # Implicit: is_not_null
-            minimum: -40.0           # Implicit: is_in_range (combined)
-            maximum: 125.0           # Implicit: is_in_range (combined)
+            required: true           # Predefined: is_not_null
+            minimum: -40.0           # Predefined: is_in_range (combined)
+            maximum: 125.0           # Predefined: is_in_range (combined)
             quality:
               # Text expectation
               - type: text
@@ -519,8 +519,8 @@ Here's a complete example showing contract-based rule generation with all three 
           
           status:
             type: string
-            required: true           # Implicit: is_not_null
-            enum:                    # Implicit: is_in_list
+            required: true           # Predefined: is_not_null
+            enum:                    # Predefined: is_in_list
               - active
               - maintenance
               - offline
@@ -539,19 +539,19 @@ Here's a complete example showing contract-based rule generation with all three 
     # Generate all rule types from contract
     rules = generator.generate_rules_from_contract(
         contract_file="/Workspace/Shared/contracts/sensor_readings.yaml",
-        generate_implicit_rules=True,   # Schema-derived rules
+        generate_predefined_rules=True,   # Schema-derived rules
         process_text_rules=True,        # LLM-processed expectations
-        default_criticality="error"     # Default for implicit rules
+        default_criticality="error"     # Default for predefined rules
     )
 
     print(f"Generated {len(rules)} quality rules:")
     
     # Group rules by type
-    implicit_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'implicit']
+    predefined_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'predefined']
     explicit_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'explicit']
     text_rules = [r for r in rules if r['user_metadata']['rule_type'] == 'text_llm']
     
-    print(f"  - {len(implicit_rules)} implicit (from schema)")
+    print(f"  - {len(predefined_rules)} predefined (from schema)")
     print(f"  - {len(explicit_rules)} explicit (DQX native)")
     print(f"  - {len(text_rules)} text-based (LLM-generated)")
 
@@ -590,7 +590,7 @@ All generated rules include rich metadata that traces them back to the source co
     "contract_version": "2.1.0",
     "model": "sensor_readings",
     "field": "sensor_id",
-    "rule_type": "implicit"  # or "explicit" or "text_llm"
+    "rule_type": "predefined"  # or "explicit" or "text_llm"
   }
 }
 ```
@@ -603,7 +603,7 @@ All generated rules include rich metadata that traces them back to the source co
 | `contract_version` | Contract version | `2.1.0` |
 | `model` | Model/table name | `sensor_readings` |
 | `field` | Field/column name (if field-level rule) | `sensor_id` |
-| `rule_type` | How rule was generated | `implicit`, `explicit`, or `text_llm` |
+| `rule_type` | How rule was generated | `predefined`, `explicit`, or `text_llm` |
 | `text_expectation` | Original text (for text-based rules only) | Natural language description |
 
 This metadata enables:
@@ -666,7 +666,7 @@ Data contract-based rules can be combined with rules from other sources for comp
    datacontract lint /path/to/contract.yaml
    ```
 
-3. **Start with Implicit Rules**: Begin with schema-based implicit rules, then add explicit rules for business logic that cannot be expressed as constraints.
+3. **Start with Predefined Rules**: Begin with schema-based predefined rules, then add explicit rules for business logic that cannot be expressed as constraints.
 
 4. **Use Text Expectations Judiciously**: Text-based rules are powerful but require LLM processing. Use them for complex business logic that's easier to express in natural language.
 
@@ -819,12 +819,12 @@ pip install 'databricks-labs-dqx[datacontract]'
 
 ### Missing Rules for Some Fields
 
-**Problem**: Expected implicit rules are not generated for certain fields.
+**Problem**: Expected predefined rules are not generated for certain fields.
 
 **Solution**:
 - Verify field constraints are properly defined in the contract
-- Check that `generate_implicit_rules=True` (default)
-- Review supported constraint types in the [Implicit Rule Generation](#implicit-rule-generation) section
+- Check that `generate_predefined_rules=True` (default)
+- Review supported constraint types in the [Predefined Rule Generation](#predefined-rule-generation) section
 - Some constraints may require specific formats (e.g., `format: '%Y-%m-%d'` for dates)
 
 ### Explicit Rules Not Recognized

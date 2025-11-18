@@ -38,7 +38,7 @@ class DataContractRulesGenerator(DQEngineBase):
     Generator for creating DQX quality rules from data contract specifications.
 
     This class supports generating quality rules from data contracts in various formats
-    (currently ODCS v3.0.x). Rules can be generated implicitly from schema constraints
+    (currently ODCS v3.0.x). Rules can be generated from predefined schema constraints
     or explicitly from quality definitions in the contract.
     """
 
@@ -66,7 +66,7 @@ class DataContractRulesGenerator(DQEngineBase):
         contract: "DataContract | None" = None,
         contract_file: str | None = None,
         contract_format: str = "odcs",
-        generate_implicit_rules: bool = True,
+        generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
@@ -80,7 +80,7 @@ class DataContractRulesGenerator(DQEngineBase):
             contract: Pre-loaded DataContract object from datacontract-cli.
             contract_file: Path to contract YAML file (local, volume, or workspace).
             contract_format: Contract format specification (default is "odcs").
-            generate_implicit_rules: Whether to generate rules from schema properties.
+            generate_predefined_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
             default_criticality: Default criticality level for generated rules (default is "error").
 
@@ -98,7 +98,7 @@ class DataContractRulesGenerator(DQEngineBase):
         spec = self._load_contract_spec(contract, contract_file)
         self._validate_contract_spec(spec)
 
-        dq_rules = self._generate_all_rules(spec, generate_implicit_rules, process_text_rules, default_criticality)
+        dq_rules = self._generate_all_rules(spec, generate_predefined_rules, process_text_rules, default_criticality)
         self._validate_generated_rules(dq_rules)
 
         return dq_rules
@@ -149,7 +149,7 @@ class DataContractRulesGenerator(DQEngineBase):
     def _generate_all_rules(
         self,
         spec: "DataContractSpecification",
-        generate_implicit_rules: bool,
+        generate_predefined_rules: bool,
         process_text_rules: bool,
         default_criticality: str,
     ) -> list[dict]:
@@ -157,9 +157,11 @@ class DataContractRulesGenerator(DQEngineBase):
         dq_rules = []
 
         for model_name, model in (spec.models or {}).items():
-            if generate_implicit_rules:
-                implicit_rules = self._generate_implicit_rules_for_model(model, model_name, spec, default_criticality)
-                dq_rules.extend(implicit_rules)
+            if generate_predefined_rules:
+                predefined_rules = self._generate_predefined_rules_for_model(
+                    model, model_name, spec, default_criticality
+                )
+                dq_rules.extend(predefined_rules)
 
             if process_text_rules:
                 text_rules = self._process_text_rules_for_model(model, model_name, spec, default_criticality)
@@ -184,19 +186,19 @@ class DataContractRulesGenerator(DQEngineBase):
         """Extract contract version from specification."""
         return getattr(spec.info, 'version', 'unknown') if spec.info else 'unknown'
 
-    def _generate_implicit_rules_for_model(
+    def _generate_predefined_rules_for_model(
         self, model: "Model", model_name: str, spec: "DataContractSpecification", default_criticality: str
     ) -> list[dict]:
-        """Generate implicit rules from all fields in a model."""
+        """Generate predefined rules from all fields in a model."""
         rules = []
         for field_name, field in (model.fields or {}).items():
-            field_rules = self._generate_implicit_rules_for_field(
+            field_rules = self._generate_predefined_rules_for_field(
                 field, field_name, model_name, spec, default_criticality
             )
             rules.extend(field_rules)
         return rules
 
-    def _generate_implicit_rules_for_field(
+    def _generate_predefined_rules_for_field(
         self,
         field: "Field",
         field_name: str,
@@ -205,7 +207,7 @@ class DataContractRulesGenerator(DQEngineBase):
         default_criticality: str,
         parent_path: str = "",
     ) -> list[dict]:
-        """Generate implicit DQ rules from a field's constraints."""
+        """Generate predefined DQ rules from a field's constraints."""
         # Build full column path
         column_path = f"{parent_path}.{field_name}" if parent_path else field_name
 
@@ -221,7 +223,7 @@ class DataContractRulesGenerator(DQEngineBase):
         # If field has nested fields, recurse
         if field.fields:
             for nested_name, nested_field in field.fields.items():
-                nested_rules = self._generate_implicit_rules_for_field(
+                nested_rules = self._generate_predefined_rules_for_field(
                     nested_field, nested_name, model_name, spec, default_criticality, column_path
                 )
                 rules.extend(nested_rules)
@@ -253,7 +255,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 "user_metadata": {
                     **contract_metadata,
                     "dimension": "completeness",
-                    "rule_type": "implicit",
+                    "rule_type": "predefined",
                 },
             }
         ]
@@ -273,7 +275,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 "user_metadata": {
                     **contract_metadata,
                     "dimension": "uniqueness",
-                    "rule_type": "implicit",
+                    "rule_type": "predefined",
                 },
             }
         ]
@@ -293,7 +295,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 "user_metadata": {
                     **contract_metadata,
                     "dimension": "validity",
-                    "rule_type": "implicit",
+                    "rule_type": "predefined",
                 },
             }
         ]
@@ -313,7 +315,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 "user_metadata": {
                     **contract_metadata,
                     "dimension": "validity",
-                    "rule_type": "implicit",
+                    "rule_type": "predefined",
                 },
             }
         ]
@@ -325,7 +327,17 @@ class DataContractRulesGenerator(DQEngineBase):
         if field.minimum is None and field.maximum is None:
             return []
 
+        # Skip float constraints when both min and max are present (is_in_range doesn't support floats yet)
+        # Single-sided constraints work fine with floats
+        # TODO: Add float support to is_in_range function (https://github.com/databrickslabs/dqx/issues/71)
         if field.minimum is not None and field.maximum is not None:
+            if isinstance(field.minimum, float) or isinstance(field.maximum, float):
+                logger.warning(
+                    f"Skipping range constraint for field '{column_path}': "
+                    f"is_in_range does not support float min/max constraints yet. "
+                    f"Consider using explicit DQX rules with sql_expression or separate min/max constraints."
+                )
+                return []
             return [
                 {
                     "check": {
@@ -341,7 +353,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "user_metadata": {
                         **contract_metadata,
                         "dimension": "validity",
-                        "rule_type": "implicit",
+                        "rule_type": "predefined",
                     },
                 }
             ]
@@ -358,7 +370,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "user_metadata": {
                         **contract_metadata,
                         "dimension": "validity",
-                        "rule_type": "implicit",
+                        "rule_type": "predefined",
                     },
                 }
             ]
@@ -374,7 +386,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 "user_metadata": {
                     **contract_metadata,
                     "dimension": "validity",
-                    "rule_type": "implicit",
+                    "rule_type": "predefined",
                 },
             }
         ]
@@ -403,7 +415,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "user_metadata": {
                         **contract_metadata,
                         "dimension": "validity",
-                        "rule_type": "implicit",
+                        "rule_type": "predefined",
                     },
                 }
             )
@@ -423,7 +435,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "user_metadata": {
                         **contract_metadata,
                         "dimension": "validity",
-                        "rule_type": "implicit",
+                        "rule_type": "predefined",
                     },
                 }
             )
@@ -454,7 +466,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     "user_metadata": {
                         **contract_metadata,
                         "dimension": "validity",
-                        "rule_type": "implicit",
+                        "rule_type": "predefined",
                     },
                 }
             ]
@@ -471,7 +483,7 @@ class DataContractRulesGenerator(DQEngineBase):
                 "user_metadata": {
                     **contract_metadata,
                     "dimension": "validity",
-                    "rule_type": "implicit",
+                    "rule_type": "predefined",
                 },
             }
         ]
@@ -670,7 +682,7 @@ class DataContractRulesGenerator(DQEngineBase):
             col_info = {"name": field_name, "type": field.type or "string"}
 
             # TODO: Future enhancement - include field constraints for richer LLM context
-            # This would help LLM avoid duplicating implicit rules and generate
+            # This would help LLM avoid duplicating predefined rules and generate
             # more complementary business logic rules.
 
             columns.append(col_info)

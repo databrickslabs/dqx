@@ -80,7 +80,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
     def test_generate_rules_from_file(self, generator, sample_contract_path):
         """Test generating rules from a contract file path."""
         rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_implicit_rules=True, process_text_rules=False
+            contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=False
         )
 
         assert isinstance(rules, list)
@@ -90,7 +90,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         """Test generating rules from a DataContract object."""
         contract = DataContract(data_contract_file=sample_contract_path)
         rules = generator.generate_rules_from_contract(
-            contract=contract, generate_implicit_rules=True, process_text_rules=False
+            contract=contract, generate_predefined_rules=True, process_text_rules=False
         )
 
         assert isinstance(rules, list)
@@ -101,14 +101,14 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         with pytest.raises(ValueError, match="Contract format 'unknown' not supported"):
             generator.generate_rules_from_contract(contract_file=sample_contract_path, contract_format="unknown")
 
-    def test_skip_implicit_rules(self, generator, sample_contract_path):
-        """Test that generate_implicit_rules=False works."""
+    def test_skip_predefined_rules(self, generator, sample_contract_path):
+        """Test that generate_predefined_rules=False works."""
         rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_implicit_rules=False, process_text_rules=False
+            contract_file=sample_contract_path, generate_predefined_rules=False, process_text_rules=False
         )
 
         # Should only have explicit rules (comprehensive contract has explicit quality checks)
-        # All rules should be explicit (not implicit)
+        # All rules should be explicit (not predefined)
         for rule in rules:
             assert rule["user_metadata"]["rule_type"] == "explicit", "Should only have explicit rules"
 
@@ -117,16 +117,16 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         rules = generator.generate_rules_from_contract(
             contract_file=sample_contract_path,
             default_criticality="warn",
-            generate_implicit_rules=True,
+            generate_predefined_rules=True,
             process_text_rules=False,
         )
 
-        # All implicit rules should have warn criticality
-        assert all(r["criticality"] == "warn" for r in rules if r["user_metadata"]["rule_type"] == "implicit")
+        # All predefined rules should have warn criticality
+        assert all(r["criticality"] == "warn" for r in rules if r["user_metadata"]["rule_type"] == "predefined")
 
 
-class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
-    """Test implicit rule generation from field constraints."""
+class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
+    """Test predefined rule generation from field constraints."""
 
     def test_required_field_generates_is_not_null(self, generator):
         """Test that required fields generate is_not_null rules."""
@@ -137,13 +137,13 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             assert len(rules) == 1
             assert rules[0]["check"]["function"] == "is_not_null"
             assert rules[0]["check"]["arguments"]["column"] == "user_id"
-            assert rules[0]["user_metadata"]["rule_type"] == "implicit"
+            assert rules[0]["user_metadata"]["rule_type"] == "predefined"
             assert rules[0]["user_metadata"]["dimension"] == "completeness"
         finally:
             os.unlink(temp_path)
@@ -292,7 +292,7 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
     def _verify_nested_field_rules(self, generator, contract_file):
         """Helper to verify nested field rule generation."""
         rules = generator.generate_rules_from_contract(
-            contract_file=contract_file, generate_implicit_rules=True, process_text_rules=False
+            contract_file=contract_file, generate_predefined_rules=True, process_text_rules=False
         )
 
         # Verify nested column paths are generated correctly
@@ -327,7 +327,7 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should only generate rule for required field
@@ -352,7 +352,7 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=True
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
             )
 
             # Should generate no rules since all text descriptions are empty/whitespace
@@ -385,7 +385,7 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
             # Should still generate rules despite warnings
             with caplog.at_level("WARNING"):
                 rules = generator.generate_rules_from_contract(
-                    contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
                 )
 
             # Should generate rules successfully
@@ -423,7 +423,7 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should generate rules for both models
@@ -456,7 +456,7 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should generate multiple rules for different constraints
@@ -514,7 +514,7 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
             )
 
             # Should have 2 rules with different criticalities
@@ -529,7 +529,7 @@ class TestDataContractGeneratorImplicitRules(DataContractGeneratorTestBase):
 
 
 class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
-    """Test constraint-specific implicit rule generation."""
+    """Test constraint-specific predefined rule generation."""
 
     def test_field_with_only_minimum_constraint(self, generator):
         """Test that field with only minimum (no maximum) generates is_not_less_than rule."""
@@ -546,7 +546,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should generate is_not_less_than rule
@@ -575,7 +575,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should generate is_not_greater_than rule
@@ -619,7 +619,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
             )
 
             # Should only have 1 rule (the DQX one)
@@ -655,7 +655,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
             )
 
             # Should generate no rules since non-DQX engines are not supported
@@ -680,7 +680,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should generate is_in_range rule when both min and max are present
@@ -710,7 +710,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should generate sql_expression rule for minLength
@@ -740,7 +740,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should generate sql_expression rule for maxLength
@@ -771,7 +771,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=True, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
             # Should generate two sql_expression rules (one for min, one for max)
@@ -888,7 +888,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             mock_llm_engine = self._create_text_rule_llm_mock()
             generator.llm_engine = mock_llm_engine
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=True
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
             )
             self._verify_text_rules(rules, mock_llm_engine)
         finally:
@@ -912,7 +912,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         try:
             # Generator without LLM engine (llm_engine=None by default in fixture)
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=True
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
             )
 
             # Should generate no rules since LLM is not available
@@ -943,7 +943,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
             # Generate with process_text_rules=False
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
             )
 
             # Should not call LLM
@@ -1025,7 +1025,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             mock_llm_engine = self._create_multiple_text_rules_llm_mock()
             generator.llm_engine = mock_llm_engine
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=True
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
             )
             self._verify_multiple_text_rules(rules, mock_llm_engine)
         finally:

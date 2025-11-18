@@ -147,7 +147,7 @@ class DQGenerator(DQEngineBase):
         contract: "DataContract | None" = None,
         contract_file: str | None = None,
         contract_format: str = "odcs",
-        generate_implicit_rules: bool = True,
+        generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
@@ -161,7 +161,7 @@ class DQGenerator(DQEngineBase):
             contract: Pre-loaded DataContract object from datacontract-cli.
             contract_file: Path to contract YAML file (local, volume, or workspace).
             contract_format: Contract format specification (default is "odcs").
-            generate_implicit_rules: Whether to generate rules from schema properties.
+            generate_predefined_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
             default_criticality: Default criticality level for generated rules (default is "error").
 
@@ -193,7 +193,7 @@ class DQGenerator(DQEngineBase):
             contract=contract,
             contract_file=contract_file,
             contract_format=contract_format,
-            generate_implicit_rules=generate_implicit_rules,
+            generate_predefined_rules=generate_predefined_rules,
             process_text_rules=process_text_rules,
             default_criticality=default_criticality,
         )

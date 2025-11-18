@@ -1,6 +1,6 @@
 # Comprehensive Data Contract for DQX Testing
 # This contract demonstrates ALL supported DQX rule generation patterns:
-# 1. Implicit rules from field constraints
+# 1. Predefined rules from field constraints
 # 2. Explicit DQX rules (native format)
 # 3. Text-based expectations (for LLM processing)
 # 4. Dataset-level quality checks
@@ -12,7 +12,7 @@ info:
   version: 2.1.0
   description: |
     Comprehensive data contract for IoT sensor readings demonstrating
-    all DQX rule generation capabilities including implicit constraints,
+    all DQX rule generation capabilities including predefined constraints,
     explicit quality checks, and dataset-level validations.
   owner: IoT Platform Team
   contact:

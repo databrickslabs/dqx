@@ -65,7 +65,7 @@ class TestExplicitDQXCriticality:
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
             )
 
             assert len(rules) == 1
@@ -98,7 +98,7 @@ class TestExplicitDQXCriticality:
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
             )
 
             assert len(rules) == 1
@@ -131,7 +131,7 @@ class TestExplicitDQXCriticality:
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_implicit_rules=False, process_text_rules=False
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
             )
 
             assert len(rules) == 1
@@ -142,8 +142,8 @@ class TestExplicitDQXCriticality:
         finally:
             os.unlink(temp_path)
 
-    def test_implicit_rules_use_default_criticality(self, generator):
-        """Test that implicit rules use the default_criticality parameter."""
+    def test_predefined_rules_use_default_criticality(self, generator):
+        """Test that predefined rules use the default_criticality parameter."""
         contract_dict = create_basic_contract(fields={"user_id": {"type": "string", "required": True}})
 
         temp_path = create_test_contract_file(custom_contract=contract_dict)
@@ -152,13 +152,13 @@ class TestExplicitDQXCriticality:
             # Generate with warn as default
             rules = generator.generate_rules_from_contract(
                 contract_file=temp_path,
-                generate_implicit_rules=True,
+                generate_predefined_rules=True,
                 process_text_rules=False,
                 default_criticality="warn",
             )
 
             assert len(rules) == 1
-            assert rules[0]["criticality"] == "warn"  # Implicit rule should use default_criticality
+            assert rules[0]["criticality"] == "warn"  # Predefined rule should use default_criticality
             assert rules[0]["check"]["function"] == "is_not_null"
         finally:
             os.unlink(temp_path)
