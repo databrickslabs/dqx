@@ -35,20 +35,60 @@ class TestDataContractIntegration:
         assert_rules_have_valid_structure(rules)
         assert_rules_have_valid_metadata(rules)
 
-        # Verify specific expected rules based on sample_datacontract.yaml
-        # The contract has sensor_id field with: required=true, unique=true, pattern
-        rule_functions = {r["check"]["function"] for r in rules}
-        assert "is_not_null" in rule_functions, "Expected is_not_null for required field sensor_id"
-        assert "is_unique" in rule_functions, "Expected is_unique for unique field sensor_id"
-        assert "regex_match" in rule_functions, "Expected regex_match for pattern constraint"
-
-        # Verify we have explicit DQX rules from the contract
+        # Get predefined and explicit rules
+        predefined_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "predefined"]
         explicit_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "explicit"]
+
+        # Verify we have both types of rules
+        assert len(predefined_rules) > 0, "Expected predefined rules to be generated"
         assert len(explicit_rules) >= 5, f"Expected at least 5 explicit DQX rules, got {len(explicit_rules)}"
 
-        # Verify predefined rules exist
-        predefined_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "predefined"]
-        assert len(predefined_rules) > 0, "Expected predefined rules to be generated"
+        # ===== Verify specific expected rules match the contract =====
+
+        # 1. sensor_id: required=true, unique=true, pattern
+        sensor_id_rules = [r for r in predefined_rules if "sensor_id" in r["name"]]
+        sensor_id_functions = {r["check"]["function"] for r in sensor_id_rules}
+        assert "is_not_null" in sensor_id_functions, "sensor_id should have is_not_null (required)"
+        assert "is_unique" in sensor_id_functions, "sensor_id should have is_unique (unique)"
+        assert "regex_match" in sensor_id_functions, "sensor_id should have regex_match (pattern)"
+
+        # 2. temperature_celsius: minimum=-273.15, maximum=200.0 (float values - should use sql_expression)
+        temp_rules = [r for r in predefined_rules if "temperature_celsius" in r["name"]]
+        assert len(temp_rules) == 2, "temperature_celsius should have 2 rules (is_not_null + range)"
+        temp_range_rule = next((r for r in temp_rules if "range" in r["name"]), None)
+        assert temp_range_rule is not None, "temperature_celsius should have range rule"
+        assert temp_range_rule["check"]["function"] == "sql_expression", "Float range should use sql_expression"
+        assert (
+            "temperature_celsius >= -273.15 AND temperature_celsius <= 200.0"
+            in temp_range_rule["check"]["arguments"]["expression"]
+        ), "temperature_celsius range expression should be correct"
+
+        # 3. vibration_level: minimum=0, maximum=10 (integer values - should use is_in_range)
+        vibration_rules = [r for r in predefined_rules if "vibration_level" in r["name"]]
+        vibration_range_rule = next((r for r in vibration_rules if "range" in r["name"]), None)
+        assert vibration_range_rule is not None, "vibration_level should have range rule"
+        assert vibration_range_rule["check"]["function"] == "is_in_range", "Integer range should use is_in_range"
+        assert vibration_range_rule["check"]["arguments"]["min_limit"] == 0
+        assert vibration_range_rule["check"]["arguments"]["max_limit"] == 10
+
+        # 4. sensor_status: enum values (should use is_in_list)
+        status_rules = [r for r in predefined_rules if "sensor_status" in r["name"]]
+        status_enum_rule = next((r for r in status_rules if r["check"]["function"] == "is_in_list"), None)
+        assert status_enum_rule is not None, "sensor_status should have is_in_list for enum"
+        assert set(status_enum_rule["check"]["arguments"]["allowed"]) == {
+            "active",
+            "inactive",
+            "maintenance",
+            "faulty",
+        }
+
+        # 5. Verify explicit DQX rules from contract
+        explicit_functions = {r["check"]["function"] for r in explicit_rules}
+        assert (
+            "is_not_null_and_not_empty" in explicit_functions
+        ), "Should have explicit is_not_null_and_not_empty for sensor_id"
+        assert "is_valid_timestamp" in explicit_functions, "Should have explicit is_valid_timestamp"
+        assert "sql_expression" in explicit_functions, "Should have explicit sql_expression checks"
 
     def test_generate_rules_from_datacontract_object(self, ws, spark, sample_contract_path):
         """Test generating rules from DataContract object."""
@@ -64,14 +104,63 @@ class TestDataContractIntegration:
         assert_rules_have_valid_structure(rules)
         assert_rules_have_valid_metadata(rules)
 
-        # Verify specific expected rules
-        rule_functions = {r["check"]["function"] for r in rules}
-        assert "is_not_null" in rule_functions, "Expected is_not_null for required fields"
-        assert "is_unique" in rule_functions, "Expected is_unique for unique fields"
+        # Get predefined and explicit rules
+        predefined_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "predefined"]
+        explicit_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "explicit"]
 
-        # Verify criticality levels from contract
-        error_rules = [r for r in rules if r["criticality"] == "error"]
-        assert len(error_rules) > 0, "Expected rules with error criticality"
+        # Verify we have both types of rules
+        assert len(predefined_rules) > 0, "Expected predefined rules to be generated"
+        assert len(explicit_rules) >= 5, f"Expected at least 5 explicit DQX rules, got {len(explicit_rules)}"
+
+        # ===== Verify specific expected rules match the contract =====
+
+        # 1. Required fields should have is_not_null rules
+        required_fields = ["sensor_id", "machine_id", "reading_timestamp", "temperature_celsius", "humidity_percentage"]
+        for field in required_fields:
+            not_null_rule = next(
+                (r for r in predefined_rules if field in r["name"] and r["check"]["function"] == "is_not_null"), None
+            )
+            assert not_null_rule is not None, f"{field} should have is_not_null rule (required=true)"
+
+        # 2. Unique field should have is_unique rule
+        unique_rule = next((r for r in predefined_rules if r["check"]["function"] == "is_unique"), None)
+        assert unique_rule is not None, "sensor_id should have is_unique rule (unique=true)"
+
+        # 3. Pattern fields should have regex_match rules
+        pattern_fields = ["sensor_id", "machine_id", "location", "device_model"]
+        pattern_rules = [r for r in predefined_rules if r["check"]["function"] == "regex_match"]
+        assert len(pattern_rules) >= len(pattern_fields), f"Expected at least {len(pattern_fields)} regex_match rules"
+
+        # 4. Enum fields should have is_in_list rules
+        enum_rules = [r for r in predefined_rules if r["check"]["function"] == "is_in_list"]
+        assert len(enum_rules) >= 2, "Expected at least 2 enum fields with is_in_list rules"
+
+        # 5. Float range constraints should use sql_expression
+        float_range_fields = ["temperature_celsius", "humidity_percentage", "pressure_bar"]
+        for field in float_range_fields:
+            range_rule = next(
+                (
+                    r
+                    for r in predefined_rules
+                    if field in r["name"] and "range" in r["name"] and r["check"]["function"] == "sql_expression"
+                ),
+                None,
+            )
+            if field != "pressure_bar":  # pressure_bar is optional, might not have all fields populated
+                assert range_rule is not None, f"{field} should have sql_expression rule for float range"
+
+        # 6. Integer range should use is_in_range
+        vibration_rule = next(
+            (r for r in predefined_rules if "vibration_level" in r["name"] and r["check"]["function"] == "is_in_range"),
+            None,
+        )
+        assert vibration_rule is not None, "vibration_level (integer) should use is_in_range"
+
+        # 7. Verify criticality levels from explicit rules in contract
+        error_rules = [r for r in explicit_rules if r["criticality"] == "error"]
+        warn_rules = [r for r in explicit_rules if r["criticality"] == "warn"]
+        assert len(error_rules) > 0, "Expected rules with error criticality from explicit checks"
+        assert len(warn_rules) > 0, "Expected rules with warn criticality from explicit checks"
 
     def test_contract_metadata_preserved(self, ws, spark, sample_contract_path):
         """Test that contract metadata is preserved in generated rules."""
