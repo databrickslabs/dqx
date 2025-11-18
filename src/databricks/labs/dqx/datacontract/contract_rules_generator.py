@@ -671,7 +671,7 @@ class DataContractRulesGenerator(DQEngineBase):
         logger.info(f"Added explicit DQX rule for {column_path}")
         return dqx_rule
 
-    def _build_schema_info_from_model(self, model: Model) -> str:
+    def _build_schema_info_from_model(self, model: "Model") -> str:
         """
         Build schema info JSON string from Model for LLM context.
 
