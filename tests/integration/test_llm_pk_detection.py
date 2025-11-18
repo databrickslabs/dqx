@@ -65,9 +65,7 @@ def test_detect_primary_keys_simple_table(
         assert "user_id" in pk_info["columns"], "user_id should be detected as primary key"
 
 
-def test_detect_primary_keys_composite(
-    ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available
-):
+def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available):
     """Test primary key detection on a table with composite primary key."""
     _ = skip_if_llm_not_available
     # Create test table with composite key
@@ -149,9 +147,7 @@ def test_detect_primary_keys_no_clear_key(
     assert isinstance(pk_info, dict), "PK result should be a dictionary"
 
 
-def test_compare_datasets_with_llm_wrapper(
-    ws, spark, make_schema, make_table, skip_if_llm_not_available
-):
+def test_compare_datasets_with_llm_wrapper(ws, spark, make_schema, make_table, skip_if_llm_not_available):
     """Test compare_datasets_with_llm wrapper with auto PK detection."""
     # Use the fixture to ensure LLM is available
     _ = skip_if_llm_not_available
