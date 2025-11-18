@@ -368,14 +368,14 @@ PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs inst
 
 #### Installing DQX as a tool
 
-During DQX installation as a tool in the workspace installation reply *yes* to the question "Does the given workspace block Internet access"?
+During DQX installation as a tool in the workspace reply *yes* to the question "Does the given workspace block Internet access"?
 
-If the host has no access to github, then dqx installation will not be able to download the files locally and will fail.
+If the installation host has no access to GitHub, then dqx installation will not be able to download the files locally and will fail.
 In order to address that, follow the steps below
  - install dqx on a host which has access to github using the instruction above
  - zip the installation from ~/.databricks/labs/dqx
  - copy the zip file to the target host and unzip
-Now the installation can be done in offline mode (ensure databricks cli is upgraded to version v0.244.0 or higher)
+Now the installation can be done in offline mode (ensure Databricks CLI is upgraded to version v0.244.0 or higher)
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx --offline=true
 ```

@@ -508,7 +508,8 @@ class WorkflowDeployment(InstallationMixin):
     @staticmethod
     def _get_fallback_dependencies() -> list[str]:
         """
-        Get fallback dependency prefixes when metadata is unavailable. The list should match the dependency list from the pyproject.toml
+        Get fallback dependency prefixes when metadata is unavailable. The list should match the dependency list
+        from the pyproject.toml file in the project root.
 
         Returns:
             List of core dependency prefixes.

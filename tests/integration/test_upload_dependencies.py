@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
-def installation_with_upload_deps(ws, make_random, env_or_skip):
+def installation_with_upload_deps(ws, make_random):
     """Create an installation with upload_dependencies=True."""
     cleanup = []
 
@@ -231,48 +231,7 @@ def test_config_upload_dependencies_persists(ws, installation_with_upload_deps):
     assert config_dict["upload_dependencies"] is True
 
 
-def _configure_test_workspace(installer, input_table, catalog_name, schema_name, make_random):
-    """Helper to configure workspace with test data."""
-    workspace_config = installer.configure()
-    assert workspace_config.upload_dependencies is True, "upload_dependencies should be True"
-
-    run_config = workspace_config.get_run_config()
-    run_config.input_config = InputConfig(location=input_table.full_name, options={"versionAsOf": "0"})
-    output_table = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
-    run_config.output_config = OutputConfig(location=output_table)
-    run_config.profiler_config = ProfilerConfig(sample_fraction=1.0, sample_seed=100)
-
-    return workspace_config
-
-
-def _run_and_verify_workflow(ws, installation):
-    """Helper to run and verify profiler workflow execution."""
-    install_state = InstallState.from_installation(installation)
-    assert len(install_state.jobs) > 0, "Jobs should be created"
-
-    deployed_workflows = DeployedWorkflows(ws, install_state)
-    run_id = deployed_workflows.run_workflow("profiler", run_config_name="default", max_wait=timedelta(minutes=15))
-
-    assert run_id is not None, "Workflow should return a run_id"
-
-    # Get the run details using get_run instead of list_runs
-    job_run = ws.jobs.get_run(run_id=run_id)
-    assert job_run is not None, "Job run should exist"
-
-    run_state = job_run.state
-    assert run_state is not None, "Job run should have a state"
-
-    assert run_state.result_state in [
-        RunResultState.SUCCESS,
-        RunResultState.CANCELED,
-    ], f"Job should complete successfully, got: {run_state.result_state}"
-
-    return run_id
-
-
-def test_end_to_end_installation_and_workflow_with_upload_dependencies(
-    ws, make_schema, make_table, make_random, env_or_skip
-):
+def test_end_to_end_installation_and_workflow_with_upload_dependencies(ws, make_schema, make_table, make_random):
     """
     End-to-end integration test: Install DQX with upload_dependencies=True and run a workflow.
     This verifies that dependencies are properly uploaded and workflows can execute successfully.
@@ -325,3 +284,42 @@ def test_end_to_end_installation_and_workflow_with_upload_dependencies(
             installation.remove()
         except Exception as e:
             logger.warning(f"Failed to cleanup installation: {e}")
+
+
+def _configure_test_workspace(installer, input_table, catalog_name, schema_name, make_random):
+    """Helper to configure workspace with test data."""
+    workspace_config = installer.configure()
+    assert workspace_config.upload_dependencies is True, "upload_dependencies should be True"
+
+    run_config = workspace_config.get_run_config()
+    run_config.input_config = InputConfig(location=input_table.full_name, options={"versionAsOf": "0"})
+    output_table = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    run_config.output_config = OutputConfig(location=output_table)
+    run_config.profiler_config = ProfilerConfig(sample_fraction=1.0, sample_seed=100)
+
+    return workspace_config
+
+
+def _run_and_verify_workflow(ws, installation):
+    """Helper to run and verify profiler workflow execution."""
+    install_state = InstallState.from_installation(installation)
+    assert len(install_state.jobs) > 0, "Jobs should be created"
+
+    deployed_workflows = DeployedWorkflows(ws, install_state)
+    run_id = deployed_workflows.run_workflow("profiler", run_config_name="default", max_wait=timedelta(minutes=15))
+
+    assert run_id is not None, "Workflow should return a run_id"
+
+    # Get the run details using get_run instead of list_runs
+    job_run = ws.jobs.get_run(run_id=run_id)
+    assert job_run is not None, "Job run should exist"
+
+    run_state = job_run.state
+    assert run_state is not None, "Job run should have a state"
+
+    assert run_state.result_state in [
+        RunResultState.SUCCESS,
+        RunResultState.CANCELED,
+    ], f"Job should complete successfully, got: {run_state.result_state}"
+
+    return run_id
