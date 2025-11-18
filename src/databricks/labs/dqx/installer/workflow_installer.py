@@ -560,6 +560,8 @@ class WorkflowDeployment(InstallationMixin):
             if self._config.upload_dependencies:
                 logger.info("Uploading dependencies to workspace...")
                 dependency_prefixes = self._get_dependency_prefixes()
+                # TODO the _build_wheel in the upload wheel dependencies method
+                #  currently does not handle installation of extras, therefore they are not uploaded
                 for whl in self._wheels.upload_wheel_dependencies(dependency_prefixes):
                     wheel_paths.append(whl)
             wheel_paths.sort(key=WorkflowDeployment._library_dep_order)
