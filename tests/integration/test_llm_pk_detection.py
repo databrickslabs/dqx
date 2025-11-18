@@ -1,5 +1,6 @@
 import importlib.util
 import pytest
+from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
@@ -17,7 +18,9 @@ def skip_if_llm_not_available():
         pytest.skip("LLM dependencies not installed")
 
 
-def test_detect_primary_keys_simple_table(ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available):
+def test_detect_primary_keys_simple_table(
+    ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available
+):
     """Test primary key detection on a simple table with clear primary key."""
     _ = skip_if_llm_not_available
     # Create test table with obvious primary key
@@ -104,7 +107,9 @@ def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, insta
         assert len(pk_info["columns"]) >= 1, "At least one primary key column should be detected"
 
 
-def test_detect_primary_keys_no_clear_key(ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available):
+def test_detect_primary_keys_no_clear_key(
+    ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available
+):
     """Test primary key detection on a table with no clear primary key."""
     _ = skip_if_llm_not_available
     # Create test table without clear primary key (log-style data)
@@ -171,9 +176,6 @@ def test_compare_datasets_with_llm_wrapper(ws, spark, make_schema, make_table, s
     ref_df.createOrReplaceTempView("ref_table_for_test")
 
     # Test the wrapper with auto PK detection
-    # pylint: disable=import-outside-toplevel
-    from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
-
     _, apply_func = compare_datasets_with_llm(
         source_table=source_table.full_name,
         ref_table=ref_table.full_name,  # For PK detection
