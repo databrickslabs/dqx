@@ -133,7 +133,7 @@ class TestDataContractIntegration:
         assert_rules_have_valid_metadata(rules)
 
         # Verify that text-based rules were processed by LLM
-        # The sample contract has a text expectation (line 60-63) about duplicate sensor readings
+        # The sample contract has a text expectation about duplicate sensor readings
         text_llm_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "text_llm"]
         assert len(text_llm_rules) > 0, "Expected at least one text_llm rule from text expectations"
 

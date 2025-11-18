@@ -149,9 +149,13 @@ models:
         maximum: 100.0
 """
 
-# Parse contract
+# Parse contract and write to temporary file
 contract = yaml.safe_load(contract_yaml)
 print(f"Contract: {contract['info']['title']} v{contract['info']['version']}")
+
+with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    yaml.dump(contract, f)
+    contract_file = f.name
 
 # COMMAND ----------
 
@@ -178,18 +182,12 @@ print(f"Contract: {contract['info']['title']} v{contract['info']['version']}")
 
 # COMMAND ----------
 
-# Write contract to temporary file
-with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
-    yaml.dump(contract, f)
-    contract_file = f.name
-
 # Generate DQX rules
 generator = DQGenerator(workspace_client=ws)
 rules = generator.generate_rules_from_contract(
     contract_file=contract_file,
-    generate_predefined_rules=True,
     process_text_rules=False,
-    default_criticality="error"
+    default_criticality="error"  # or "warn" for warnings instead of errors
 )
 
 print(f"Generated {len(rules)} quality rules from contract")
@@ -209,13 +207,7 @@ print(f"Generated {len(rules)} quality rules from contract")
 # Display first few rules
 import json
 
-for i, rule in enumerate(rules[:5], 1):
-    print(f"\n--- Rule {i} ---")
-    print(f"Name: {rule['name']}")
-    print(f"Function: {rule['check']['function']}")
-    print(f"Arguments: {json.dumps(rule['check']['arguments'], indent=2)}")
-    print(f"Criticality: {rule['criticality']}")
-    print(f"Metadata: {json.dumps(rule['user_metadata'], indent=2)}")
+print(json.dumps(rules[:5], indent=2))
 
 # COMMAND ----------
 
@@ -315,32 +307,7 @@ display(bad_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 8. Custom Criticality Levels
-# MAGIC
-# MAGIC You can set default criticality for all predefined rules:
-# MAGIC - `error`: Critical issues that should block data (default)
-# MAGIC - `warn`: Warnings that log but don't block
-
-# COMMAND ----------
-
-# Generate rules with 'warn' criticality
-warn_rules = generator.generate_rules_from_contract(
-    contract_file=contract_file,
-    default_criticality="warn"
-)
-
-print(f"Generated {len(warn_rules)} rules with 'warn' criticality")
-
-# Apply warn rules
-warn_result_df = engine.apply_checks_by_metadata(df, warn_rules)
-
-# With 'warn' criticality, no records are filtered out
-print(f"Result count: {warn_result_df.count()} (same as input: {df.count()})")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## 9. Using DataContract Object
+# MAGIC ## 8. Using DataContract Object
 # MAGIC
 # MAGIC You can also pass a pre-loaded DataContract object instead of a file path.
 
@@ -354,7 +321,6 @@ dc = DataContract(data_contract_file=contract_file)
 # Generate rules from object
 rules_from_object = generator.generate_rules_from_contract(
     contract=dc,
-    generate_predefined_rules=True,
     process_text_rules=False
 )
 
@@ -412,7 +378,6 @@ with open(contract_text_file, 'w') as f:
 # This will use LLM to convert text expectations into executable DQX rules
 rules_with_llm = generator.generate_rules_from_contract(
     contract_file=contract_text_file,
-    generate_predefined_rules=True,
     process_text_rules=True  # Enable LLM-based text rule processing
 )
 
@@ -463,27 +428,21 @@ os.unlink(contract_text_file)
 # MAGIC %md
 # MAGIC ## 11. Save and Load Generated Rules
 # MAGIC
-# MAGIC Rules can be saved to JSON and loaded later for reuse.
+# MAGIC Rules can be saved and loaded using DQEngine's built-in methods.
 
 # COMMAND ----------
-
-import json
 
 # Get current username
 current_user = spark.sql("SELECT current_user() as user").collect()[0]["user"]
 
 # Save rules to workspace file
-rules_path = f"/Workspace/Users/{current_user}/dqx_generated_rules.json"
+rules_path = f"/Workspace/Users/{current_user}/dqx_generated_rules.yml"
 
-with open(rules_path.replace("/Workspace", "/dbfs"), "w") as f:
-    json.dump(rules, f, indent=2)
-
+engine.save_checks(rules, rules_path)
 print(f"Saved {len(rules)} rules to {rules_path}")
 
 # Load rules back
-with open(rules_path.replace("/Workspace", "/dbfs"), "r") as f:
-    loaded_rules = json.load(f)
-
+loaded_rules = engine.load_checks(rules_path)
 print(f"Loaded {len(loaded_rules)} rules from file")
 
 # COMMAND ----------
@@ -497,8 +456,8 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # MAGIC 2. ✅ Generated DQX rules automatically from the contract
 # MAGIC 3. ✅ Validated and applied rules to data
 # MAGIC 4. ✅ Split good and bad records
-# MAGIC 5. ✅ Customized criticality levels
-# MAGIC 6. ✅ Saved and loaded generated rules
+# MAGIC 5. ✅ Saved and loaded generated rules
+# MAGIC 6. ✅ Explored AI-assisted rule generation from text
 # MAGIC
 # MAGIC ### Supported Field Constraints
 # MAGIC

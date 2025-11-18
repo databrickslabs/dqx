@@ -6,21 +6,25 @@ import tempfile
 
 import yaml
 
+from databricks.labs.dqx.engine import DQEngine
+
 
 def assert_valid_rule_structure(rule: dict) -> None:
     """
-    Assert that a rule dictionary has the expected structure.
+    Assert that a rule dictionary has the expected structure using DQEngine's validation.
 
     A valid rule must contain:
         - "check": a dictionary with "function" and "arguments" keys
         - "criticality": the rule's criticality level
-        - "user_metadata": metadata associated with the rule
+        - "user_metadata": metadata associated with the rule (optional)
     """
-    assert "check" in rule, "Rule must have a 'check' key"
-    assert "function" in rule["check"], "Rule check must have a 'function' key"
-    assert "arguments" in rule["check"], "Rule check must have an 'arguments' key"
-    assert "criticality" in rule, "Rule must have a 'criticality' key"
-    assert "user_metadata" in rule, "Rule must have a 'user_metadata' key"
+    # Use DQEngine's validate_checks method
+    validation_status = DQEngine.validate_checks([rule], validate_custom_check_functions=False)
+    assert not validation_status.has_errors, f"Rule validation failed: {validation_status.errors}"
+
+    # Additionally check user_metadata if present (this is contract-specific, not in DQEngine validation)
+    if "user_metadata" in rule:
+        assert isinstance(rule["user_metadata"], dict), "user_metadata must be a dictionary"
 
 
 def assert_valid_contract_metadata(metadata: dict) -> None:

@@ -532,12 +532,12 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
     """Test constraint-specific predefined rule generation."""
 
     def test_field_with_only_minimum_constraint(self, generator):
-        """Test that field with only minimum (no maximum) generates is_not_less_than rule."""
+        """Test that field with only minimum (no maximum) generates sql_expression rule for float."""
         contract_dict = create_basic_contract(
             fields={
                 "temperature": {
                     "type": "decimal",
-                    "minimum": -273.15,  # Only minimum, no maximum
+                    "minimum": -273.15,  # Float minimum, should use sql_expression
                 }
             }
         )
@@ -549,24 +549,25 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
-            # Should generate is_not_less_than rule
+            # Should generate sql_expression rule for float minimum
             rule_functions = [rule["check"]["function"] for rule in rules]
-            assert "is_not_less_than" in rule_functions, "Should have is_not_less_than rule"
+            assert "sql_expression" in rule_functions, "Should have sql_expression rule for float minimum"
 
-            # Verify the limit is set correctly
-            min_rule = next(r for r in rules if r["check"]["function"] == "is_not_less_than")
-            assert min_rule["check"]["arguments"]["limit"] == -273.15
+            # Verify the expression is correct
+            min_rule = next(r for r in rules if r["check"]["function"] == "sql_expression")
+            assert min_rule["check"]["arguments"]["expression"] == "temperature >= -273.15"
+            assert min_rule["check"]["arguments"]["columns"] == ["temperature"]
 
         finally:
             os.unlink(temp_path)
 
     def test_field_with_only_maximum_constraint(self, generator):
-        """Test that field with only maximum (no minimum) generates is_not_greater_than rule."""
+        """Test that field with only maximum (no minimum) generates sql_expression rule for float."""
         contract_dict = create_basic_contract(
             fields={
                 "humidity": {
                     "type": "decimal",
-                    "maximum": 100.0,  # Only maximum, no minimum
+                    "maximum": 100.0,  # Float maximum, should use sql_expression
                 }
             }
         )
@@ -578,13 +579,14 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
             )
 
-            # Should generate is_not_greater_than rule
+            # Should generate sql_expression rule for float maximum
             rule_functions = [rule["check"]["function"] for rule in rules]
-            assert "is_not_greater_than" in rule_functions, "Should have is_not_greater_than rule"
+            assert "sql_expression" in rule_functions, "Should have sql_expression rule for float maximum"
 
-            # Verify the limit is set correctly
-            max_rule = next(r for r in rules if r["check"]["function"] == "is_not_greater_than")
-            assert max_rule["check"]["arguments"]["limit"] == 100.0
+            # Verify the expression is correct
+            max_rule = next(r for r in rules if r["check"]["function"] == "sql_expression")
+            assert max_rule["check"]["arguments"]["expression"] == "humidity <= 100.0"
+            assert max_rule["check"]["arguments"]["columns"] == ["humidity"]
 
         finally:
             os.unlink(temp_path)
@@ -992,10 +994,12 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         fields_with_rules = {r["user_metadata"]["field"] for r in rules}
         assert "order_id" in fields_with_rules
         assert "customer_email" in fields_with_rules
+
+        # Validate rule structure using DQEngine
+        assert_rules_have_valid_structure(rules)
+
+        # Verify all are text_llm rules
         for rule in rules:
-            assert "criticality" in rule
-            assert "check" in rule
-            assert "user_metadata" in rule
             assert rule["user_metadata"]["rule_type"] == "text_llm"
 
     def test_multiple_text_rules_processed(self, generator):

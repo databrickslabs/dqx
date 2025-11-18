@@ -8,25 +8,26 @@ specifications like ODCS (Open Data Contract Standard).
 import json
 import logging
 from collections.abc import Callable
+from importlib.util import find_spec
 from typing import TYPE_CHECKING
+
+# Import datacontract dependencies (validated in __init__.py)
+from datacontract.data_contract import DataContract  # type: ignore
+from datacontract.model.data_contract_specification import (  # type: ignore
+    DataContractSpecification,
+    Field,
+    Model,
+    Quality,
+)
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.telemetry import telemetry_logger
 
-# Conditional imports for Data Contract CLI
-try:
-    from datacontract.data_contract import DataContract
-    from datacontract.model.data_contract_specification import DataContractSpecification, Field, Model, Quality
-
-    DATACONTRACT_ENABLED = True
-except ImportError:
-    DATACONTRACT_ENABLED = False
-
-# Type checking imports (never evaluated at runtime, only by static type checkers)
+# Type checking imports (for type hints only, not evaluated at runtime)
 if TYPE_CHECKING:
-    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
+    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class DataContractRulesGenerator(DQEngineBase):
     def __init__(
         self,
         workspace_client: WorkspaceClient,
-        llm_engine: 'DQLLMEngine | None' = None,
+        llm_engine: "DQLLMEngine | None" = None,
         custom_check_functions: dict[str, Callable] | None = None,
     ):
         """
@@ -53,7 +54,19 @@ class DataContractRulesGenerator(DQEngineBase):
             workspace_client: Databricks WorkspaceClient instance.
             llm_engine: Optional LLM engine for processing text-based quality expectations.
             custom_check_functions: Optional dictionary of custom check functions.
+
+        Raises:
+            ImportError: If datacontract-cli is not installed, or if LLM dependencies are missing when llm_engine is provided.
         """
+        # Validate LLM dependencies if llm_engine is provided
+        if llm_engine is not None:
+            required_llm_specs = ["dspy"]
+            if not all(find_spec(spec) for spec in required_llm_specs):
+                raise ImportError(
+                    "LLM extras not installed. Install additional dependencies by running "
+                    "`pip install databricks-labs-dqx[llm]`."
+                )
+
         super().__init__(workspace_client=workspace_client)
         self.llm_engine = llm_engine
         self.custom_check_functions = custom_check_functions
@@ -61,7 +74,7 @@ class DataContractRulesGenerator(DQEngineBase):
     @telemetry_logger("datacontract", "generate_rules_from_contract")
     def generate_rules_from_contract(
         self,
-        contract: "DataContract | None" = None,
+        contract: DataContract | None = None,
         contract_file: str | None = None,
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
@@ -75,19 +88,18 @@ class DataContractRulesGenerator(DQEngineBase):
         schema properties, explicit quality definitions, and text-based expectations.
 
         Args:
-            contract: Pre-loaded DataContract object from datacontract-cli.
-            contract_file: Path to contract YAML file (local, volume, or workspace).
+            contract: Pre-loaded DataContract object from datacontract-cli. Either `contract` or `contract_file` must be provided.
+            contract_file: Path to contract YAML file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
             contract_format: Contract format specification (default is "odcs").
-            generate_predefined_rules: Whether to generate rules from schema properties.
-            process_text_rules: Whether to process text-based expectations using LLM.
+            generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
+            process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
             default_criticality: Default criticality level for generated rules (default is "error").
 
         Returns:
             A list of dictionaries representing the generated DQX quality rules.
 
         Raises:
-            ImportError: If datacontract-cli is not installed.
-            ValueError: If neither or both parameters are provided, or format not supported.
+            ValueError: If neither or both contract parameters are provided, or format not supported.
 
         Note:
             Exactly one of 'contract' or 'contract_file' must be provided.
@@ -101,16 +113,8 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return dq_rules
 
-    def _validate_inputs(
-        self, contract: "DataContract | None", contract_file: str | None, contract_format: str
-    ) -> None:
+    def _validate_inputs(self, contract: DataContract | None, contract_file: str | None, contract_format: str) -> None:
         """Validate input parameters."""
-        if not DATACONTRACT_ENABLED:
-            raise ImportError(
-                "Data contract functionality requires datacontract-cli. "
-                "Install with: pip install 'databricks-labs-dqx[datacontract]'"
-            )
-
         if contract is None and contract_file is None:
             raise ValueError("Either 'contract' or 'contract_file' must be provided")
 
@@ -121,8 +125,8 @@ class DataContractRulesGenerator(DQEngineBase):
             raise ValueError(f"Contract format '{contract_format}' not supported. Currently only 'odcs' is supported.")
 
     def _load_contract_spec(
-        self, contract: "DataContract | None", contract_file: str | None
-    ) -> "DataContractSpecification":
+        self, contract: DataContract | None, contract_file: str | None
+    ) -> DataContractSpecification:
         """Load DataContractSpecification from contract or file."""
         if contract_file is not None:
             data_contract = DataContract(data_contract_file=contract_file)
@@ -132,7 +136,7 @@ class DataContractRulesGenerator(DQEngineBase):
         assert contract is not None
         return contract.get_data_contract_specification()
 
-    def _validate_contract_spec(self, spec: "DataContractSpecification") -> None:
+    def _validate_contract_spec(self, spec: DataContractSpecification) -> None:
         """Validate contract specification using datacontract-cli lint."""
         lint_result = (DataContract(data_contract=spec.model_dump())).lint()  # type: ignore[arg-type]
         if lint_result.result != "passed":
@@ -146,7 +150,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _generate_all_rules(
         self,
-        spec: "DataContractSpecification",
+        spec: DataContractSpecification,
         generate_predefined_rules: bool,
         process_text_rules: bool,
         default_criticality: str,
@@ -180,12 +184,12 @@ class DataContractRulesGenerator(DQEngineBase):
                 logger.info(f"Successfully generated {len(dq_rules)} DQX rules from data contract")
 
     @staticmethod
-    def _get_contract_version(spec: "DataContractSpecification") -> str:
+    def _get_contract_version(spec: DataContractSpecification) -> str:
         """Extract contract version from specification."""
         return getattr(spec.info, 'version', 'unknown') if spec.info else 'unknown'
 
     def _generate_predefined_rules_for_model(
-        self, model: "Model", model_name: str, spec: "DataContractSpecification", default_criticality: str
+        self, model: Model, model_name: str, spec: DataContractSpecification, default_criticality: str
     ) -> list[dict]:
         """Generate predefined rules from all fields in a model."""
         rules = []
@@ -198,14 +202,24 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _generate_predefined_rules_for_field(
         self,
-        field: "Field",
+        field: Field,
         field_name: str,
         model_name: str,
-        spec: "DataContractSpecification",
+        spec: DataContractSpecification,
         default_criticality: str,
         parent_path: str = "",
+        recursion_depth: int = 0,
     ) -> list[dict]:
         """Generate predefined DQ rules from a field's constraints."""
+        # Protect against excessive recursion depth (e.g., circular references or very deep nesting)
+        max_recursion_depth = 20
+        if recursion_depth > max_recursion_depth:
+            logger.warning(
+                f"Maximum recursion depth ({max_recursion_depth}) exceeded for field '{field_name}'. "
+                f"Skipping further nested fields to prevent potential circular references."
+            )
+            return []
+
         # Build full column path
         column_path = f"{parent_path}.{field_name}" if parent_path else field_name
 
@@ -222,13 +236,19 @@ class DataContractRulesGenerator(DQEngineBase):
         if field.fields:
             for nested_name, nested_field in field.fields.items():
                 nested_rules = self._generate_predefined_rules_for_field(
-                    nested_field, nested_name, model_name, spec, default_criticality, column_path
+                    nested_field,
+                    nested_name,
+                    model_name,
+                    spec,
+                    default_criticality,
+                    column_path,
+                    recursion_depth + 1,
                 )
                 rules.extend(nested_rules)
             return rules
 
         # Generate rules based on field constraints
-        rules.extend(self._generate_required_rules(field, column_path, contract_metadata, default_criticality))
+        rules.extend(self._generate_not_null_rules(field, column_path, contract_metadata, default_criticality))
         rules.extend(self._generate_unique_rules(field, column_path, contract_metadata, default_criticality))
         rules.extend(self._generate_enum_rules(field, column_path, contract_metadata, default_criticality))
         rules.extend(self._generate_pattern_rules(field, column_path, contract_metadata, default_criticality))
@@ -238,10 +258,10 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return rules
 
-    def _generate_required_rules(
-        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
+    def _generate_not_null_rules(
+        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
-        """Generate required/not_null rules."""
+        """Generate not_null rules from required field constraint."""
         if not field.required:
             return []
 
@@ -259,7 +279,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_unique_rules(
-        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
+        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate uniqueness rules."""
         if not field.unique:
@@ -279,7 +299,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_enum_rules(
-        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
+        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate enum/valid values rules."""
         if not field.enum:
@@ -299,7 +319,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_pattern_rules(
-        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
+        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate pattern/regex rules."""
         if not field.pattern:
@@ -319,23 +339,40 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_range_rules_from_field(
-        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
+        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate range rules from minimum/maximum constraints."""
         if field.minimum is None and field.maximum is None:
             return []
 
-        # Skip float constraints when both min and max are present (is_in_range doesn't support floats yet)
-        # Single-sided constraints work fine with floats
-        # TODO: Add float support to is_in_range function (https://github.com/databrickslabs/dqx/issues/71)
+        # Check if limits are floats - use sql_expression for float constraints #937
+        has_float_limits = (field.minimum is not None and isinstance(field.minimum, float)) or (
+            field.maximum is not None and isinstance(field.maximum, float)
+        )
+
+        # Handle both minimum and maximum constraints together
         if field.minimum is not None and field.maximum is not None:
-            if isinstance(field.minimum, float) or isinstance(field.maximum, float):
-                logger.warning(
-                    f"Skipping range constraint for field '{column_path}': "
-                    f"is_in_range does not support float min/max constraints yet. "
-                    f"Consider using explicit DQX rules with sql_expression or separate min/max constraints."
-                )
-                return []
+            if has_float_limits:
+                # Use sql_expression for float range constraints
+                return [
+                    {
+                        "check": {
+                            "function": "sql_expression",
+                            "arguments": {
+                                "expression": f"{column_path} >= {field.minimum} AND {column_path} <= {field.maximum}",
+                                "columns": [column_path],
+                            },
+                        },
+                        "name": f"{column_path}_out_of_range",
+                        "criticality": criticality,
+                        "user_metadata": {
+                            **contract_metadata,
+                            "dimension": "validity",
+                            "rule_type": "predefined",
+                        },
+                    }
+                ]
+            # Use is_in_range for non-float constraints
             return [
                 {
                     "check": {
@@ -356,7 +393,28 @@ class DataContractRulesGenerator(DQEngineBase):
                 }
             ]
 
+        # Handle only minimum constraint
         if field.minimum is not None:
+            if has_float_limits:
+                # Use sql_expression for float minimum constraint
+                return [
+                    {
+                        "check": {
+                            "function": "sql_expression",
+                            "arguments": {
+                                "expression": f"{column_path} >= {field.minimum}",
+                                "columns": [column_path],
+                            },
+                        },
+                        "name": f"{column_path}_below_minimum",
+                        "criticality": criticality,
+                        "user_metadata": {
+                            **contract_metadata,
+                            "dimension": "validity",
+                            "rule_type": "predefined",
+                        },
+                    }
+                ]
             return [
                 {
                     "check": {
@@ -373,6 +431,27 @@ class DataContractRulesGenerator(DQEngineBase):
                 }
             ]
 
+        # Handle only maximum constraint
+        if has_float_limits:
+            # Use sql_expression for float maximum constraint
+            return [
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "expression": f"{column_path} <= {field.maximum}",
+                            "columns": [column_path],
+                        },
+                    },
+                    "name": f"{column_path}_above_maximum",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "dimension": "validity",
+                        "rule_type": "predefined",
+                    },
+                }
+            ]
         return [
             {
                 "check": {
@@ -390,7 +469,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _generate_length_rules(
-        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
+        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate string length rules from minLength/maxLength using SQL expressions."""
         rules = []
@@ -441,7 +520,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _generate_format_rules_from_field(
-        self, field: "Field", column_path: str, contract_metadata: dict, criticality: str
+        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
         """Generate format validation rules for dates/timestamps."""
         if not field.format:
@@ -487,7 +566,7 @@ class DataContractRulesGenerator(DQEngineBase):
         ]
 
     def _process_text_rules_for_model(
-        self, model: "Model", model_name: str, spec: "DataContractSpecification", _default_criticality: str
+        self, model: Model, model_name: str, spec: DataContractSpecification, _default_criticality: str
     ) -> list[dict]:
         """Process text-based quality expectations using LLM for a model."""
         if self.llm_engine is None:
@@ -507,7 +586,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _process_text_rules_for_field(
-        self, field: "Field", field_name: str, contract_metadata: dict, schema_info: str, parent_path: str = ""
+        self, field: Field, field_name: str, contract_metadata: dict, schema_info: str, parent_path: str = ""
     ) -> list[dict]:
         """Process text-based rules for a single field."""
         column_path = f"{parent_path}.{field_name}" if parent_path else field_name
@@ -540,12 +619,12 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return rules
 
-    def _is_text_quality(self, quality: "Quality") -> bool:
+    def _is_text_quality(self, quality: Quality) -> bool:
         """Check if quality is a text-based expectation."""
         return quality.type == "text" if hasattr(quality, "type") else False
 
     def _process_single_text_rule_from_field(
-        self, field: "Field", column_path: str, text_expectation: str, contract_metadata: dict, schema_info: str
+        self, field: Field, column_path: str, text_expectation: str, contract_metadata: dict, schema_info: str
     ) -> list[dict]:
         """Process a single text rule and add metadata."""
         try:
@@ -559,7 +638,7 @@ class DataContractRulesGenerator(DQEngineBase):
             return []
 
     def _generate_rules_from_text_field(
-        self, field: "Field", column_path: str, text_expectation: str, schema_info: str
+        self, field: Field, column_path: str, text_expectation: str, schema_info: str
     ) -> list[dict]:
         """Generate DQX rules from text expectation using LLM."""
         if self.llm_engine is None:
@@ -597,7 +676,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rule
 
     def _process_explicit_rules_for_model(
-        self, model: "Model", model_name: str, spec: "DataContractSpecification", _default_criticality: str
+        self, model: Model, model_name: str, spec: DataContractSpecification, _default_criticality: str
     ) -> list[dict]:
         """Process explicit DQX format rules from a model."""
         contract_metadata = {
@@ -613,7 +692,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _extract_explicit_rules_for_field(
-        self, field: "Field", field_name: str, contract_metadata: dict, parent_path: str = ""
+        self, field: Field, field_name: str, contract_metadata: dict, parent_path: str = ""
     ) -> list[dict]:
         """Extract explicit DQX rules from a field's quality checks."""
         column_path = f"{parent_path}.{field_name}" if parent_path else field_name
@@ -640,7 +719,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return rules
 
-    def _is_dqx_quality(self, quality: "Quality") -> bool:
+    def _is_dqx_quality(self, quality: Quality) -> bool:
         """Check if quality is a DQX custom check."""
         # Check if quality has type='custom' and specification with DQX format
         if not hasattr(quality, "type") or quality.type != "custom":
@@ -651,7 +730,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return isinstance(spec, dict) and "check" in spec
 
     def _extract_dqx_rule_from_quality(
-        self, quality: "Quality", column_path: str, contract_metadata: dict
+        self, quality: Quality, column_path: str, contract_metadata: dict
     ) -> dict | None:
         """Extract a DQX rule from a Quality object."""
         # Get the specification (DQX rule definition)
@@ -666,10 +745,18 @@ class DataContractRulesGenerator(DQEngineBase):
 
         dqx_rule['user_metadata'].update({"field": column_path, "rule_type": "explicit", **contract_metadata})
 
+        # Validate the rule structure before returning
+        validation_status = DQEngine.validate_checks([dqx_rule], self.custom_check_functions)
+        if validation_status.has_errors:
+            logger.warning(
+                f"Explicit DQX rule for {column_path} failed validation: {validation_status.errors}. Skipping rule."
+            )
+            return None
+
         logger.info(f"Added explicit DQX rule for {column_path}")
         return dqx_rule
 
-    def _build_schema_info_from_model(self, model: "Model") -> str:
+    def _build_schema_info_from_model(self, model: Model) -> str:
         """
         Build schema info JSON string from Model for LLM context.
 
@@ -678,11 +765,7 @@ class DataContractRulesGenerator(DQEngineBase):
         columns = []
         for field_name, field in (model.fields or {}).items():
             col_info = {"name": field_name, "type": field.type or "string"}
-
-            # TODO: Future enhancement - include field constraints for richer LLM context
-            # This would help LLM avoid duplicating predefined rules and generate
-            # more complementary business logic rules.
-
+            #  Note: Field constraints could be included here for richer LLM context in future iterations #936
             columns.append(col_info)
 
         schema_dict = {"columns": columns}

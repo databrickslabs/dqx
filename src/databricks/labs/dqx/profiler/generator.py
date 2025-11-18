@@ -31,7 +31,7 @@ try:
 except ImportError:
     DATACONTRACT_ENABLED = False
 
-# Type checking imports
+# Type checking imports (for type hints only, not evaluated at runtime)
 if TYPE_CHECKING:
     from datacontract.data_contract import DataContract
 
