@@ -29,7 +29,7 @@ lines.append("---\n")
 
 lines.append("# Performance Benchmarks Report\n")
 
-lines.append("## Specification")
+lines.append("## Specification\n")
 lines.append("* 100 million rows are used for each test.")
 lines.append(
     "* DQX rules are executed in parallel and in distributed manner using Spark. To minimize test variability, each type of check is executed sequentially in this benchmark. Specific tests, such as `test_benchmark_apply_checks_all_dataset_checks` and `test_benchmark_apply_checks_all_row_checks`, execute all types of checks in parallel simultaneously."
