@@ -141,6 +141,9 @@ class WorkspaceConfig:
 
     # whether to use serverless clusters for the jobs, only used during workspace installation
     serverless_clusters: bool = True
+    upload_dependencies: bool = (
+        False  # whether to upload dependencies to the workspace during installation to enable DQX in restricted (no-internet) environments
+    )
     extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. result_column_names
 
     # cluster configuration for the jobs (applicable for non-serverless clusters only)
