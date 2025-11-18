@@ -142,9 +142,9 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     schema = make_schema(catalog_name=catalog).name
     installation_ctx.replace(
         extend_prompts={
-            r'Provide location for the input data .*': '/databricks-datasets/delta-sharing/samples/nyctaxi_2019',
-            r'Provide output table .*': f'{catalog}.{schema}.output_table',
-            r'Provide quarantined table .*': f'{catalog}.{schema}.quarantine_table',
+            r"Provide location for the input data .*": "/databricks-datasets/delta-sharing/samples/nyctaxi_2019",
+            r"Provide output table .*": f"{catalog}.{schema}.output_table",
+            r"Provide quarantined table .*": f"{catalog}.{schema}.quarantine_table",
         },
     )
     installation_ctx.workspace_installer.run(installation_ctx.config)
