@@ -10,9 +10,8 @@ sidebar_position: 13
 
 ## Specification
 * 100 million rows are used for each test.
-* DQX rules are executed in parallel and in distributed manner using Spark. To minimize test variability, each type of check is executed sequentially in this benchmark. Specific tests, such as `test_benchmark_apply_checks_all_dataset_checks` and `test_benchmark_apply_checks_all_row_checks`, execute all types of checks in parallel simultaneously.
+* Tests are run sequentially to reduce variability.
 * Benchmarks are created using Databricks Serverless cluster.
-* The provided benchmarks are indicative. You should always consider benchmarking results in the context of your own data and environment.
 
 ## Results
 | Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | iqr (s) | q1 (s) | q3 (s) | Rounds | iqr outliers | stddev outliers | Ops/s |
