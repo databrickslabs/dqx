@@ -38,7 +38,6 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
 
-# Initialize workspace client (spark is available as a built-in global)
 ws = WorkspaceClient()
 
 # COMMAND ----------
