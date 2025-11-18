@@ -9,6 +9,7 @@ from dataclasses import replace, dataclass
 from functools import cached_property
 
 import pytest
+from databricks.sdk.service.compute import DataSecurityMode
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
 from databricks.sdk.retries import retried
@@ -91,6 +92,30 @@ def skip_if_runtime_not_geo_compatible(ws, debug_env):
 
     if not valid:
         pytest.skip("This test requires a cluster with runtime 17.1 or above")
+
+
+@pytest.fixture
+def skip_in_non_dedicated_cluster(ws, debug_env):
+    """
+    Skip the test if the cluster is not running in dedicated mode.
+
+    Args:
+        ws (WorkspaceClient): Workspace client to interact with Databricks.
+        debug_env (dict): Test environment variables.
+    """
+    if "DATABRICKS_SERVERLESS_COMPUTE_ID" in debug_env:
+        pytest.skip("Test not supported in Serverless")
+
+    cluster_id = debug_env.get("DATABRICKS_CLUSTER_ID")
+    if not cluster_id:
+        raise ValueError("DATABRICKS_CLUSTER_ID is not set in debug_env")
+
+    cluster_info = ws.clusters.get(cluster_id)
+    if cluster_info.data_security_mode not in (
+        DataSecurityMode.SINGLE_USER,
+        DataSecurityMode.DATA_SECURITY_MODE_DEDICATED,
+    ):
+        pytest.skip("This test requires a dedicated cluster")
 
 
 class CommonUtils:

@@ -8530,7 +8530,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
-def test_apply_checks_foreachBatch(spark):
+def test_apply_checks_foreachBatch(ws, spark, skip_in_non_dedicated_cluster):
     engine = DQEngine(spark=spark)
     input_df = spark.readStream.format("rate").load()
     checks = [
