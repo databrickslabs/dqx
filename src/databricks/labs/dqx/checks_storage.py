@@ -145,7 +145,7 @@ class LakebaseChecksStorageHandler(PickleableMixin, ChecksStorageHandler[Lakebas
         self, ws: WorkspaceClient | None = None, spark: SparkSession | None = None, engine: Engine | None = None
     ):
         self._ws = ws
-        self.spark = spark if spark is not None else SparkSession.builder.getOrCreate()
+        self.spark = spark or SparkSession.builder.getOrCreate()
         self.engine = engine
 
     @property
