@@ -641,7 +641,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return isinstance(spec, dict) and "check" in spec
 
     def _extract_dqx_rule_from_quality(
-        self, quality: Quality, column_path: str, contract_metadata: dict
+        self, quality: "Quality", column_path: str, contract_metadata: dict
     ) -> dict | None:
         """Extract a DQX rule from a Quality object."""
         # Get the specification (DQX rule definition)
