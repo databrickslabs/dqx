@@ -31,8 +31,13 @@ lines.append("# Performance Benchmarks Report\n")
 
 lines.append("## Specification")
 lines.append("* 100 million rows are used for each test.")
-lines.append("* Tests are run sequentially to reduce variability.")
-lines.append("* Benchmarks are created using Databricks Serverless cluster.\n")
+lines.append(
+    "* DQX rules are executed in parallel and in distributed manner using Spark. To minimize test variability, each type of check is executed sequentially in this benchmark. Specific tests, such as `test_benchmark_apply_checks_all_dataset_checks` and `test_benchmark_apply_checks_all_row_checks`, execute all types of checks in parallel simultaneously."
+)
+lines.append("* Benchmarks are created using Databricks Serverless cluster.")
+lines.append(
+    "* The provided benchmarks are indicative. You should always consider benchmarking results in the context of your own data and environment.\n"
+)
 
 lines.append("## Results")
 
