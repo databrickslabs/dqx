@@ -65,7 +65,9 @@ def test_detect_primary_keys_simple_table(
         assert "user_id" in pk_info["columns"], "user_id should be detected as primary key"
 
 
-def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available):
+def test_detect_primary_keys_composite(
+    ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available
+):
     """Test primary key detection on a table with composite primary key."""
     _ = skip_if_llm_not_available
     # Create test table with composite key
