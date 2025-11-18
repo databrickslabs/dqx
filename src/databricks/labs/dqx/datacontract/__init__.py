@@ -8,7 +8,15 @@ Use DQGenerator.generate_rules_from_contract() as the main entry point for gener
 rules from data contracts.
 """
 
-from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
+try:
+    from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
+except ImportError as e:
+    if "datacontract" in str(e):
+        raise ImportError(
+            "datacontract extras not installed. Install additional dependencies by running "
+            "`pip install databricks-labs-dqx[datacontract]`."
+        ) from e
+    raise
 
 __all__ = [
     "DataContractRulesGenerator",

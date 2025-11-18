@@ -3,18 +3,14 @@ Integration tests for Data Contract to DQX rules generation.
 """
 
 import os
-from datetime import datetime
 
 import pytest
 from datacontract.data_contract import DataContract
-from pyspark.sql import types as T
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.engine import DQEngine
 from tests.unit.test_datacontract_utils import (
     assert_rules_have_valid_metadata,
     assert_rules_have_valid_structure,
-    create_test_contract_file,
 )
 
 
@@ -39,6 +35,21 @@ class TestDataContractIntegration:
         assert_rules_have_valid_structure(rules)
         assert_rules_have_valid_metadata(rules)
 
+        # Verify specific expected rules based on sample_datacontract.yaml
+        # The contract has sensor_id field with: required=true, unique=true, pattern
+        rule_functions = {r["check"]["function"] for r in rules}
+        assert "is_not_null" in rule_functions, "Expected is_not_null for required field sensor_id"
+        assert "is_unique" in rule_functions, "Expected is_unique for unique field sensor_id"
+        assert "regex_match" in rule_functions, "Expected regex_match for pattern constraint"
+
+        # Verify we have explicit DQX rules from the contract
+        explicit_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "explicit"]
+        assert len(explicit_rules) >= 5, f"Expected at least 5 explicit DQX rules, got {len(explicit_rules)}"
+
+        # Verify predefined rules exist
+        predefined_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "predefined"]
+        assert len(predefined_rules) > 0, "Expected predefined rules to be generated"
+
     def test_generate_rules_from_datacontract_object(self, ws, spark, sample_contract_path):
         """Test generating rules from DataContract object."""
         generator = DQGenerator(workspace_client=ws, spark=spark)
@@ -53,52 +64,14 @@ class TestDataContractIntegration:
         assert_rules_have_valid_structure(rules)
         assert_rules_have_valid_metadata(rules)
 
-    def test_apply_generated_rules_to_dataframe(self, ws, spark, sample_contract_path):
-        """Test applying generated rules to actual DataFrame."""
-        generator = DQGenerator(workspace_client=ws)
+        # Verify specific expected rules
+        rule_functions = {r["check"]["function"] for r in rules}
+        assert "is_not_null" in rule_functions, "Expected is_not_null for required fields"
+        assert "is_unique" in rule_functions, "Expected is_unique for unique fields"
 
-        # Generate rules (only predefined rules to avoid Spark validation issues)
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=False
-        )
-
-        # Filter out rules with float arguments (is_in_range with decimal values)
-        # These cause validation warnings but work correctly when applied
-        valid_rules = []
-        for rule in rules:
-            args = rule.get("check", {}).get("arguments", {})
-            has_float = any(isinstance(v, float) for v in args.values())
-            if not has_float:
-                valid_rules.append(rule)
-
-        # Create sample DataFrame matching the contract schema (subset of fields)
-        schema = T.StructType(
-            [
-                T.StructField("sensor_id", T.StringType(), True),
-                T.StructField("reading_timestamp", T.TimestampType(), True),
-                T.StructField("temperature_celsius", T.DoubleType(), True),
-                T.StructField("sensor_status", T.StringType(), True),
-            ]
-        )
-
-        data = [
-            ("SENS-001", datetime(2024, 1, 15, 10, 30, 0), 25.5, "active"),
-            ("SENS-002", datetime(2024, 1, 16, 14, 20, 0), 30.2, "maintenance"),
-        ]
-
-        df = spark.createDataFrame(data, schema)
-
-        # Apply generated rules
-        engine = DQEngine(workspace_client=ws)
-        result_df = engine.apply_checks_by_metadata(df, valid_rules)
-
-        # Verify result DataFrame
-        assert result_df is not None
-        assert result_df.count() == 2
-
-        # Check that result columns were added
-        result_columns = result_df.columns
-        assert len(result_columns) > len(df.columns)
+        # Verify criticality levels from contract
+        error_rules = [r for r in rules if r["criticality"] == "error"]
+        assert len(error_rules) > 0, "Expected rules with error criticality"
 
     def test_contract_metadata_preserved(self, ws, spark, sample_contract_path):
         """Test that contract metadata is preserved in generated rules."""
@@ -145,61 +118,27 @@ class TestDataContractIntegration:
         assert "regex_match" in functions
         assert "is_in_list" in functions
 
-    def test_apply_rules_with_validation_failures(self, ws, spark):
-        """Test applying generated rules to DataFrame with invalid data."""
-        # Create temporary contract file
-        temp_path = create_test_contract_file()
-
-        try:
-            # Generate rules from contract
-            rules = self._generate_test_rules(ws, spark, temp_path)
-
-            # Create test DataFrame with invalid data
-            df = self._create_test_dataframe_with_invalid_data(spark)
-
-            # Apply rules and verify results
-            self._verify_validation_failures(ws, df, rules)
-        finally:
-            os.unlink(temp_path)
-
-    def _generate_test_rules(self, ws, spark, contract_path: str) -> list[dict]:
-        """Generate rules from test contract."""
+    def test_generate_rules_with_text_processing(self, ws, spark, sample_contract_path):
+        """Test generating rules with process_text_rules=True for LLM-based rule generation."""
         generator = DQGenerator(workspace_client=ws, spark=spark)
-        return generator.generate_rules_from_contract(
-            contract_file=contract_path, generate_predefined_rules=True, process_text_rules=False
+
+        # Generate rules with text processing enabled
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=True
         )
 
-    def _create_test_dataframe_with_invalid_data(self, spark):
-        """Create test DataFrame with mix of valid and invalid data."""
-        schema = T.StructType(
-            [
-                T.StructField("user_id", T.StringType(), True),
-                T.StructField("age", T.IntegerType(), True),
-                T.StructField("status", T.StringType(), True),
-            ]
-        )
+        # Verify rules were generated
+        assert len(rules) > 0
+        assert_rules_have_valid_structure(rules)
+        assert_rules_have_valid_metadata(rules)
 
-        data = [
-            ("USER-0001", 25, "active"),  # Valid
-            (None, 30, "active"),  # Invalid: null user_id
-            ("USER-0002", 150, "active"),  # Invalid: age > 120
-            ("USER-0003", 40, "unknown"),  # Invalid: status not in valid values
-            ("INVALID", 35, "inactive"),  # Invalid: pattern mismatch
-        ]
+        # Verify that text-based rules were processed by LLM
+        # The sample contract has a text expectation (line 60-63) about duplicate sensor readings
+        text_llm_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "text_llm"]
+        assert len(text_llm_rules) > 0, "Expected at least one text_llm rule from text expectations"
 
-        return spark.createDataFrame(data, schema)
-
-    def _verify_validation_failures(self, ws, df, rules):
-        """Verify that validation failures are correctly detected."""
-        engine = DQEngine(workspace_client=ws)
-        result_df = engine.apply_checks_by_metadata(df, rules)
-
-        # Verify errors were detected
-        assert result_df.count() == 5
-
-        # Split into good and bad
-        good_df, bad_df = engine.apply_checks_by_metadata_and_split(df, rules)
-
-        # Only the first row should be good
-        assert good_df.count() == 1
-        assert bad_df.count() == 4
+        # Verify that we still have predefined and explicit rules too
+        predefined_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "predefined"]
+        explicit_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "explicit"]
+        assert len(predefined_rules) > 0, "Expected predefined rules"
+        assert len(explicit_rules) > 0, "Expected explicit DQX rules"

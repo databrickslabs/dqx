@@ -16,11 +16,11 @@ def assert_valid_rule_structure(rule: dict) -> None:
         - "criticality": the rule's criticality level
         - "user_metadata": metadata associated with the rule
     """
-    assert "check" in rule
-    assert "function" in rule["check"]
-    assert "arguments" in rule["check"]
-    assert "criticality" in rule
-    assert "user_metadata" in rule
+    assert "check" in rule, "Rule must have a 'check' key"
+    assert "function" in rule["check"], "Rule check must have a 'function' key"
+    assert "arguments" in rule["check"], "Rule check must have an 'arguments' key"
+    assert "criticality" in rule, "Rule must have a 'criticality' key"
+    assert "user_metadata" in rule, "Rule must have a 'user_metadata' key"
 
 
 def assert_valid_contract_metadata(metadata: dict) -> None:

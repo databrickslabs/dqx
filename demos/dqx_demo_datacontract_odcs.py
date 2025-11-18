@@ -64,6 +64,26 @@ models:
   orders:
     type: table
     description: Customer orders table
+    
+    # Dataset-level quality checks (explicit DQX rules)
+    quality:
+      # Example 1: Custom DQX rule - Check dataset is not empty
+      - type: custom
+        engine: dqx
+        specification:
+          criticality: error
+          name: orders_dataset_not_empty
+          check:
+            function: is_aggr_not_less_than
+            arguments:
+              expression: count(*)
+              min_limit: 1
+      
+      # Example 2: Text-based expectation (requires LLM processing)
+      # Uncomment to use with process_text_rules=True
+      # - type: text
+      #   description: "Orders with total amount over $10000 must have order_status of 'confirmed' or 'shipped'"
+    
     fields:
       order_id:
         type: string
@@ -90,6 +110,18 @@ models:
         required: true
         minimum: 0.01
         maximum: 100000.00
+        # Field-level quality check (explicit DQX rule)
+        quality:
+          - type: custom
+            engine: dqx
+            specification:
+              criticality: warn
+              name: order_total_reasonable_check
+              check:
+                function: is_not_greater_than
+                arguments:
+                  column: order_total
+                  limit: 50000.00
       
       order_status:
         type: string
@@ -126,11 +158,21 @@ print(f"Contract: {contract['info']['title']} v{contract['info']['version']}")
 # MAGIC %md
 # MAGIC ## 2. Generate DQX Rules from Contract
 # MAGIC
-# MAGIC DQX automatically generates quality rules from field constraints like:
-# MAGIC - `required` → `is_not_null`
-# MAGIC - `unique` → `is_unique`
-# MAGIC - `pattern` → `regex_match`
+# MAGIC The contract above demonstrates three types of quality rules:
+# MAGIC
+# MAGIC ### 1. Predefined Rules (from field constraints)
+# MAGIC - `required: true` → `is_not_null`
+# MAGIC - `unique: true` → `is_unique`
+# MAGIC - `pattern: regex` → `regex_match`
 # MAGIC - `minimum`/`maximum` → `is_in_range`
+# MAGIC - `enum: [...]` → `is_in_list`
+# MAGIC
+# MAGIC ### 2. Explicit DQX Rules (type: custom, engine: dqx)
+# MAGIC - Dataset-level: `is_aggr_not_less_than` to check dataset is not empty
+# MAGIC - Field-level: `is_not_greater_than` for warning on high order totals
+# MAGIC
+# MAGIC ### 3. Text-based Rules (type: text - requires LLM)
+# MAGIC - Natural language business logic converted to executable rules
 # MAGIC - `enum` → `is_in_list`
 # MAGIC - `format` → `is_valid_date`/`is_valid_timestamp`
 
@@ -321,7 +363,105 @@ print(f"Generated {len(rules_from_object)} rules from DataContract object")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 10. Save and Load Generated Rules
+# MAGIC ## 10. AI-Assisted Rule Generation from Text Expectations
+# MAGIC
+# MAGIC DQX can automatically convert text-based expectations into executable rules using LLM.
+# MAGIC This is useful when business rules are too complex to express as simple constraints.
+# MAGIC
+# MAGIC **Prerequisites:** Requires DQX with LLM extras: `pip install databricks-labs-dqx[llm]`
+
+# COMMAND ----------
+
+# Create a contract with text-based quality expectations
+contract_with_text = {
+    "dataContractSpecification": "0.9.3",
+    "id": "orders-with-text",
+    "info": {"title": "Orders with Text Rules", "version": "1.0.0"},
+    "models": {
+        "orders": {
+            "description": "Order data with business logic rules",
+            "quality": [
+                {
+                    "type": "text",
+                    "description": "Orders over $1000 must have a manager approval_id. Orders under $1000 can have null approval_id."
+                },
+                {
+                    "type": "text",
+                    "description": "Customer orders should not have duplicate order_id for the same customer_id within the same day."
+                }
+            ],
+            "fields": {
+                "order_id": {"type": "string", "required": True},
+                "customer_id": {"type": "string", "required": True},
+                "order_amount": {"type": "number", "required": True},
+                "approval_id": {"type": "string", "required": False},
+                "order_date": {"type": "date", "required": True}
+            }
+        }
+    }
+}
+
+# Save contract to file
+contract_text_file = tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False).name
+with open(contract_text_file, 'w') as f:
+    yaml.dump(contract_with_text, f)
+
+# COMMAND ----------
+
+# Generate rules with text processing enabled
+# This will use LLM to convert text expectations into executable DQX rules
+rules_with_llm = generator.generate_rules_from_contract(
+    contract_file=contract_text_file,
+    generate_predefined_rules=True,
+    process_text_rules=True  # Enable LLM-based text rule processing
+)
+
+print(f"Generated {len(rules_with_llm)} total rules")
+
+# COMMAND ----------
+
+# Examine the text-based rules generated by LLM
+text_llm_rules = [r for r in rules_with_llm if r["user_metadata"]["rule_type"] == "text_llm"]
+predefined_rules = [r for r in rules_with_llm if r["user_metadata"]["rule_type"] == "predefined"]
+
+print(f"\n📝 Predefined rules (from field constraints): {len(predefined_rules)}")
+print(f"🤖 Text-based rules (generated by LLM): {len(text_llm_rules)}")
+
+print("\n=== LLM-Generated Rules ===")
+for rule in text_llm_rules:
+    print(f"\nRule: {rule['check']['function']}")
+    print(f"Arguments: {rule['check']['arguments']}")
+    print(f"Filter: {rule.get('filter', 'None')}")
+    print(f"Criticality: {rule['criticality']}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### How Text Rule Generation Works
+# MAGIC
+# MAGIC 1. **Text Expectations**: Define business rules in natural language in your contract
+# MAGIC 2. **LLM Processing**: DQX uses an LLM to understand the intent and convert to executable rules
+# MAGIC 3. **Validation**: Generated rules are validated for correctness
+# MAGIC 4. **Metadata**: Rules are tagged with `rule_type: "text_llm"` for tracking
+# MAGIC
+# MAGIC ### When to Use Text Rules
+# MAGIC
+# MAGIC - ✅ Complex business logic that's hard to express as simple constraints
+# MAGIC - ✅ Conditional rules (e.g., "if X then Y")
+# MAGIC - ✅ Cross-field validations
+# MAGIC - ✅ Domain-specific rules that benefit from natural language
+# MAGIC
+# MAGIC For more details, see: [AI-Assisted Quality Checks Generation](https://databrickslabs.github.io/dqx/docs/guide/ai_assisted_quality_checks_generation/)
+
+# COMMAND ----------
+
+# Cleanup text contract file
+os.unlink(contract_text_file)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 11. Save and Load Generated Rules
 # MAGIC
 # MAGIC Rules can be saved to JSON and loaded later for reuse.
 
@@ -371,11 +511,20 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # MAGIC | `enum: [...]` | `is_in_list` | Status codes |
 # MAGIC | `format: date/time` | `is_valid_date`/`is_valid_timestamp` | Dates, timestamps |
 # MAGIC
+# MAGIC ### Three Types of Rules
+# MAGIC
+# MAGIC | Rule Type | Source | Example |
+# MAGIC |-----------|--------|---------|
+# MAGIC | **Predefined** | Field constraints (required, unique, pattern, etc.) | `is_not_null`, `is_unique`, `regex_match` |
+# MAGIC | **Explicit DQX** | Custom DQX rules in quality section (`type: custom`) | `is_data_fresh_per_time_window`, custom checks |
+# MAGIC | **Text-based (LLM)** | Natural language expectations (`type: text`) | Complex business logic converted by AI |
+# MAGIC
 # MAGIC ### Next Steps
 # MAGIC
 # MAGIC - Store contracts in version control
 # MAGIC - Integrate with CI/CD pipelines
 # MAGIC - Add custom quality checks to contracts
+# MAGIC - Explore AI-assisted rule generation
 # MAGIC - Monitor quality metrics over time
 
 # COMMAND ----------

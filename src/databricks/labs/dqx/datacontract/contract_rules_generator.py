@@ -27,8 +27,6 @@ except ImportError:
 # Type checking imports (never evaluated at runtime, only by static type checkers)
 if TYPE_CHECKING:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
-    from datacontract.data_contract import DataContract
-    from datacontract.model.data_contract_specification import DataContractSpecification, Field, Model, Quality
 
 logger = logging.getLogger(__name__)
 
