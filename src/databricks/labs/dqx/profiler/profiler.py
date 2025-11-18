@@ -224,7 +224,7 @@ class DQProfiler(DQEngineBase):
             >>> print(f"Primary Keys: {result.get('primary_key_columns')}")
         """
         # Import here to avoid circular dependency
-        from databricks.labs.dqx.profiler.generator import DQGenerator  # pylint: disable=import-outside-toplevel
+        from databricks.labs.dqx.profiler.generator import DQGenerator
 
         # Create generator with LLM support
         generator = DQGenerator(
