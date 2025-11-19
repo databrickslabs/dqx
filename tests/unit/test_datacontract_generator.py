@@ -4,6 +4,7 @@ Unit tests for Data Contract to DQX rules generation.
 
 import json
 import os
+import tempfile
 from unittest.mock import Mock
 
 import pytest
@@ -1107,5 +1108,311 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
             )
             self._verify_multiple_text_rules(rules, mock_llm_engine)
+        finally:
+            os.unlink(temp_path)
+
+    # Additional tests for coverage improvement
+
+    def test_format_generates_timestamp_validation(self, generator):
+        """Test that format constraint on timestamp field generates is_valid_timestamp rule."""
+        contract_dict = create_basic_contract(
+            properties=[
+                {
+                    "name": "created_at",
+                    "logicalType": "timestamp",
+                    "required": True,
+                    "logicalTypeOptions": {"format": "yyyy-MM-dd HH:mm:ss"},
+                }
+            ]
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should generate is_valid_timestamp rule
+            timestamp_rules = [r for r in rules if "is_valid_timestamp" in r["check"]["function"]]
+            assert len(timestamp_rules) == 1
+            assert timestamp_rules[0]["check"]["arguments"]["timestamp_format"] == "%Y-%m-%d %H:%M:%S"
+        finally:
+            os.unlink(temp_path)
+
+    def test_format_on_string_type_ignored(self, generator):
+        """Test that format on non-date type doesn't generate format validation rules."""
+        contract_dict = create_basic_contract(
+            properties=[
+                {
+                    "name": "status",
+                    "logicalType": "string",  # Not date/timestamp
+                    "logicalTypeOptions": {"format": "yyyy-MM-dd"},  # Format should be ignored
+                }
+            ]
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should not generate format validation rules for string type
+            format_rules = [
+                r
+                for r in rules
+                if "valid_date" in r["check"]["function"] or "valid_timestamp" in r["check"]["function"]
+            ]
+            assert (
+                len(format_rules) == 0
+            ), "Format validation rules should not be generated for non-date/timestamp types"
+        finally:
+            os.unlink(temp_path)
+
+    def test_python_format_passthrough(self, generator):
+        """Test that Python format strings (with %) are passed through as-is."""
+        contract_dict = create_basic_contract(
+            properties=[
+                {
+                    "name": "birth_date",
+                    "logicalType": "date",
+                    "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Already Python format
+                }
+            ]
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            date_rules = [r for r in rules if "is_valid_date" in r["check"]["function"]]
+            assert len(date_rules) == 1
+            # Should keep Python format as-is
+            assert date_rules[0]["check"]["arguments"]["date_format"] == "%Y-%m-%d"
+        finally:
+            os.unlink(temp_path)
+
+    def test_contract_with_empty_schema_list(self, generator):
+        """Test handling of contract with empty schema list."""
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:empty_schema",
+            "name": "Empty Schema Contract",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [],  # Empty list
+        }
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should return empty list
+            assert len(rules) == 0
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_without_name_uses_unknown(self, generator):
+        """Test that schema without name uses 'unknown_schema' in metadata."""
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:no_name",
+            "name": "No Name Schema Contract",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    # No 'name' field
+                    "physicalType": "table",
+                    "properties": [{"name": "field1", "logicalType": "string", "required": True}],
+                }
+            ],
+        }
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            assert len(rules) >= 1
+            # Metadata should use "unknown_schema"
+            assert rules[0]["user_metadata"]["schema"] == "unknown_schema"
+        finally:
+            os.unlink(temp_path)
+
+    def test_deep_nested_fields_hit_recursion_limit(self, generator, caplog):
+        """Test that deeply nested fields hit recursion limit and log warning."""
+
+        # Create a deeply nested structure (25 levels deep, limit is 20)
+        def create_nested_property(depth):
+            if depth == 0:
+                return {"name": "leaf", "logicalType": "string", "required": True}
+            return {
+                "name": f"level_{depth}",
+                "logicalType": "object",
+                "properties": [create_nested_property(depth - 1)],
+            }
+
+        contract_dict = create_basic_contract(properties=[create_nested_property(25)])
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should log warning about max recursion depth
+            assert "Maximum recursion depth" in caplog.text or "exceeded" in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_file_not_found_raises_error(self, generator):
+        """Test that non-existent contract file raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError, match="Contract file not found"):
+            generator.generate_rules_from_contract(contract_file="/nonexistent/path/contract.yaml")
+
+    def test_invalid_yaml_raises_value_error(self, generator):
+        """Test that invalid contract structure raises ValueError."""
+        # Create temp file with malformed ODCS contract (missing required fields)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("kind: DataContract\n")
+            f.write("apiVersion: v3.0.2\n")
+            f.write("invalid_structure: not_a_valid_contract\n")
+            # Missing required fields like 'id', 'name', 'version', 'status'
+            temp_path = f.name
+
+        try:
+            with pytest.raises(ValueError, match="Failed to parse ODCS contract"):
+                generator.generate_rules_from_contract(contract_file=temp_path)
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_level_text_rules(self, generator, mock_workspace_client, mock_spark):
+        """Test text rules defined at schema level (not property level)."""
+        mock_llm = Mock()
+        mock_llm.get_business_rules_with_llm = Mock(
+            return_value=Mock(
+                quality_rules=[
+                    {
+                        "check": {"function": "is_unique", "arguments": {"columns": ["id", "timestamp"]}},
+                        "name": "unique_records",
+                        "criticality": "error",
+                    }
+                ]
+            )
+        )
+
+        gen_with_llm = DataContractRulesGenerator(workspace_client=mock_workspace_client, llm_engine=mock_llm)
+
+        # Contract with schema-level text rule (not property-level)
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:schema_text",
+            "name": "Schema Level Text Rules",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "test_schema",
+                    "physicalType": "table",
+                    "quality": [  # Schema-level quality
+                        {"type": "text", "description": "Records should be unique by id and timestamp"}
+                    ],
+                    "properties": [
+                        {"name": "id", "logicalType": "string"},
+                        {"name": "timestamp", "logicalType": "timestamp"},
+                    ],
+                }
+            ],
+        }
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = gen_with_llm.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
+            )
+
+            # Should have called LLM for schema-level text rule
+            assert mock_llm.get_business_rules_with_llm.called
+            assert len(rules) >= 1
+        finally:
+            os.unlink(temp_path)
+
+    def test_explicit_rule_with_object_implementation(self, generator):
+        """Test explicit rule where implementation is an object with attributes (not dict)."""
+        # Load a contract that will have implementation as Pydantic objects
+        contract_dict = create_contract_with_quality(
+            property_name="test_field",
+            logical_type="string",
+            quality_checks=[
+                {
+                    "type": "custom",
+                    "engine": "dqx",
+                    "implementation": {
+                        "name": "test_rule",
+                        "criticality": "warn",
+                        "check": {"function": "is_not_null", "arguments": {"column": "test_field"}},
+                    },
+                }
+            ],
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            # Load using datacontract-cli which returns Pydantic models
+            data_contract = DataContract(data_contract_file=temp_path)
+
+            rules = generator.generate_rules_from_contract(
+                contract=data_contract, generate_predefined_rules=False, process_text_rules=False
+            )
+
+            assert len(rules) >= 1
+            assert rules[0]["criticality"] == "warn"
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_with_no_properties(self, generator):
+        """Test schema with empty or missing properties list."""
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:no_props",
+            "name": "No Properties",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "empty_schema",
+                    "physicalType": "table",
+                    # No 'properties' field
+                }
+            ],
+        }
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should return empty list
+            assert len(rules) == 0
         finally:
             os.unlink(temp_path)
