@@ -73,7 +73,14 @@ To use data contract-based rule generation with ODCS (Open Data Contract Standar
 pip install 'databricks-labs-dqx[datacontract]'
 ```
 
-This installs the `datacontract-cli` library for parsing and validating ODCS contracts. See the [Data Contract Quality Rules Generation Guide](/docs/guide/data_contract_quality_rules_generation) for more details.
+This installs the `datacontract-cli` library for parsing and validating ODCS contracts.
+
+If your data contracts include text-based quality expectations (natural language rules), also install the `llm` extras:
+```commandline
+pip install 'databricks-labs-dqx[datacontract,llm]'
+```
+
+See the [Data Contract Quality Rules Generation Guide](/docs/guide/data_contract_quality_rules_generation) for more details.
 
 
 ### Installing DQX with company-hosted PyPI mirror

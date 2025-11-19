@@ -395,15 +395,16 @@ Text-based expectations are defined using `type: text` in the quality section:
 <Tabs>
   <TabItem value="YAML" label="Contract (YAML)" default>
     ```yaml
-    dataContractSpecification: 0.9.3
+    kind: DataContract
+    apiVersion: v3.0.2
     id: urn:datacontract:compliance:user_data
-    info:
-      title: User Data (GDPR Compliant)
-      version: 1.0.0
+    name: User Data (GDPR Compliant)
+    version: 1.0.0
+    status: active
 
-    models:
-      users:
-        type: table
+    schema:
+      - name: users
+        physicalType: table
         
         # Dataset-level text expectation
         quality:
@@ -413,9 +414,9 @@ Text-based expectations are defined using `type: text` in the quality section:
               email address. Users with the same email are considered duplicates
               and should be flagged for review.
         
-        fields:
-          email:
-            type: string
+        properties:
+          - name: email
+            logicalType: string
             required: true
             quality:
               # Field-level text expectation
@@ -425,8 +426,8 @@ Text-based expectations are defined using `type: text` in the quality section:
                   domains only (@company.com or @partner.com). Personal email
                   domains like gmail.com or yahoo.com should be rejected.
           
-          consent_date:
-            type: date
+          - name: consent_date
+            logicalType: date
             required: true
             quality:
               # Another text expectation
@@ -482,38 +483,42 @@ If you don't have LLM dependencies installed or want to skip text processing:
   </TabItem>
 </Tabs>
 
-## Complete Workflow Example
+## Complete Usage Example
 
 Here's a complete example showing contract-based rule generation with all three rule types:
 
 <Tabs>
   <TabItem value="YAML" label="Contract (YAML)" default>
     ```yaml
-    dataContractSpecification: 0.9.3
+    kind: DataContract
+    apiVersion: v3.0.2
     id: urn:datacontract:iot:sensor_readings
-    info:
-      title: IoT Sensor Readings
-      version: 2.1.0
-      description: Quality contract for IoT sensor data
-      owner: IoT Platform Team
+    name: IoT Sensor Readings
+    version: 2.1.0
+    description: Quality contract for IoT sensor data
+    status: active
+    owner: IoT Platform Team
 
-    models:
-      sensor_readings:
-        type: table
+    schema:
+      - name: sensor_readings
+        physicalType: table
         description: Real-time sensor readings from IoT devices
         
         # Explicit dataset-level check
         quality:
           - type: custom
             engine: dqx
-            specification:
+            description: Ensure sensor data is fresh and recent
+            implementation:
               name: sensor_data_freshness
               criticality: error
               check:
                 function: is_data_fresh_per_time_window
                 arguments:
-                  timestamp_column: reading_timestamp
-                  max_delay_hours: 24
+                  column: reading_timestamp
+                  window_minutes: 60
+                  min_records_per_window: 1
+                  lookback_windows: 24
                   groupby_columns:
                     - sensor_id
           
@@ -523,18 +528,20 @@ Here's a complete example showing contract-based rule generation with all three 
               The dataset should not contain duplicate sensor readings for the
               same sensor_id and reading_timestamp combination.
         
-        fields:
-          sensor_id:
-            type: string
+        properties:
+          - name: sensor_id
+            logicalType: string
             required: true           # Predefined: is_not_null
             unique: true             # Predefined: is_unique
-            pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'  # Predefined: regex_match
+            logicalTypeOptions:
+              pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'  # Predefined: regex_match
           
-          temperature:
-            type: decimal
+          - name: temperature
+            logicalType: decimal
             required: true           # Predefined: is_not_null
-            minimum: -40.0           # Predefined: is_in_range (combined)
-            maximum: 125.0           # Predefined: is_in_range (combined)
+            logicalTypeOptions:
+              minimum: -40.0           # Predefined: sql_expression (range check)
+              maximum: 125.0           # Predefined: sql_expression (range check)
             quality:
               # Text expectation
               - type: text
@@ -542,13 +549,14 @@ Here's a complete example showing contract-based rule generation with all three 
                   Temperature readings outside normal operating range (-10°C to 50°C)
                   should be flagged as warnings for manual review.
           
-          status:
-            type: string
+          - name: status
+            logicalType: string
             required: true           # Predefined: is_not_null
-            enum:                    # Predefined: is_in_list
-              - active
-              - maintenance
-              - offline
+            logicalTypeOptions:
+              enum:                    # Predefined: regex_match
+                - active
+                - maintenance
+                - offline
     ```
   </TabItem>
   <TabItem value="Python" label="Python Code">
@@ -718,27 +726,31 @@ Enable domain teams to define and own quality contracts:
 ```python
 # Data product team defines their contract
 contract_yaml = """
-dataContractSpecification: 0.9.3
+kind: DataContract
+apiVersion: v3.0.2
 id: urn:datacontract:marketing:customer_360
-info:
-  title: Customer 360 View
-  version: 1.2.0
-  owner: Marketing Analytics Team
+name: Customer 360 View
+version: 1.2.0
+status: active
+owner: Marketing Analytics Team
   
-models:
-  customer_360:
-    fields:
-      customer_id:
-        type: string
+schema:
+  - name: customer_360
+    physicalType: table
+    properties:
+      - name: customer_id
+        logicalType: string
         required: true
         unique: true
-      email:
-        type: string
+      - name: email
+        logicalType: string
         required: true
-        pattern: '^[a-zA-Z0-9._%+-]+@.+$'
-      lifetime_value:
-        type: decimal
-        minimum: 0
+        logicalTypeOptions:
+          pattern: '^[a-zA-Z0-9._%+-]+@.+$'
+      - name: lifetime_value
+        logicalType: decimal
+        logicalTypeOptions:
+          minimum: 0
 """
 
 # Central platform team generates and applies rules
@@ -754,20 +766,22 @@ Define compliance requirements in contracts:
 
 ```python
 contract_yaml = """
-dataContractSpecification: 0.9.3
+kind: DataContract
+apiVersion: v3.0.2
 id: urn:datacontract:gdpr:personal_data
-info:
-  title: GDPR Personal Data
-  version: 1.0.0
+name: GDPR Personal Data
+version: 1.0.0
+status: active
   
-models:
-  user_data:
-    fields:
-      email:
-        type: string
+schema:
+  - name: user_data
+    physicalType: table
+    properties:
+      - name: email
+        logicalType: string
         required: true
-      consent_date:
-        type: date
+      - name: consent_date
+        logicalType: date
         required: true
         quality:
           - type: text

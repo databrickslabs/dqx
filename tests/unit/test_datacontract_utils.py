@@ -143,28 +143,8 @@ def create_contract_with_quality(
     Returns:
         An ODCS v3.x contract dictionary with quality checks.
     """
-    # Convert legacy 'specification' format to 'implementation' for tests still using old format
-    converted_quality: list[dict] = []
-    for check in quality_checks:
-        if check.get("type") == "custom" and check.get("engine") == "dqx" and "specification" in check:
-            # Convert old specification format to ODCS v3.x implementation format
-            spec = check["specification"]
-            converted_check: dict = {
-                "type": "custom",
-                "engine": "dqx",
-                "implementation": {
-                    "name": spec.get("name", "unnamed_rule"),
-                    "check": spec["check"],
-                },
-            }
-            if "criticality" in spec:
-                converted_check["implementation"]["criticality"] = spec["criticality"]  # type: ignore[index]
-            converted_quality.append(converted_check)
-        else:
-            # Already in ODCS v3.x format or other type
-            converted_quality.append(check)
-
-    property_def = {"name": property_name, "logicalType": logical_type, "quality": converted_quality}
+    # All quality checks should already be in ODCS v3.x format
+    property_def = {"name": property_name, "logicalType": logical_type, "quality": quality_checks}
 
     return create_basic_contract(schema_name=schema_name, properties=[property_def])
 

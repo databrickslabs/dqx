@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable
 from importlib.util import find_spec
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -947,13 +947,19 @@ class DataContractRulesGenerator(DQEngineBase):
             criticality = impl.criticality if hasattr(impl, "criticality") and impl.criticality else default_criticality
         return check, name, criticality
 
-    def _convert_check_to_dict(self, check) -> dict:
-        """Convert check object to dictionary format."""
-        if hasattr(check, "model_dump"):
-            return check.model_dump()  # type: ignore[union-attr]
+    def _convert_check_to_dict(self, check: Any) -> dict:
+        """Convert check object to dictionary format.
+
+        Handles Pydantic models (from datacontract-cli), dicts, and custom check objects.
+        """
+        # Pydantic v2 models from datacontract-cli
+        if hasattr(check, "model_dump") and callable(getattr(check, "model_dump", None)):
+            return check.model_dump()
+        # Plain dict
         if isinstance(check, dict):
             return check
-        return {"function": check.function, "arguments": check.arguments}  # type: ignore[union-attr]
+        # Custom check object with function and arguments attributes
+        return {"function": check.function, "arguments": check.arguments}
 
     def _build_rule_dict(
         self,

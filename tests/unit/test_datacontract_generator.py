@@ -549,7 +549,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                 {
                     "type": "custom",
                     "engine": "dqx",
-                    "specification": {
+                    "implementation": {
                         "criticality": "error",
                         "name": "check1",
                         "check": {"function": "is_not_null", "arguments": {"column": "data"}},
@@ -558,7 +558,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                 {
                     "type": "custom",
                     "engine": "dqx",
-                    "specification": {
+                    "implementation": {
                         "criticality": "warn",
                         "name": "check2",
                         "check": {
@@ -667,7 +667,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 {
                     "type": "custom",
                     "engine": "dqx",
-                    "specification": {
+                    "implementation": {
                         "check": {"function": "is_not_null", "arguments": {"column": "data"}},
                     },
                 },
@@ -675,7 +675,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 {
                     "type": "custom",
                     "engine": "some_other_engine",
-                    "specification": {"some": "config"},
+                    "implementation": {"some": "config"},
                 },
             ],
         )
@@ -703,12 +703,12 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 {
                     "type": "custom",
                     "engine": "soda",  # Non-DQX engine
-                    "specification": {"checks": ["row_count > 0"]},
+                    "implementation": {"checks": ["row_count > 0"]},
                 },
                 {
                     "type": "custom",
                     "engine": "great_expectations",  # Non-DQX engine
-                    "specification": {"expectation": "expect_column_values_to_not_be_null"},
+                    "implementation": {"expectation": "expect_column_values_to_not_be_null"},
                 },
             ],
         )
