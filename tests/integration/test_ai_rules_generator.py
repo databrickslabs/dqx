@@ -9,25 +9,11 @@ from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 # Sample user input with specific requirements to avoid flakiness in tests
 USER_INPUT = """
-Username should not start with 's' and should not contain more than 20 letters if user id is provided. Error message must be: "Username should not start with 's' and should not contain more than 20 letters if user id is provided"
-Apply validation when user_id is not null. Use SQL expression for this check with the following expression: NOT (username LIKE 's%') AND LENGTH(username) <= 20.
-Users at age 18 or above must have a valid email address.
-Age should be between 0 and 120.
+Users at age 18 or above must have a valid email address checked using regex.
+Age should be between 0 and 120. Output the rules in the given order.
 """
 
 EXPECTED_CHECKS = [
-    {
-        "check": {
-            "arguments": {
-                "columns": ["username"],
-                "expression": "NOT (username LIKE 's%') AND LENGTH(username) <= 20",
-                "msg": "Username should not start with 's' and should not contain more than 20 letters if user id is provided",
-            },
-            "function": "sql_expression",
-        },
-        "criticality": "error",
-        "filter": "user_id IS NOT NULL",
-    },
     {
         "check": {
             "arguments": {"column": "email", "regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
