@@ -1,8 +1,12 @@
 import datetime
 import re
+import logging
 import warnings
 import ipaddress
 import uuid
+from typing import Any
+from functools import partial
+from databricks.labs.blueprint.parallel import Threads, ManyError
 from collections.abc import Callable
 from enum import Enum
 from itertools import zip_longest
@@ -19,8 +23,11 @@ from databricks.labs.dqx.utils import (
     normalize_col_str,
     get_columns_as_strings,
     to_lowercase,
+    strip_jvm_stacktrace,
 )
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
+
+logger = logging.getLogger(__name__)
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
@@ -2705,3 +2712,77 @@ def _validate_sql_query_params(query: str, merge_columns: list[str]) -> None:
         raise UnsafeSqlQueryError(
             "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
         )
+
+@register_rule("dataset")
+def row_count(table_expr: str,
+              row_count_column: str = "row_count",
+              row_count_error_column: str = "row_count_error",
+              worker_count: int = 8):
+    """
+    Computes row counts for tables listed in the dataframe's records.
+
+    Each row of a dataframe is expected to contain a table name. The computation is done in parallel on the specified number of workers.
+
+    Args:
+        table_expr: The sql expression that will be used to get the table fqn name. For example:
+                    - `table_name` when there is only one column in the dataframe with table names.
+                    - `catalog_name || '.' || schema_name || '.' || table_name` when there are 3 columns in the dataframe: catalog_name, schema_name, table_name.
+        row_count_column: Name of the column that will contain the row count. Defaults to "row_count".
+        worker_count: Number of workers to use for the computation. Defaults to 8.
+
+    Note:
+    - The operation collects all tables names from the input dataframe and computes row counts for each table in parallel.
+    - Ensure that the input dataframe listing table names is not too large to avoid driver memory issues.
+    - In case of major driver failure operation will lose all computed data and needs to be restarted.
+
+    Returns:
+        Input dataframe enriched with row counts.
+
+        In case error occurs while computing row count, the _errors column will contain the error message.
+    """
+
+    def compute_row_counts(spark: SparkSession, table_name: str) -> dict[str, Any]:
+        try:
+            logger.debug(f"Computing row count for table: {table_name!r}")
+            cnt = spark.table(table_name).count()
+            logger.info(f"Row count for table {table_name!r}: {cnt}")
+            return {'__table_name': table_name, row_count_column: cnt}
+        except Exception as e:
+            logger.warning(f"Error computing row count for table {table_name!r}: {strip_jvm_stacktrace(e)}")
+            return {'__table_name': table_name, row_count_error_column: e}
+
+    def apply(df: DataFrame, spark: SparkSession, ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        df = df.withColumn('__table_name', F.expr(table_expr))
+
+        table_names = [row['__table_name'] for row in df.select('__table_name').distinct().collect()]
+
+        tasks = [partial(compute_row_counts, spark, table_name) for table_name in table_names]
+        results, bad = Threads.gather("row_count", tasks, worker_count)
+
+        # bad should normally be empty, as underyling function is not raising any execeptions
+        # spark session problems should lead to results being exception, not being added to bad
+        # errors can only happen if there is a problem with python REPL
+        if bad:
+            raise ManyError(bad)
+
+        df_counts = spark.createDataFrame(
+            results,
+            types.StructType([
+                types.StructField("__table_name", types.StringType(), False),
+                types.StructField(row_count_column, types.LongType(), True),
+                types.StructField(row_count_error_column, types.StringType(), True)
+            ]))
+
+        final_df = df.alias("df").join(df_counts.alias("counts"), on="__table_name", how="left")
+
+        final_df = final_df.select("df.*", f"counts.{row_count_column}", f"counts.{row_count_error_column}")
+
+        return final_df
+
+    condition = make_condition(
+        F.col(row_count_error_column).isNotNull(),
+        F.concat_ws("", F.lit("Error computing row count for table: "), F.col(row_count_error_column)),
+        f"{row_count_error_column}_error",
+    )
+
+    return condition, apply

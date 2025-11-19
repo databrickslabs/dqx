@@ -448,3 +448,12 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     if is_array:
         return F.transform(col_expr, F.lower)
     return F.lower(col_expr)
+
+
+def strip_jvm_stacktrace(exception: Exception) -> str:
+    """Returns exception message with 'JVM stacktrace:' part of message stripped"""
+    s = str(exception)
+    if stack_idx := s.find("JVM stacktrace:"):
+        return s[:stack_idx].rstrip()
+    else:
+        return s
