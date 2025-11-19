@@ -658,6 +658,72 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_field_with_only_integer_maximum_constraint(self, generator):
+        """Test that field with only integer maximum generates is_aggr_not_greater_than rule."""
+        contract_dict = create_basic_contract(
+            properties=[
+                {
+                    "name": "age",
+                    "logicalType": "integer",
+                    "logicalTypeOptions": {
+                        "maximum": 150,  # Integer maximum
+                    },
+                }
+            ]
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should generate is_aggr_not_greater_than rule for integer maximum
+            rule_functions = [rule["check"]["function"] for rule in rules]
+            assert "is_aggr_not_greater_than" in rule_functions
+
+            # Verify the rule details
+            max_rule = next(r for r in rules if r["check"]["function"] == "is_aggr_not_greater_than")
+            assert max_rule["check"]["arguments"]["expression"] == "max(age)"
+            assert max_rule["check"]["arguments"]["max_limit"] == 150
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_field_with_only_integer_minimum_constraint(self, generator):
+        """Test that field with only integer minimum generates is_aggr_not_less_than rule."""
+        contract_dict = create_basic_contract(
+            properties=[
+                {
+                    "name": "quantity",
+                    "logicalType": "integer",
+                    "logicalTypeOptions": {
+                        "minimum": 0,  # Integer minimum
+                    },
+                }
+            ]
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should generate is_aggr_not_less_than rule for integer minimum
+            rule_functions = [rule["check"]["function"] for rule in rules]
+            assert "is_aggr_not_less_than" in rule_functions
+
+            # Verify the rule details
+            min_rule = next(r for r in rules if r["check"]["function"] == "is_aggr_not_less_than")
+            assert min_rule["check"]["arguments"]["expression"] == "min(quantity)"
+            assert min_rule["check"]["arguments"]["min_limit"] == 0
+
+        finally:
+            os.unlink(temp_path)
+
     def test_explicit_dqx_quality_check_detection(self, generator):
         """Test that explicit DQX quality checks are correctly identified."""
         contract_dict = create_contract_with_quality(
@@ -857,6 +923,50 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             # Verify both min and max length are checked
             assert "LENGTH(postal_code) >= 5" in expression
             assert "LENGTH(postal_code) <= 10" in expression
+
+        finally:
+            os.unlink(temp_path)
+
+    def test_field_with_logical_type_options_but_no_constraints(self, generator):
+        """Test field with logicalTypeOptions but no min/max constraints."""
+        contract_dict = create_basic_contract(
+            properties=[
+                {
+                    "name": "status",
+                    "logicalType": "string",
+                    "logicalTypeOptions": {
+                        "description": "User status field",
+                        # No minimum, maximum, minLength, maxLength, etc.
+                    },
+                }
+            ]
+        )
+
+        temp_path = create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+            )
+
+            # Should not generate any range or length rules for this field
+            # Only count rules for 'status' field
+            status_rules = [r for r in rules if "status" in r.get("name", "")]
+            # There should be no constraint-based rules
+            constraint_rules = [
+                r
+                for r in status_rules
+                if any(
+                    func in r["check"]["function"]
+                    for func in (
+                        "is_in_range",
+                        "is_length_between",
+                        "is_aggr_not_less_than",
+                        "is_aggr_not_greater_than",
+                    )
+                )
+            ]
+            assert len(constraint_rules) == 0
 
         finally:
             os.unlink(temp_path)
