@@ -47,7 +47,7 @@ class TestExplicitDQXCriticality:
                 {
                     "type": "custom",
                     "engine": "dqx",
-                    "specification": {
+                    "implementation": {
                         "criticality": "warn",  # Explicitly set to warn
                         "check": {
                             "function": "regex_match",
@@ -83,7 +83,7 @@ class TestExplicitDQXCriticality:
                 {
                     "type": "custom",
                     "engine": "dqx",
-                    "specification": {
+                    "implementation": {
                         "criticality": "error",  # Explicitly set to error
                         "check": {
                             "function": "is_not_null_and_not_empty",
@@ -116,7 +116,7 @@ class TestExplicitDQXCriticality:
                 {
                     "type": "custom",
                     "engine": "dqx",
-                    "specification": {
+                    "implementation": {
                         # No criticality specified
                         "check": {
                             "function": "is_not_null",
