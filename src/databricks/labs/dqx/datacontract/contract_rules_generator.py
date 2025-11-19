@@ -56,7 +56,7 @@ class DataContractRulesGenerator(DQEngineBase):
             custom_check_functions: Optional dictionary of custom check functions.
 
         Raises:
-            ImportError: If datacontract-cli is not installed, or if LLM dependencies are missing when llm_engine is provided.
+            ImportError: If LLM dependencies are missing when llm_engine is provided.
         """
         # Validate LLM dependencies if llm_engine is provided
         if llm_engine is not None:

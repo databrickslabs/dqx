@@ -1,7 +1,6 @@
 import logging
 import json
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 from pyspark.sql import SparkSession
 
@@ -26,14 +25,11 @@ except ImportError:
 # Conditional imports for data contract support
 try:
     from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
+    from datacontract.data_contract import DataContract  # type: ignore
 
     DATACONTRACT_ENABLED = True
 except ImportError:
     DATACONTRACT_ENABLED = False
-
-# Type checking imports (for type hints only, not evaluated at runtime)
-if TYPE_CHECKING:
-    from datacontract.data_contract import DataContract
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +140,7 @@ class DQGenerator(DQEngineBase):
     @telemetry_logger("generator", "generate_rules_from_contract")
     def generate_rules_from_contract(
         self,
-        contract: "DataContract | None" = None,
+        contract: DataContract | None = None,
         contract_file: str | None = None,
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,

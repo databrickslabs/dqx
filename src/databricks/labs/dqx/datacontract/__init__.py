@@ -11,22 +11,15 @@ Note: The datacontract package is required. LLM extras are optional and only nee
 if you want to use text-based rule generation with llm_engine.
 """
 
-try:
-    from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
-except ImportError as e:
-    if "datacontract" in str(e) and "dspy" not in str(e):
-        raise ImportError(
-            "datacontract extras not installed. Install additional dependencies by running "
-            "`pip install databricks-labs-dqx[datacontract]`."
-        ) from e
-    if "dspy" in str(e) or "DQLLMEngine" in str(e):
-        raise ImportError(
-            "LLM extras not installed. Install additional dependencies by running "
-            "`pip install databricks-labs-dqx[llm]`. "
-            "Note: LLM extras are only needed if you want to use text-based rule generation with llm_engine."
-        ) from e
-    raise
+from importlib.util import find_spec
 
-__all__ = [
-    "DataContractRulesGenerator",
+required_specs = [
+    "datacontract",
 ]
+
+# Check if required datacontract packages are installed
+if not all(find_spec(spec) for spec in required_specs):
+    raise ImportError(
+        "datacontract extras not installed. Install additional dependencies by running "
+        "`pip install databricks-labs-dqx[datacontract]`."
+    )
