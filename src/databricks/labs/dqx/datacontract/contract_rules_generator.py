@@ -9,16 +9,14 @@ import json
 import logging
 from collections.abc import Callable
 from importlib.util import find_spec
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import yaml
 
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
-from datacontract.model.data_contract_specification import (  # type: ignore
-    DataContractSpecification,
-    Field,
-    Model,
-    Quality,
-)
+from open_data_contract_standard.model import OpenDataContractStandard  # type: ignore
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
@@ -34,11 +32,12 @@ logger = logging.getLogger(__name__)
 
 class DataContractRulesGenerator(DQEngineBase):
     """
-    Generator for creating DQX quality rules from data contract specifications.
+    Generator for creating DQX quality rules from ODCS v3.x data contracts.
 
-    This class supports generating quality rules from data contracts in various formats
-    (currently ODCS v3.0.x). Rules can be generated from predefined schema constraints
-    or explicitly from quality definitions in the contract.
+    This class processes Open Data Contract Standard (ODCS) v3.x contracts natively,
+    extracting constraints from logicalTypeOptions and generating DQX quality rules.
+    Supports predefined rules from schema properties, explicit rules from quality sections,
+    and text-based expectations processed via LLM.
     """
 
     def __init__(
@@ -82,15 +81,15 @@ class DataContractRulesGenerator(DQEngineBase):
         default_criticality: str = "error",
     ) -> list[dict]:
         """
-        Generate DQX quality rules from a data contract specification.
+        Generate DQX quality rules from an ODCS v3.x data contract.
 
-        Parses a data contract (currently supporting ODCS v3.0.x) and generates rules based on
-        schema properties, explicit quality definitions, and text-based expectations.
+        Parses an ODCS v3.x contract natively and generates rules based on schema properties,
+        logicalTypeOptions constraints, explicit quality definitions, and text-based expectations.
 
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Either `contract` or `contract_file` must be provided.
             contract_file: Path to contract YAML file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
-            contract_format: Contract format specification (default is "odcs").
+            contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
             process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
             default_criticality: Default criticality level for generated rules (default is "error").
@@ -102,13 +101,14 @@ class DataContractRulesGenerator(DQEngineBase):
             ValueError: If neither or both contract parameters are provided, or format not supported.
 
         Note:
-            Exactly one of 'contract' or 'contract_file' must be provided.
+            Exactly one of 'contract' or 'contract_file' must be provided. For ODCS v3.x,
+            contract_file is preferred.
         """
         self._validate_inputs(contract, contract_file, contract_format)
-        spec = self._load_contract_spec(contract, contract_file)
-        self._validate_contract_spec(spec)
+        odcs = self._load_contract_spec(contract, contract_file)
+        self._validate_contract_spec(odcs)
 
-        dq_rules = self._generate_all_rules(spec, generate_predefined_rules, process_text_rules, default_criticality)
+        dq_rules = self._generate_all_rules(odcs, generate_predefined_rules, process_text_rules, default_criticality)
         self._validate_generated_rules(dq_rules)
 
         return dq_rules
@@ -124,52 +124,98 @@ class DataContractRulesGenerator(DQEngineBase):
         if contract_format != "odcs":
             raise ValueError(f"Contract format '{contract_format}' not supported. Currently only 'odcs' is supported.")
 
-    def _load_contract_spec(
-        self, contract: DataContract | None, contract_file: str | None
-    ) -> DataContractSpecification:
-        """Load DataContractSpecification from contract or file."""
+    def _load_contract_spec(self, contract: DataContract | None, contract_file: str | None) -> OpenDataContractStandard:
+        """Load ODCS v3.x contract natively (no conversion to v1.2.1)."""
         if contract_file is not None:
-            data_contract = DataContract(data_contract_file=contract_file)
-            return data_contract.get_data_contract_specification()
+            # Load ODCS v3.x directly from YAML file
+            return self._load_contract_from_file(contract_file)
 
-        # Contract is guaranteed to be not None by validation
-        assert contract is not None
-        return contract.get_data_contract_specification()
+        # For pre-loaded contract, we need to work with the file path or contract data
+        if contract is not None:
+            # Try to get the file path first
+            contract_file_path = getattr(contract, '_data_contract_file', None) or getattr(
+                contract, 'data_contract_file', None
+            )
 
-    def _validate_contract_spec(self, spec: DataContractSpecification) -> None:
-        """Validate contract specification using datacontract-cli lint."""
-        lint_result = (DataContract(data_contract=spec.model_dump())).lint()  # type: ignore[arg-type]
-        if lint_result.result != "passed":
-            checks = lint_result.checks or []
-            errors = [f"{c.check}: {c.details}" for c in checks if hasattr(c, "check") and c.result != "passed"]
-            if errors:
-                logger.warning(f"Contract validation warnings: {errors}")
+            if contract_file_path:
+                return self._load_contract_from_file(contract_file_path)
 
-        contract_version = getattr(spec.info, "version", "unknown") if spec.info else "unknown"
-        logger.info(f"Parsing data contract '{spec.id or 'unknown'}' v{contract_version}")
+            # If no file path, try to get the contract data directly
+            contract_data = getattr(contract, 'data_contract', None)
+            if contract_data:
+                return OpenDataContractStandard.model_validate(contract_data)
+
+            raise ValueError(
+                "For ODCS v3.x native support, provide contract_file instead of pre-loaded contract object"
+            )
+
+        raise ValueError("Either contract or contract_file must be provided")
+
+    def _load_contract_from_file(self, contract_location: str) -> OpenDataContractStandard:
+        """
+        Load ODCS v3.x contract directly from YAML file.
+
+        This method loads the contract YAML and creates an OpenDataContractStandard object
+        directly, avoiding the buggy resolve_data_contract_v2 function.
+
+        Args:
+            contract_location: Path to the contract YAML file
+
+        Returns:
+            OpenDataContractStandard object
+
+        Raises:
+            FileNotFoundError: If contract file doesn't exist
+            ValueError: If contract YAML is invalid
+        """
+        contract_path = Path(contract_location)
+
+        if not contract_path.exists():
+            raise FileNotFoundError(f"Contract file not found: {contract_location}")
+
+        # Load YAML file
+        with open(contract_path, 'r', encoding='utf-8') as f:
+            contract_dict = yaml.safe_load(f)
+
+        # Create OpenDataContractStandard object using pydantic validation
+        try:
+            return OpenDataContractStandard.model_validate(contract_dict)
+        except Exception as e:
+            raise ValueError(f"Failed to parse ODCS contract from {contract_location}: {e}") from e
+
+    def _validate_contract_spec(self, odcs: OpenDataContractStandard) -> None:
+        """Validate ODCS v3.x contract specification."""
+        # Skip datacontract library's lint() validation due to bugs in the external library
+        # We perform our own validation when generating rules via DQEngine.validate_checks()
+        contract_version = odcs.version or "unknown"
+        contract_name = odcs.name or odcs.id or "unknown"
+        logger.info(f"Parsing ODCS v3.x contract '{contract_name}' v{contract_version} (API {odcs.apiVersion})")
 
     def _generate_all_rules(
         self,
-        spec: DataContractSpecification,
+        odcs: OpenDataContractStandard,
         generate_predefined_rules: bool,
         process_text_rules: bool,
         default_criticality: str,
     ) -> list[dict]:
-        """Generate all rules from contract models."""
+        """Generate all rules from ODCS v3.x contract schemas."""
         dq_rules = []
 
-        for model_name, model in (spec.models or {}).items():
+        # ODCS v3.x uses schema_ list instead of models dict
+        for schema_obj in odcs.schema_ or []:
+            schema_name = schema_obj.name or "unknown_schema"
+
             if generate_predefined_rules:
-                predefined_rules = self._generate_predefined_rules_for_model(
-                    model, model_name, spec, default_criticality
+                predefined_rules = self._generate_predefined_rules_for_schema(
+                    schema_obj, schema_name, odcs, default_criticality
                 )
                 dq_rules.extend(predefined_rules)
 
             if process_text_rules:
-                text_rules = self._process_text_rules_for_model(model, model_name, spec, default_criticality)
+                text_rules = self._process_text_rules_for_schema(schema_obj, schema_name, odcs)
                 dq_rules.extend(text_rules)
 
-            explicit_rules = self._process_explicit_rules_for_model(model, model_name, spec, default_criticality)
+            explicit_rules = self._process_explicit_rules_for_schema(schema_obj, schema_name, odcs, default_criticality)
             dq_rules.extend(explicit_rules)
 
         return dq_rules
@@ -183,63 +229,65 @@ class DataContractRulesGenerator(DQEngineBase):
             else:
                 logger.info(f"Successfully generated {len(dq_rules)} DQX rules from data contract")
 
-    @staticmethod
-    def _get_contract_version(spec: DataContractSpecification) -> str:
-        """Extract contract version from specification."""
-        return getattr(spec.info, 'version', 'unknown') if spec.info else 'unknown'
+    # ==================================================================================
+    # ODCS v3.x Native Support Methods
+    # ==================================================================================
 
-    def _generate_predefined_rules_for_model(
-        self, model: Model, model_name: str, spec: DataContractSpecification, default_criticality: str
+    def _generate_predefined_rules_for_schema(
+        self, schema_obj, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
     ) -> list[dict]:
-        """Generate predefined rules from all fields in a model."""
+        """Generate predefined rules from all properties in an ODCS schema."""
         rules = []
-        for field_name, field in (model.fields or {}).items():
-            field_rules = self._generate_predefined_rules_for_field(
-                field, field_name, model_name, spec, default_criticality
+
+        contract_metadata = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+        }
+
+        for prop in schema_obj.properties or []:
+            prop_rules = self._generate_predefined_rules_for_property(
+                prop, schema_name, contract_metadata, default_criticality
             )
-            rules.extend(field_rules)
+            rules.extend(prop_rules)
+
         return rules
 
-    def _generate_predefined_rules_for_field(
+    def _generate_predefined_rules_for_property(
         self,
-        field: Field,
-        field_name: str,
-        model_name: str,
-        spec: DataContractSpecification,
+        prop,  # ODCS SchemaProperty object
+        schema_name: str,
+        contract_metadata: dict,
         default_criticality: str,
         parent_path: str = "",
         recursion_depth: int = 0,
     ) -> list[dict]:
-        """Generate predefined DQ rules from a field's constraints."""
-        # Protect against excessive recursion depth (e.g., circular references or very deep nesting)
+        """Generate predefined DQ rules from an ODCS v3.x property."""
+
         max_recursion_depth = 20
         if recursion_depth > max_recursion_depth:
             logger.warning(
-                f"Maximum recursion depth ({max_recursion_depth}) exceeded for field '{field_name}'. "
-                f"Skipping further nested fields to prevent potential circular references."
+                f"Maximum recursion depth ({max_recursion_depth}) exceeded for property '{prop.name}'. "
+                f"Skipping further nested properties."
             )
             return []
 
         # Build full column path
-        column_path = f"{parent_path}.{field_name}" if parent_path else field_name
+        column_path = f"{parent_path}.{prop.name}" if parent_path else prop.name
 
-        contract_metadata = {
-            "contract_id": spec.id or "unknown",
-            "contract_version": self._get_contract_version(spec),
-            "model": model_name,
-            "field": column_path,
-        }
+        # Update metadata with field info
+        field_metadata = {**contract_metadata, "field": column_path}
 
         rules = []
 
-        # If field has nested fields, recurse
-        if field.fields:
-            for nested_name, nested_field in field.fields.items():
-                nested_rules = self._generate_predefined_rules_for_field(
-                    nested_field,
-                    nested_name,
-                    model_name,
-                    spec,
+        # Handle nested properties (objects)
+        if prop.logicalType == "object" and prop.properties:
+            for nested_prop in prop.properties:
+                nested_rules = self._generate_predefined_rules_for_property(
+                    nested_prop,
+                    schema_name,
+                    contract_metadata,
                     default_criticality,
                     column_path,
                     recursion_depth + 1,
@@ -247,24 +295,70 @@ class DataContractRulesGenerator(DQEngineBase):
                 rules.extend(nested_rules)
             return rules
 
-        # Generate rules based on field constraints
-        rules.extend(self._generate_not_null_rules(field, column_path, contract_metadata, default_criticality))
-        rules.extend(self._generate_unique_rules(field, column_path, contract_metadata, default_criticality))
-        rules.extend(self._generate_enum_rules(field, column_path, contract_metadata, default_criticality))
-        rules.extend(self._generate_pattern_rules(field, column_path, contract_metadata, default_criticality))
-        rules.extend(self._generate_range_rules_from_field(field, column_path, contract_metadata, default_criticality))
-        rules.extend(self._generate_length_rules(field, column_path, contract_metadata, default_criticality))
-        rules.extend(self._generate_format_rules_from_field(field, column_path, contract_metadata, default_criticality))
+        # Generate rules from direct attributes
+        rules.extend(
+            self._generate_rules_from_direct_attributes(prop, column_path, field_metadata, default_criticality)
+        )
+
+        # Generate rules from logicalTypeOptions
+        if prop.logicalTypeOptions:
+            rules.extend(
+                self._generate_rules_from_logical_type_options(
+                    prop, column_path, field_metadata, default_criticality, prop.logicalTypeOptions
+                )
+            )
 
         return rules
 
-    def _generate_not_null_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+    def _generate_rules_from_direct_attributes(
+        self, prop, column_path: str, field_metadata: dict, default_criticality: str
     ) -> list[dict]:
-        """Generate not_null rules from required field constraint."""
-        if not field.required:
-            return []
+        """Generate rules from direct property attributes (required, unique)."""
+        rules = []
+        if prop.required:
+            rules.extend(self._generate_not_null_rules_from_property(column_path, field_metadata, default_criticality))
+        if prop.unique:
+            rules.extend(self._generate_unique_rules_from_property(column_path, field_metadata, default_criticality))
+        return rules
 
+    def _generate_rules_from_logical_type_options(
+        self, prop, column_path: str, field_metadata: dict, default_criticality: str, opts: dict
+    ) -> list[dict]:
+        """Generate rules from logicalTypeOptions (pattern, ranges, length, format)."""
+        rules = []
+
+        # Handle pattern constraints
+        if opts.get('pattern'):
+            rules.extend(
+                self._generate_pattern_rules_from_options(column_path, field_metadata, default_criticality, opts)
+            )
+
+        # Handle range constraints from minimum and maximum
+        if opts.get('minimum') is not None or opts.get('maximum') is not None:
+            rules.extend(
+                self._generate_range_rules_from_options(column_path, field_metadata, default_criticality, opts)
+            )
+
+        # Handle string length constraints
+        if opts.get('minLength') is not None or opts.get('maxLength') is not None:
+            rules.extend(
+                self._generate_string_length_rules_from_options(column_path, field_metadata, default_criticality, opts)
+            )
+
+        # Handle date and timestamp format constraints
+        if prop.logicalType in {'date', 'timestamp', 'datetime'} and opts.get('format'):
+            rules.extend(
+                self._generate_format_rules_from_options(
+                    column_path, prop.logicalType, field_metadata, default_criticality, opts
+                )
+            )
+
+        return rules
+
+    def _generate_not_null_rules_from_property(
+        self, column_path: str, contract_metadata: dict, criticality: str
+    ) -> list[dict]:
+        """Generate not_null rules from required property constraint."""
         return [
             {
                 "check": {"function": "is_not_null", "arguments": {"column": column_path}},
@@ -278,13 +372,10 @@ class DataContractRulesGenerator(DQEngineBase):
             }
         ]
 
-    def _generate_unique_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+    def _generate_unique_rules_from_property(
+        self, column_path: str, contract_metadata: dict, criticality: str
     ) -> list[dict]:
-        """Generate uniqueness rules."""
-        if not field.unique:
-            return []
-
+        """Generate uniqueness rules from ODCS property."""
         return [
             {
                 "check": {"function": "is_unique", "arguments": {"columns": [column_path]}},
@@ -298,36 +389,17 @@ class DataContractRulesGenerator(DQEngineBase):
             }
         ]
 
-    def _generate_enum_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+    def _generate_pattern_rules_from_options(
+        self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
-        """Generate enum/valid values rules."""
-        if not field.enum:
+        """Generate pattern/regex rules from logicalTypeOptions."""
+        pattern = opts.get('pattern')
+        if not pattern:
             return []
 
         return [
             {
-                "check": {"function": "is_in_list", "arguments": {"column": column_path, "allowed": field.enum}},
-                "name": f"{column_path}_invalid_value",
-                "criticality": criticality,
-                "user_metadata": {
-                    **contract_metadata,
-                    "dimension": "validity",
-                    "rule_type": "predefined",
-                },
-            }
-        ]
-
-    def _generate_pattern_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
-    ) -> list[dict]:
-        """Generate pattern/regex rules."""
-        if not field.pattern:
-            return []
-
-        return [
-            {
-                "check": {"function": "regex_match", "arguments": {"column": column_path, "regex": field.pattern}},
+                "check": {"function": "regex_match", "arguments": {"column": column_path, "regex": pattern}},
                 "name": f"{column_path}_invalid_pattern",
                 "criticality": criticality,
                 "user_metadata": {
@@ -338,20 +410,23 @@ class DataContractRulesGenerator(DQEngineBase):
             }
         ]
 
-    def _generate_range_rules_from_field(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+    def _generate_range_rules_from_options(
+        self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
-        """Generate range rules from minimum/maximum constraints."""
-        if field.minimum is None and field.maximum is None:
+        """Generate range rules from logicalTypeOptions minimum/maximum."""
+        minimum = opts.get('minimum')
+        maximum = opts.get('maximum')
+
+        if minimum is None and maximum is None:
             return []
 
-        # Check if limits are floats - use sql_expression for float constraints #937
-        has_float_limits = (field.minimum is not None and isinstance(field.minimum, float)) or (
-            field.maximum is not None and isinstance(field.maximum, float)
+        # Check if limits are floats - use sql_expression for float constraints
+        has_float_limits = (minimum is not None and isinstance(minimum, float)) or (
+            maximum is not None and isinstance(maximum, float)
         )
 
         # Handle both minimum and maximum constraints together
-        if field.minimum is not None and field.maximum is not None:
+        if minimum is not None and maximum is not None:
             if has_float_limits:
                 # Use sql_expression for float range constraints
                 return [
@@ -359,7 +434,7 @@ class DataContractRulesGenerator(DQEngineBase):
                         "check": {
                             "function": "sql_expression",
                             "arguments": {
-                                "expression": f"{column_path} >= {field.minimum} AND {column_path} <= {field.maximum}",
+                                "expression": f"{column_path} >= {minimum} AND {column_path} <= {maximum}",
                                 "columns": [column_path],
                             },
                         },
@@ -379,8 +454,8 @@ class DataContractRulesGenerator(DQEngineBase):
                         "function": "is_in_range",
                         "arguments": {
                             "column": column_path,
-                            "min_limit": field.minimum,
-                            "max_limit": field.maximum,
+                            "min_limit": minimum,
+                            "max_limit": maximum,
                         },
                     },
                     "name": f"{column_path}_out_of_range",
@@ -394,15 +469,14 @@ class DataContractRulesGenerator(DQEngineBase):
             ]
 
         # Handle only minimum constraint
-        if field.minimum is not None:
+        if minimum is not None:
             if has_float_limits:
-                # Use sql_expression for float minimum constraint
                 return [
                     {
                         "check": {
                             "function": "sql_expression",
                             "arguments": {
-                                "expression": f"{column_path} >= {field.minimum}",
+                                "expression": f"{column_path} >= {minimum}",
                                 "columns": [column_path],
                             },
                         },
@@ -418,8 +492,11 @@ class DataContractRulesGenerator(DQEngineBase):
             return [
                 {
                     "check": {
-                        "function": "is_not_less_than",
-                        "arguments": {"column": column_path, "limit": field.minimum},
+                        "function": "is_aggr_not_less_than",
+                        "arguments": {
+                            "expression": f"min({column_path})",
+                            "min_limit": minimum,
+                        },
                     },
                     "name": f"{column_path}_below_minimum",
                     "criticality": criticality,
@@ -432,15 +509,33 @@ class DataContractRulesGenerator(DQEngineBase):
             ]
 
         # Handle only maximum constraint
-        if has_float_limits:
-            # Use sql_expression for float maximum constraint
+        if maximum is not None:
+            if has_float_limits:
+                return [
+                    {
+                        "check": {
+                            "function": "sql_expression",
+                            "arguments": {
+                                "expression": f"{column_path} <= {maximum}",
+                                "columns": [column_path],
+                            },
+                        },
+                        "name": f"{column_path}_above_maximum",
+                        "criticality": criticality,
+                        "user_metadata": {
+                            **contract_metadata,
+                            "dimension": "validity",
+                            "rule_type": "predefined",
+                        },
+                    }
+                ]
             return [
                 {
                     "check": {
-                        "function": "sql_expression",
+                        "function": "is_aggr_not_greater_than",
                         "arguments": {
-                            "expression": f"{column_path} <= {field.maximum}",
-                            "columns": [column_path],
+                            "expression": f"max({column_path})",
+                            "max_limit": maximum,
                         },
                     },
                     "name": f"{column_path}_above_maximum",
@@ -452,42 +547,73 @@ class DataContractRulesGenerator(DQEngineBase):
                     },
                 }
             ]
-        return [
-            {
-                "check": {
-                    "function": "is_not_greater_than",
-                    "arguments": {"column": column_path, "limit": field.maximum},
-                },
-                "name": f"{column_path}_above_maximum",
-                "criticality": criticality,
-                "user_metadata": {
-                    **contract_metadata,
-                    "dimension": "validity",
-                    "rule_type": "predefined",
-                },
-            }
-        ]
 
-    def _generate_length_rules(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+        return []
+
+    def _generate_string_length_rules_from_options(
+        self, column_path: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
-        """Generate string length rules from minLength/maxLength using SQL expressions."""
-        rules = []
+        """Generate string length rules from logicalTypeOptions minLength/maxLength."""
+        min_length = opts.get('minLength')
+        max_length = opts.get('maxLength')
 
-        min_length = getattr(field, "minLength", None)
-        max_length = getattr(field, "maxLength", None)
+        if min_length is None and max_length is None:
+            return []
 
-        # Generate minLength rule
+        # If both are present and equal, check exact length
+        if min_length is not None and max_length is not None and min_length == max_length:
+            return [
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "expression": f"LENGTH({column_path}) = {min_length}",
+                            "columns": [column_path],
+                        },
+                    },
+                    "name": f"{column_path}_invalid_length",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "dimension": "validity",
+                        "rule_type": "predefined",
+                    },
+                }
+            ]
+
+        # Handle range of lengths
+        if min_length is not None and max_length is not None:
+            return [
+                {
+                    "check": {
+                        "function": "sql_expression",
+                        "arguments": {
+                            "expression": f"LENGTH({column_path}) >= {min_length} AND LENGTH({column_path}) <= {max_length}",
+                            "columns": [column_path],
+                        },
+                    },
+                    "name": f"{column_path}_invalid_length",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "dimension": "validity",
+                        "rule_type": "predefined",
+                    },
+                }
+            ]
+
+        # Handle only min_length
         if min_length is not None:
-            rules.append(
+            return [
                 {
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
                             "expression": f"LENGTH({column_path}) >= {min_length}",
+                            "columns": [column_path],
                         },
                     },
-                    "name": f"{column_path}_min_length",
+                    "name": f"{column_path}_too_short",
                     "criticality": criticality,
                     "user_metadata": {
                         **contract_metadata,
@@ -495,19 +621,20 @@ class DataContractRulesGenerator(DQEngineBase):
                         "rule_type": "predefined",
                     },
                 }
-            )
+            ]
 
-        # Generate maxLength rule
+        # Handle only max_length
         if max_length is not None:
-            rules.append(
+            return [
                 {
                     "check": {
                         "function": "sql_expression",
                         "arguments": {
                             "expression": f"LENGTH({column_path}) <= {max_length}",
+                            "columns": [column_path],
                         },
                     },
-                    "name": f"{column_path}_max_length",
+                    "name": f"{column_path}_too_long",
                     "criticality": criticality,
                     "user_metadata": {
                         **contract_metadata,
@@ -515,30 +642,52 @@ class DataContractRulesGenerator(DQEngineBase):
                         "rule_type": "predefined",
                     },
                 }
-            )
+            ]
 
-        return rules
+        return []
 
-    def _generate_format_rules_from_field(
-        self, field: Field, column_path: str, contract_metadata: dict, criticality: str
+    def _generate_format_rules_from_options(
+        self, column_path: str, logical_type: str, contract_metadata: dict, criticality: str, opts: dict
     ) -> list[dict]:
-        """Generate format validation rules for dates/timestamps."""
-        if not field.format:
+        """Generate format validation rules from logicalTypeOptions format (for date/timestamp fields)."""
+        format_str = opts.get('format')
+        if not format_str:
             return []
 
-        # Detect if it's a timestamp based on format (time components: %H, %M, %S, %I, %p)
-        # Support both Python strftime (%H) and Java SimpleDateFormat (HH) formats
-        time_components = ('%H', '%M', '%S', '%I', '%p', 'HH', 'mm', 'ss', 'hh')
-        is_timestamp = any(time_component in field.format for time_component in time_components)
+        # Convert ODCS format (Java SimpleDateFormat) to Python strftime format if needed
+        python_format = self._convert_to_python_format(format_str)
 
-        if is_timestamp:
+        # Generate appropriate validation rule based on logical type
+        if logical_type == 'date':
+            return [
+                {
+                    "check": {
+                        "function": "is_valid_date",
+                        "arguments": {
+                            "column": column_path,
+                            "date_format": python_format,
+                        },
+                    },
+                    "name": f"{column_path}_valid_date_format",
+                    "criticality": criticality,
+                    "user_metadata": {
+                        **contract_metadata,
+                        "dimension": "validity",
+                        "rule_type": "predefined",
+                    },
+                }
+            ]
+        if logical_type in {'timestamp', 'datetime'}:
             return [
                 {
                     "check": {
                         "function": "is_valid_timestamp",
-                        "arguments": {"column": column_path, "timestamp_format": field.format},
+                        "arguments": {
+                            "column": column_path,
+                            "timestamp_format": python_format,
+                        },
                     },
-                    "name": f"{column_path}_invalid_timestamp_format",
+                    "name": f"{column_path}_valid_timestamp_format",
                     "criticality": criticality,
                     "user_metadata": {
                         **contract_metadata,
@@ -547,226 +696,318 @@ class DataContractRulesGenerator(DQEngineBase):
                     },
                 }
             ]
-
-        # Assume it's a date format
-        return [
-            {
-                "check": {
-                    "function": "is_valid_date",
-                    "arguments": {"column": column_path, "date_format": field.format},
-                },
-                "name": f"{column_path}_invalid_date_format",
-                "criticality": criticality,
-                "user_metadata": {
-                    **contract_metadata,
-                    "dimension": "validity",
-                    "rule_type": "predefined",
-                },
-            }
-        ]
-
-    def _process_text_rules_for_model(
-        self, model: Model, model_name: str, spec: DataContractSpecification, _default_criticality: str
-    ) -> list[dict]:
-        """Process text-based quality expectations using LLM for a model."""
-        if self.llm_engine is None:
-            return []
-
-        contract_metadata = {
-            "contract_id": spec.id or "unknown",
-            "contract_version": self._get_contract_version(spec),
-            "model": model_name,
-        }
-        schema_info = self._build_schema_info_from_model(model)
-
-        rules = []
-        for field_name, field in (model.fields or {}).items():
-            rules.extend(self._process_text_rules_for_field(field, field_name, contract_metadata, schema_info))
-
-        return rules
-
-    def _process_text_rules_for_field(
-        self, field: Field, field_name: str, contract_metadata: dict, schema_info: str, parent_path: str = ""
-    ) -> list[dict]:
-        """Process text-based rules for a single field."""
-        column_path = f"{parent_path}.{field_name}" if parent_path else field_name
-
-        # Recurse for nested fields
-        if field.fields:
-            rules = []
-            for nested_name, nested_field in field.fields.items():
-                rules.extend(
-                    self._process_text_rules_for_field(
-                        nested_field, nested_name, contract_metadata, schema_info, column_path
-                    )
-                )
-            return rules
-
-        # Process quality checks for this field
-        if not field.quality:
-            return []
-
-        rules = []
-        for quality in field.quality:
-            if self._is_text_quality(quality):
-                text_expectation = quality.description or ""
-                if text_expectation:
-                    rules.extend(
-                        self._process_single_text_rule_from_field(
-                            field, column_path, text_expectation, contract_metadata, schema_info
-                        )
-                    )
-
-        return rules
-
-    def _is_text_quality(self, quality: Quality) -> bool:
-        """Check if quality is a text-based expectation."""
-        return quality.type == "text" if hasattr(quality, "type") else False
-
-    def _process_single_text_rule_from_field(
-        self, field: Field, column_path: str, text_expectation: str, contract_metadata: dict, schema_info: str
-    ) -> list[dict]:
-        """Process a single text rule and add metadata."""
-        try:
-            generated_rules = self._generate_rules_from_text_field(field, column_path, text_expectation, schema_info)
-            return [
-                self._add_text_rule_metadata(rule, column_path, text_expectation, contract_metadata)
-                for rule in generated_rules
-            ]
-        except Exception as e:
-            logger.warning(f"Failed to process text rule for {column_path}: {e}")
-            return []
-
-    def _generate_rules_from_text_field(
-        self, field: Field, column_path: str, text_expectation: str, schema_info: str
-    ) -> list[dict]:
-        """Generate DQX rules from text expectation using LLM."""
-        if self.llm_engine is None:
-            return []
-
-        # Build context for LLM
-        context_info = f"Field: {column_path}"
-        if field.type:
-            context_info += f", Type: {field.type}"
-        if field.description:
-            context_info += f", Description: {field.description}"
-
-        user_input = f"{context_info}\nExpectation: {text_expectation}"
-
-        # Generate rules using LLM
-        logger.info(f"Processing text rule for {column_path}: {text_expectation}")
-        prediction = self.llm_engine.get_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
-
-        return json.loads(prediction.quality_rules)
-
-    def _add_text_rule_metadata(
-        self, rule: dict, column_path: str, text_expectation: str, contract_metadata: dict
-    ) -> dict:
-        """Add contract metadata to a text-generated rule."""
-        if 'user_metadata' not in rule:
-            rule['user_metadata'] = {}
-        rule['user_metadata'].update(
-            {
-                **contract_metadata,
-                "field": column_path,
-                "rule_type": "text_llm",
-                "text_expectation": text_expectation,
-            }
+        logger.warning(
+            f"Format '{format_str}' specified for non-date/timestamp type '{logical_type}' on '{column_path}'"
         )
-        return rule
+        return []
 
-    def _process_explicit_rules_for_model(
-        self, model: Model, model_name: str, spec: DataContractSpecification, _default_criticality: str
-    ) -> list[dict]:
-        """Process explicit DQX format rules from a model."""
-        contract_metadata = {
-            "contract_id": spec.id or "unknown",
-            "contract_version": self._get_contract_version(spec),
-            "model": model_name,
+    def _convert_to_python_format(self, format_str: str) -> str:
+        """
+        Convert Java SimpleDateFormat or ISO 8601 format to Python strftime format.
+
+        Common mappings:
+        - yyyy -> %Y (4-digit year)
+        - MM -> %m (2-digit month)
+        - dd -> %d (2-digit day)
+        - HH -> %H (24-hour format)
+        - mm -> %M (minutes)
+        - ss -> %S (seconds)
+        """
+        # If it's already in Python format (starts with %), return as-is
+        if '%' in format_str:
+            return format_str
+
+        # Common Java SimpleDateFormat to Python strftime conversions
+        conversions = {
+            'yyyy': '%Y',
+            'yy': '%y',
+            'MM': '%m',
+            'dd': '%d',
+            'HH': '%H',
+            'hh': '%I',
+            'mm': '%M',
+            'ss': '%S',
+            'SSS': '%f',  # Milliseconds
+            'a': '%p',  # AM/PM
         }
 
-        rules = []
-        for field_name, field in (model.fields or {}).items():
-            rules.extend(self._extract_explicit_rules_for_field(field, field_name, contract_metadata))
+        result = format_str
+        for java_fmt, python_fmt in conversions.items():
+            result = result.replace(java_fmt, python_fmt)
+
+        return result
+
+    def _process_text_rules_for_schema(
+        self, schema_obj, schema_name: str, odcs: OpenDataContractStandard
+    ) -> list[dict]:
+        """Process text-based quality rules from ODCS schema using LLM."""
+        if not self.llm_engine:
+            return []
+
+        rules: list[dict] = []
+
+        # Build contract metadata
+        contract_metadata = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+        }
+
+        # Build schema context for LLM
+        schema_info_json = self._build_schema_info_from_model(schema_obj)
+
+        # Process property-level text rules
+        for prop in schema_obj.properties or []:
+            if prop.quality:
+                property_text_rules = self._process_text_rules_for_property(
+                    prop, schema_info_json, schema_name, contract_metadata
+                )
+                rules.extend(property_text_rules)
+
+        # Process schema-level text rules
+        if schema_obj.quality:
+            schema_text_rules = self._process_text_rules_for_schema_level(
+                schema_obj.quality, schema_info_json, schema_name, contract_metadata
+            )
+            rules.extend(schema_text_rules)
 
         return rules
 
-    def _extract_explicit_rules_for_field(
-        self, field: Field, field_name: str, contract_metadata: dict, parent_path: str = ""
+    def _process_text_rules_for_property(
+        self, prop, schema_info_json: str, schema_name: str, contract_metadata: dict
     ) -> list[dict]:
-        """Extract explicit DQX rules from a field's quality checks."""
-        column_path = f"{parent_path}.{field_name}" if parent_path else field_name
-
-        # Recurse for nested fields
-        if field.fields:
-            rules = []
-            for nested_name, nested_field in field.fields.items():
-                rules.extend(
-                    self._extract_explicit_rules_for_field(nested_field, nested_name, contract_metadata, column_path)
-                )
-            return rules
-
-        # Extract explicit DQX rules from quality checks
-        if not field.quality:
+        """Process text rules for a property using LLM."""
+        if not self.llm_engine:
             return []
 
         rules = []
-        for quality in field.quality:
-            if self._is_dqx_quality(quality):
-                dqx_rule = self._extract_dqx_rule_from_quality(quality, column_path, contract_metadata)
-                if dqx_rule:
-                    rules.append(dqx_rule)
+        for quality_rule in prop.quality:
+            if quality_rule.type == 'text' and quality_rule.description:
+                logger.info(f"Processing text rule for property '{prop.name}': {quality_rule.description}")
+
+                # Use LLM to convert text expectation to DQX rules
+                prediction = self.llm_engine.get_business_rules_with_llm(
+                    user_input=quality_rule.description, schema_info=schema_info_json
+                )
+
+                # Extract and parse rules from prediction
+                llm_rules_json = prediction.quality_rules
+                llm_rules = json.loads(llm_rules_json) if isinstance(llm_rules_json, str) else llm_rules_json
+
+                # Add metadata to LLM-generated rules
+                for rule in llm_rules:
+                    rule["user_metadata"] = {
+                        **contract_metadata,
+                        **rule.get("user_metadata", {}),
+                        "schema": schema_name,
+                        "field": prop.name,
+                        "rule_type": "text_llm",
+                        "text_expectation": quality_rule.description,
+                    }
+                    rules.append(rule)
 
         return rules
 
-    def _is_dqx_quality(self, quality: Quality) -> bool:
-        """Check if quality is a DQX custom check."""
-        # Check if quality has type='custom' and specification with DQX format
-        if not hasattr(quality, "type") or quality.type != "custom":
-            return False
+    def _process_text_rules_for_schema_level(
+        self, quality_list, schema_info_json: str, schema_name: str, contract_metadata: dict
+    ) -> list[dict]:
+        """Process schema-level text rules using LLM."""
+        if not self.llm_engine:
+            return []
 
-        # DQX rules are in quality.specification or quality.model_extra['specification']
-        spec = getattr(quality, "specification", None) or (quality.model_extra or {}).get("specification", {})
-        return isinstance(spec, dict) and "check" in spec
+        rules = []
+        for quality_rule in quality_list:
+            if quality_rule.type == 'text' and quality_rule.description:
+                logger.info(f"Processing text rule for schema '{schema_name}': {quality_rule.description}")
 
-    def _extract_dqx_rule_from_quality(
-        self, quality: Quality, column_path: str, contract_metadata: dict
-    ) -> dict | None:
-        """Extract a DQX rule from a Quality object."""
-        # Get the specification (DQX rule definition)
-        spec = getattr(quality, "specification", None) or (quality.model_extra or {}).get("specification", {})
+                # Use LLM to convert text expectation to DQX rules
+                prediction = self.llm_engine.get_business_rules_with_llm(
+                    user_input=quality_rule.description, schema_info=schema_info_json
+                )
 
-        if not isinstance(spec, dict) or "check" not in spec:
-            return None
+                # Extract and parse rules from prediction
+                llm_rules_json = prediction.quality_rules
+                llm_rules = json.loads(llm_rules_json) if isinstance(llm_rules_json, str) else llm_rules_json
 
-        dqx_rule = spec.copy()
-        if 'user_metadata' not in dqx_rule:
-            dqx_rule['user_metadata'] = {}
+                # Add metadata to LLM-generated rules
+                for rule in llm_rules:
+                    rule["user_metadata"] = {
+                        **contract_metadata,
+                        **rule.get("user_metadata", {}),
+                        "schema": schema_name,
+                        "rule_type": "text_llm",
+                        "text_expectation": quality_rule.description,
+                    }
+                    rules.append(rule)
 
-        dqx_rule['user_metadata'].update({"field": column_path, "rule_type": "explicit", **contract_metadata})
+        return rules
 
-        # Validate the rule structure before returning
-        validation_status = DQEngine.validate_checks([dqx_rule], self.custom_check_functions)
-        if validation_status.has_errors:
-            logger.warning(
-                f"Explicit DQX rule for {column_path} failed validation: {validation_status.errors}. Skipping rule."
-            )
-            return None
-
-        logger.info(f"Added explicit DQX rule for {column_path}")
-        return dqx_rule
-
-    def _build_schema_info_from_model(self, model: Model) -> str:
+    def _build_schema_info_from_model(self, schema_obj) -> str:
         """
-        Build schema info JSON string from Model for LLM context.
+        Build schema information from ODCS schema object for LLM context.
 
-        Currently provides basic field name and type.
+        Returns JSON string with schema structure for LLM processing.
         """
         columns = []
-        for field_name, field in (model.fields or {}).items():
-            col_info = {"name": field_name, "type": field.type or "string"}
-            #  Note: Field constraints could be included here for richer LLM context in future iterations #936
-            columns.append(col_info)
 
-        schema_dict = {"columns": columns}
-        return json.dumps(schema_dict)
+        def _extract_columns(props, prefix=""):
+            """Recursively extract column information from properties."""
+            for prop in props or []:
+                column_path = f"{prefix}.{prop.name}" if prefix else prop.name
+                col_info = {
+                    "name": column_path,
+                    "type": prop.logicalType,
+                }
+                if prop.description:
+                    col_info["description"] = prop.description
+                columns.append(col_info)
+
+                # Recursively process nested properties
+                if prop.logicalType == 'object' and hasattr(prop, 'properties') and prop.properties:
+                    _extract_columns(prop.properties, column_path)
+
+        _extract_columns(schema_obj.properties)
+
+        schema_info = {"name": schema_obj.name, "columns": columns}
+
+        return json.dumps(schema_info)
+
+    def _process_explicit_rules_for_schema(
+        self, schema_obj, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+    ) -> list[dict]:
+        """Process explicitly defined DQX quality rules from ODCS schema."""
+        rules = []
+
+        # Process property-level explicit rules
+        for prop in schema_obj.properties or []:
+            if prop.quality:
+                rules.extend(self._extract_property_explicit_rules(prop, schema_name, odcs, default_criticality))
+
+        # Process schema-level explicit rules
+        if schema_obj.quality:
+            rules.extend(
+                self._extract_schema_explicit_rules(schema_obj.quality, schema_name, odcs, default_criticality)
+            )
+
+        return rules
+
+    def _extract_property_explicit_rules(
+        self, prop, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+    ) -> list[dict]:
+        """Extract explicit DQX rules from property quality definitions."""
+        rules = []
+        for quality_rule in prop.quality:
+            if self._is_dqx_explicit_rule(quality_rule):
+                rule = self._build_explicit_rule_from_quality(
+                    quality_rule, prop.name, schema_name, odcs, default_criticality
+                )
+                if rule:
+                    rules.append(rule)
+        return rules
+
+    def _extract_schema_explicit_rules(
+        self, quality_list, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+    ) -> list[dict]:
+        """Extract explicit DQX rules from schema quality definitions."""
+        rules = []
+        for quality_rule in quality_list:
+            if self._is_dqx_explicit_rule(quality_rule):
+                rule = self._build_explicit_rule_from_quality(
+                    quality_rule, None, schema_name, odcs, default_criticality
+                )
+                if rule:
+                    rules.append(rule)
+        return rules
+
+    def _is_dqx_explicit_rule(self, quality_rule) -> bool:
+        """Check if a quality rule is a DQX explicit rule with implementation."""
+        if quality_rule.type != 'custom' or quality_rule.engine != 'dqx':
+            return False
+        if not hasattr(quality_rule, 'implementation') or not quality_rule.implementation:
+            return False
+        impl = quality_rule.implementation
+        has_check = (isinstance(impl, dict) and 'check' in impl) or (hasattr(impl, 'check') and impl.check)
+        return has_check
+
+    def _build_explicit_rule_from_quality(
+        self,
+        quality_rule,
+        property_name: str | None,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> dict | None:
+        """Build a DQX rule from a quality rule's implementation."""
+        return self._build_explicit_rule_from_implementation(
+            quality_rule.implementation, property_name, schema_name, odcs, default_criticality
+        )
+
+    def _build_explicit_rule_from_implementation(
+        self,
+        impl,
+        property_name: str | None,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> dict | None:
+        """Build a DQX rule from an explicit implementation in the contract."""
+        try:
+            check, name, criticality = self._extract_impl_attributes(impl, default_criticality)
+            if check is None:
+                logger.warning("Implementation missing 'check' attribute")
+                return None
+
+            check_dict = self._convert_check_to_dict(check)
+            rule = self._build_rule_dict(check_dict, name, criticality, schema_name, property_name, odcs)
+            return rule
+        except Exception as e:
+            logger.warning(f"Failed to build explicit rule from implementation: {e}")
+            return None
+
+    def _extract_impl_attributes(self, impl, default_criticality: str):
+        """Extract check, name, and criticality from implementation (dict or object)."""
+        if isinstance(impl, dict):
+            check = impl.get("check")
+            name = impl.get("name", "unnamed_rule")
+            criticality = impl.get("criticality", default_criticality)
+        else:
+            check = impl.check if hasattr(impl, "check") else None
+            name = impl.name if hasattr(impl, "name") and impl.name else "unnamed_rule"
+            criticality = impl.criticality if hasattr(impl, "criticality") and impl.criticality else default_criticality
+        return check, name, criticality
+
+    def _convert_check_to_dict(self, check) -> dict:
+        """Convert check object to dictionary format."""
+        if hasattr(check, "model_dump"):
+            return check.model_dump()  # type: ignore[union-attr]
+        if isinstance(check, dict):
+            return check
+        return {"function": check.function, "arguments": check.arguments}  # type: ignore[union-attr]
+
+    def _build_rule_dict(
+        self,
+        check_dict: dict,
+        name: str,
+        criticality: str,
+        schema_name: str,
+        property_name: str | None,
+        odcs: OpenDataContractStandard,
+    ) -> dict:
+        """Build the final rule dictionary with metadata."""
+        user_metadata: dict = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+            "rule_type": "explicit",
+        }
+        if property_name:
+            user_metadata["field"] = property_name
+
+        rule = {
+            "check": check_dict,
+            "name": name,
+            "criticality": criticality,
+            "user_metadata": user_metadata,
+        }
+        return rule

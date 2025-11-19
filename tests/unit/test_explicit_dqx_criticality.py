@@ -41,8 +41,8 @@ class TestExplicitDQXCriticality:
     def test_explicit_rule_with_criticality_warn(self, generator):
         """Test that explicit DQX rules preserve 'warn' criticality from contract."""
         contract_dict = create_contract_with_quality(
-            field_name="email",
-            field_type="string",
+            property_name="email",
+            logical_type="string",
             quality_checks=[
                 {
                     "type": "custom",
@@ -77,8 +77,8 @@ class TestExplicitDQXCriticality:
     def test_explicit_rule_with_criticality_error(self, generator):
         """Test that explicit DQX rules preserve 'error' criticality from contract."""
         contract_dict = create_contract_with_quality(
-            field_name="user_id",
-            field_type="string",
+            property_name="user_id",
+            logical_type="string",
             quality_checks=[
                 {
                     "type": "custom",
@@ -110,8 +110,8 @@ class TestExplicitDQXCriticality:
     def test_explicit_rule_without_criticality_uses_dqx_default(self, generator):
         """Test that explicit DQX rules without criticality use DQX's default (error)."""
         contract_dict = create_contract_with_quality(
-            field_name="user_id",
-            field_type="string",
+            property_name="user_id",
+            logical_type="string",
             quality_checks=[
                 {
                     "type": "custom",
@@ -144,7 +144,9 @@ class TestExplicitDQXCriticality:
 
     def test_predefined_rules_use_default_criticality(self, generator):
         """Test that predefined rules use the default_criticality parameter."""
-        contract_dict = create_basic_contract(fields={"user_id": {"type": "string", "required": True}})
+        contract_dict = create_basic_contract(
+            properties=[{"name": "user_id", "logicalType": "string", "required": True}]
+        )
 
         temp_path = create_test_contract_file(custom_contract=contract_dict)
 

@@ -36,9 +36,17 @@ For automated discovery of data patterns without contracts, consider using the [
 For generating rules from natural language without contracts, see [AI-Assisted Generation](/docs/guide/ai_assisted_quality_checks_generation).
 </Admonition>
 
-### ODCS Compatibility
+### ODCS v3.x Native Support
 
-DQX supports the Open Data Contract Standard (ODCS) v3.0.x specification. ODCS is part of the Linux Foundation and provides a comprehensive format for defining data product contracts. DQX leverages the `datacontract-cli` library for parsing and validating contracts, ensuring full compatibility with the ODCS ecosystem.
+DQX natively supports Open Data Contract Standard (ODCS) v3.x contracts. ODCS is part of the Linux Foundation and provides a comprehensive format for defining data product contracts. 
+
+**Key Features:**
+- **Native Processing**: DQX processes ODCS v3.x contracts directly without conversion
+- **Full Support**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength)
+- **Quality Sections**: Handles explicit DQX rules via `implementation` blocks in quality sections
+- **Version Compatibility**: Supports ODCS v3.0.x and above (no backward compatibility with older versions)
+
+DQX leverages the `datacontract-cli` library for parsing and validating contracts, ensuring full compatibility with the ODCS ecosystem.
 
 ## Prerequisites
 
@@ -117,63 +125,67 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
 
 Predefined rules are automatically derived from schema field constraints defined in your data contract. DQX analyzes field properties and generates appropriate quality checks without requiring explicit rule definitions.
 
-### Supported Schema Constraints
+### Supported ODCS v3.x Property Constraints
 
-| Constraint | Description | Generated DQX Rule | Example |
-|------------|-------------|-------------------|---------|
-| `required: true` | Field cannot be null | `is_not_null` | All mandatory fields |
-| `unique: true` | Values must be unique | `is_unique` | Primary keys, identifiers |
-| `pattern: regex` | Values must match pattern | `regex_match` | Email, phone, ID formats |
-| `minimum` + `maximum` | Numeric range | `is_in_range` | Age, amount limits |
-| `minimum` only | Minimum value | `is_not_less_than` | Positive amounts |
-| `maximum` only | Maximum value | `is_not_greater_than` | Upper bounds |
-| `enum: [...]` | Values from list | `is_in_list` | Status codes, categories |
-| `format: date/datetime` | Date/timestamp format | `is_valid_date` / `is_valid_timestamp` | Dates, timestamps |
-| `minLength` only | Minimum string length | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
-| `maxLength` only | Maximum string length | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
-| `minLength` + `maxLength` | String length range | `sql_expression` (both checks) | Fixed-length codes |
+| Constraint | Location | Generated DQX Rule | Example |
+|------------|----------|-------------------|---------|
+| `required: true` | Direct property attribute | `is_not_null` | All mandatory properties |
+| `unique: true` | Direct property attribute | `is_unique` | Primary keys, identifiers |
+| `pattern` | `logicalTypeOptions` | `regex_match` | Email, phone, ID formats |
+| `minimum` + `maximum` | `logicalTypeOptions` | `is_in_range` or `sql_expression` (floats) | Age, amount limits |
+| `minimum` only | `logicalTypeOptions` | `is_aggr_not_less_than` | Positive amounts |
+| `maximum` only | `logicalTypeOptions` | `is_aggr_not_greater_than` | Upper bounds |
+| `minLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &gt;= N) | Minimum code length |
+| `maxLength` only | `logicalTypeOptions` | `sql_expression` (LENGTH &lt;= N) | Maximum field size |
+| `minLength` + `maxLength` | `logicalTypeOptions` | `sql_expression` (both checks) | Fixed-length codes |
+| `format` | `logicalTypeOptions` | Logged (not yet implemented) | Date/timestamp formats |
+
+**Note**: In ODCS v3.x, enum values are typically handled via pattern constraints or quality rules with `type: library`.
 
 ### Example Contract with Predefined Rules
 
 <Tabs>
   <TabItem value="YAML" label="Contract (YAML)" default>
     ```yaml
-    dataContractSpecification: 0.9.3
+    kind: DataContract
+    apiVersion: v3.0.2
     id: urn:datacontract:ecommerce:orders
-    info:
-      title: E-Commerce Orders
-      version: 1.0.0
+    name: E-Commerce Orders
+    version: 1.0.0
+    status: active
+    domain: ecommerce
+    dataProduct: orders_data_product
 
-    models:
-      orders:
-        type: table
-        fields:
-          order_id:
-            type: string
+    schema:
+      - name: orders
+        physicalType: table
+        properties:
+          - name: order_id
+            logicalType: string
             required: true              # → is_not_null
             unique: true                # → is_unique
-            pattern: '^ORD-[0-9]{8}$'   # → regex_match
+            logicalTypeOptions:
+              pattern: '^ORD-[0-9]{8}$'   # → regex_match
           
-          customer_email:
-            type: string
+          - name: customer_email
+            logicalType: string
             required: true              # → is_not_null
-            pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'  # → regex_match
+            logicalTypeOptions:
+              pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'  # → regex_match
           
-          order_total:
-            type: decimal
+          - name: order_total
+            logicalType: number
+            physicalType: decimal(10,2)
             required: true              # → is_not_null
-            minimum: 0.01               # → is_in_range (combined)
-            maximum: 100000.00          # → is_in_range (combined)
+            logicalTypeOptions:
+              minimum: 0.01               # → sql_expression (floats)
+              maximum: 100000.00          # → sql_expression (floats)
           
-          order_status:
-            type: string
+          - name: order_status
+            logicalType: string
             required: true              # → is_not_null
-            enum:                       # → is_in_list
-              - pending
-              - confirmed
-              - shipped
-              - delivered
-              - cancelled
+            logicalTypeOptions:
+              pattern: '^(pending|confirmed|shipped|delivered|cancelled)$'  # → regex_match
     ```
   </TabItem>
   <TabItem value="Python" label="Generated Rules (Python)">
@@ -193,8 +205,8 @@ Predefined rules are automatically derived from schema field constraints defined
     # - is_unique for order_id
     # - regex_match for order_id (pattern validation)
     # - regex_match for customer_email (email validation)
-    # - is_in_range for order_total (0.01 to 100000.00)
-    # - is_in_list for order_status (enum validation)
+    # - sql_expression for order_total (float range: 0.01 to 100000.00)
+    # - regex_match for order_status (pattern validation)
     ```
   </TabItem>
 </Tabs>
@@ -242,67 +254,43 @@ All predefined rules inherit a default criticality level:
 
 ## Explicit Rule Generation
 
-Explicit rules allow you to embed custom DQX quality checks directly within your data contract using DQX native YAML format. This is useful for business logic rules that cannot be expressed as simple schema constraints.
+Explicit rules allow you to embed custom DQX quality checks directly within your ODCS v3.x data contract. This is useful for business logic rules that cannot be expressed as simple property constraints.
 
-### Defining Explicit Rules in Contracts
+### Defining Explicit Rules in ODCS v3.x Contracts
 
-Explicit rules are defined in the `quality` section of a field or model using `type: custom` with `engine: dqx`:
+Explicit rules are defined in the `quality` section of a property or schema using `type: custom` with `engine: dqx` and an `implementation` block:
 
 <Tabs>
   <TabItem value="YAML" label="Contract (YAML)" default>
     ```yaml
-    dataContractSpecification: 0.9.3
+    kind: DataContract
+    apiVersion: v3.0.2
     id: urn:datacontract:finance:transactions
-    info:
-      title: Financial Transactions
-      version: 1.0.0
+    name: Financial Transactions
+    version: 1.0.0
+    status: active
+    domain: finance
+    dataProduct: transactions_data_product
 
-    models:
-      transactions:
-        type: table
+    schema:
+      - name: transactions
+        physicalType: table
         
-        # Model-level (dataset-level) quality checks
-        quality:
-          # Check data freshness
-          - type: custom
-            engine: dqx
-            specification:
-              name: transaction_data_freshness
-              criticality: error
-              check:
-                function: is_data_fresh_per_time_window
-                arguments:
-                  timestamp_column: transaction_timestamp
-                  max_delay_hours: 2
-                  groupby_columns:
-                    - account_id
-          
-          # Check minimum row count
-          - type: custom
-            engine: dqx
-            specification:
-              name: minimum_transactions
-              criticality: warn
-              check:
-                function: is_aggr_not_greater_than
-                arguments:
-                  expression: count(*)
-                  max_limit: 0
-        
-        fields:
-          transaction_id:
-            type: string
+        properties:
+          - name: transaction_id
+            logicalType: string
             required: true
             unique: true
             
-          account_id:
-            type: string
+          - name: account_id
+            logicalType: string
             required: true
             quality:
-              # Field-level explicit check
+              # Property-level explicit check
               - type: custom
                 engine: dqx
-                specification:
+                description: Account ID must not be empty
+                implementation:
                   name: account_id_format
                   criticality: error
                   check:
@@ -311,34 +299,71 @@ Explicit rules are defined in the `quality` section of a field or model using `t
                       column: account_id
                       trim_strings: true
           
-          amount:
-            type: decimal
+          - name: amount
+            logicalType: number
+            physicalType: decimal(10,2)
             required: true
-            minimum: 0
+            logicalTypeOptions:
+              minimum: 0
             quality:
               # Business logic rule
               - type: custom
                 engine: dqx
-                specification:
+                description: Flag suspicious high-value transactions
+                implementation:
                   name: suspicious_transaction_flag
                   criticality: warn
                   check:
                     function: sql_expression
                     arguments:
-                      column: amount
                       expression: amount < 10000 OR verified = true
+                      columns:
+                        - amount
+                        - verified
+        
+        # Schema-level (dataset-level) quality checks
+        quality:
+          # Check data freshness
+          - type: custom
+            engine: dqx
+            description: Ensure transaction data is recent
+            implementation:
+              name: transaction_data_freshness
+              criticality: error
+              check:
+                function: is_data_fresh_per_time_window
+                arguments:
+                  column: transaction_timestamp
+                  window_minutes: 60
+                  min_records_per_window: 1
+                  lookback_windows: 2
+          
+          # Check minimum row count
+          - type: custom
+            engine: dqx
+            description: Ensure dataset contains transactions
+            implementation:
+              name: minimum_transactions
+              criticality: warn
+              check:
+                function: is_aggr_not_less_than
+                arguments:
+                  column: transaction_id
+                  limit: 1
+                  aggr_type: count
     ```
   </TabItem>
 </Tabs>
 
-### Explicit Rule Structure
+### Explicit Rule Structure for ODCS v3.x
 
 Each explicit DQX rule must follow this structure:
 
 ```yaml
 - type: custom              # Required: marks as custom quality check
   engine: dqx              # Required: specifies DQX engine
-  specification:           # Required: contains the DQX rule
+  description: ...         # Optional: human-readable description
+  implementation:          # Required: contains the DQX rule (ODCS v3.x)
     name: rule_name        # Required: unique rule name
     criticality: error     # Required: "error" or "warn"
     check:                 # Required: the actual check definition
@@ -347,8 +372,8 @@ Each explicit DQX rule must follow this structure:
         # function-specific arguments
 ```
 
-<Admonition type="warning" title="Explicit Rule Criticality">
-Unlike predefined rules (which use `default_criticality`), explicit rules **must** define their own `criticality` within the `specification`. This allows fine-grained control over different business rules.
+<Admonition type="warning" title="Explicit Rule Criticality in ODCS v3.x">
+Unlike predefined rules (which use `default_criticality`), explicit rules **must** define their own `criticality` within the `implementation` block. This allows fine-grained control over different business rules.
 </Admonition>
 
 ## Text-Based Rule Generation
@@ -588,7 +613,8 @@ All generated rules include rich metadata that traces them back to the source co
   "user_metadata": {
     "contract_id": "urn:datacontract:iot:sensor_readings",
     "contract_version": "2.1.0",
-    "model": "sensor_readings",
+    "odcs_version": "v3.0.2",
+    "schema": "sensor_readings",
     "field": "sensor_id",
     "rule_type": "predefined"  # or "explicit" or "text_llm"
   }
@@ -601,8 +627,9 @@ All generated rules include rich metadata that traces them back to the source co
 |-------|-------------|---------|
 | `contract_id` | Unique identifier from contract | `urn:datacontract:iot:sensor_readings` |
 | `contract_version` | Contract version | `2.1.0` |
-| `model` | Model/table name | `sensor_readings` |
-| `field` | Field/column name (if field-level rule) | `sensor_id` |
+| `odcs_version` | ODCS API version (standard version) | `v3.0.2` |
+| `schema` | Schema/table name (ODCS v3.x) | `sensor_readings` |
+| `field` | Property/column name (if property-level rule) | `sensor_id` |
 | `rule_type` | How rule was generated | `predefined`, `explicit`, or `text_llm` |
 | `text_expectation` | Original text (for text-based rules only) | Natural language description |
 
@@ -803,9 +830,9 @@ pip install 'databricks-labs-dqx[datacontract]'
   ```bash
   datacontract lint /path/to/contract.yaml
   ```
-- Ensure your contract follows ODCS v3.0.x specification
-- Check field types and constraint formats match ODCS standards
-- Review the [ODCS specification](https://bitol-io.github.io/open-data-contract-standard/v3.0.2/)
+- Ensure your contract follows ODCS v3.x specification (`kind: DataContract`, `apiVersion: v3.0.x`)
+- Check that constraints are in `logicalTypeOptions` for ODCS v3.x
+- Review the [ODCS specification](https://bitol-io.github.io/open-data-contract-standard/)
 
 ### Text Rules Not Generated
 
@@ -834,7 +861,7 @@ pip install 'databricks-labs-dqx[datacontract]'
 **Solution**:
 - Ensure you're using `type: custom` and `engine: dqx`
 - Verify the rule structure matches the required format (see [Explicit Rule Structure](#explicit-rule-structure))
-- Check that the rule is wrapped in a `specification` block
+- Check that the rule is wrapped in an `implementation` block (ODCS v3.x)
 - Validate YAML syntax and indentation
 
 ### Contract Metadata Not Preserved

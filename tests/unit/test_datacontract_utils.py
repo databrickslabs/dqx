@@ -34,8 +34,9 @@ def assert_valid_contract_metadata(metadata: dict) -> None:
     The metadata dictionary must have the following keys:
         - contract_id: Unique identifier for the contract (str)
         - contract_version: Version of the contract (str)
-        - model: Name of the model the contract applies to (str)
-        - field: Name of the field the contract applies to (str)
+        - odcs_version: ODCS API version (str)
+        - schema: Name of the schema the contract applies to (str)
+        - field: Name of the field the contract applies to (str) - optional
         - rule_type: Type of rule, must be one of {"predefined", "explicit", "text_llm"} (str)
 
     Args:
@@ -46,8 +47,9 @@ def assert_valid_contract_metadata(metadata: dict) -> None:
     """
     assert "contract_id" in metadata
     assert "contract_version" in metadata
-    assert "model" in metadata
-    assert "field" in metadata
+    assert "odcs_version" in metadata
+    assert "schema" in metadata
+    # field is optional (not present for schema-level rules)
     assert "rule_type" in metadata
     assert metadata["rule_type"] in {"predefined", "explicit", "text_llm"}
 
@@ -76,56 +78,95 @@ def assert_rules_have_valid_metadata(rules: list[dict]) -> None:
 
 
 def create_basic_contract(
-    model_name: str = "test_table",
-    fields: dict | None = None,
+    schema_name: str = "test_table",
+    properties: list[dict] | None = None,
     contract_id: str = "test",
     contract_version: str = "1.0.0",
 ) -> dict:
     """
-    Create a basic contract dictionary with specified fields.
+    Create a basic ODCS v3.x contract dictionary with specified properties.
 
     Args:
-        model_name: Name of the model.
-        fields: Dictionary of field definitions.
+        schema_name: Name of the schema.
+        properties: List of ODCS v3.x property dictionaries. Each property should have:
+                   - name: property name
+                   - logicalType: data type (string, number, integer, etc.)
+                   - required: boolean (optional)
+                   - unique: boolean (optional)
+                   - logicalTypeOptions: dict with pattern, minimum, maximum, etc. (optional)
+                   - quality: list of quality checks (optional)
         contract_id: Contract ID.
         contract_version: Contract version.
 
     Returns:
-        A contract dictionary.
+        An ODCS v3.x contract dictionary.
     """
-    if fields is None:
-        fields = {"user_id": {"type": "string", "required": True}}
+    if properties is None:
+        properties = [{"name": "user_id", "logicalType": "string", "required": True}]
 
     return {
-        "dataContractSpecification": "0.9.3",
+        "kind": "DataContract",
+        "apiVersion": "v3.0.2",
         "id": contract_id,
-        "info": {"title": contract_id, "version": contract_version},
-        "models": {model_name: {"fields": fields}},
+        "name": contract_id,
+        "version": contract_version,
+        "status": "active",
+        "schema": [{"name": schema_name, "physicalType": "table", "properties": properties}],
     }
 
 
 def create_contract_with_quality(
-    field_name: str,
-    field_type: str,
+    property_name: str,
+    logical_type: str,
     quality_checks: list[dict],
-    model_name: str = "test_table",
+    schema_name: str = "test_table",
 ) -> dict:
     """
-    Create a contract with quality checks for a single field.
+    Create an ODCS v3.x contract with quality checks for a single property.
 
     Args:
-        field_name: Name of the field.
-        field_type: Type of the field.
-        quality_checks: List of quality check dictionaries.
-        model_name: Name of the model.
+        property_name: Name of the property.
+        logical_type: Logical type of the property (string, number, etc.).
+        quality_checks: List of ODCS v3.x quality check dictionaries.
+                       For DQX rules, use format:
+                       {
+                           "type": "custom",
+                           "engine": "dqx",
+                           "implementation": {
+                               "name": "rule_name",
+                               "criticality": "error|warn",
+                               "check": {"function": "...", "arguments": {...}}
+                           }
+                       }
+        schema_name: Name of the schema.
 
     Returns:
-        A contract dictionary with quality checks.
+        An ODCS v3.x contract dictionary with quality checks.
     """
-    return create_basic_contract(
-        model_name=model_name,
-        fields={field_name: {"type": field_type, "quality": quality_checks}},
-    )
+    # Convert legacy 'specification' format to 'implementation' for tests still using old format
+    converted_quality: list[dict] = []
+    for check in quality_checks:
+        if check.get("type") == "custom" and check.get("engine") == "dqx" and "specification" in check:
+            # Convert old specification format to ODCS v3.x implementation format
+            spec = check["specification"]
+            converted_check: dict = {
+                "type": "custom",
+                "engine": "dqx",
+                "implementation": {
+                    "name": spec.get("name", "unnamed_rule"),
+                    "check": spec["check"],
+                },
+            }
+            if "criticality" in spec:
+                converted_check["implementation"]["criticality"] = spec["criticality"]  # type: ignore[index]
+            converted_quality.append(converted_check)
+        else:
+            # Already in ODCS v3.x format or other type
+            converted_quality.append(check)
+
+    property_def = {"name": property_name, "logicalType": logical_type, "quality": converted_quality}
+
+    return create_basic_contract(schema_name=schema_name, properties=[property_def])
 
 
 def create_test_contract_file(
@@ -136,10 +177,10 @@ def create_test_contract_file(
     custom_contract: dict | None = None,
 ) -> str:
     """
-    Create a temporary contract file for testing.
+    Create a temporary ODCS v3.x contract file for testing.
 
     Args:
-        user_id_pattern: Pattern for user_id field.
+        user_id_pattern: Pattern for user_id property.
         age_min: Minimum age value.
         age_max: Maximum age value.
         status_values: List of valid status values.
@@ -154,14 +195,27 @@ def create_test_contract_file(
         if status_values is None:
             status_values = ["active", "inactive"]
 
-        contract_dict = create_basic_contract(
-            model_name="users",
-            fields={
-                "user_id": {"type": "string", "required": True, "pattern": user_id_pattern},
-                "age": {"type": "integer", "minimum": age_min, "maximum": age_max},
-                "status": {"type": "string", "enum": status_values},
+        # Create ODCS v3.x properties directly
+        properties: list[dict] = [
+            {
+                "name": "user_id",
+                "logicalType": "string",
+                "required": True,
+                "logicalTypeOptions": {"pattern": user_id_pattern},
             },
-        )
+            {
+                "name": "age",
+                "logicalType": "integer",
+                "logicalTypeOptions": {"minimum": age_min, "maximum": age_max},
+            },
+            {
+                "name": "status",
+                "logicalType": "string",
+                "logicalTypeOptions": {"pattern": f"^({'|'.join(status_values)})$"},  # enum as pattern
+            },
+        ]
+
+        contract_dict = create_basic_contract(schema_name="users", properties=properties)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.safe_dump(contract_dict, f)

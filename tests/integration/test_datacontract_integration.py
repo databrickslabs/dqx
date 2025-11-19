@@ -71,16 +71,10 @@ class TestDataContractIntegration:
         assert vibration_range_rule["check"]["arguments"]["min_limit"] == 0
         assert vibration_range_rule["check"]["arguments"]["max_limit"] == 10
 
-        # 4. sensor_status: enum values (should use is_in_list)
+        # 4. sensor_status: pattern for enum values (ODCS v3.x uses pattern)
         status_rules = [r for r in predefined_rules if "sensor_status" in r["name"]]
-        status_enum_rule = next((r for r in status_rules if r["check"]["function"] == "is_in_list"), None)
-        assert status_enum_rule is not None, "sensor_status should have is_in_list for enum"
-        assert set(status_enum_rule["check"]["arguments"]["allowed"]) == {
-            "active",
-            "inactive",
-            "maintenance",
-            "faulty",
-        }
+        status_pattern_rule = next((r for r in status_rules if r["check"]["function"] == "regex_match"), None)
+        assert status_pattern_rule is not None, "sensor_status should have regex_match for pattern constraint"
 
         # 5. Verify explicit DQX rules from contract
         explicit_functions = {r["check"]["function"] for r in explicit_rules}
@@ -131,9 +125,8 @@ class TestDataContractIntegration:
         pattern_rules = [r for r in predefined_rules if r["check"]["function"] == "regex_match"]
         assert len(pattern_rules) >= len(pattern_fields), f"Expected at least {len(pattern_fields)} regex_match rules"
 
-        # 4. Enum fields should have is_in_list rules
-        enum_rules = [r for r in predefined_rules if r["check"]["function"] == "is_in_list"]
-        assert len(enum_rules) >= 2, "Expected at least 2 enum fields with is_in_list rules"
+        # 4. Pattern fields should have regex_match rules (ODCS v3.x uses pattern for enums)
+        # Note: In ODCS v3.x, enum-like constraints are handled via pattern in logicalTypeOptions
 
         # 5. Float range constraints should use sql_expression
         float_range_fields = ["temperature_celsius", "humidity_percentage", "pressure_bar"]
@@ -185,8 +178,8 @@ class TestDataContractIntegration:
         )
 
         # Should only have explicit rules (no predefined rules)
-        # Sample contract has 5 explicit DQX rules
-        assert len(rules) == 5
+        # Sample ODCS v3.x contract has 7 explicit DQX rules (5 property-level + 2 schema-level)
+        assert len(rules) == 7
 
         # Verify all rules are explicit
         for rule in rules:

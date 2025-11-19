@@ -1,18 +1,18 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # DQX Data Contract Integration Demo (ODCS Compatible)
+# MAGIC # DQX Data Contract Integration Demo (ODCS v3.x)
 # MAGIC
-# MAGIC This notebook demonstrates how to use DQX with data contracts to automatically generate
-# MAGIC and apply data quality rules. DQX supports the datacontract-cli specification, which is
-# MAGIC compatible with the Open Data Contract Standard (ODCS).
+# MAGIC This notebook demonstrates how to use DQX with Open Data Contract Standard (ODCS) v3.x
+# MAGIC contracts to automatically generate and apply data quality rules. DQX natively processes
+# MAGIC ODCS v3.x contracts, extracting constraints from `logicalTypeOptions` and quality sections.
 # MAGIC
 # MAGIC ## What You'll Learn
 # MAGIC
-# MAGIC 1. Loading a data contract from a YAML file
-# MAGIC 2. Automatically generating DQX quality rules from field constraints
-# MAGIC 3. Understanding predefined rule generation
+# MAGIC 1. Creating ODCS v3.x data contracts
+# MAGIC 2. Automatically generating DQX quality rules from property constraints
+# MAGIC 3. Understanding predefined vs explicit rule generation
 # MAGIC 4. Applying generated rules to your data
-# MAGIC 5. Viewing quality check results with contract metadata
+# MAGIC 5. Using AI-assisted rule generation from text expectations
 # MAGIC
 # MAGIC ## Prerequisites
 # MAGIC
@@ -50,71 +50,74 @@ ws = WorkspaceClient()
 
 # COMMAND ----------
 
-# Example data contract (datacontract-cli format, ODCS compatible)
+# Example data contract (ODCS v3.x format)
 contract_yaml = """
-dataContractSpecification: 0.9.3
+kind: DataContract
+apiVersion: v3.0.2
 id: urn:datacontract:ecommerce:orders
-info:
-  title: E-Commerce Orders
-  version: 1.0.0
-  description: Customer order data
-  owner: Data Engineering Team
+name: E-Commerce Orders
+version: 1.0.0
+status: active
+domain: ecommerce
+dataProduct: orders_data_product
+tenant: Data Engineering Team
 
-models:
-  orders:
-    type: table
+description:
+  purpose: Customer order data for e-commerce platform
+  usage: Demonstrate DQX rule generation from ODCS v3.x contracts
+
+tags:
+  - ecommerce
+  - orders
+  - demo
+
+schema:
+  - name: orders
+    physicalName: orders_table
+    physicalType: table
     description: Customer orders table
     
-    # Dataset-level quality checks (explicit DQX rules)
-    quality:
-      # Example 1: Custom DQX rule - Check dataset is not empty
-      - type: custom
-        engine: dqx
-        specification:
-          criticality: error
-          name: orders_dataset_not_empty
-          check:
-            function: is_aggr_not_less_than
-            arguments:
-              expression: count(*)
-              min_limit: 1
-      
-      # Example 2: Text-based expectation (requires LLM processing)
-      # Uncomment to use with process_text_rules=True
-      # - type: text
-      #   description: "Orders with total amount over $10000 must have order_status of 'confirmed' or 'shipped'"
-    
-    fields:
-      order_id:
-        type: string
+    properties:
+      - name: order_id
+        logicalType: string
+        physicalType: varchar(12)
         description: Unique order identifier
         required: true
         unique: true
-        pattern: '^ORD-[0-9]{8}$'
+        primaryKey: true
+        logicalTypeOptions:
+          pattern: '^ORD-[0-9]{8}$'
       
-      customer_email:
-        type: string
+      - name: customer_email
+        logicalType: string
+        physicalType: varchar(100)
         description: Customer email address
         required: true
-        pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'
+        logicalTypeOptions:
+          pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'
       
-      order_date:
-        type: date
+      - name: order_date
+        logicalType: date
+        physicalType: date
         description: Order placement date
         required: true
-        format: '%Y-%m-%d'
+        logicalTypeOptions:
+          format: 'yyyy-MM-dd'
       
-      order_total:
-        type: decimal
+      - name: order_total
+        logicalType: number
+        physicalType: decimal(10,2)
         description: Total order amount
         required: true
-        minimum: 0.01
-        maximum: 100000.00
-        # Field-level quality check (explicit DQX rule)
+        logicalTypeOptions:
+          minimum: 0.01
+          maximum: 100000.00
         quality:
+          # Field-level quality check (explicit DQX rule)
           - type: custom
             engine: dqx
-            specification:
+            description: Warn on unusually high order totals
+            implementation:
               criticality: warn
               name: order_total_reasonable_check
               check:
@@ -123,35 +126,57 @@ models:
                   column: order_total
                   limit: 50000.00
       
-      order_status:
-        type: string
+      - name: order_status
+        logicalType: string
+        physicalType: varchar(20)
         description: Current order status
         required: true
-        enum:
-          - pending
-          - confirmed
-          - shipped
-          - delivered
-          - cancelled
+        logicalTypeOptions:
+          pattern: '^(pending|confirmed|shipped|delivered|cancelled)$'
       
-      quantity:
-        type: integer
+      - name: quantity
+        logicalType: integer
+        physicalType: int
         description: Number of items
         required: true
-        minimum: 1
-        maximum: 1000
+        logicalTypeOptions:
+          minimum: 1
+          maximum: 1000
       
-      discount_percentage:
-        type: decimal
+      - name: discount_percentage
+        logicalType: number
+        physicalType: decimal(5,2)
         description: Discount applied
         required: false
-        minimum: 0.0
-        maximum: 100.0
+        logicalTypeOptions:
+          minimum: 0.0
+          maximum: 100.0
+    
+    # Dataset-level quality checks (explicit DQX rules)
+    quality:
+      # Example 1: Custom DQX rule - Check dataset is not empty
+      - type: custom
+        engine: dqx
+        description: Ensure orders dataset contains data
+        implementation:
+          criticality: error
+          name: orders_dataset_not_empty
+          check:
+            function: is_aggr_not_less_than
+            arguments:
+              column: order_id
+              limit: 1
+              aggr_type: count
+      
+      # Example 2: Text-based expectation (requires LLM processing)
+      # Uncomment to use with process_text_rules=True
+      # - type: text
+      #   description: "Orders with total amount over $10000 must have order_status of 'confirmed' or 'shipped'"
 """
 
 # Parse contract and write to temporary file
 contract = yaml.safe_load(contract_yaml)
-print(f"Contract: {contract['info']['title']} v{contract['info']['version']}")
+print(f"Contract: {contract['name']} v{contract['version']}")
 
 with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
     yaml.dump(contract, f)
@@ -162,23 +187,22 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 # MAGIC %md
 # MAGIC ## 2. Generate DQX Rules from Contract
 # MAGIC
-# MAGIC The contract above demonstrates three types of quality rules:
+# MAGIC The ODCS v3.x contract above demonstrates three types of quality rules:
 # MAGIC
-# MAGIC ### 1. Predefined Rules (from field constraints)
+# MAGIC ### 1. Predefined Rules (from property constraints in logicalTypeOptions)
 # MAGIC - `required: true` → `is_not_null`
 # MAGIC - `unique: true` → `is_unique`
 # MAGIC - `pattern: regex` → `regex_match`
-# MAGIC - `minimum`/`maximum` → `is_in_range`
-# MAGIC - `enum: [...]` → `is_in_list`
+# MAGIC - `minimum`/`maximum` → `is_in_range` or `sql_expression` (for floats)
+# MAGIC - `minLength`/`maxLength` → `sql_expression` for LENGTH checks
 # MAGIC
-# MAGIC ### 2. Explicit DQX Rules (type: custom, engine: dqx)
+# MAGIC ### 2. Explicit DQX Rules (type: custom, engine: dqx, implementation: {...})
 # MAGIC - Dataset-level: `is_aggr_not_less_than` to check dataset is not empty
-# MAGIC - Field-level: `is_not_greater_than` for warning on high order totals
+# MAGIC - Property-level: `is_not_greater_than` for warning on high order totals
 # MAGIC
 # MAGIC ### 3. Text-based Rules (type: text - requires LLM)
 # MAGIC - Natural language business logic converted to executable rules
-# MAGIC - `enum` → `is_in_list`
-# MAGIC - `format` → `is_valid_date`/`is_valid_timestamp`
+# MAGIC - Useful for complex conditional logic and cross-field validations
 
 # COMMAND ----------
 
@@ -338,14 +362,28 @@ print(f"Generated {len(rules_from_object)} rules from DataContract object")
 
 # COMMAND ----------
 
-# Create a contract with text-based quality expectations
+# Create a contract with text-based quality expectations (ODCS v3.x)
 contract_with_text = {
-    "dataContractSpecification": "0.9.3",
+    "kind": "DataContract",
+    "apiVersion": "v3.0.2",
     "id": "orders-with-text",
-    "info": {"title": "Orders with Text Rules", "version": "1.0.0"},
-    "models": {
-        "orders": {
+    "name": "Orders with Text Rules",
+    "version": "1.0.0",
+    "status": "active",
+    "domain": "ecommerce",
+    "dataProduct": "orders_with_text",
+    "schema": [
+        {
+            "name": "orders",
+            "physicalType": "table",
             "description": "Order data with business logic rules",
+            "properties": [
+                {"name": "order_id", "logicalType": "string", "required": True},
+                {"name": "customer_id", "logicalType": "string", "required": True},
+                {"name": "order_amount", "logicalType": "number", "required": True},
+                {"name": "approval_id", "logicalType": "string", "required": False},
+                {"name": "order_date", "logicalType": "date", "required": True}
+            ],
             "quality": [
                 {
                     "type": "text",
@@ -355,16 +393,9 @@ contract_with_text = {
                     "type": "text",
                     "description": "Customer orders should not have duplicate order_id for the same customer_id within the same day."
                 }
-            ],
-            "fields": {
-                "order_id": {"type": "string", "required": True},
-                "customer_id": {"type": "string", "required": True},
-                "order_amount": {"type": "number", "required": True},
-                "approval_id": {"type": "string", "required": False},
-                "order_date": {"type": "date", "required": True}
-            }
+            ]
         }
-    }
+    ]
 }
 
 # Save contract to file
@@ -459,23 +490,23 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # MAGIC 5. ✅ Saved and loaded generated rules
 # MAGIC 6. ✅ Explored AI-assisted rule generation from text
 # MAGIC
-# MAGIC ### Supported Field Constraints
+# MAGIC ### Supported ODCS v3.x Property Constraints
 # MAGIC
-# MAGIC | Constraint | DQX Rule | Example |
-# MAGIC |------------|----------|---------|
-# MAGIC | `required: true` | `is_not_null` | All required fields |
-# MAGIC | `unique: true` | `is_unique` | Primary keys |
-# MAGIC | `pattern: regex` | `regex_match` | Email, phone formats |
-# MAGIC | `minimum`/`maximum` | `is_in_range` | Age, amount limits |
-# MAGIC | `enum: [...]` | `is_in_list` | Status codes |
-# MAGIC | `format: date/time` | `is_valid_date`/`is_valid_timestamp` | Dates, timestamps |
+# MAGIC | Constraint | Location | DQX Rule | Example |
+# MAGIC |------------|----------|----------|---------|
+# MAGIC | `required: true` | Direct property attribute | `is_not_null` | All required properties |
+# MAGIC | `unique: true` | Direct property attribute | `is_unique` | Primary keys |
+# MAGIC | `pattern` | `logicalTypeOptions` | `regex_match` | Email, phone formats |
+# MAGIC | `minimum`/`maximum` | `logicalTypeOptions` | `is_in_range` or `sql_expression` | Age, amount limits |
+# MAGIC | `minLength`/`maxLength` | `logicalTypeOptions` | `sql_expression` | String length validation |
+# MAGIC | `format` | `logicalTypeOptions` | Logged (not yet implemented) | Date/timestamp formats |
 # MAGIC
 # MAGIC ### Three Types of Rules
 # MAGIC
 # MAGIC | Rule Type | Source | Example |
 # MAGIC |-----------|--------|---------|
-# MAGIC | **Predefined** | Field constraints (required, unique, pattern, etc.) | `is_not_null`, `is_unique`, `regex_match` |
-# MAGIC | **Explicit DQX** | Custom DQX rules in quality section (`type: custom`) | `is_data_fresh_per_time_window`, custom checks |
+# MAGIC | **Predefined** | Property constraints (required, unique, logicalTypeOptions) | `is_not_null`, `is_unique`, `regex_match` |
+# MAGIC | **Explicit DQX** | Custom DQX rules in quality section with `implementation` | `is_data_fresh_per_time_window`, custom checks |
 # MAGIC | **Text-based (LLM)** | Natural language expectations (`type: text`) | Complex business logic converted by AI |
 # MAGIC
 # MAGIC ### Next Steps
