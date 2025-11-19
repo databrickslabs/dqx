@@ -57,7 +57,6 @@ class DataContractRulesGenerator(DQEngineBase):
         Raises:
             ImportError: If LLM dependencies are missing when llm_engine is provided.
         """
-        # Validate LLM dependencies if llm_engine is provided
         if llm_engine is not None:
             required_llm_specs = ["dspy"]
             if not all(find_spec(spec) for spec in required_llm_specs):
@@ -127,12 +126,9 @@ class DataContractRulesGenerator(DQEngineBase):
     def _load_contract_spec(self, contract: DataContract | None, contract_file: str | None) -> OpenDataContractStandard:
         """Load ODCS v3.x contract natively (no conversion to v1.2.1)."""
         if contract_file is not None:
-            # Load ODCS v3.x directly from YAML file
             return self._load_contract_from_file(contract_file)
 
-        # For pre-loaded contract, we need to work with the file path or contract data
         if contract is not None:
-            # Try to get the file path first
             contract_file_path = getattr(contract, '_data_contract_file', None) or getattr(
                 contract, 'data_contract_file', None
             )
@@ -140,7 +136,6 @@ class DataContractRulesGenerator(DQEngineBase):
             if contract_file_path:
                 return self._load_contract_from_file(contract_file_path)
 
-            # If no file path, try to get the contract data directly
             contract_data = getattr(contract, 'data_contract', None)
             if contract_data:
                 return OpenDataContractStandard.model_validate(contract_data)
@@ -155,8 +150,8 @@ class DataContractRulesGenerator(DQEngineBase):
         """
         Load ODCS v3.x contract directly from YAML file.
 
-        This method loads the contract YAML and creates an OpenDataContractStandard object
-        directly, avoiding the buggy resolve_data_contract_v2 function.
+        This method provides a clean, direct path to load ODCS v3.x contracts by reading
+        the YAML file and using Pydantic validation to create the OpenDataContractStandard object.
 
         Args:
             contract_location: Path to the contract YAML file
@@ -173,20 +168,22 @@ class DataContractRulesGenerator(DQEngineBase):
         if not contract_path.exists():
             raise FileNotFoundError(f"Contract file not found: {contract_location}")
 
-        # Load YAML file
         with open(contract_path, 'r', encoding='utf-8') as f:
             contract_dict = yaml.safe_load(f)
 
-        # Create OpenDataContractStandard object using pydantic validation
         try:
             return OpenDataContractStandard.model_validate(contract_dict)
         except Exception as e:
             raise ValueError(f"Failed to parse ODCS contract from {contract_location}: {e}") from e
 
     def _validate_contract_spec(self, odcs: OpenDataContractStandard) -> None:
-        """Validate ODCS v3.x contract specification."""
-        # Skip datacontract library's lint() validation due to bugs in the external library
-        # We perform our own validation when generating rules via DQEngine.validate_checks()
+        """
+        Validate ODCS v3.x contract specification.
+
+        Note: We skip the datacontract library's lint() method and perform validation
+        on generated rules via DQEngine.validate_checks() instead, which provides more
+        relevant feedback for DQX rule generation.
+        """
         contract_version = odcs.version or "unknown"
         contract_name = odcs.name or odcs.id or "unknown"
         logger.info(f"Parsing ODCS v3.x contract '{contract_name}' v{contract_version} (API {odcs.apiVersion})")
@@ -229,10 +226,7 @@ class DataContractRulesGenerator(DQEngineBase):
             else:
                 logger.info(f"Successfully generated {len(dq_rules)} DQX rules from data contract")
 
-    # ==================================================================================
     # ODCS v3.x Native Support Methods
-    # ==================================================================================
-
     def _generate_predefined_rules_for_schema(
         self, schema_obj, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
     ) -> list[dict]:
@@ -273,10 +267,7 @@ class DataContractRulesGenerator(DQEngineBase):
             )
             return []
 
-        # Build full column path
         column_path = f"{parent_path}.{prop.name}" if parent_path else prop.name
-
-        # Update metadata with field info
         field_metadata = {**contract_metadata, "field": column_path}
 
         rules = []
@@ -295,12 +286,10 @@ class DataContractRulesGenerator(DQEngineBase):
                 rules.extend(nested_rules)
             return rules
 
-        # Generate rules from direct attributes
         rules.extend(
             self._generate_rules_from_direct_attributes(prop, column_path, field_metadata, default_criticality)
         )
 
-        # Generate rules from logicalTypeOptions
         if prop.logicalTypeOptions:
             rules.extend(
                 self._generate_rules_from_logical_type_options(
@@ -425,10 +414,8 @@ class DataContractRulesGenerator(DQEngineBase):
             maximum is not None and isinstance(maximum, float)
         )
 
-        # Handle both minimum and maximum constraints together
         if minimum is not None and maximum is not None:
             if has_float_limits:
-                # Use sql_expression for float range constraints
                 return [
                     {
                         "check": {
@@ -468,7 +455,6 @@ class DataContractRulesGenerator(DQEngineBase):
                 }
             ]
 
-        # Handle only minimum constraint
         if minimum is not None:
             if has_float_limits:
                 return [
@@ -508,7 +494,6 @@ class DataContractRulesGenerator(DQEngineBase):
                 }
             ]
 
-        # Handle only maximum constraint
         if maximum is not None:
             if has_float_limits:
                 return [
@@ -560,7 +545,6 @@ class DataContractRulesGenerator(DQEngineBase):
         if min_length is None and max_length is None:
             return []
 
-        # If both are present and equal, check exact length
         if min_length is not None and max_length is not None and min_length == max_length:
             return [
                 {
@@ -581,7 +565,6 @@ class DataContractRulesGenerator(DQEngineBase):
                 }
             ]
 
-        # Handle range of lengths
         if min_length is not None and max_length is not None:
             return [
                 {
@@ -602,7 +585,6 @@ class DataContractRulesGenerator(DQEngineBase):
                 }
             ]
 
-        # Handle only min_length
         if min_length is not None:
             return [
                 {
@@ -623,7 +605,6 @@ class DataContractRulesGenerator(DQEngineBase):
                 }
             ]
 
-        # Handle only max_length
         if max_length is not None:
             return [
                 {
@@ -654,10 +635,8 @@ class DataContractRulesGenerator(DQEngineBase):
         if not format_str:
             return []
 
-        # Convert ODCS format (Java SimpleDateFormat) to Python strftime format if needed
         python_format = self._convert_to_python_format(format_str)
 
-        # Generate appropriate validation rule based on logical type
         if logical_type == 'date':
             return [
                 {
@@ -746,14 +725,12 @@ class DataContractRulesGenerator(DQEngineBase):
 
         rules: list[dict] = []
 
-        # Build contract metadata
         contract_metadata = {
             "contract_id": odcs.id or "unknown",
             "contract_version": odcs.version or "unknown",
             "odcs_version": odcs.apiVersion or "unknown",
         }
 
-        # Build schema context for LLM
         schema_info_json = self._build_schema_info_from_model(schema_obj)
 
         # Process property-level text rules
@@ -785,16 +762,13 @@ class DataContractRulesGenerator(DQEngineBase):
             if quality_rule.type == 'text' and quality_rule.description:
                 logger.info(f"Processing text rule for property '{prop.name}': {quality_rule.description}")
 
-                # Use LLM to convert text expectation to DQX rules
                 prediction = self.llm_engine.get_business_rules_with_llm(
                     user_input=quality_rule.description, schema_info=schema_info_json
                 )
 
-                # Extract and parse rules from prediction
                 llm_rules_json = prediction.quality_rules
                 llm_rules = json.loads(llm_rules_json) if isinstance(llm_rules_json, str) else llm_rules_json
 
-                # Add metadata to LLM-generated rules
                 for rule in llm_rules:
                     rule["user_metadata"] = {
                         **contract_metadata,
@@ -820,16 +794,13 @@ class DataContractRulesGenerator(DQEngineBase):
             if quality_rule.type == 'text' and quality_rule.description:
                 logger.info(f"Processing text rule for schema '{schema_name}': {quality_rule.description}")
 
-                # Use LLM to convert text expectation to DQX rules
                 prediction = self.llm_engine.get_business_rules_with_llm(
                     user_input=quality_rule.description, schema_info=schema_info_json
                 )
 
-                # Extract and parse rules from prediction
                 llm_rules_json = prediction.quality_rules
                 llm_rules = json.loads(llm_rules_json) if isinstance(llm_rules_json, str) else llm_rules_json
 
-                # Add metadata to LLM-generated rules
                 for rule in llm_rules:
                     rule["user_metadata"] = {
                         **contract_metadata,
