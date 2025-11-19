@@ -209,13 +209,13 @@ You can control whether predefined rules are generated:
     # Generate only explicit rules, skip predefined ones
     rules = generator.generate_rules_from_contract(
         contract_file="contract.yaml",
-        generate_predefined_rules=False  # Skip schema-derived rules
+        generate_predefined_rules=False
     )
 
     # Generate all rules (default behavior)
     rules = generator.generate_rules_from_contract(
         contract_file="contract.yaml",
-        generate_predefined_rules=True   # Include schema-derived rules
+        generate_predefined_rules=True
     )
     ```
   </TabItem>
