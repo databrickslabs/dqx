@@ -3,15 +3,18 @@ from collections.abc import Callable
 from functools import cached_property
 from typing import final
 from pyspark.sql import DataFrame, Observation
-from databricks.labs.dqx.checks_validator import ChecksValidationStatus
-from databricks.labs.dqx.rule import DQRule
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.__about__ import __version__
+from databricks.labs.dqx.checks_validator import ChecksValidationStatus
+from databricks.labs.dqx.mixins import PickleableMixin
+from databricks.labs.dqx.rule import DQRule
+from databricks.labs.dqx.utils import get_workspace_client
+from databricks.sdk import WorkspaceClient
 
 
-class DQEngineBase(abc.ABC):
-    def __init__(self, workspace_client: WorkspaceClient):
-        self._workspace_client = self._verify_workspace_client(workspace_client)
+class DQEngineBase(PickleableMixin, abc.ABC):
+    def __init__(self, workspace_client: WorkspaceClient | None = None):
+        self._ws = workspace_client
+        self._verify_workspace_client(workspace_client or get_workspace_client())
 
     @cached_property
     def ws(self) -> WorkspaceClient:
@@ -20,7 +23,7 @@ class DQEngineBase(abc.ABC):
         Ensures workspace connectivity and sets the product info used for
         telemetry so that requests are attributed to *dqx*.
         """
-        return self._workspace_client
+        return self._ws or get_workspace_client()
 
     @staticmethod
     @final
