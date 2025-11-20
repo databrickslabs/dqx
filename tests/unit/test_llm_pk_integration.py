@@ -6,14 +6,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
-from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
 
 try:
-    from databricks.labs.dqx.llm.llm_pk_detector import DatabricksPrimaryKeyDetector
+    from databricks.labs.dqx.llm.llm_pk_detector import PrimaryKeyDetector
 
     LLM_AVAILABLE = True
 except ImportError:
@@ -34,8 +32,8 @@ class MockLLMEngine:
         """Initialize mock LLM engine."""
 
 
-class MockSparkManager:
-    """Test double for SparkManager."""
+class MockTableManager:
+    """Test double for TableManager."""
 
     def __init__(self, table_definition="", metadata_info="", should_raise=False):
         self.table_definition = table_definition
@@ -91,7 +89,6 @@ def test_profiler_detect_pk_with_llm(skip_if_llm_not_available):
     assert hasattr(profiler, 'detect_primary_keys_with_llm')
     assert callable(profiler.detect_primary_keys_with_llm)
 
-    # Create input config
     input_config = InputConfig(location="test_table")
 
     # Verify method accepts correct parameters
@@ -101,7 +98,6 @@ def test_profiler_detect_pk_with_llm(skip_if_llm_not_available):
         result = profiler.detect_primary_keys_with_llm(
             input_config=input_config,
             llm_model_config=LLMModelConfig(model_name="test-model"),
-            validate_duplicates=False,
         )
         # If it somehow works, verify result structure
         assert isinstance(result, dict)
@@ -110,43 +106,6 @@ def test_profiler_detect_pk_with_llm(skip_if_llm_not_available):
         # Expected to fail without real endpoint - this is fine
         # We've verified the method exists and accepts correct parameters
         pass
-
-
-def test_detect_primary_key_simple(skip_if_llm_not_available):
-    """Test simple primary key detection with mocked table schema and LLM."""
-    mock_table_definition = """
-    CREATE TABLE customers (
-        customer_id BIGINT NOT NULL,
-        first_name STRING,
-        last_name STRING,
-        email STRING,
-        created_at TIMESTAMP
-    )
-    """
-    mock_metadata = "Table: customers, Columns: 5, Primary constraints: None"
-    mock_chat_databricks = Mock()
-
-    detector = DatabricksPrimaryKeyDetector(
-        table="customers",
-        endpoint="mock-endpoint",
-        validate_duplicates=False,
-        show_live_reasoning=False,
-        spark_session=None,
-        chat_databricks_cls=mock_chat_databricks,
-    )
-
-    detector.spark_manager = MockSparkManager(mock_table_definition, mock_metadata)
-    detector.detector = MockDetector(
-        primary_key_columns="customer_id",
-        confidence="high",
-        reasoning="customer_id is a unique identifier, non-nullable bigint typically used as primary key",
-    )
-
-    result = detector.detect_primary_keys()
-
-    assert result["success"] is True
-    assert result["primary_key_columns"] == ["customer_id"]
-    assert "customer_id" in result["reasoning"]
 
 
 def test_detect_primary_key_composite(skip_if_llm_not_available):
@@ -162,16 +121,15 @@ def test_detect_primary_key_composite(skip_if_llm_not_available):
     mock_metadata = "Table: order_items, Columns: 4, Primary constraints: None"
     mock_chat_databricks = Mock()
 
-    detector = DatabricksPrimaryKeyDetector(
+    detector = PrimaryKeyDetector(
         table="order_items",
-        endpoint="mock-endpoint",
-        validate_duplicates=False,
+        model_config=LLMModelConfig(model_name="mock-endpoint"),
         show_live_reasoning=False,
         spark_session=None,
         chat_databricks_cls=mock_chat_databricks,
     )
 
-    detector.spark_manager = MockSparkManager(mock_table_definition, mock_metadata)
+    detector.table_manager = MockTableManager(mock_table_definition, mock_metadata)
     detector.detector = MockDetector(
         primary_key_columns="order_id, product_id",
         confidence="high",
@@ -197,16 +155,15 @@ def test_detect_primary_key_no_clear_key(skip_if_llm_not_available):
     mock_metadata = "Table: application_logs, Columns: 4, Primary constraints: None"
     mock_chat_databricks = Mock()
 
-    detector = DatabricksPrimaryKeyDetector(
+    detector = PrimaryKeyDetector(
         table="application_logs",
-        endpoint="mock-endpoint",
-        validate_duplicates=False,
+        model_config=LLMModelConfig(model_name="mock-endpoint"),
         show_live_reasoning=False,
         spark_session=None,
         chat_databricks_cls=mock_chat_databricks,
     )
 
-    detector.spark_manager = MockSparkManager(mock_table_definition, mock_metadata)
+    detector.table_manager = MockTableManager(mock_table_definition, mock_metadata)
     detector.detector = MockDetector(
         primary_key_columns="none",
         confidence="low",
@@ -221,17 +178,8 @@ def test_detect_primary_key_no_clear_key(skip_if_llm_not_available):
 
 def test_profiler_runner_integration():
     """Test ProfilerRunner integration with PK detection."""
-    runner = ProfilerRunner(
-        ws=Mock(),
-        spark=Mock(),
-        dq_engine=Mock(),
-        installation=Mock(),
-        profiler=Mock(),
-    )
-
-    mock_generator = Mock()
-    mock_generator.llm_engine = MockLLMEngine()
-    mock_generator.detect_primary_keys_with_llm.return_value = {
+    mock_profiler = Mock()
+    mock_profiler.detect_primary_keys_with_llm.return_value = {
         'table': 'test_table',
         'success': True,
         'primary_key_columns': ['id'],
@@ -240,6 +188,17 @@ def test_profiler_runner_integration():
         'has_duplicates': False,
         'duplicate_count': 0,
     }
+
+    runner = ProfilerRunner(
+        ws=Mock(),
+        spark=Mock(),
+        dq_engine=Mock(),
+        installation=Mock(),
+        profiler=mock_profiler,
+    )
+
+    mock_generator = Mock()
+    mock_generator.llm_engine = MockLLMEngine()
 
     input_config = InputConfig(location="test_table")
     summary_stats = {}
@@ -251,17 +210,19 @@ def test_profiler_runner_integration():
     assert summary_stats['primary_keys']['confidence'] == 'high'
     assert summary_stats['primary_keys']['has_duplicates'] is False
     assert summary_stats['primary_keys']['duplicate_count'] == 0
-    mock_generator.detect_primary_keys_with_llm.assert_called_once_with(input_config)
+    mock_profiler.detect_primary_keys_with_llm.assert_called_once_with(input_config)
 
 
 def test_profiler_runner_llm_not_enabled():
     """Test ProfilerRunner when LLM is not enabled."""
+    mock_profiler = Mock()
+
     runner = ProfilerRunner(
         ws=Mock(),
         spark=Mock(),
         dq_engine=Mock(),
         installation=Mock(),
-        profiler=Mock(),
+        profiler=mock_profiler,
     )
 
     mock_generator = Mock()
@@ -273,26 +234,28 @@ def test_profiler_runner_llm_not_enabled():
     runner.detect_primary_keys_using_llm(mock_generator, input_config, summary_stats)
 
     assert 'primary_keys' not in summary_stats
-    mock_generator.detect_primary_keys_with_llm.assert_not_called()
+    mock_profiler.detect_primary_keys_with_llm.assert_not_called()
 
 
 def test_profiler_runner_pk_detection_error():
     """Test ProfilerRunner when PK detection fails."""
+    mock_profiler = Mock()
+    mock_profiler.detect_primary_keys_with_llm.return_value = {
+        'table': 'test_table',
+        'success': False,
+        'error': 'Table not found',
+    }
+
     runner = ProfilerRunner(
         ws=Mock(),
         spark=Mock(),
         dq_engine=Mock(),
         installation=Mock(),
-        profiler=Mock(),
+        profiler=mock_profiler,
     )
 
     mock_generator = Mock()
     mock_generator.llm_engine = MockLLMEngine()
-    mock_generator.detect_primary_keys_with_llm.return_value = {
-        'table': 'test_table',
-        'success': False,
-        'error': 'Table not found',
-    }
 
     input_config = InputConfig(location="test_table")
     summary_stats = {}
@@ -302,39 +265,3 @@ def test_profiler_runner_pk_detection_error():
     assert 'primary_keys' in summary_stats
     assert 'error' in summary_stats['primary_keys']
     assert summary_stats['primary_keys']['error'] == 'Table not found'
-
-
-def test_compare_datasets_with_llm_manual_columns():
-    """Test compare_datasets_with_llm wrapper with manual columns (backward compatibility)."""
-    # Mock compare_datasets to track calls
-    called_args = {}
-
-    def mock_compare_datasets(**kwargs):
-        called_args.update(kwargs)
-        return (Mock(), Mock())
-
-    # Replace compare_datasets temporarily
-    original_func = check_funcs.compare_datasets
-    check_funcs.compare_datasets = mock_compare_datasets
-
-    try:
-        # Call wrapper with manual columns
-        result = compare_datasets_with_llm(
-            source_table="catalog.schema.source",
-            ref_table="catalog.schema.reference",
-            columns=["user_id"],
-            ref_columns=["user_id"],
-            check_missing_records=True,
-        )
-
-        # Verify it returns a result
-        assert result is not None
-
-        # Verify compare_datasets was called with correct arguments
-        assert called_args["columns"] == ["user_id"]
-        assert called_args["ref_columns"] == ["user_id"]
-        assert called_args["ref_table"] == "catalog.schema.reference"
-        assert called_args["check_missing_records"] is True
-    finally:
-        # Restore original function
-        check_funcs.compare_datasets = original_func

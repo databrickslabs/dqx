@@ -179,7 +179,7 @@ class ProfilerRunner:
 
         try:
             logger.info(f"Detecting primary keys with LLM for table: {input_config.location}")
-            pk_result = generator.detect_primary_keys_with_llm(input_config)
+            pk_result = self.profiler.detect_primary_keys_with_llm(input_config)
 
             if pk_result.get("success"):
                 summary_stats["primary_keys"] = {

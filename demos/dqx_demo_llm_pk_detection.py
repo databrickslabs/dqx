@@ -6,85 +6,90 @@
 # MAGIC
 # MAGIC ## What is LLM-Based Primary Key Detection?
 # MAGIC
-# MAGIC Primary keys are crucial for data quality, but identifying them manually can be time-consuming, especially in large or complex datasets. DQX leverages Large Language Models (LLMs) to:
-# MAGIC
-# MAGIC - **Analyze table schemas** and metadata
-# MAGIC - **Identify potential primary key columns** (single or composite)
+# MAGIC Primary keys are crucial for data quality. DQX leverages Large Language Models to automatically:
+# MAGIC - **Analyze table schemas** and identify potential primary key columns (single or composite)
 # MAGIC - **Validate uniqueness** and check for duplicates
 # MAGIC - **Provide reasoning** for the detected primary keys
 # MAGIC
-# MAGIC ## Use Cases
+# MAGIC ## Key Use Cases for Data Quality
 # MAGIC
-# MAGIC - **Data Discovery**: Understand table relationships without manual analysis
-# MAGIC - **Data Quality Profiling**: Automatically identify unique identifiers during profiling
-# MAGIC - **Schema Documentation**: Generate documentation for undocumented tables
-# MAGIC - **Migration Planning**: Identify keys before migrating to Unity Catalog
+# MAGIC 1. **Detecting Keys for Comparing Datasets**: Automatically identify join keys when comparing source and target datasets, enabling accurate data validation without manual schema analysis.
+# MAGIC
+# MAGIC 2. **Discovering Keys for Checking Uniqueness**: Generate `is_unique` data quality rules based on detected primary keys to ensure data integrity.
+# MAGIC
+# MAGIC 3. **Data Profiling**: Understand table relationships and unique identifiers during initial data exploration.
+# MAGIC
+# MAGIC 4. **Schema Documentation**: Generate documentation for undocumented or legacy tables.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Install DQX with LLM extras
+# MAGIC ## Prerequisites
 # MAGIC
-# MAGIC To use DQX LLM-based features, DQX must be installed with `llm` extras: 
+# MAGIC To use DQX LLM-based features, install DQX with `llm` extras:
 # MAGIC
-# MAGIC `%pip install databricks-labs-dqx[llm]`
+# MAGIC ```
+# MAGIC %pip install databricks-labs-dqx[llm]
+# MAGIC ```
 
 # COMMAND ----------
 
-# MAGIC
-# MAGIC %pip install  --no-cache-dir --force-reinstall  databricks_labs_dqx-0.10.0-py3-none-any.whl[llm]
-# MAGIC
-# MAGIC
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
+
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install 'databricks-labs-dqx[llm] @ {dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx[llm]
+
+%restart_python
 
 # COMMAND ----------
 
-# MAGIC
-# MAGIC %restart_python
+model_name = "databricks/databricks-claude-sonnet-4-5"
 
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Setup and Configuration
-# MAGIC
-# MAGIC ### Model Configuration
-# MAGIC
-# MAGIC The LLM-based primary key detection uses the `databricks-meta-llama-3-1-8b-instruct` foundation model endpoint by default. This is hardcoded specifically for PK detection to ensure optimal performance. Other LLM features in DQX use the global default model (`databricks/databricks-claude-sonnet-4-5`).
-# MAGIC
-# MAGIC ### Table Configuration
-# MAGIC
-# MAGIC You can detect primary keys for any table accessible in your Databricks workspace. Provide the fully qualified table name in the format: `catalog.schema.table`
-
-# COMMAND ----------
-
-# Configuration widgets
-# Note: The model for PK detection is hardcoded to databricks-meta-llama-3-1-8b-instruct
-default_table_name = "samples.tpch.customer"
-
-dbutils.widgets.text("table_name", default_table_name, "Table Name")
-
-table_name = dbutils.widgets.get("table_name")
+dbutils.widgets.text("model_name", model_name, "Model Name")
+model_name = dbutils.widgets.get("model_name")
 
 # COMMAND ----------
 
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 
 # COMMAND ----------
 
-# Initialize Workspace Client
 ws = WorkspaceClient()
+profiler = DQProfiler(ws, spark)
+
+llm_model_config = LLMModelConfig(model_name=model_name)
+generator = DQGenerator(ws, spark, llm_model_config=llm_model_config)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## LLM-Based Primary Key Detection
+# MAGIC
+# MAGIC DQX supports LLM-based primary key detection to intelligently identify primary key columns from table schema and metadata. The following configurations are available:
+# MAGIC
+# MAGIC - **Model Serving Endpoint**:  
+# MAGIC   By default, DQX uses the `databricks/databricks-claude-sonnet-4-5` model serving endpoint for primary key detection. However, users can specify a different model endpoint if they prefer to use another one.
+# MAGIC
+# MAGIC - **Profiler for Detection**:  
+# MAGIC   Use `DQProfiler.detect_primary_keys_with_llm()` to detect primary keys in tables.
+# MAGIC
+# MAGIC - **Generator for Rules**:  
+# MAGIC   Use `DQGenerator.dq_generate_is_unique()` to create `is_unique` validation rules based on detected primary keys.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Example 1: Simple Primary Key Detection
 # MAGIC
-# MAGIC Let's create a simple table with a clear single-column primary key and detect it using LLM.
+# MAGIC Detect a single-column primary key in a user table.
 
 # COMMAND ----------
 
-# Create sample data with a clear primary key
 data = [
     (1, "Alice", "alice@example.com", "Engineering"),
     (2, "Bob", "bob@example.com", "Sales"),
@@ -94,83 +99,24 @@ data = [
 ]
 
 df = spark.createDataFrame(data, ["user_id", "username", "email", "department"])
-
-# Create temporary table
 temp_table = "dqx_demo_simple_pk"
 df.write.mode("overwrite").saveAsTable(temp_table)
-
 display(df)
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### Detect Primary Key with LLM
-# MAGIC
-# MAGIC You can detect primary keys using either:
-# MAGIC 1. **DQProfiler** - Convenient method for standalone PK detection
-# MAGIC 2. **DQGenerator** - More control when integrating with rule generation
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### Option 1: Using DQProfiler (Recommended for standalone PK detection)
-
-# COMMAND ----------
-
-from databricks.labs.dqx.profiler.profiler import DQProfiler
-
-# Create profiler
-profiler = DQProfiler(ws, spark)
-
-# Note: PK detection uses databricks-meta-llama-3-1-8b-instruct (hardcoded)
-# LLMModelConfig is not needed for PK detection as the model is preset
-llm_model_config = None
-
-# Detect primary keys using profiler
 input_config = InputConfig(location=temp_table)
-pk_result = profiler.detect_primary_keys_with_llm(
-    input_config=input_config,
-    llm_model_config=llm_model_config,
-    validate_duplicates=True,
-    fail_on_duplicates=True
-)
+pk_result = profiler.detect_primary_keys_with_llm(input_config=input_config, llm_model_config=llm_model_config)
 
 print("=" * 80)
-print("PRIMARY KEY DETECTION RESULT (Using DQProfiler)")
+print("PRIMARY KEY DETECTION RESULT")
 print("=" * 80)
 print(f"Table: {pk_result.get('table')}")
 print(f"Success: {pk_result.get('success')}")
 print(f"Primary Key Columns: {pk_result.get('primary_key_columns')}")
 print(f"Confidence: {pk_result.get('confidence')}")
 print(f"Has Duplicates: {pk_result.get('has_duplicates')}")
-print(f"Duplicate Count: {pk_result.get('duplicate_count')}")
 print(f"\nReasoning:\n{pk_result.get('reasoning')}")
-print("=" * 80)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC #### Option 2: Using DQGenerator (For integration with rule generation)
-
-# COMMAND ----------
-
-# Create DQ Generator with LLM support
-generator = DQGenerator(ws, spark, llm_model_config=llm_model_config)
-
-# Detect primary keys using generator
-pk_result_gen = generator.detect_primary_keys_with_llm(
-    input_config=input_config,
-    validate_duplicates=True,
-    fail_on_duplicates=True
-)
-
-print("=" * 80)
-print("PRIMARY KEY DETECTION RESULT (Using DQGenerator)")
-print("=" * 80)
-print(f"Table: {pk_result_gen.get('table')}")
-print(f"Success: {pk_result_gen.get('success')}")
-print(f"Primary Key Columns: {pk_result_gen.get('primary_key_columns')}")
-print(f"Confidence: {pk_result_gen.get('confidence')}")
 print("=" * 80)
 
 # COMMAND ----------
@@ -178,11 +124,10 @@ print("=" * 80)
 # MAGIC %md
 # MAGIC ## Example 2: Composite Primary Key Detection
 # MAGIC
-# MAGIC Now let's create a table with a composite primary key (multiple columns together form the unique identifier).
+# MAGIC Detect a multi-column primary key in an order items table.
 
 # COMMAND ----------
 
-# Create sample order items data with composite primary key
 order_data = [
     (101, 1, "Laptop", 1200.00, 1),
     (101, 2, "Mouse", 25.00, 2),
@@ -197,411 +142,125 @@ df_orders = spark.createDataFrame(
     ["order_id", "line_item", "product_name", "price", "quantity"]
 )
 
-# Create temporary table
 temp_table_composite = "dqx_demo_composite_pk"
 df_orders.write.mode("overwrite").saveAsTable(temp_table_composite)
-
 display(df_orders)
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### Detect Composite Primary Key
-
-# COMMAND ----------
-
-# Detect primary keys for the composite key table
 input_config_composite = InputConfig(location=temp_table_composite)
-pk_result_composite = generator.detect_primary_keys_with_llm(
+pk_result_composite = profiler.detect_primary_keys_with_llm(
     input_config=input_config_composite,
-    validate_duplicates=True
+    llm_model_config=llm_model_config
 )
 
 print("=" * 80)
-print("COMPOSITE PRIMARY KEY DETECTION RESULT")
+print("COMPOSITE PRIMARY KEY DETECTION")
 print("=" * 80)
 print(f"Table: {pk_result_composite.get('table')}")
 print(f"Success: {pk_result_composite.get('success')}")
 print(f"Primary Key Columns: {pk_result_composite.get('primary_key_columns')}")
 print(f"Confidence: {pk_result_composite.get('confidence')}")
-print(f"Has Duplicates: {pk_result_composite.get('has_duplicates')}")
 print(f"\nReasoning:\n{pk_result_composite.get('reasoning')}")
 print("=" * 80)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Example 3: Table with No Clear Primary Key
+# MAGIC ## Example 3: Generate Uniqueness Rules from Detected PKs
 # MAGIC
-# MAGIC Let's see how the LLM handles a table where there's no obvious primary key (like a log table).
+# MAGIC Use detected primary keys to create `is_unique` data quality rules with the generator.
 
 # COMMAND ----------
 
-# Create sample log data with no clear primary key
-log_data = [
-    ("2024-01-15 10:30:00", "INFO", "Application started"),
-    ("2024-01-15 10:31:00", "WARN", "High memory usage"),
-    ("2024-01-15 10:32:00", "INFO", "User logged in"),
-    ("2024-01-15 10:33:00", "ERROR", "Database connection failed"),
-    ("2024-01-15 10:34:00", "INFO", "Retry successful"),
-]
-
-df_logs = spark.createDataFrame(log_data, ["timestamp", "log_level", "message"])
-
-# Create temporary table
-temp_table_logs = "dqx_demo_logs_no_pk"
-df_logs.write.mode("overwrite").saveAsTable(temp_table_logs)
-
-display(df_logs)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Detect Primary Key (Expected: None or Low Confidence)
-
-# COMMAND ----------
-
-# Detect primary keys for the log table
-input_config_logs = InputConfig(location=temp_table_logs)
-pk_result_logs = generator.detect_primary_keys_with_llm(
-    input_config=input_config_logs,
-    validate_duplicates=True,
-    fail_on_duplicates=False  # Don't fail if no clear key found
-)
-
-print("=" * 80)
-print("NO CLEAR PRIMARY KEY SCENARIO")
-print("=" * 80)
-print(f"Table: {pk_result_logs.get('table')}")
-print(f"Success: {pk_result_logs.get('success')}")
-print(f"Primary Key Columns: {pk_result_logs.get('primary_key_columns')}")
-print(f"Confidence: {pk_result_logs.get('confidence')}")
-print(f"\nReasoning:\n{pk_result_logs.get('reasoning')}")
-print("=" * 80)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Example 4: Table with Duplicates in Candidate Primary Key
-# MAGIC
-# MAGIC Let's create a table where the candidate primary key has duplicates.
-
-# COMMAND ----------
-
-# Create sample data with duplicate IDs (data quality issue)
-duplicate_data = [
-    (1, "Product A", 100.00),
-    (2, "Product B", 150.00),
-    (1, "Product A", 100.00),  # Duplicate ID!
-    (3, "Product C", 200.00),
-    (4, "Product D", 120.00),
-]
-
-df_duplicates = spark.createDataFrame(
-    duplicate_data, 
-    ["product_id", "product_name", "price"]
-)
-
-# Create temporary table
-temp_table_duplicates = "dqx_demo_duplicates"
-df_duplicates.write.mode("overwrite").saveAsTable(temp_table_duplicates)
-
-display(df_duplicates)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Detect Primary Key with Duplicates
-
-# COMMAND ----------
-
-# Detect primary keys for the table with duplicates
-input_config_duplicates = InputConfig(location=temp_table_duplicates)
-pk_result_duplicates = generator.detect_primary_keys_with_llm(
-    input_config=input_config_duplicates,
-    validate_duplicates=True,
-    fail_on_duplicates=False  # Don't fail, just report duplicates
-)
-
-print("=" * 80)
-print("PRIMARY KEY WITH DUPLICATES SCENARIO")
-print("=" * 80)
-print(f"Table: {pk_result_duplicates.get('table')}")
-print(f"Success: {pk_result_duplicates.get('success')}")
-print(f"Primary Key Columns: {pk_result_duplicates.get('primary_key_columns')}")
-print(f"Confidence: {pk_result_duplicates.get('confidence')}")
-print(f"Has Duplicates: {pk_result_duplicates.get('has_duplicates')}")
-print(f"Duplicate Count: {pk_result_duplicates.get('duplicate_count')}")
-print(f"\nReasoning:\n{pk_result_duplicates.get('reasoning')}")
-print("=" * 80)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Example 5: Using with Profiler (Integrated Workflow)
-# MAGIC
-# MAGIC The LLM-based primary key detection is integrated into the DQX profiler workflow. When you run profiling with LLM enabled, primary keys are automatically detected and included in the summary statistics.
-
-# COMMAND ----------
-
-# Create a simple demo table for profiling
-profile_data = [
-    (1001, "John Doe", 28, "john@example.com", "New York"),
-    (1002, "Jane Smith", 34, "jane@example.com", "San Francisco"),
-    (1003, "Bob Johnson", 45, "bob@example.com", "Chicago"),
-    (1004, "Alice Williams", 29, "alice@example.com", "Boston"),
-]
-
-df_profile = spark.createDataFrame(
-    profile_data, 
-    ["customer_id", "name", "age", "email", "city"]
-)
-
-temp_table_profile = "dqx_demo_profile"
-df_profile.write.mode("overwrite").saveAsTable(temp_table_profile)
-
-display(df_profile)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Run Profiler with LLM-based PK Detection
-
-# COMMAND ----------
-
-from databricks.labs.dqx.profiler.profiler import DQProfiler
-
-# Create profiler to get table statistics
-profiler = DQProfiler(ws)
-df_to_profile = spark.table(temp_table_profile)
-summary_stats, profiles = profiler.profile(df=df_to_profile)
-
-# Add table name to summary stats
-summary_stats["table"] = temp_table_profile
-
-# Detect primary keys using LLM
-input_config = InputConfig(location=temp_table_profile)
-pk_result = generator.detect_primary_keys_with_llm(
-    input_config=input_config,
-    validate_duplicates=True,
-    fail_on_duplicates=False
-)
-
-# Add PK results to summary stats
+# First detect PKs using profiler, then create rules using generator
 if pk_result.get("success"):
-    summary_stats["primary_keys"] = {
-        "columns": pk_result.get("primary_key_columns", []),
-        "confidence": pk_result.get("confidence", "unknown"),
-        "reasoning": pk_result.get("reasoning", ""),
-        "has_duplicates": pk_result.get("has_duplicates", False),
-        "duplicate_count": pk_result.get("duplicate_count", 0),
-    }
+    detected_columns = pk_result.get("primary_key_columns", [])
+    
+    rule = generator.dq_generate_is_unique(
+        column=",".join(detected_columns),
+        level="error",
+        columns=detected_columns,
+        confidence=pk_result.get("confidence", "unknown"),
+        reasoning=pk_result.get("reasoning", ""),
+        llm_detected=True,
+    )
+    
+    print("=" * 80)
+    print("GENERATED UNIQUENESS RULE")
+    print("=" * 80)
+    print(f"Generated rule for table: {temp_table}")
+    print(f"\nRule Details:")
+    print(f"  - Name: {rule.get('name')}")
+    print(f"  - Check: {rule.get('check')}")
+    print(f"  - Criticality: {rule.get('criticality')}")
+    print(f"  - Metadata: {rule.get('user_metadata')}")
+    print("=" * 80)
 else:
-    summary_stats["primary_keys"] = {
-        "error": pk_result.get("error", "Unknown error"),
-    }
-
-print("=" * 80)
-print("PROFILER RESULTS WITH PRIMARY KEY DETECTION")
-print("=" * 80)
-print("\nSummary Statistics:")
-print(f"Table: {summary_stats.get('table')}")
-print(f"Row Count: {summary_stats.get('row_count')}")
-print(f"Column Count: {summary_stats.get('column_count')}")
-
-if "primary_keys" in summary_stats and "error" not in summary_stats["primary_keys"]:
-    pk_info = summary_stats["primary_keys"]
-    print("\nPrimary Key Information:")
-    print(f"  Columns: {pk_info.get('columns')}")
-    print(f"  Confidence: {pk_info.get('confidence')}")
-    print(f"  Has Duplicates: {pk_info.get('has_duplicates')}")
-    print(f"  Duplicate Count: {pk_info.get('duplicate_count')}")
-    print(f"\nReasoning:\n{pk_info.get('reasoning')}")
-else:
-    error_msg = summary_stats.get("primary_keys", {}).get("error", "Unknown")
-    print(f"\nPrimary Key Detection Failed: {error_msg}")
-
-print("=" * 80)
+    print(f"Failed to detect primary keys: {pk_result.get('error')}")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Cleanup
+# MAGIC ## Example 4: Use Detected PKs for Dataset Comparison
 # MAGIC
-# MAGIC Let's clean up the temporary tables we created.
+# MAGIC Detect primary keys and use them to compare two datasets.
 
 # COMMAND ----------
 
-# Drop temporary tables
+source_data = [
+    (1, "Alice", "alice@example.com"),
+    (2, "Bob", "bob@example.com"),
+    (3, "Charlie", "charlie@example.com"),
+]
+
+target_data = [
+    (1, "Alice", "alice@example.com"),
+    (2, "Robert", "bob@example.com"),  # Name changed
+    (4, "David", "david@example.com"),  # New record
+]
+
+df_source = spark.createDataFrame(source_data, ["id", "name", "email"])
+df_target = spark.createDataFrame(target_data, ["id", "name", "email"])
+
+temp_source = "dqx_demo_source"
+temp_target = "dqx_demo_target"
+df_source.write.mode("overwrite").saveAsTable(temp_source)
+df_target.write.mode("overwrite").saveAsTable(temp_target)
+
+# COMMAND ----------
+
+from databricks.labs.dqx.check_funcs import compare_datasets
+
+input_config_source = InputConfig(location=temp_source)
+pk_result_source = profiler.detect_primary_keys_with_llm(
+    input_config=input_config_source,
+    llm_model_config=llm_model_config
+)
+
+if pk_result_source.get("success"):
+    detected_keys = pk_result_source.get("primary_key_columns")
+    print(f"Detected Primary Keys: {detected_keys}")
+    
+    comparison_result = compare_datasets(
+        df1=df_source,
+        df2=df_target,
+        on=detected_keys
+    )
+    
+    print("\n" + "=" * 80)
+    print("DATASET COMPARISON RESULTS")
+    print("=" * 80)
+    print(f"Using detected primary keys: {detected_keys}")
+    print(f"\nComparison Summary:")
+    display(comparison_result)
+else:
+    print(f"Failed to detect primary keys: {pk_result_source.get('error')}")
+
+# COMMAND ----------
+
+# Cleanup
 spark.sql(f"DROP TABLE IF EXISTS {temp_table}")
 spark.sql(f"DROP TABLE IF EXISTS {temp_table_composite}")
-spark.sql(f"DROP TABLE IF EXISTS {temp_table_logs}")
-spark.sql(f"DROP TABLE IF EXISTS {temp_table_duplicates}")
-spark.sql(f"DROP TABLE IF EXISTS {temp_table_profile}")
-
-print("✅ Cleanup complete! All temporary tables have been dropped.")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## How to Run This Demo
-# MAGIC
-# MAGIC ### Prerequisites
-# MAGIC
-# MAGIC 1. **Databricks Workspace**: You need access to a Databricks workspace with Unity Catalog enabled
-# MAGIC 2. **LLM Model Serving Endpoint**: Ensure you have access to the configured LLM endpoint (default: `databricks-dbrx-instruct`)
-# MAGIC 3. **Cluster Requirements**:
-# MAGIC    - Databricks Runtime 14.3 LTS or higher
-# MAGIC    - Recommended: Serverless compute or cluster with Shared access mode
-# MAGIC
-# MAGIC ### Running the Demo
-# MAGIC
-# MAGIC #### Option 1: Run in Databricks Workspace
-# MAGIC
-# MAGIC 1. **Upload this notebook** to your Databricks workspace:
-# MAGIC    - Go to **Workspace** → Right-click on a folder → **Import**
-# MAGIC    - Select this notebook file
-# MAGIC
-# MAGIC 2. **Attach to a cluster**:
-# MAGIC    - Click **Connect** and select a cluster
-# MAGIC    - Or use serverless compute (recommended)
-# MAGIC
-# MAGIC 3. **Run all cells**:
-# MAGIC    - Click **Run All** to execute all cells
-# MAGIC    - Or run cells individually by pressing `Shift + Enter`
-# MAGIC
-# MAGIC #### Option 2: Import from Repository
-# MAGIC
-# MAGIC 1. **Clone the DQX repository**:
-# MAGIC    ```bash
-# MAGIC    git clone https://github.com/databrickslabs/dqx.git
-# MAGIC    ```
-# MAGIC
-# MAGIC 2. **Navigate to demos**:
-# MAGIC    ```bash
-# MAGIC    cd dqx/demos
-# MAGIC    ```
-# MAGIC
-# MAGIC 3. **Upload to Databricks Workspace**:
-# MAGIC    ```bash
-# MAGIC    databricks workspace import dqx_demo_llm_pk_detection.py \
-# MAGIC      /Users/<your-username>/dqx_demo_llm_pk_detection \
-# MAGIC      --language PYTHON --format SOURCE
-# MAGIC    ```
-# MAGIC
-# MAGIC #### Option 3: Run via Databricks CLI
-# MAGIC
-# MAGIC 1. **Install Databricks CLI**:
-# MAGIC    ```bash
-# MAGIC    pip install databricks-cli
-# MAGIC    ```
-# MAGIC
-# MAGIC 2. **Configure authentication**:
-# MAGIC    ```bash
-# MAGIC    databricks configure --token
-# MAGIC    ```
-# MAGIC
-# MAGIC 3. **Import and run**:
-# MAGIC    ```bash
-# MAGIC    databricks workspace import dqx_demo_llm_pk_detection.py \
-# MAGIC      /Users/<your-username>/dqx_demo_llm_pk_detection --language PYTHON
-# MAGIC    ```
-# MAGIC
-# MAGIC ## 🔗 Example 6: Use with Compare Datasets (Auto PK Detection)
-# MAGIC
-# MAGIC The `compare_datasets_with_llm` wrapper automatically detects primary keys for dataset comparison.
-
-# COMMAND ----------
-
-# Setup catalog and schema for demo
-import re
-current_user = spark.sql("SELECT current_user() as user").collect()[0]["user"]
-# Clean username to make it a valid schema name
-clean_username = re.sub(r'[^a-zA-Z0-9_]', '_', current_user.split('@')[0])
-
-catalog = "main"  # Using 'main' catalog, change if needed
-schema = f"dqx_demo_{clean_username}"
-
-# Create schema if it doesn't exist
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema}")
-
-print(f"Using catalog: {catalog}")
-print(f"Using schema: {schema}")
-
-# COMMAND ----------
-
-# Create two tables for comparison
-spark.sql(f"""
-    CREATE OR REPLACE TABLE {catalog}.{schema}.source_customers AS
-    SELECT * FROM VALUES 
-        (1, 'Alice', 'alice@example.com'),
-        (2, 'Bob', 'bob@example.com'),
-        (3, 'Charlie', 'charlie@example.com')
-    AS data(customer_id, name, email)
-""")
-
-spark.sql(f"""
-    CREATE OR REPLACE TABLE {catalog}.{schema}.ref_customers AS
-    SELECT * FROM VALUES 
-        (1, 'Alice', 'alice@example.com'),
-        (2, 'Bob', 'bob_updated@example.com'),
-        (3, 'Charlie', 'charlie@example.com')
-    AS data(customer_id, name, email)
-""")
-
-# COMMAND ----------
-
-# Compare datasets with auto PK detection
-from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
-
-print("🔍 Detecting primary keys and comparing datasets using LLM...")
-print("=" * 80)
-
-# Load both DataFrames
-source_df = spark.table(f"{catalog}.{schema}.source_customers")
-ref_df = spark.table(f"{catalog}.{schema}.ref_customers")
-
-# The wrapper will auto-detect customer_id as PK using LLM for both tables
-# Use ref_table for PK detection, but we need to provide the DataFrame via ref_df_name
-ref_df.createOrReplaceTempView("ref_customers_for_comparison")
-
-condition_col, apply_func = compare_datasets_with_llm(
-    source_table=f"{catalog}.{schema}.source_customers",
-    ref_table=f"{catalog}.{schema}.ref_customers",  # For PK detection
-    ref_df_name="ref_customers_for_comparison",  # For actual comparison
-)
-
-print("\n✅ Primary keys detected successfully for both tables!")
-print("📊 Applying comparison...\n")
-
-# Apply the comparison - pass reference DataFrame dict
-# result_df = apply_func(source_df, {"ref_customers_for_comparison": ref_df})
-result_df = apply_func(source_df, spark, {"ref_customers_for_comparison": ref_df})
-
-# Display all results  
-print("Full comparison results:")
-display(result_df)
-
-# The comparison status is in a struct column starting with __compare_status
-print("\nRows with differences (Bob's email changed):")
-# Get the compare status column name (it has a generated UUID)
-compare_col = [col for col in result_df.columns if col.startswith("__compare_status")][0]
-differences_df = result_df.filter(f"{compare_col}.matched = false")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC **Note**: The wrapper automatically:
-# MAGIC 1. Detects primary keys using LLM (customer_id in this case)
-# MAGIC 2. Compares the datasets using the detected keys
-# MAGIC 3. Returns comparison results showing differences (Bob's email changed)
-# MAGIC
-# MAGIC You can also provide manual columns if you don't want auto-detection:
-# MAGIC ```python
-# MAGIC compare_datasets_with_llm(
-# MAGIC     source_table="...",
-# MAGIC     ref_table="...",
-# MAGIC     columns=["customer_id"],  # Manual PK
-# MAGIC     ref_columns=["customer_id"]
-# MAGIC )
-# MAGIC ```
+spark.sql(f"DROP TABLE IF EXISTS {temp_source}")
+spark.sql(f"DROP TABLE IF EXISTS {temp_target}")

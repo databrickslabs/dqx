@@ -1,0 +1,342 @@
+---
+sidebar_position: 6
+---
+
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# LLM-Based Primary Key Detection
+
+DQX provides AI-powered primary key detection that automatically identifies primary key columns in your tables using Large Language Models (LLMs). This feature analyzes table schemas and metadata to intelligently detect single or composite primary keys without manual inspection.
+
+## Overview
+
+The LLM-based primary key detection capability is available via the `DQProfiler` class and supports:
+- Analyzing table schemas to identify potential primary key columns
+- Detecting both single-column and composite primary keys
+- Validating uniqueness and checking for duplicate values
+- Providing confidence scores and reasoning for detected keys
+- Generating `is_unique` quality rules based on detected keys
+
+<Admonition type="tip" title="When to use LLM-Based PK Detection">
+LLM-based primary key detection is ideal for:
+- **Dataset Comparison**: Automatically identify join keys when comparing source and target datasets
+- **Data Quality Rules**: Generate `is_unique` validation rules for detected primary keys
+- **Data Profiling**: Understand table relationships and unique identifiers during exploration
+- **Schema Documentation**: Document primary keys for undocumented or legacy tables
+- **Migration Projects**: Quickly identify keys when migrating data between systems
+</Admonition>
+
+### Model Access
+
+The feature requires access to an LLM model. DQX supports:
+- **Databricks Foundation Model APIs** (recommended): Use Databricks-hosted models like `databricks/databricks-claude-sonnet-4-5` (default)
+- **Custom API endpoints**: Any OpenAI-compatible API endpoint
+
+## Prerequisites
+
+To use the LLM-based primary key detection feature, install DQX with the LLM extra dependencies:
+
+```bash
+pip install 'databricks-labs-dqx[llm]'
+```
+
+This will install required packages including DSPy and other LLM-related dependencies.
+
+## Basic Usage
+
+### Detecting Primary Keys
+
+Use `DQProfiler` to detect primary keys in a table:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+    from databricks.sdk import WorkspaceClient
+
+    # Initialize workspace client and profiler
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws, spark)
+
+    # Detect primary keys for a table
+    input_config = InputConfig(location="catalog.schema.users")
+    result = profiler.detect_primary_keys_with_llm(input_config)
+
+    # Display detected keys
+    if "primary_key_columns" in result:
+        print(f"Primary Key: {result['primary_key_columns']}")
+        print(f"Confidence: {result['confidence']}")
+        print(f"Reasoning: {result['reasoning']}")
+    ```
+  </TabItem>
+</Tabs>
+
+### Using Custom Model Configuration
+
+You can configure the profiler to use custom models:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+
+    # Configure custom model
+    llm_config = LLMModelConfig(
+        model_name="databricks/databricks-claude-sonnet-4-5"
+    )
+
+    profiler = DQProfiler(ws, spark)
+
+    # Detect primary keys with custom model
+    result = profiler.detect_primary_keys_with_llm(
+        input_config=InputConfig(location="catalog.schema.orders"),
+        llm_model_config=llm_config
+    )
+
+    print(f"Detected Primary Key: {result.get('primary_key_columns')}")
+    ```
+  </TabItem>
+</Tabs>
+
+## Generating Quality Rules from Detected Keys
+
+### Creating `is_unique` Rules
+
+Use `DQGenerator` to automatically generate uniqueness validation rules based on detected primary keys:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+
+    # Initialize generator with LLM config
+    llm_config = LLMModelConfig(model_name="databricks/databricks-claude-sonnet-4-5")
+    generator = DQGenerator(ws, spark, llm_model_config=llm_config)
+
+    # Generate is_unique rules based on detected primary keys
+    checks = generator.dq_generate_is_unique(
+        input_config=InputConfig(location="catalog.schema.customers")
+    )
+
+    print(f"Generated {len(checks)} quality checks")
+    for check in checks:
+        print(f"- {check}")
+    ```
+  </TabItem>
+</Tabs>
+
+## Using with Dataset Comparison
+
+One of the most powerful use cases is automatic join key detection for dataset comparison:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
+
+    # Automatically detect primary keys and compare datasets
+    check_def, apply_func = compare_datasets_with_llm(
+        source_table="catalog.schema.source_table",
+        ref_table="catalog.schema.reference_table",  # LLM detects keys from this
+        ref_df_name="reference_data"  # Name for the reference dataframe
+    )
+
+    # Load your dataframes
+    source_df = spark.table("catalog.schema.source_table")
+    ref_df = spark.table("catalog.schema.reference_table")
+
+    # Apply comparison using detected keys
+    result_df = apply_func(source_df, spark, {"reference_data": ref_df})
+
+    # Show comparison results
+    result_df.display()
+    ```
+  </TabItem>
+</Tabs>
+
+This automatically:
+1. Detects primary keys from the reference table using LLM
+2. Uses detected keys to join and compare the datasets
+3. Returns comparison results with match/mismatch details
+
+## Complete Example
+
+Here's a complete workflow showing primary key detection, rule generation, and validation:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+    from databricks.sdk import WorkspaceClient
+
+    # Initialize
+    ws = WorkspaceClient()
+    profiler = DQProfiler(ws, spark)
+    
+    llm_config = LLMModelConfig(model_name="databricks/databricks-claude-sonnet-4-5")
+    generator = DQGenerator(ws, spark, llm_model_config=llm_config)
+
+    # Step 1: Detect primary keys
+    table_location = "catalog.schema.transactions"
+    pk_result = profiler.detect_primary_keys_with_llm(
+        input_config=InputConfig(location=table_location),
+        llm_model_config=llm_config
+    )
+
+    print(f"Detected Primary Keys: {pk_result.get('primary_key_columns')}")
+    print(f"Confidence: {pk_result.get('confidence')}")
+
+    # Step 2: Generate is_unique quality rules
+    checks = generator.dq_generate_is_unique(
+        input_config=InputConfig(location=table_location)
+    )
+
+    print(f"\nGenerated {len(checks)} quality checks")
+
+    # Step 3: Apply quality rules to validate uniqueness
+    engine = DQEngine(ws, spark)
+    data_df = spark.table(table_location)
+    
+    result_df = engine.apply_checks(
+        input_df=data_df,
+        checks=checks
+    )
+
+    # Show validation results
+    result_df.display()
+    ```
+  </TabItem>
+</Tabs>
+
+## Example Use Cases
+
+### Use Case 1: Validating Data Migration
+
+Detect keys and compare source vs target tables after migration:
+
+```python
+from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
+
+# Automatically compare migrated data
+check_def, apply_func = compare_datasets_with_llm(
+    source_table="legacy.prod.customers",
+    ref_table="modern.prod.customers",
+    ref_df_name="target"
+)
+
+source_df = spark.table("legacy.prod.customers")
+target_df = spark.table("modern.prod.customers")
+
+# Compare using auto-detected keys
+comparison = apply_func(source_df, spark, {"target": target_df})
+comparison.display()
+```
+
+### Use Case 2: Data Quality Rules for Undocumented Tables
+
+Generate uniqueness rules for legacy tables without documentation:
+
+```python
+from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+
+generator = DQGenerator(ws, spark, llm_model_config=LLMModelConfig())
+
+# Generate rules for undocumented table
+checks = generator.dq_generate_is_unique(
+    input_config=InputConfig(location="legacy_db.unknown_schema.mystery_table")
+)
+
+# Apply and validate
+engine = DQEngine(ws, spark)
+df = spark.table("legacy_db.unknown_schema.mystery_table")
+results = engine.apply_checks(df, checks)
+```
+
+### Use Case 3: Composite Key Detection
+
+Detect and validate composite primary keys:
+
+```python
+profiler = DQProfiler(ws, spark)
+
+# Detect composite keys (e.g., order_id + line_item_id)
+result = profiler.detect_primary_keys_with_llm(
+    input_config=InputConfig(location="sales.prod.order_line_items")
+)
+
+print(f"Composite Key: {result['primary_key_columns']}")
+# Output: ["order_id", "line_item_id"]
+```
+
+## Best Practices
+
+1. **Validate Results**: Always review detected primary keys before using them in production workflows
+2. **Check Confidence Scores**: Pay attention to confidence levels - low confidence may indicate ambiguous keys
+3. **Verify Uniqueness**: Use generated `is_unique` rules to validate that detected keys are actually unique
+4. **Handle Composite Keys**: The detection works for both single and composite keys
+5. **Use for Documentation**: Document detected keys in your data catalog or schema documentation
+
+## Troubleshooting
+
+### Error: LLM dependencies not available
+
+**Problem**: You receive an error saying "LLM dependencies not available".
+
+**Solution**: Install the LLM dependencies:
+```bash
+pip install 'databricks-labs-dqx[llm]'
+```
+
+### Low Confidence Scores
+
+**Problem**: The LLM returns low confidence for detected primary keys.
+
+**Solution**:
+- Review the reasoning provided by the LLM
+- Manually inspect the table schema and data
+- Consider that the table might not have a clear primary key
+- Check if the table has proper constraints or metadata
+
+### Model Access Issues
+
+**Problem**: Unable to connect to the LLM model endpoint.
+
+**Solution**:
+- Verify you have access to Databricks Foundation Model APIs
+- Check your workspace permissions
+- Try using the default model (`databricks/databricks-claude-sonnet-4-5`)
+- Ensure your cluster has network access to the model endpoint
+
+### Detected Keys Have Duplicates
+
+**Problem**: The detected primary keys have duplicate values in the data.
+
+**Solution**:
+- The LLM suggests keys based on schema/metadata, not data content
+- Use the generated `is_unique` rules to identify duplicate rows
+- Clean the data or update the primary key definition
+- Consider if you need a composite key instead of a single column
+
+## Limitations
+
+- Requires network access to the LLM model endpoint
+- Detection is based on schema and metadata, not actual data analysis
+- May not detect surrogate keys or technical identifiers without clear naming patterns
+- Requires additional LLM dependencies which increases package size
+- LLM inference may take a few seconds to complete
+

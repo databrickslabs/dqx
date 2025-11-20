@@ -1,7 +1,6 @@
 import logging
 import json
 from collections.abc import Callable
-from typing import Any
 
 from pyspark.sql import SparkSession
 
@@ -18,7 +17,6 @@ from databricks.labs.dqx.errors import MissingParameterError
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
     from databricks.labs.dqx.llm.llm_utils import get_column_metadata
-    from databricks.labs.dqx.llm.llm_pk_detector import DatabricksPrimaryKeyDetector
 
     LLM_ENABLED = True
 except ImportError:
@@ -129,65 +127,6 @@ class DQGenerator(DQEngineBase):
             logger.info(f"LLM reasoning: {prediction.reasoning}")
 
         return dq_rules
-
-    @telemetry_logger("generator", "detect_primary_keys_with_llm")
-    def detect_primary_keys_with_llm(
-        self,
-        input_config: InputConfig,
-        validate_duplicates: bool = True,
-        fail_on_duplicates: bool = True,
-        max_retries: int = 3,
-    ) -> dict[str, Any]:
-        """
-        Detects primary keys using LLM-based analysis.
-
-        Args:
-            input_config: Input configuration containing the table location.
-            validate_duplicates: Whether to validate the detected primary keys for duplicates.
-            fail_on_duplicates: Whether to fail if duplicates are found after max retries.
-            max_retries: Maximum number of retries to find unique primary key combination.
-
-        Returns:
-            A dictionary containing the primary key detection result with the following keys:
-            - table: The table name
-            - success: Whether detection was successful
-            - primary_key_columns: List of detected primary key columns (if successful)
-            - confidence: Confidence level (high/medium/low)
-            - reasoning: LLM reasoning for the selection
-            - has_duplicates: Whether duplicates were found (if validation performed)
-            - duplicate_count: Number of duplicate combinations (if validation performed)
-            - error: Error message (if failed)
-
-        Raises:
-            MissingParameterError: If LLM engine is not available or input_config is missing.
-        """
-        if self.llm_engine is None:
-            raise MissingParameterError(
-                "LLM engine not available. Make sure LLM dependencies are installed: "
-                "pip install 'databricks-labs-dqx[llm]'"
-            )
-
-        if not input_config or not input_config.location:
-            raise MissingParameterError("Input config with location (table name) is required for PK detection")
-
-        table_name = input_config.location
-        logger.info(f"Detecting primary keys with LLM for table: {table_name}")
-
-        # Use llama model specifically for PK detection
-        pk_model = "databricks-meta-llama-3-1-8b-instruct"
-        detector = DatabricksPrimaryKeyDetector(
-            table=table_name,
-            endpoint=pk_model,
-            validate_duplicates=validate_duplicates,
-            fail_on_duplicates=fail_on_duplicates,
-            spark_session=self.spark,
-            max_retries=max_retries,
-        )
-
-        result = detector.detect_primary_keys()
-
-        logger.info(f"Primary key detection completed for {table_name}: {result.get('success', False)}")
-        return result
 
     @staticmethod
     def dq_generate_is_in(column: str, level: str = "error", **params: dict):
@@ -307,9 +246,57 @@ class DQGenerator(DQEngineBase):
             "criticality": level,
         }
 
+    @staticmethod
+    def dq_generate_is_unique(column: str, level: str = "error", **params: dict):
+        """Generates a data quality rule to check if specified columns are unique.
+
+        Uses is_unique with nulls_distinct=True for uniqueness validation.
+
+        Args:
+            column: Comma-separated list of column names that form the primary key. Uses all columns if not provided.
+            level: The criticality level of the rule (default is "error").
+            params: Additional parameters including columns list, confidence, reasoning, etc.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        columns = params.get("columns", column.split(","))
+
+        # Clean up column names (remove whitespace)
+        columns = [col.strip() for col in columns]
+
+        confidence = params.get("confidence", "unknown")
+        reasoning = params.get("reasoning", "")
+        nulls_distinct = params.get("nulls_distinct", True)
+        llm_detected = params.get("llm_detected", False)
+
+        # Create base metadata
+        user_metadata = {
+            "pk_detection_confidence": confidence,
+            "pk_detection_reasoning": reasoning,
+            "detected_primary_key": True,
+        }
+
+        # Add LLM-specific metadata if this was LLM-detected
+        if llm_detected:
+            user_metadata.update(
+                {"llm_based_detection": True, "detection_method": "llm_analysis", "requires_llm_dependencies": True}
+            )
+
+        return {
+            "check": {
+                "function": "is_unique",
+                "arguments": {"columns": columns, "nulls_distinct": nulls_distinct},
+            },
+            "name": f"primary_key_{'_'.join(columns)}_validation",
+            "criticality": level,
+            "user_metadata": user_metadata,
+        }
+
     _checks_mapping = {
         "is_not_null": dq_generate_is_not_null,
         "is_in": dq_generate_is_in,
         "min_max": dq_generate_min_max,
         "is_not_null_or_empty": dq_generate_is_not_null_or_empty,
+        "is_unique": dq_generate_is_unique,
     }

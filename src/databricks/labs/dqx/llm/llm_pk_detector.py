@@ -8,21 +8,21 @@ from databricks_langchain import ChatDatabricks  # type: ignore
 from langchain_core.messages import HumanMessage  # type: ignore
 from pyspark.sql import SparkSession
 
+from databricks.labs.dqx.config import LLMModelConfig
 
 logger = logging.getLogger(__name__)
 
 
-class DatabricksLM(dspy.LM):
+class DspyLMAdapter(dspy.LM):
     """Custom DSPy LM adapter for Databricks Model Serving."""
 
-    def __init__(self, endpoint: str, temperature: float = 0.1, max_tokens: int = 1000, chat_databricks_cls=None):
+    def __init__(self, endpoint: str, max_tokens: int = 1000, chat_databricks_cls=None):
         self.endpoint = endpoint
-        self.temperature = temperature
         self.max_tokens = max_tokens
 
         # Allow injection of ChatDatabricks class for testing
         chat_cls = chat_databricks_cls or ChatDatabricks
-        self.llm = chat_cls(endpoint=endpoint, temperature=temperature, max_tokens=max_tokens)
+        self.llm = chat_cls(endpoint=endpoint, temperature=0.1, max_tokens=max_tokens)
         super().__init__(model=endpoint)
 
     def __call__(self, prompt=None, messages=None, **kwargs):
@@ -43,8 +43,8 @@ class DatabricksLM(dspy.LM):
             return [f"Unexpected error: {str(e)}"]
 
 
-class SparkManager:
-    """Manages Spark SQL operations for table schema and duplicate checking."""
+class TableManager:
+    """Manages table operations for schema retrieval and metadata checking."""
 
     def __init__(self, spark_session=None):
         """Initialize with Spark session."""
@@ -235,10 +235,11 @@ class SparkManager:
             return f"Could not retrieve metadata due to unexpected error: {e}"
 
 
-def configure_databricks_llm(endpoint: str = "", temperature: float = 0.1, chat_databricks_cls=None):
+def configure_databricks_llm(model_config: LLMModelConfig, chat_databricks_cls=None):
     """Configure DSPy to use Databricks model serving."""
-    language_model = DatabricksLM(endpoint=endpoint, temperature=temperature, chat_databricks_cls=chat_databricks_cls)
+    language_model = DspyLMAdapter(endpoint=model_config.model_name, chat_databricks_cls=chat_databricks_cls)
     dspy.configure(lm=language_model)
+    logger.info(f"Configured DSPy model for PK detection: {model_config.model_name}")
     return language_model
 
 
@@ -262,17 +263,15 @@ class PrimaryKeyDetection(dspy.Signature):
     reasoning: str = dspy.OutputField(desc="Step-by-step reasoning for the selection based on metadata analysis")
 
 
-class DatabricksPrimaryKeyDetector:
+class PrimaryKeyDetector:
     """Primary Key Detector optimized for Databricks Spark environment."""
 
     def __init__(
         self,
         table: str,
         *,
-        endpoint: str = "databricks-meta-llama-3-1-8b-instruct",
+        model_config: LLMModelConfig | None = None,
         context: str = "",
-        validate_duplicates: bool = True,
-        fail_on_duplicates: bool = True,
         spark_session=None,
         show_live_reasoning: bool = True,
         max_retries: int = 3,
@@ -282,16 +281,14 @@ class DatabricksPrimaryKeyDetector:
         self.table = table
         self.context = context
         self.llm_provider = "databricks"  # Fixed to databricks provider
-        self.endpoint = endpoint
-        self.validate_duplicates = validate_duplicates
-        self.fail_on_duplicates = fail_on_duplicates
+        self.model_config = model_config or LLMModelConfig()
         self.spark = spark_session
         self.detector = detector_cls if detector_cls else dspy.ChainOfThought(PrimaryKeyDetection)
-        self.spark_manager = SparkManager(spark_session)
+        self.table_manager = TableManager(spark_session)
         self.show_live_reasoning = show_live_reasoning
         self.max_retries = max_retries
 
-        configure_databricks_llm(endpoint=endpoint, temperature=0.1, chat_databricks_cls=chat_databricks_cls)
+        configure_databricks_llm(model_config=self.model_config, chat_databricks_cls=chat_databricks_cls)
         configure_with_tracing()
 
     def detect_primary_keys(self) -> dict[str, Any]:
@@ -304,8 +301,8 @@ class DatabricksPrimaryKeyDetector:
     def _detect_primary_keys_from_table(self) -> dict[str, Any]:
         """Detect primary keys from a registered table or view."""
         try:
-            table_definition = self.spark_manager.get_table_definition(self.table)
-            metadata_info = self.spark_manager.get_table_metadata_info(self.table)
+            table_definition = self.table_manager.get_table_definition(self.table)
+            metadata_info = self.table_manager.get_table_metadata_info(self.table)
         except (ValueError, RuntimeError, OSError) as e:
             return {
                 'table': self.table,
@@ -327,7 +324,6 @@ class DatabricksPrimaryKeyDetector:
             table_definition,
             self.context,
             metadata_info,
-            self.validate_duplicates,
         )
 
     def check_duplicates(
@@ -437,23 +433,14 @@ class DatabricksPrimaryKeyDetector:
             )
             return result, previous_attempts, False  # Continue retrying
 
-        logger.info(f"Maximum retries ({self.max_retries}) reached. Returning best attempt with duplicates noted.")
+        logger.info(f"Maximum retries ({self.max_retries}) reached. Primary key validation failed.")
 
-        # Check if we should fail when duplicates are found
-        if hasattr(self, 'fail_on_duplicates') and self.fail_on_duplicates:
-            result['success'] = False  # Mark as failed since duplicates were found
-            result['error'] = (
-                f"Primary key validation failed: Found {duplicate_count} duplicate combinations "
-                f"in suggested columns {pk_columns}"
-            )
-        else:
-            # Return best attempt with warning but don't fail
-            result['success'] = True
-            result['warning'] = (
-                f"Primary key has duplicates: Found {duplicate_count} duplicate combinations "
-                f"in suggested columns {pk_columns}"
-            )
-
+        # Always fail when duplicates are found - primary keys must be unique
+        result['success'] = False
+        result['error'] = (
+            f"Primary key validation failed: Found {duplicate_count} duplicate combinations "
+            f"in suggested columns {pk_columns} after {self.max_retries} retry attempts"
+        )
         result['retries_attempted'] = attempt
         result['all_attempts'] = all_attempts
         result['final_status'] = 'max_retries_reached_with_duplicates'
@@ -538,7 +525,6 @@ class DatabricksPrimaryKeyDetector:
         table_definition: str,
         context: str,
         metadata_info: str,
-        validate_duplicates: bool,
     ) -> dict[str, Any]:
         """Handle prediction with retry logic for duplicate validation."""
 
@@ -555,11 +541,6 @@ class DatabricksPrimaryKeyDetector:
 
             all_attempts.append(result.copy())
             pk_columns = result['primary_key_columns']
-
-            if not validate_duplicates:
-                result['validation_performed'] = False
-                result['retries_attempted'] = attempt
-                return result
 
             logger.info("Validating primary key prediction...")
             result, previous_attempts, should_stop = self._validate_pk_duplicates(

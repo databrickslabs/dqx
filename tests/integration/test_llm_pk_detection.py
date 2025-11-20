@@ -1,6 +1,5 @@
 import importlib.util
 import pytest
-from databricks.labs.dqx.check_funcs import compare_datasets_with_llm
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
@@ -145,58 +144,3 @@ def test_detect_primary_keys_no_clear_key(
 
     # Should either detect "none" or have an error, but result should exist
     assert isinstance(pk_info, dict), "PK result should be a dictionary"
-
-
-def test_compare_datasets_with_llm_wrapper(ws, spark, make_schema, make_table, skip_if_llm_not_available):
-    """Test compare_datasets_with_llm wrapper with auto PK detection."""
-    # Use the fixture to ensure LLM is available
-    _ = skip_if_llm_not_available
-
-    schema = make_schema(catalog_name=TEST_CATALOG)
-
-    # Create source table
-    source_table = make_table(
-        catalog_name=TEST_CATALOG,
-        schema_name=schema.name,
-        ctas="SELECT * FROM VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie') AS data(id, name)",
-    )
-
-    # Create reference table (same data)
-    ref_table = make_table(
-        catalog_name=TEST_CATALOG,
-        schema_name=schema.name,
-        ctas="SELECT * FROM VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie') AS data(id, name)",
-    )
-
-    # Load both DataFrames
-    source_df = spark.table(source_table.full_name)
-    ref_df = spark.table(ref_table.full_name)
-
-    # Register reference as temp view
-    ref_df.createOrReplaceTempView("ref_table_for_test")
-
-    # Test the wrapper with auto PK detection
-    _, apply_func = compare_datasets_with_llm(
-        source_table=source_table.full_name,
-        ref_table=ref_table.full_name,  # For PK detection
-        ref_df_name="ref_table_for_test",  # For comparison
-    )
-
-    # Apply the comparison using apply_func with all required arguments
-    result_df = apply_func(source_df, spark, {"ref_table_for_test": ref_df})
-
-    # Assertions - all rows should match (no differences)
-    results = result_df.collect()
-    assert len(results) == 3, "Should have 3 rows"
-
-    # Get the compare status column (has generated UUID in name)
-    compare_col = [col for col in result_df.columns if col.startswith("__compare_status")][0]
-
-    # Check that all rows match
-    # Note: When datasets are identical, the compare status might be None (no error)
-    # or have a matched=True status
-    for row in results:
-        check_val = row[compare_col]
-        if check_val is not None:
-            # If there's a status object, it should indicate a match
-            assert check_val.matched is True, f"Row should match: {row}"

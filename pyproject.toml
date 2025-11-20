@@ -517,7 +517,7 @@ max-bool-expr = 5
 max-branches = 20
 
 # Maximum number of locals for function / method body.
-max-locals = 26
+max-locals = 24
 
 # Maximum number of parents for a class (see R0901).
 max-parents = 7
@@ -645,9 +645,7 @@ disable = [
     "mock-no-usage",
     "broad-exception-caught",
     "rewrite-as-for-loop",
-    "redundant-returns-doc",
-    "import-outside-toplevel",
-    "cyclic-import",
+    "redundant-returns-doc"
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can
