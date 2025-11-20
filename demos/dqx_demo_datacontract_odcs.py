@@ -39,6 +39,8 @@ else:
 import os
 import tempfile
 import yaml
+from datetime import date
+from decimal import Decimal
 from pyspark.sql import types as T
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.profiler.generator import DQGenerator
@@ -176,11 +178,11 @@ schema:
       
       # Example 2: Text-based expectation (AI-assisted rule generation)
       - type: text
-        description: "Orders with total amount over $10000 must have order_status of 'confirmed' or 'shipped'"
+        description: "For rows where order_total > 10000, the order_status column must be either 'confirmed' or 'shipped'"
       
       # Example 3: Another text-based expectation for cross-field validation
       - type: text
-        description: "For orders with discount_percentage greater than 50%, the order_status cannot be 'cancelled'"
+        description: "For rows where discount_percentage > 50, the discount_percentage must be less than or equal to 75"
 """
 
 # Parse contract and write to temporary file
@@ -213,7 +215,8 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 # MAGIC ### 3. Text-based Rules (type: text - AI-assisted via LLM)
 # MAGIC - Natural language business logic converted to executable rules by AI
 # MAGIC - Useful for complex conditional logic and cross-field validations
-# MAGIC - Example: "Orders over $10000 must have order_status of 'confirmed' or 'shipped'"
+# MAGIC - Example: "For rows where order_total > 10000, order_status must be 'confirmed' or 'shipped'"
+# MAGIC - Example: "For rows where discount_percentage > 50, discount must not exceed 75"
 
 # COMMAND ----------
 
@@ -228,9 +231,9 @@ rules = generator.generate_rules_from_contract(
 print(f"Generated {len(rules)} quality rules from contract")
 
 # Show rule breakdown by type
-predefined_count = len([r for r in rules if r["user_metadata"]["rule_type"] == "predefined"])
-explicit_count = len([r for r in rules if r["user_metadata"]["rule_type"] == "explicit"])
-text_llm_count = len([r for r in rules if r["user_metadata"]["rule_type"] == "text_llm"])
+predefined_count = len([r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"])
+explicit_count = len([r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"])
+text_llm_count = len([r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"])
 
 print(f"  - {predefined_count} predefined rules (from property constraints)")
 print(f"  - {explicit_count} explicit DQX rules")
@@ -265,6 +268,10 @@ print(json.dumps(rules[:3], indent=2))
 
 # COMMAND ----------
 
+from datetime import date
+from decimal import Decimal
+from pyspark.sql import types as T
+
 # Define schema
 schema = T.StructType([
     T.StructField("order_id", T.StringType(), True),
@@ -279,17 +286,17 @@ schema = T.StructType([
 # Sample data with mix of valid and invalid records
 data = [
     # Valid record
-    ("ORD-12345678", "customer@example.com", "2024-01-15", 99.99, "confirmed", 2, 10.0),
+    ("ORD-12345678", "customer@example.com", date(2024, 1, 15), Decimal("99.99"), "confirmed", 2, Decimal("10.0")),
     # Valid record
-    ("ORD-87654321", "another@test.com", "2024-01-16", 150.50, "shipped", 1, 5.0),
+    ("ORD-87654321", "another@test.com", date(2024, 1, 16), Decimal("150.50"), "shipped", 1, Decimal("5.0")),
     # Invalid: null required field
-    (None, "test@example.com", "2024-01-17", 75.00, "pending", 1, 0.0),
+    (None, "test@example.com", date(2024, 1, 17), Decimal("75.00"), "pending", 1, Decimal("0.0")),
     # Invalid: pattern mismatch
-    ("INVALID", "bad@example.com", "2024-01-18", 200.00, "delivered", 3, 15.0),
+    ("INVALID", "bad@example.com", date(2024, 1, 18), Decimal("200.00"), "delivered", 3, Decimal("15.0")),
     # Invalid: out of range
-    ("ORD-99999999", "valid@test.com", "2024-01-19", 150000.00, "confirmed", 2, 10.0),
+    ("ORD-99999999", "valid@test.com", date(2024, 1, 19), Decimal("150000.00"), "confirmed", 2, Decimal("10.0")),
     # Invalid: status not in enum
-    ("ORD-11111111", "test@mail.com", "2024-01-20", 50.00, "unknown", 1, 5.0),
+    ("ORD-11111111", "test@mail.com", date(2024, 1, 20), Decimal("50.00"), "unknown", 1, Decimal("5.0")),
 ]
 
 df = spark.createDataFrame(data, schema)
