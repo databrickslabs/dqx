@@ -2728,6 +2728,7 @@ def row_count(table_expr: str,
                     - `table_name` when there is only one column in the dataframe with table names.
                     - `catalog_name || '.' || schema_name || '.' || table_name` when there are 3 columns in the dataframe: catalog_name, schema_name, table_name.
         row_count_column: Name of the column that will contain the row count. Defaults to "row_count".
+        row_count_error_column: Name of the column that will contain error messages if row count computation fails. Defaults to "row_count_error".
         worker_count: Number of workers to use for the computation. Defaults to 8.
 
     Note:
