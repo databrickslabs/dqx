@@ -388,17 +388,20 @@ print(f"Generated {len(rules_from_object)} rules from DataContract object")
 
 # COMMAND ----------
 
+from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
+
 # Get current username
 current_user = spark.sql("SELECT current_user() as user").collect()[0]["user"]
 
 # Save rules to workspace file
 rules_path = f"/Workspace/Users/{current_user}/dqx_generated_rules.yml"
+storage_config = WorkspaceFileChecksStorageConfig(location=rules_path)
 
-engine.save_checks(rules, rules_path)
+engine.save_checks(rules, storage_config)
 print(f"Saved {len(rules)} rules to {rules_path}")
 
 # Load rules back
-loaded_rules = engine.load_checks(rules_path)
+loaded_rules = engine.load_checks(storage_config)
 print(f"Loaded {len(loaded_rules)} rules from file")
 
 # COMMAND ----------
