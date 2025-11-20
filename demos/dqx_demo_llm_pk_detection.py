@@ -3,6 +3,7 @@
 # MAGIC # DQX - LLM-Based Primary Key Detection Demo
 # MAGIC
 # MAGIC This demo showcases DQX's LLM-based primary key detection capability, which uses AI to automatically identify primary key columns in your tables.
+# MAGIC The primary key detection enables the generator to automatically create uniqueness rules and facilitates dataset comparison (in `compare_datasets` rule) when matching keys are not explicitly defined.
 # MAGIC
 # MAGIC ## What is LLM-Based Primary Key Detection?
 # MAGIC

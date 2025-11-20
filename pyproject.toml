@@ -645,7 +645,7 @@ disable = [
     "mock-no-usage",
     "broad-exception-caught",
     "rewrite-as-for-loop",
-    "redundant-returns-doc"
+    "redundant-returns-doc",
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can

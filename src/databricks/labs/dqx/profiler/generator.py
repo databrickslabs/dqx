@@ -46,10 +46,10 @@ class DQGenerator(DQEngineBase):
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
         self.custom_check_functions = custom_check_functions
-        self.llm_model_config = llm_model_config or LLMModelConfig()
 
+        llm_model_config = llm_model_config or LLMModelConfig()
         self.llm_engine = (
-            DQLLMEngine(model_config=self.llm_model_config, custom_check_functions=custom_check_functions)
+            DQLLMEngine(model_config=llm_model_config, custom_check_functions=custom_check_functions)
             if LLM_ENABLED
             else None
         )

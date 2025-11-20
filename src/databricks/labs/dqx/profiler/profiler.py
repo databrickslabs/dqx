@@ -220,12 +220,6 @@ class DQProfiler(DQEngineBase):
 
         Raises:
             MissingParameterError: If LLM engine is not available or input_config is missing.
-
-        Example:
-            >>> profiler = DQProfiler(ws, spark)
-            >>> input_config = InputConfig(location="catalog.schema.table")
-            >>> result = profiler.detect_primary_keys_with_llm(input_config)
-            >>> print(f"Primary Keys: {result.get('primary_key_columns')}")
         """
         if not LLM_PK_ENABLED:
             raise MissingParameterError(
