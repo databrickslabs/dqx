@@ -242,18 +242,23 @@ if pk_result_source.get("success"):
     detected_keys = pk_result_source.get("primary_key_columns")
     print(f"Detected Primary Keys: {detected_keys}")
     
-    comparison_result = compare_datasets(
-        df1=df_source,
-        df2=df_target,
-        on=detected_keys
+    # compare_datasets is a DQX check function - it returns (condition, apply_fn)
+    condition, apply_fn = compare_datasets(
+        columns=detected_keys,           # Primary key columns in source
+        ref_columns=detected_keys,       # Primary key columns in target
+        ref_df_name="target_df",         # Name for the reference dataframe
+        check_missing_records=True,      # Check for missing records
     )
+    
+    # Apply the comparison
+    df_with_comparison = apply_fn(df_source, spark, {"target_df": df_target})
     
     print("\n" + "=" * 80)
     print("DATASET COMPARISON RESULTS")
     print("=" * 80)
     print(f"Using detected primary keys: {detected_keys}")
-    print(f"\nComparison Summary:")
-    display(comparison_result)
+    print(f"\nComparison results (showing first 20 rows):")
+    display(df_with_comparison.limit(20))
 else:
     print(f"Failed to detect primary keys: {pk_result_source.get('error')}")
 
