@@ -20,6 +20,7 @@ from databricks.labs.dqx.check_funcs import (
     compare_datasets,
     is_data_fresh_per_time_window,
     has_valid_schema,
+    row_count,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -1960,3 +1961,195 @@ def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
         "a string, b string, c double, has_invalid_schema string",
     )
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_blabla():
+    pass
+
+def test_row_count_basic(spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    test_schema = make_schema(catalog_name=catalog_name)
+    
+    # Create test tables with known row counts
+    table1_name = f"{catalog_name}.{test_schema.name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{test_schema.name}.{make_random(10).lower()}"
+    table3_name = f"{catalog_name}.{test_schema.name}.{make_random(10).lower()}"
+    
+    # Create tables with different row counts
+    spark.createDataFrame([(i,) for i in range(5)], "value int").write.saveAsTable(table1_name)
+    spark.createDataFrame([(i,) for i in range(10)], "value int").write.saveAsTable(table2_name)
+    spark.createDataFrame([(i,) for i in range(15)], "value int").write.saveAsTable(table3_name)
+    
+    # Create input dataframe with table names
+    input_df = spark.createDataFrame(
+        [
+            [table1_name],
+            [table2_name],
+            [table3_name],
+        ],
+        "table_name string",
+    )
+    
+    # Apply row_count check
+    condition, apply_method = row_count(table_expr="table_name")
+    actual_df = apply_method(input_df, spark, {})
+    
+    # Select relevant columns
+    actual = actual_df.select("table_name", "row_count", "row_count_error", condition)
+    
+    expected_schema = "table_name string, row_count long, row_count_error string, row_count_error_error string"
+    expected = spark.createDataFrame(
+        [
+            [table1_name, 5, None, None],
+            [table2_name, 10, None, None],
+            [table3_name, 15, None, None],
+        ],
+        expected_schema,
+    )
+    
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_row_count_with_composite_table_expression(spark: SparkSession, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    test_schema = make_schema(catalog_name=catalog_name)
+    
+    # Create test tables with known row counts
+    table1 = make_random(10).lower()
+    table2 = make_random(10).lower()
+    
+    table1_fqn = f"{catalog_name}.{test_schema.name}.{table1}"
+    table2_fqn = f"{catalog_name}.{test_schema.name}.{table2}"
+    
+    # Create tables with different row counts
+    spark.createDataFrame([(i,) for i in range(7)], "value int").write.saveAsTable(table1_fqn)
+    spark.createDataFrame([(i,) for i in range(12)], "value int").write.saveAsTable(table2_fqn)
+    
+    # Create input dataframe with separate columns for catalog, schema, and table
+    input_df = spark.createDataFrame(
+        [
+            [catalog_name, test_schema.name, table1],
+            [catalog_name, test_schema.name, table2],
+        ],
+        "catalog_name string, schema_name string, table_name string",
+    )
+    
+    # Apply row_count check with composite table expression
+    condition, apply_method = row_count(
+        table_expr="catalog_name || '.' || schema_name || '.' || table_name"
+    )
+    actual_df = apply_method(input_df, spark, {})
+    
+    # Select relevant columns
+    actual = actual_df.select(
+        "catalog_name", "schema_name", "table_name", "row_count", "row_count_error", condition
+    )
+    
+    expected_schema = (
+        "catalog_name string, schema_name string, table_name string, "
+        "row_count long, row_count_error string, row_count_error_error string"
+    )
+    expected = spark.createDataFrame(
+        [
+            [catalog_name, test_schema.name, table1, 7, None, None],
+            [catalog_name, test_schema.name, table2, 12, None, None],
+        ],
+        expected_schema,
+    )
+    
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_row_count_with_nonexistent_table(spark: SparkSession, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    test_schema = make_schema(catalog_name=catalog_name)
+    
+    # Create one valid table and one non-existent table
+    valid_table = make_random(10).lower()
+    valid_table_fqn = f"{catalog_name}.{test_schema.name}.{valid_table}"
+    nonexistent_table = f"{catalog_name}.{test_schema.name}.nonexistent_{make_random(10).lower()}"
+    
+    # Create only the valid table
+    spark.createDataFrame([(i,) for i in range(3)], "value int").write.saveAsTable(valid_table_fqn)
+    
+    # Create input dataframe with both valid and non-existent table
+    input_df = spark.createDataFrame(
+        [
+            [valid_table_fqn],
+            [nonexistent_table],
+        ],
+        "table_name string",
+    )
+    
+    # Apply row_count check
+    condition, apply_method = row_count(table_expr="table_name")
+    actual_df = apply_method(input_df, spark, {})
+    
+    # Select relevant columns
+    actual = actual_df.select("table_name", "row_count", "row_count_error", condition)
+    
+    # Collect results to check the error case
+    results = actual.collect()
+    
+    # Verify valid table has correct count
+    valid_row = [r for r in results if r["table_name"] == valid_table_fqn][0]
+    assert valid_row["row_count"] == 3
+    assert valid_row["row_count_error"] is None
+    assert valid_row["row_count_error_error"] is None
+    
+    # Verify non-existent table has error
+    error_row = [r for r in results if r["table_name"] == nonexistent_table][0]
+    assert error_row["row_count"] is None
+    assert error_row["row_count_error"] is not None
+    assert error_row["row_count_error_error"] is not None
+    assert "Error computing row count for table" in error_row["row_count_error_error"]
+
+
+def test_row_count_with_custom_columns(spark: SparkSession, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    test_schema = make_schema(catalog_name=catalog_name)
+    
+    # Create test tables
+    table1_name = f"{catalog_name}.{test_schema.name}.{make_random(10).lower()}"
+    table2_name = f"{catalog_name}.{test_schema.name}.{make_random(10).lower()}"
+    
+    spark.createDataFrame([(i,) for i in range(8)], "value int").write.saveAsTable(table1_name)
+    spark.createDataFrame([(i,) for i in range(4)], "value int").write.saveAsTable(table2_name)
+    
+    # Create input dataframe
+    input_df = spark.createDataFrame(
+        [
+            [table1_name],
+            [table2_name],
+        ],
+        "table_name string",
+    )
+    
+    # Apply row_count check with custom column names
+    custom_count_col = "custom_count"
+    custom_error_col = "custom_error"
+    condition, apply_method = row_count(
+        table_expr="table_name",
+        row_count_column=custom_count_col,
+        row_count_error_column=custom_error_col,
+    )
+    actual_df = apply_method(input_df, spark, {})
+    
+    # Verify custom columns exist
+    assert custom_count_col in actual_df.columns
+    assert custom_error_col in actual_df.columns
+    
+    # Select relevant columns
+    actual = actual_df.select("table_name", custom_count_col, custom_error_col, condition)
+    
+    expected_schema = f"table_name string, {custom_count_col} long, {custom_error_col} string, {custom_error_col}_error string"
+    expected = spark.createDataFrame(
+        [
+            [table1_name, 8, None, None],
+            [table2_name, 4, None, None],
+        ],
+        expected_schema,
+    )
+    
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+

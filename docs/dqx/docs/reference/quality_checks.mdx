@@ -1396,6 +1396,7 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `compare_datasets`                 | Compares two DataFrames at both row and column levels, providing detailed information about differences, including new or missing rows and column-level changes. Only columns present in both the source and reference DataFrames are compared. Use with caution if `check_missing_records` is enabled, as this may increase the number of rows in the output beyond the original input DataFrame. The comparison does not support Map types (any column comparison on map type is skipped automatically). Comparing datasets is valuable for validating data during migrations, detecting drift, performing regression testing, or verifying synchronization between source and target systems.    | `columns`: columns to use for row matching with the reference DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'df.columns'; `ref_columns`: list of columns in the reference DataFrame or Table to row match against the source DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'ref_df.columns'; note that `columns` are matched with `ref_columns` by position, so the order of the provided columns in both lists must be exactly aligned; `exclude_columns`: (optional) list of columns to exclude from the value comparison but not from row matching (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'); the `exclude_columns` field does not alter the list of columns used to determine row matches (columns), it only controls which columns are skipped during the value comparison; `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; `check_missing_records`: perform a FULL OUTER JOIN to identify records that are missing from source or reference DataFrames, default is False; use with caution as this may increase the number of rows in the output, as unmatched rows from both sides are included; `null_safe_row_matching`: (optional) treat NULLs as equal when matching rows using `columns` and `ref_columns` (default: True); `null_safe_column_value_matching`: (optional) treat NULLs as equal when comparing column values (default: True) |
 | `is_data_fresh_per_time_window`    | Freshness check that validates whether at least X records arrive within every Y-minute time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `column`: timestamp column (can be a string column name or a column expression); `window_minutes`: time window in minutes to check for data arrival; `min_records_per_window`: minimum number of records expected per time window; `lookback_windows`: (optional) number of time windows to look back from `curr_timestamp`, it filters records to include only those within the specified number of time windows from `curr_timestamp` (if no lookback is provided, the check is applied to the entire dataset); `curr_timestamp`: (optional) current timestamp column (if not provided, current_timestamp() function is used)                                                                                                                                                                                                                                                                              |
 | `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected.                                                                                                                                                                                              | `expected_schema`: expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `row_count`                        | Computes row counts for tables listed in the DataFrame's records. Each row is expected to contain a table name, and the computation is done in parallel using the specified number of workers. Results are added as new columns to enrich the input DataFrame. In case of errors during computation, the error message is stored in the error column instead of the count.                                                                                                                                                                                                                                                                                                                         | `table_expr`: SQL expression to get the table fully qualified name (e.g., `table_name` for single column, or `catalog_name || '.' || schema_name || '.' || table_name` for three columns); `row_count_column`: (optional) name of the column that will contain the row count (default: "row_count"); `row_count_error_column`: (optional) name of the column that will contain error messages if row count computation fails (default: "row_count_error"); `worker_count`: (optional) number of workers to use for parallel computation (default: 8)                                                                                                                                                                                                                                                                                                                                                |
 
 **Compare datasets check**
 
@@ -1728,6 +1729,23 @@ Complex data types are supported as well.
       columns:
         - id
         - name
+
+# row_count check with single column containing table names
+- criticality: error
+  check:
+    function: row_count
+    arguments:
+      table_expr: table_name # this column will contain the name of a table to compute row counts for
+
+# row_count check with multiple columns forming fully qualified table name
+- criticality: error
+  check:
+    function: row_count
+    arguments:
+      table_expr: "catalog_name || '.' || schema_name || '.' || table_name" # expressions on how to compute table name 
+      row_count_column: table_row_count
+      row_count_error_column: table_row_count_error
+      worker_count: 16
 
 # apply check to multiple columns
 - criticality: error
@@ -2121,6 +2139,27 @@ checks = [
           ]), True)
         ]),
         "columns": ["id", "name"],
+      },
+    ),
+
+    # row_count check with single column containing table names
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.row_count,
+      check_func_kwargs={
+        "table_expr": "table_name",
+      },
+    ),
+
+    # row_count check with multiple columns forming fully qualified table name
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.row_count,
+      check_func_kwargs={
+        "table_expr": "catalog_name || '.' || schema_name || '.' || table_name",
+        "row_count_column": "table_row_count",
+        "row_count_error_column": "table_row_count_error",
+        "worker_count": 16,
       },
     ),
 
