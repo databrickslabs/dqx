@@ -196,7 +196,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 2. Generate DQX Rules from Contract
+# MAGIC ## 2. Generate DQX Rules from Contract stored in a file
 # MAGIC
 # MAGIC The ODCS v3.x contract above demonstrates three types of quality rules:
 # MAGIC
@@ -252,16 +252,36 @@ print(f"  - {text_llm_count} AI-generated rules (from text expectations)")
 
 # COMMAND ----------
 
-# Display sample rules
+# Display generated rules
 import json
 
-print("========== Generated Rules (first 3) ==========")
-print(json.dumps(rules[:3], indent=2))
+print("========== Generated Rules ==========")
+print(json.dumps(rules, indent=2))
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 4. Create Sample Data
+# MAGIC ## 4. Validate Generated Rules
+# MAGIC
+# MAGIC All generated rules are validated automatically. However, if you manually change the rules, you should validate them before applying.
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+
+validation_status = DQEngine.validate_checks(rules)
+
+if validation_status.has_errors:
+    print("⚠️  Validation errors found:")
+    for error in validation_status.errors:
+        print(f"  - {error}")
+else:
+    print(f"✅ All {len(rules)} rules validated successfully!")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## 5. Create Sample Data
 # MAGIC
 # MAGIC Let's create sample data that matches the contract schema.
 # MAGIC We'll include both valid and invalid records to demonstrate rule application.
@@ -305,26 +325,6 @@ display(df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 5. Validate Generated Rules
-# MAGIC
-# MAGIC Before applying rules, let's validate them to ensure they're properly formed.
-
-# COMMAND ----------
-
-from databricks.labs.dqx.engine import DQEngine
-
-validation_status = DQEngine.validate_checks(rules)
-
-if validation_status.has_errors:
-    print("⚠️  Validation errors found:")
-    for error in validation_status.errors:
-        print(f"  - {error}")
-else:
-    print(f"✅ All {len(rules)} rules validated successfully!")
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## 6. Apply Rules to Data
 # MAGIC
 # MAGIC DQX applies all rules and adds result columns to your DataFrame.
@@ -360,9 +360,9 @@ display(bad_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## 8. Using DataContract Object
+# MAGIC ## 8. Generate DQX Rules from Contract defined using DataContract Object
 # MAGIC
-# MAGIC You can also pass a pre-loaded DataContract object instead of a file path.
+# MAGIC You can also pass a pre-loaded DataContract object to the generator instead of a file path.
 
 # COMMAND ----------
 

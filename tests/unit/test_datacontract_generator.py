@@ -1,11 +1,8 @@
-"""
-Unit tests for Data Contract to DQX rules generation.
-"""
-
 import json
 import os
 import tempfile
 from unittest.mock import Mock
+import yaml
 
 import pytest
 from datacontract.data_contract import DataContract
@@ -15,14 +12,133 @@ from databricks.labs.dqx.datacontract.contract_rules_generator import (
     DataContractRulesGenerator,
 )
 import databricks.labs.dqx.profiler.generator as generator_module
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from tests.unit.test_datacontract_utils import (
-    assert_rules_have_valid_metadata,
-    assert_rules_have_valid_structure,
-    create_basic_contract,
-    create_contract_with_quality,
-    create_test_contract_file,
-)
+
+
+def _create_basic_contract(
+    schema_name: str = "test_table",
+    properties: list[dict] | None = None,
+    contract_id: str = "test",
+    contract_version: str = "1.0.0",
+) -> dict:
+    """
+    Create a basic ODCS v3.x contract dictionary with specified properties.
+
+    Args:
+        schema_name: Name of the schema.
+        properties: List of ODCS v3.x property dictionaries. Each property should have:
+                   - name: property name
+                   - logicalType: data type (string, number, integer, etc.)
+                   - required: boolean (optional)
+                   - unique: boolean (optional)
+                   - logicalTypeOptions: dict with pattern, minimum, maximum, etc. (optional)
+                   - quality: list of quality checks (optional)
+        contract_id: Contract ID.
+        contract_version: Contract version.
+
+    Returns:
+        An ODCS v3.x contract dictionary.
+    """
+    if properties is None:
+        properties = [{"name": "user_id", "logicalType": "string", "required": True}]
+
+    return {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.2",
+        "id": contract_id,
+        "name": contract_id,
+        "version": contract_version,
+        "status": "active",
+        "schema": [{"name": schema_name, "physicalType": "table", "properties": properties}],
+    }
+
+
+def _create_contract_with_quality(
+    property_name: str,
+    logical_type: str,
+    quality_checks: list[dict],
+    schema_name: str = "test_table",
+) -> dict:
+    """
+    Create an ODCS v3.x contract with quality checks for a single property.
+
+    Args:
+        property_name: Name of the property.
+        logical_type: Logical type of the property (string, number, etc.).
+        quality_checks: List of ODCS v3.x quality check dictionaries.
+                       For DQX rules, use format:
+                       {
+                           "type": "custom",
+                           "engine": "dqx",
+                           "implementation": {
+                               "name": "rule_name",
+                               "criticality": "error|warn",
+                               "check": {"function": "...", "arguments": {...}}
+                           }
+                       }
+        schema_name: Name of the schema.
+
+    Returns:
+        An ODCS v3.x contract dictionary with quality checks.
+    """
+    # All quality checks should already be in ODCS v3.x format
+    property_def = {"name": property_name, "logicalType": logical_type, "quality": quality_checks}
+
+    return _create_basic_contract(schema_name=schema_name, properties=[property_def])
+
+
+def _create_test_contract_file(
+    user_id_pattern: str = "^USER-[0-9]{4}$",
+    age_min: int = 0,
+    age_max: int = 120,
+    status_values: list[str] | None = None,
+    custom_contract: dict | None = None,
+) -> str:
+    """
+    Create a temporary ODCS v3.x contract file for testing.
+
+    Args:
+        user_id_pattern: Pattern for user_id property.
+        age_min: Minimum age value.
+        age_max: Maximum age value.
+        status_values: List of valid status values.
+        custom_contract: Optional custom contract dict to use instead of default.
+
+    Returns:
+        Path to the temporary contract file.
+    """
+    if custom_contract:
+        contract_dict = custom_contract
+    else:
+        if status_values is None:
+            status_values = ["active", "inactive"]
+
+        # Create ODCS v3.x properties directly
+        properties: list[dict] = [
+            {
+                "name": "user_id",
+                "logicalType": "string",
+                "required": True,
+                "logicalTypeOptions": {"pattern": user_id_pattern},
+            },
+            {
+                "name": "age",
+                "logicalType": "integer",
+                "logicalTypeOptions": {"minimum": age_min, "maximum": age_max},
+            },
+            {
+                "name": "status",
+                "logicalType": "string",
+                "logicalTypeOptions": {"pattern": f"^({'|'.join(status_values)})$"},  # enum as pattern
+            },
+        ]
+
+        contract_dict = _create_basic_contract(schema_name="users", properties=properties)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.safe_dump(contract_dict, f)
+        return f.name
 
 
 class DataContractGeneratorTestBase:
@@ -32,7 +148,6 @@ class DataContractGeneratorTestBase:
     def mock_workspace_client(self):
         """Create mock WorkspaceClient."""
         mock_ws = Mock()
-        # Configure mock config with product_info for telemetry
         mock_config = Mock()
         mock_config.configure_mock(**{"_product_info": ("dqx", "0.0.0")})
         mock_ws.config = mock_config
@@ -73,58 +188,151 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         with pytest.raises(ValueError, match="Either 'contract' or 'contract_file' must be provided"):
             generator.generate_rules_from_contract()
 
+    def test_requires_either_valid_contract_object(self, generator):
+        """Test that either contract or contract_file must be provided."""
+        with pytest.raises(
+            ValueError,
+            match="DataContract object must have either a file path, data_contract dict, or data_contract_str attribute",
+        ):
+            generator.generate_rules_from_contract(DataContract())
+
     def test_cannot_provide_both_contract_and_file(self, generator, sample_contract_path):
         """Test that both contract and contract_file cannot be provided."""
         contract = DataContract(data_contract_file=sample_contract_path)
         with pytest.raises(ValueError, match="Cannot provide both"):
             generator.generate_rules_from_contract(contract=contract, contract_file=sample_contract_path)
 
-    def test_generate_rules_from_file(self, generator, sample_contract_path):
-        """Test generating rules from a contract file path."""
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=False
-        )
-
-        assert isinstance(rules, list)
-        assert_rules_have_valid_structure(rules)
-
-    def test_generate_rules_from_datacontract_object(self, generator, sample_contract_path):
-        """Test generating rules from a DataContract object."""
-        contract = DataContract(data_contract_file=sample_contract_path)
-        rules = generator.generate_rules_from_contract(
-            contract=contract, generate_predefined_rules=True, process_text_rules=False
-        )
-
-        assert isinstance(rules, list)
-        assert len(rules) > 0
-
     def test_unsupported_contract_format(self, generator, sample_contract_path):
         """Test error for unsupported contract format."""
         with pytest.raises(ValueError, match="Contract format 'unknown' not supported"):
             generator.generate_rules_from_contract(contract_file=sample_contract_path, contract_format="unknown")
 
-    def test_skip_predefined_rules(self, generator, sample_contract_path):
-        """Test that generate_predefined_rules=False works."""
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_predefined_rules=False, process_text_rules=False
+    def test_explicit_rule_with_criticality_warn(self, generator):
+        """Test that explicit DQX rules preserve 'warn' criticality from contract."""
+        contract_dict = _create_contract_with_quality(
+            property_name="email",
+            logical_type="string",
+            quality_checks=[
+                {
+                    "type": "custom",
+                    "engine": "dqx",
+                    "implementation": {
+                        "criticality": "warn",  # Explicitly set to warn
+                        "check": {
+                            "function": "regex_match",
+                            "arguments": {
+                                "column": "email",
+                                "regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$",
+                            },
+                        },
+                    },
+                }
+            ],
         )
 
-        # Should only have explicit rules (comprehensive contract has explicit quality checks)
-        # All rules should be explicit (not predefined)
-        for rule in rules:
-            assert rule["user_metadata"]["rule_type"] == "explicit", "Should only have explicit rules"
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
-    def test_default_criticality(self, generator, sample_contract_path):
-        """Test that default_criticality is applied."""
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path,
-            default_criticality="warn",
-            generate_predefined_rules=True,
-            process_text_rules=False,
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+            )
+
+            assert len(rules) == 1
+            assert rules[0]["criticality"] == "warn"  # Should preserve 'warn' from contract
+            assert rules[0]["check"]["function"] == "regex_match"
+        finally:
+            os.unlink(temp_path)
+
+    def test_explicit_rule_with_criticality_error(self, generator):
+        """Test that explicit DQX rules preserve 'error' criticality from contract."""
+        contract_dict = _create_contract_with_quality(
+            property_name="user_id",
+            logical_type="string",
+            quality_checks=[
+                {
+                    "type": "custom",
+                    "engine": "dqx",
+                    "implementation": {
+                        "criticality": "error",  # Explicitly set to error
+                        "check": {
+                            "function": "is_not_null_and_not_empty",
+                            "arguments": {"column": "user_id", "trim_strings": True},
+                        },
+                    },
+                }
+            ],
         )
 
-        # All predefined rules should have warn criticality
-        assert all(r["criticality"] == "warn" for r in rules if r["user_metadata"]["rule_type"] == "predefined")
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+            )
+
+            assert len(rules) == 1
+            assert rules[0]["criticality"] == "error"  # Should preserve 'error' from contract
+            assert rules[0]["check"]["function"] == "is_not_null_and_not_empty"
+        finally:
+            os.unlink(temp_path)
+
+    def test_explicit_rule_without_criticality_uses_dqx_default(self, generator):
+        """Test that explicit DQX rules without criticality use DQX's default (error)."""
+        contract_dict = _create_contract_with_quality(
+            property_name="user_id",
+            logical_type="string",
+            quality_checks=[
+                {
+                    "type": "custom",
+                    "engine": "dqx",
+                    "implementation": {
+                        # No criticality specified
+                        "check": {
+                            "function": "is_not_null",
+                            "arguments": {"column": "user_id"},
+                        },
+                    },
+                }
+            ],
+        )
+
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+            )
+
+            assert len(rules) == 1
+            # When criticality is not specified in contract, it won't be in the rule
+            # DQX engine will use its default 'error' when applying the rule
+            assert "criticality" not in rules[0] or rules[0].get("criticality") == "error"
+            assert rules[0]["check"]["function"] == "is_not_null"
+        finally:
+            os.unlink(temp_path)
+
+    def test_predefined_rules_use_default_criticality(self, generator):
+        """Test that predefined rules use the default_criticality parameter."""
+        contract_dict = _create_basic_contract(
+            properties=[{"name": "user_id", "logicalType": "string", "required": True}]
+        )
+
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            # Generate with warn as default
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=True,
+                process_text_rules=False,
+                default_criticality="warn",
+            )
+
+            assert len(rules) == 1
+            assert rules[0]["criticality"] == "warn"  # Predefined rule should use default_criticality
+            assert rules[0]["check"]["function"] == "is_not_null"
+        finally:
+            os.unlink(temp_path)
 
 
 class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
@@ -133,11 +341,11 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
     def test_required_field_generates_is_not_null(self, generator):
         """Test that required fields generate is_not_null rules."""
         # Create a simple contract with a required property
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[{"name": "user_id", "logicalType": "string", "required": True}]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -154,9 +362,11 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_unique_field_generates_is_unique(self, generator):
         """Test that unique fields generate is_unique rules."""
-        contract_dict = create_basic_contract(properties=[{"name": "user_id", "logicalType": "string", "unique": True}])
+        contract_dict = _create_basic_contract(
+            properties=[{"name": "user_id", "logicalType": "string", "unique": True}]
+        )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -169,7 +379,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_enum_generates_is_in_list(self, generator):
         """Test that enum fields generate regex_match rules (ODCS v3.x uses pattern for enums)."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "status",
@@ -179,7 +389,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -202,7 +412,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_pattern_generates_regex_match(self, generator):
         """Test that pattern fields generate regex_match rules."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "code",
@@ -212,7 +422,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -225,7 +435,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_range_generates_is_in_range(self, generator):
         """Test that minimum/maximum generate is_in_range rules."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "age",
@@ -235,7 +445,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -249,7 +459,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_format_generates_date_validation(self, generator):
         """Test that format generates date/timestamp validation rules."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "event_date",
@@ -264,7 +474,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -280,16 +490,16 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
     def test_metadata_contains_contract_info(self, generator, sample_contract_path):
         """Test that generated rules contain contract metadata."""
         rules = generator.generate_rules_from_contract(contract_file=sample_contract_path, process_text_rules=False)
-        assert_rules_have_valid_metadata(rules)
 
-    def test_sample_contract_validates_with_cli(self, sample_contract_path):
-        """Test that the sample contract is valid according to datacontract-cli.
-
-        This documents that the contract has been validated externally using:
-        hatch run datacontract lint tests/resources/sample_datacontract.yaml
-        Expected result: "data contract is valid"
-        """
-        assert os.path.exists(sample_contract_path), "Contract file must exist for CLI validation"
+        for rule in rules:
+            metadata = rule["user_metadata"]
+            assert "contract_id" in metadata
+            assert "contract_version" in metadata
+            assert "odcs_version" in metadata
+            assert "schema" in metadata
+            # field is optional (not present for schema-level rules)
+            assert "rule_type" in metadata
+            assert metadata["rule_type"] in {"predefined", "explicit", "text_llm"}
 
     def test_missing_datacontract_cli_dependency(self, generator, monkeypatch):
         """Test error when datacontract-cli is not installed."""
@@ -301,7 +511,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_nested_fields_generate_rules(self, generator):
         """Test that nested field structures generate rules with proper column paths."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "customer",
@@ -333,7 +543,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             self._verify_nested_field_rules(generator, temp_path)
@@ -366,7 +576,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_fields_without_quality_checks(self, generator):
         """Test that fields without quality checks are handled gracefully."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {"name": "id", "logicalType": "string", "required": True},
                 {"name": "optional_field", "logicalType": "string", "required": False},
@@ -374,7 +584,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -390,7 +600,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_empty_text_description_skipped(self, generator):
         """Test that text quality checks with empty/whitespace descriptions are skipped."""
-        contract_dict = create_contract_with_quality(
+        contract_dict = _create_contract_with_quality(
             property_name="user_id",
             logical_type="string",
             quality_checks=[
@@ -399,7 +609,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -433,7 +643,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Should still generate rules despite warnings
@@ -480,7 +690,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -500,7 +710,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_field_with_multiple_constraints(self, generator):
         """Test that fields with multiple constraints generate multiple rules."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "product_code",
@@ -516,7 +726,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -543,7 +753,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_explicit_rules_with_different_criticalities(self, generator):
         """Test that explicit rules preserve their individual criticality levels."""
-        contract_dict = create_contract_with_quality(
+        contract_dict = _create_contract_with_quality(
             property_name="data",
             logical_type="string",
             quality_checks=[
@@ -571,7 +781,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -594,7 +804,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_only_minimum_constraint(self, generator):
         """Test that field with only minimum (no maximum) generates sql_expression rule for float."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "temperature",
@@ -606,7 +816,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -627,7 +837,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_only_maximum_constraint(self, generator):
         """Test that field with only maximum (no minimum) generates sql_expression rule for float."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "humidity",
@@ -639,7 +849,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -660,7 +870,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_only_integer_maximum_constraint(self, generator):
         """Test that field with only integer maximum generates is_aggr_not_greater_than rule."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "age",
@@ -672,7 +882,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -693,7 +903,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_only_integer_minimum_constraint(self, generator):
         """Test that field with only integer minimum generates is_aggr_not_less_than rule."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "quantity",
@@ -705,7 +915,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -726,7 +936,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_explicit_dqx_quality_check_detection(self, generator):
         """Test that explicit DQX quality checks are correctly identified."""
-        contract_dict = create_contract_with_quality(
+        contract_dict = _create_contract_with_quality(
             property_name="data",
             logical_type="string",
             quality_checks=[
@@ -747,7 +957,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -763,7 +973,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_non_dqx_custom_quality_checks_ignored(self, generator):
         """Test that custom quality checks with non-dqx engines are ignored."""
-        contract_dict = create_contract_with_quality(
+        contract_dict = _create_contract_with_quality(
             property_name="data",
             logical_type="string",
             quality_checks=[
@@ -780,7 +990,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -795,7 +1005,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_minimum_and_maximum_together(self, generator):
         """Test that field with both minimum and maximum generates is_in_range rule."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "age",
@@ -808,7 +1018,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -829,7 +1039,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_min_length_only(self, generator):
         """Test that field with only minLength generates sql_expression rule."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "code",
@@ -841,7 +1051,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -862,7 +1072,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_max_length_only(self, generator):
         """Test that field with only maxLength generates sql_expression rule."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "description",
@@ -874,7 +1084,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -895,7 +1105,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_min_and_max_length_together(self, generator):
         """Test that field with both minLength and maxLength generates a sql_expression rule."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "postal_code",
@@ -908,7 +1118,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -929,7 +1139,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_logical_type_options_but_no_constraints(self, generator):
         """Test field with logicalTypeOptions but no min/max constraints."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "status",
@@ -942,7 +1152,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -981,13 +1191,9 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         schema = odcs.schema_[0]  # Get first schema
         return schema
 
-    def _create_test_rules_generator(self):
+    def _create_test_rules_generator(self, mock_workspace_client):
         """Helper to create a test rules generator with mocked workspace client."""
-        mock_ws = Mock()
-        mock_config = Mock()
-        mock_config.configure_mock(**{"_product_info": ("dqx", "0.0.0")})
-        mock_ws.config = mock_config
-        return DataContractRulesGenerator(workspace_client=mock_ws)
+        return DataContractRulesGenerator(workspace_client=mock_workspace_client)
 
     def _verify_schema_info(self, schema_info, expected_columns):
         """Helper to verify schema info structure."""
@@ -998,20 +1204,20 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         for col_name in expected_columns:
             assert col_name in column_names
 
-    def test_build_schema_info_from_model(self, generator):
+    def test_build_schema_info_from_model(self, generator, mock_workspace_client):
         """Test that schema info is correctly built from a model."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {"name": "customer_id", "logicalType": "string"},
                 {"name": "order_date", "logicalType": "date"},
                 {"name": "amount", "logicalType": "number"},
             ]
         )
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             model = self._load_contract_and_get_model(temp_path)
-            gen = self._create_test_rules_generator()
+            gen = self._create_test_rules_generator(mock_workspace_client)
             build_schema_info = getattr(gen, "_build_schema_info_from_model")
             schema_info = build_schema_info(model)
             self._verify_schema_info(schema_info, ["customer_id", "order_date", "amount"])
@@ -1053,7 +1259,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_text_rules_with_mocked_llm_output(self, generator):
         """Test text rule processing with mocked LLM output (based on REAL LLM structure)."""
-        contract_dict = create_contract_with_quality(
+        contract_dict = _create_contract_with_quality(
             property_name="email",
             logical_type="string",
             quality_checks=[
@@ -1063,7 +1269,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 }
             ],
         )
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             mock_llm_engine = self._create_text_rule_llm_mock()
@@ -1077,7 +1283,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_text_rules_skipped_when_llm_disabled(self, generator):
         """Test that text rules are skipped when LLM is not available."""
-        contract_dict = create_contract_with_quality(
+        contract_dict = _create_contract_with_quality(
             property_name="user_id",
             logical_type="string",
             quality_checks=[
@@ -1088,7 +1294,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Generator without LLM engine (llm_engine=None by default in fixture)
@@ -1104,7 +1310,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_text_rules_skipped_when_process_text_false(self, generator):
         """Test that text rules are skipped when process_text_rules=False."""
-        contract_dict = create_contract_with_quality(
+        contract_dict = _create_contract_with_quality(
             property_name="user_id",
             logical_type="string",
             quality_checks=[
@@ -1115,7 +1321,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Mock LLM engine
@@ -1174,8 +1380,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         assert "order_id" in fields_with_rules
         assert "customer_email" in fields_with_rules
 
-        # Validate rule structure using DQEngine
-        assert_rules_have_valid_structure(rules)
+        assert len(rules) > 0
+
+        for rule in rules:
+            # Use DQEngine's validate_checks method
+            validation_status = DQEngine.validate_checks([rule], validate_custom_check_functions=False)
+            assert not validation_status.has_errors, f"Rule validation failed: {validation_status.errors}"
+
+            # Additionally check user_metadata if present (this is contract-specific, not in DQEngine validation)
+            if "user_metadata" in rule:
+                assert isinstance(rule["user_metadata"], dict), "user_metadata must be a dictionary"
 
         # Verify all are text_llm rules
         for rule in rules:
@@ -1209,7 +1423,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 }
             ],
         }
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             mock_llm_engine = self._create_multiple_text_rules_llm_mock()
@@ -1225,7 +1439,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_format_generates_timestamp_validation(self, generator):
         """Test that format constraint on timestamp field generates is_valid_timestamp rule."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "created_at",
@@ -1236,7 +1450,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1252,7 +1466,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_format_on_string_type_ignored(self, generator):
         """Test that format on non-date type doesn't generate format validation rules."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "status",
@@ -1262,7 +1476,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1283,7 +1497,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_python_format_passthrough(self, generator):
         """Test that Python format strings (with %) are passed through as-is."""
-        contract_dict = create_basic_contract(
+        contract_dict = _create_basic_contract(
             properties=[
                 {
                     "name": "birth_date",
@@ -1293,7 +1507,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1319,7 +1533,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             "schema": [],  # Empty list
         }
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1349,7 +1563,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1375,9 +1589,9 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 "properties": [create_nested_property(depth - 1)],
             }
 
-        contract_dict = create_basic_contract(properties=[create_nested_property(25)])
+        contract_dict = _create_basic_contract(properties=[create_nested_property(25)])
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             generator.generate_rules_from_contract(
@@ -1450,7 +1664,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = gen_with_llm.generate_rules_from_contract(
@@ -1466,7 +1680,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
     def test_explicit_rule_with_object_implementation(self, generator):
         """Test explicit rule where implementation is an object with attributes (not dict)."""
         # Load a contract that will have implementation as Pydantic objects
-        contract_dict = create_contract_with_quality(
+        contract_dict = _create_contract_with_quality(
             property_name="test_field",
             logical_type="string",
             quality_checks=[
@@ -1482,7 +1696,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Load using datacontract-cli which returns Pydantic models
@@ -1515,7 +1729,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = create_test_contract_file(custom_contract=contract_dict)
+        temp_path = _create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(

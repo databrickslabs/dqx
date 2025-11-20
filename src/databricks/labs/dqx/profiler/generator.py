@@ -156,7 +156,10 @@ class DQGenerator(DQEngineBase):
         schema properties, explicit quality definitions, and text-based expectations.
 
         Args:
-            contract: Pre-loaded DataContract object from datacontract-cli.
+            contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
+                - DataContract(data_contract_file=path) - from a file path
+                - DataContract(data_contract_str=yaml_string) - from a YAML/JSON string
+                Either `contract` or `contract_file` must be provided.
             contract_file: Path to contract YAML file (local, volume, or workspace).
             contract_format: Contract format specification (default is "odcs").
             generate_predefined_rules: Whether to generate rules from schema properties.

@@ -86,8 +86,11 @@ class DataContractRulesGenerator(DQEngineBase):
         logicalTypeOptions constraints, explicit quality definitions, and text-based expectations.
 
         Args:
-            contract: Pre-loaded DataContract object from datacontract-cli. Either `contract` or `contract_file` must be provided.
-            contract_file: Path to contract YAML file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
+            contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
+                - DataContract(data_contract_file=path) - from a file path
+                - DataContract(data_contract_str=yaml_string) - from a YAML/JSON string
+                Either `contract` or `contract_file` must be provided.
+            contract_file: Path to contract YAML/JSON file (local, volume, or workspace). Either `contract` or `contract_file` must be provided.
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
             process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
@@ -100,8 +103,7 @@ class DataContractRulesGenerator(DQEngineBase):
             ValueError: If neither or both contract parameters are provided, or format not supported.
 
         Note:
-            Exactly one of 'contract' or 'contract_file' must be provided. For ODCS v3.x,
-            contract_file is preferred.
+            Exactly one of 'contract' or 'contract_file' must be provided.
         """
         self._validate_inputs(contract, contract_file, contract_format)
         odcs = self._load_contract_spec(contract, contract_file)
@@ -129,6 +131,7 @@ class DataContractRulesGenerator(DQEngineBase):
             return self._load_contract_from_file(contract_file)
 
         if contract is not None:
+            # Try to load from file path if available
             contract_file_path = getattr(contract, '_data_contract_file', None) or getattr(
                 contract, 'data_contract_file', None
             )
@@ -136,32 +139,39 @@ class DataContractRulesGenerator(DQEngineBase):
             if contract_file_path:
                 return self._load_contract_from_file(contract_file_path)
 
+            # Try to load from data_contract attribute (pre-parsed dict)
             contract_data = getattr(contract, 'data_contract', None)
             if contract_data:
                 return OpenDataContractStandard.model_validate(contract_data)
 
+            # Try to load from data_contract_str attribute (YAML/JSON string)
+            contract_str = getattr(contract, '_data_contract_str', None) or getattr(contract, 'data_contract_str', None)
+            if contract_str:
+                contract_dict = yaml.safe_load(contract_str)
+                return OpenDataContractStandard.model_validate(contract_dict)
+
             raise ValueError(
-                "For ODCS v3.x native support, provide contract_file instead of pre-loaded contract object"
+                "DataContract object must have either a file path, data_contract dict, or data_contract_str attribute"
             )
 
         raise ValueError("Either contract or contract_file must be provided")
 
     def _load_contract_from_file(self, contract_location: str) -> OpenDataContractStandard:
         """
-        Load ODCS v3.x contract directly from YAML file.
+        Load ODCS v3.x contract directly from YAML/JSON file.
 
         This method provides a clean, direct path to load ODCS v3.x contracts by reading
-        the YAML file and using Pydantic validation to create the OpenDataContractStandard object.
+        the YAML/JSON file and using Pydantic validation to create the OpenDataContractStandard object.
 
         Args:
-            contract_location: Path to the contract YAML file
+            contract_location: Path to the contract YAML/JSON file
 
         Returns:
             OpenDataContractStandard object
 
         Raises:
             FileNotFoundError: If contract file doesn't exist
-            ValueError: If contract YAML is invalid
+            ValueError: If contract YAM/JSON is invalid
         """
         contract_path = Path(contract_location)
 
