@@ -10,8 +10,8 @@ class WorkspaceContext(CliContext):
     WorkspaceContext class that extends CliContext to provide workspace-specific functionality.
     """
 
-    def __init__(self, ws: WorkspaceClient, named_parameters: dict[str, str] | None = None):
-        super().__init__(named_parameters)
+    def __init__(self, ws: WorkspaceClient, named_parameters: dict[str, str] | None = None, install_folder: str | None = None):
+        super().__init__(named_parameters, install_folder)
         self._ws = ws
 
     @cached_property
