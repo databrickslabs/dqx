@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import tempfile
 from unittest.mock import MagicMock, Mock
@@ -2302,6 +2303,46 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             assert len(rules) >= 1
             # Metadata should use "unknown_schema"
             assert rules[0]["user_metadata"]["schema"] == "unknown_schema"
+        finally:
+            os.unlink(temp_path)
+
+    def test_property_without_name_is_skipped(self, generator, caplog):
+        """Test that property without name is skipped and warning is logged."""
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:no_prop_name",
+            "name": "Property Without Name Contract",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "test_schema",
+                    "properties": [
+                        {"name": "valid_field", "logicalType": "string", "required": True},
+                        # Property without name - should be skipped
+                        {"logicalType": "integer", "required": False},
+                    ],
+                }
+            ],
+        }
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                )
+
+            # Should have rules for valid_field only
+            field_names = {rule["user_metadata"]["field"] for rule in rules}
+            assert "valid_field" in field_names
+            # Should NOT have rules for the unnamed property
+            assert all("None" not in name for name in field_names)
+
+            # Should log warning about skipping property without name
+            assert "Skipping property without name" in caplog.text
         finally:
             os.unlink(temp_path)
 

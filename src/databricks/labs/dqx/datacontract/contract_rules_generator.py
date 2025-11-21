@@ -15,7 +15,12 @@ import yaml
 
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
-from open_data_contract_standard.model import OpenDataContractStandard  # type: ignore
+from open_data_contract_standard.model import (  # type: ignore
+    DataQuality,
+    OpenDataContractStandard,
+    SchemaObject,
+    SchemaProperty,
+)
 from pydantic import ValidationError  # type: ignore
 
 from databricks.sdk import WorkspaceClient
@@ -243,7 +248,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
     # ODCS v3.x Native Support Methods
     def _generate_predefined_rules_for_schema(
-        self, schema_obj, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+        self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
     ) -> list[dict]:
         """Generate predefined rules from all properties in an ODCS schema."""
         rules = []
@@ -265,7 +270,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _generate_predefined_rules_for_property(
         self,
-        prop,  # ODCS SchemaProperty object
+        prop: SchemaProperty,
         schema_name: str,
         contract_metadata: dict,
         default_criticality: str,
@@ -280,6 +285,11 @@ class DataContractRulesGenerator(DQEngineBase):
                 f"Maximum recursion depth ({max_recursion_depth}) exceeded for property '{prop.name}'. "
                 f"Skipping further nested properties."
             )
+            return []
+
+        # Skip properties without a name
+        if not prop.name:
+            logger.warning(f"Skipping property without name in schema '{schema_name}'")
             return []
 
         column_path = f"{parent_path}.{prop.name}" if parent_path else prop.name
@@ -732,7 +742,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return result
 
     def _process_text_rules_for_schema(
-        self, schema_obj, schema_name: str, odcs: OpenDataContractStandard
+        self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard
     ) -> list[dict]:
         """Process text-based quality rules from ODCS schema using LLM."""
         if not self.llm_engine:
@@ -766,14 +776,14 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _process_text_rules_for_property(
-        self, prop, schema_info_json: str, schema_name: str, contract_metadata: dict
+        self, prop: SchemaProperty, schema_info_json: str, schema_name: str, contract_metadata: dict
     ) -> list[dict]:
         """Process text rules for a property using LLM."""
         if not self.llm_engine:
             return []
 
         rules = []
-        for quality_rule in prop.quality:
+        for quality_rule in prop.quality or []:
             if quality_rule.type == 'text' and quality_rule.description:
                 logger.info(f"Processing text rule for property '{prop.name}': {quality_rule.description}")
 
@@ -798,14 +808,14 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _process_text_rules_for_schema_level(
-        self, quality_list, schema_info_json: str, schema_name: str, contract_metadata: dict
+        self, quality_list: list[DataQuality] | None, schema_info_json: str, schema_name: str, contract_metadata: dict
     ) -> list[dict]:
         """Process schema-level text rules using LLM."""
         if not self.llm_engine:
             return []
 
         rules = []
-        for quality_rule in quality_list:
+        for quality_rule in quality_list or []:
             if quality_rule.type == 'text' and quality_rule.description:
                 logger.info(f"Processing text rule for schema '{schema_name}': {quality_rule.description}")
 
@@ -828,7 +838,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return rules
 
-    def _build_schema_info_from_model(self, schema_obj) -> str:
+    def _build_schema_info_from_model(self, schema_obj: SchemaObject) -> str:
         """
         Build schema information from ODCS schema object for LLM context.
 
@@ -836,9 +846,13 @@ class DataContractRulesGenerator(DQEngineBase):
         """
         columns = []
 
-        def _extract_columns(props, prefix=""):
+        def _extract_columns(props: list[SchemaProperty] | None, prefix: str = "") -> None:
             """Recursively extract column information from properties."""
             for prop in props or []:
+                # Skip properties without a name
+                if not prop.name:
+                    continue
+
                 column_path = f"{prefix}.{prop.name}" if prefix else prop.name
                 col_info = {
                     "name": column_path,
@@ -953,7 +967,7 @@ class DataContractRulesGenerator(DQEngineBase):
             logger.warning(f"Failed to build explicit rule from implementation: {e}")
             return None
 
-    def _extract_impl_attributes(self, impl, default_criticality: str):
+    def _extract_impl_attributes(self, impl: dict[str, Any], default_criticality: str):
         """Extract check, name, and criticality from implementation dict.
 
         In ODCS v3.x, implementation is always a dict when loaded directly.
