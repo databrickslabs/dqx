@@ -51,7 +51,6 @@ htmlcov/
 nosetests.xml
 coverage.xml
 coverage-unit.xml
-coverage-integration.xml
 *.cover
 *.py,cover
 .hypothesis/
