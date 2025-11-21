@@ -1625,8 +1625,9 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
             # Verify the rule details
             max_rule = next(r for r in rules if r["check"]["function"] == "is_aggr_not_greater_than")
-            assert max_rule["check"]["arguments"]["expression"] == "max(age)"
-            assert max_rule["check"]["arguments"]["max_limit"] == 150
+            assert max_rule["check"]["arguments"]["column"] == "age"
+            assert max_rule["check"]["arguments"]["limit"] == 150
+            assert max_rule["check"]["arguments"]["aggr_type"] == "max"
 
         finally:
             os.unlink(temp_path)
@@ -1658,8 +1659,9 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
             # Verify the rule details
             min_rule = next(r for r in rules if r["check"]["function"] == "is_aggr_not_less_than")
-            assert min_rule["check"]["arguments"]["expression"] == "min(quantity)"
-            assert min_rule["check"]["arguments"]["min_limit"] == 0
+            assert min_rule["check"]["arguments"]["column"] == "quantity"
+            assert min_rule["check"]["arguments"]["limit"] == 0
+            assert min_rule["check"]["arguments"]["aggr_type"] == "min"
 
         finally:
             os.unlink(temp_path)
@@ -2343,6 +2345,60 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
             # Should log warning about skipping property without name
             assert "Skipping property without name" in caplog.text
+        finally:
+            os.unlink(temp_path)
+
+    def test_invalid_explicit_rule_is_filtered_out(self, generator, caplog):
+        """Test that contracts with invalid explicit rules filter them out with warnings."""
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:invalid_rule",
+            "name": "Invalid Rule Contract",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "test_schema",
+                    "properties": [
+                        {
+                            "name": "amount",
+                            "logicalType": "number",
+                            "quality": [
+                                {
+                                    "type": "custom",
+                                    "engine": "dqx",
+                                    "implementation": {
+                                        "check": {
+                                            "function": "nonexistent_function_that_does_not_exist",
+                                            "arguments": {"column": "amount", "limit": 1000},
+                                        },
+                                        "name": "invalid_rule",
+                                        "criticality": "error",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+
+        try:
+            with caplog.at_level(logging.WARNING):
+                rules = generator.generate_rules_from_contract(
+                    contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                )
+
+            # Should return empty list (invalid rule filtered out)
+            assert len(rules) == 0
+
+            # Should log warning about excluding invalid rule
+            assert "Excluding invalid rule" in caplog.text
+            assert "invalid_rule" in caplog.text
+            assert "excluded 1 invalid rule(s)" in caplog.text
         finally:
             os.unlink(temp_path)
 

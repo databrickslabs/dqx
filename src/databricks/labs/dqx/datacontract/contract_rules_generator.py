@@ -118,9 +118,9 @@ class DataContractRulesGenerator(DQEngineBase):
         self._validate_contract_spec(odcs)
 
         dq_rules = self._generate_all_rules(odcs, generate_predefined_rules, process_text_rules, default_criticality)
-        self._validate_generated_rules(dq_rules)
+        valid_rules = self._validate_generated_rules(dq_rules)
 
-        return dq_rules
+        return valid_rules
 
     def _validate_inputs(self, contract: DataContract | None, contract_file: str | None, contract_format: str) -> None:
         """Validate input parameters."""
@@ -237,14 +237,37 @@ class DataContractRulesGenerator(DQEngineBase):
 
         return dq_rules
 
-    def _validate_generated_rules(self, dq_rules: list[dict]) -> None:
-        """Validate generated DQX rules."""
-        if dq_rules:
-            status = DQEngine.validate_checks(dq_rules, self.custom_check_functions)
+    def _validate_generated_rules(self, dq_rules: list[dict]) -> list[dict]:
+        """Validate generated DQX rules and filter out invalid ones.
+
+        Returns:
+            List of valid rules. Invalid rules are logged as warnings and excluded.
+        """
+        if not dq_rules:
+            return []
+
+        valid_rules = []
+        invalid_count = 0
+
+        for rule in dq_rules:
+            status = DQEngine.validate_checks([rule], self.custom_check_functions)
             if status.has_errors:
-                logger.warning(f"Generated rules have validation errors: {status.errors}")
+                invalid_count += 1
+                rule_name = rule.get('name', 'unnamed_rule')
+                error_summary = "; ".join(status.errors)
+                logger.warning(f"Excluding invalid rule '{rule_name}' from contract: {error_summary}")
             else:
-                logger.info(f"Successfully generated {len(dq_rules)} DQX rules from data contract")
+                valid_rules.append(rule)
+
+        if invalid_count > 0:
+            logger.warning(
+                f"Generated {len(dq_rules)} rules from data contract, excluded {invalid_count} invalid rule(s). "
+                f"Returning {len(valid_rules)} valid rule(s)."
+            )
+        else:
+            logger.info(f"Successfully generated {len(valid_rules)} DQX rules from data contract")
+
+        return valid_rules
 
     # ODCS v3.x Native Support Methods
     def _generate_predefined_rules_for_schema(
@@ -505,8 +528,9 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "is_aggr_not_less_than",
                         "arguments": {
-                            "expression": f"min({column_path})",
-                            "min_limit": minimum,
+                            "column": column_path,
+                            "limit": minimum,
+                            "aggr_type": "min",
                         },
                     },
                     "name": f"{column_path}_below_minimum",
@@ -544,8 +568,9 @@ class DataContractRulesGenerator(DQEngineBase):
                     "check": {
                         "function": "is_aggr_not_greater_than",
                         "arguments": {
-                            "expression": f"max({column_path})",
-                            "max_limit": maximum,
+                            "column": column_path,
+                            "limit": maximum,
+                            "aggr_type": "max",
                         },
                     },
                     "name": f"{column_path}_above_maximum",
@@ -953,19 +978,24 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs: OpenDataContractStandard,
         default_criticality: str,
     ) -> dict | None:
-        """Build a DQX rule from an explicit implementation in the contract."""
+        """Build a DQX rule from an explicit implementation in the contract.
+
+        Raises ODCSContractError if the implementation structure is invalid.
+        """
         try:
             check, name, criticality = self._extract_impl_attributes(impl, default_criticality)
             if check is None:
-                logger.warning("Implementation missing 'check' attribute")
+                logger.warning("Implementation missing 'check' attribute, skipping rule")
                 return None
 
             check_dict = self._convert_check_to_dict(check)
             rule = self._build_rule_dict(check_dict, name, criticality, schema_name, property_name, odcs)
             return rule
-        except Exception as e:
-            logger.warning(f"Failed to build explicit rule from implementation: {e}")
-            return None
+        except (AttributeError, KeyError, TypeError) as e:
+            # Malformed contract structure - fail fast
+            raise ODCSContractError(
+                f"Invalid explicit rule implementation structure in schema '{schema_name}': {e}"
+            ) from e
 
     def _extract_impl_attributes(self, impl: dict[str, Any], default_criticality: str):
         """Extract check, name, and criticality from implementation dict.
