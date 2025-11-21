@@ -22,7 +22,13 @@ class DspyLMAdapter(dspy.LM):
 
         # Allow injection of ChatDatabricks class for testing
         chat_cls = chat_databricks_cls or ChatDatabricks
-        self.llm = chat_cls(endpoint=endpoint, temperature=0.1, max_tokens=max_tokens)
+
+        model = endpoint
+        if endpoint.startswith("databricks/"):
+            model = endpoint.removeprefix("databricks/")
+
+        self.llm = chat_cls(model=model, temperature=0.1, max_tokens=max_tokens)
+
         super().__init__(model=endpoint)
 
     def __call__(self, prompt=None, messages=None, **kwargs):
