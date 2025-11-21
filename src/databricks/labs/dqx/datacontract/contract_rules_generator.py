@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from databricks.sdk.errors import NotFound
 
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
@@ -20,9 +19,10 @@ from open_data_contract_standard.model import OpenDataContractStandard  # type: 
 from pydantic import ValidationError  # type: ignore
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import ParameterError, ODCSContractError
+from databricks.labs.dqx.errors import ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.utils import missing_required_packages
 
@@ -906,14 +906,17 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _is_dqx_explicit_rule(self, quality_rule) -> bool:
-        """Check if a quality rule is a DQX explicit rule with implementation."""
+        """Check if a quality rule is a DQX explicit rule with implementation.
+
+        In ODCS v3.x, implementation is always a dict when loaded directly.
+        """
         if quality_rule.type != 'custom' or quality_rule.engine != 'dqx':
             return False
         if not hasattr(quality_rule, 'implementation') or not quality_rule.implementation:
             return False
         impl = quality_rule.implementation
-        has_check = (isinstance(impl, dict) and 'check' in impl) or (hasattr(impl, 'check') and impl.check)
-        return has_check
+        # impl is always a dict in ODCS v3.x
+        return isinstance(impl, dict) and 'check' in impl
 
     def _build_explicit_rule_from_quality(
         self,
@@ -951,37 +954,30 @@ class DataContractRulesGenerator(DQEngineBase):
             return None
 
     def _extract_impl_attributes(self, impl, default_criticality: str):
-        """Extract check, name, and criticality from implementation (dict or object)."""
-        if isinstance(impl, dict):
-            check = impl.get("check")
-            name = impl.get("name", "unnamed_rule")
-            criticality = impl.get("criticality", default_criticality)
-        else:
-            check = impl.check if hasattr(impl, "check") else None
-            name = impl.name if hasattr(impl, "name") and impl.name else "unnamed_rule"
-            criticality = impl.criticality if hasattr(impl, "criticality") and impl.criticality else default_criticality
+        """Extract check, name, and criticality from implementation dict.
+
+        In ODCS v3.x, implementation is always a dict when loaded directly.
+        """
+        if not isinstance(impl, dict):
+            raise TypeError(
+                f"Unexpected implementation type: {type(impl).__name__}. "
+                f"Expected dict, which is the standard format for ODCS v3.x implementations."
+            )
+        check = impl.get("check")
+        name = impl.get("name", "unnamed_rule")
+        criticality = impl.get("criticality", default_criticality)
         return check, name, criticality
 
     def _convert_check_to_dict(self, check: Any) -> dict:
         """Convert check object to dictionary format.
 
-        Handles Pydantic models (from datacontract-cli), dicts, and custom check objects.
+        In ODCS v3.x, check objects are always dicts when loaded directly.
         """
-        # Pydantic v2 models from datacontract-cli
-        if hasattr(check, "model_dump") and callable(getattr(check, "model_dump", None)):
-            return check.model_dump()
-
-        # Plain dict
         if isinstance(check, dict):
             return check
-
-        # Custom check object with function and arguments attributes
-        if hasattr(check, "function") and hasattr(check, "arguments"):
-            return {"function": check.function, "arguments": check.arguments}
-
-        raise ODCSContractError(
-            f"Invalid check format: expected object with 'function' and 'arguments' attributes, "
-            f"got {type(check).__name__} with attributes {dir(check)}"
+        raise TypeError(
+            f"Unexpected check type: {type(check).__name__}. "
+            f"Expected dict, which is the standard format for ODCS v3.x check definitions."
         )
 
     def _build_rule_dict(

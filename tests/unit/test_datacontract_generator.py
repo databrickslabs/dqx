@@ -1,23 +1,22 @@
 import json
 import os
 import tempfile
-from unittest.mock import Mock, MagicMock
-import yaml
+from unittest.mock import MagicMock, Mock
+
 import pytest
-from databricks.sdk.errors import NotFound
+import pyspark.sql.functions as F
+import yaml
 from datacontract.data_contract import DataContract
 from datacontract.lint.resolve import resolve_data_contract_v2
-import pyspark.sql.functions as F
-from databricks.sdk import WorkspaceClient
 
-from databricks.labs.dqx.datacontract.contract_rules_generator import (
-    DataContractRulesGenerator,
-)
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
+from databricks.labs.dqx.check_funcs import make_condition, register_rule
+from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import ODCSContractError, ParameterError
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 
 class DataContractGeneratorTestBase:
