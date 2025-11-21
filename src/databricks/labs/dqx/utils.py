@@ -3,6 +3,7 @@ import json
 import datetime
 import logging
 import re
+from importlib.util import find_spec
 from typing import Any
 from fnmatch import fnmatch
 
@@ -448,3 +449,16 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     if is_array:
         return F.transform(col_expr, F.lower)
     return F.lower(col_expr)
+
+
+def missing_required_packages(packages: list[str]) -> bool:
+    """
+    Checks if any of the required packages are missing.
+
+    Args:
+        packages: A list of package names to check.
+
+    Returns:
+        True if any package is missing, False otherwise.
+    """
+    return not all(find_spec(spec) for spec in packages)

@@ -1,144 +1,23 @@
 import json
 import os
 import tempfile
-from unittest.mock import Mock
+from unittest.mock import Mock, MagicMock
 import yaml
-
 import pytest
+from databricks.sdk.errors import NotFound
 from datacontract.data_contract import DataContract
 from datacontract.lint.resolve import resolve_data_contract_v2
+import pyspark.sql.functions as F
+from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.datacontract.contract_rules_generator import (
     DataContractRulesGenerator,
 )
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import ODCSContractError, ParameterError
 from databricks.labs.dqx.profiler.generator import DQGenerator
-
-
-def _create_basic_contract(
-    schema_name: str = "test_table",
-    properties: list[dict] | None = None,
-    contract_id: str = "test",
-    contract_version: str = "1.0.0",
-) -> dict:
-    """
-    Create a basic ODCS v3.x contract dictionary with specified properties.
-
-    Args:
-        schema_name: Name of the schema.
-        properties: List of ODCS v3.x property dictionaries. Each property should have:
-                   - name: property name
-                   - logicalType: data type (string, number, integer, etc.)
-                   - required: boolean (optional)
-                   - unique: boolean (optional)
-                   - logicalTypeOptions: dict with pattern, minimum, maximum, etc. (optional)
-                   - quality: list of quality checks (optional)
-        contract_id: Contract ID.
-        contract_version: Contract version.
-
-    Returns:
-        An ODCS v3.x contract dictionary.
-    """
-    if properties is None:
-        properties = [{"name": "user_id", "logicalType": "string", "required": True}]
-
-    return {
-        "kind": "DataContract",
-        "apiVersion": "v3.0.2",
-        "id": contract_id,
-        "name": contract_id,
-        "version": contract_version,
-        "status": "active",
-        "schema": [{"name": schema_name, "physicalType": "table", "properties": properties}],
-    }
-
-
-def _create_contract_with_quality(
-    property_name: str,
-    logical_type: str,
-    quality_checks: list[dict],
-    schema_name: str = "test_table",
-) -> dict:
-    """
-    Create an ODCS v3.x contract with quality checks for a single property.
-
-    Args:
-        property_name: Name of the property.
-        logical_type: Logical type of the property (string, number, etc.).
-        quality_checks: List of ODCS v3.x quality check dictionaries.
-                       For DQX rules, use format:
-                       {
-                           "type": "custom",
-                           "engine": "dqx",
-                           "implementation": {
-                               "name": "rule_name",
-                               "criticality": "error|warn",
-                               "check": {"function": "...", "arguments": {...}}
-                           }
-                       }
-        schema_name: Name of the schema.
-
-    Returns:
-        An ODCS v3.x contract dictionary with quality checks.
-    """
-    # All quality checks should already be in ODCS v3.x format
-    property_def = {"name": property_name, "logicalType": logical_type, "quality": quality_checks}
-
-    return _create_basic_contract(schema_name=schema_name, properties=[property_def])
-
-
-def _create_test_contract_file(
-    user_id_pattern: str = "^USER-[0-9]{4}$",
-    age_min: int = 0,
-    age_max: int = 120,
-    status_values: list[str] | None = None,
-    custom_contract: dict | None = None,
-) -> str:
-    """
-    Create a temporary ODCS v3.x contract file for testing.
-
-    Args:
-        user_id_pattern: Pattern for user_id property.
-        age_min: Minimum age value.
-        age_max: Maximum age value.
-        status_values: List of valid status values.
-        custom_contract: Optional custom contract dict to use instead of default.
-
-    Returns:
-        Path to the temporary contract file.
-    """
-    if custom_contract:
-        contract_dict = custom_contract
-    else:
-        if status_values is None:
-            status_values = ["active", "inactive"]
-
-        # Create ODCS v3.x properties directly
-        properties: list[dict] = [
-            {
-                "name": "user_id",
-                "logicalType": "string",
-                "required": True,
-                "logicalTypeOptions": {"pattern": user_id_pattern},
-            },
-            {
-                "name": "age",
-                "logicalType": "integer",
-                "logicalTypeOptions": {"minimum": age_min, "maximum": age_max},
-            },
-            {
-                "name": "status",
-                "logicalType": "string",
-                "logicalTypeOptions": {"pattern": f"^({'|'.join(status_values)})$"},  # enum as pattern
-            },
-        ]
-
-        contract_dict = _create_basic_contract(schema_name="users", properties=properties)
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        yaml.safe_dump(contract_dict, f)
-        return f.name
+from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 
 class DataContractGeneratorTestBase:
@@ -147,12 +26,7 @@ class DataContractGeneratorTestBase:
     @pytest.fixture
     def mock_workspace_client(self):
         """Create mock WorkspaceClient."""
-        mock_ws = Mock()
-        mock_config = Mock()
-        mock_config.configure_mock(**{"_product_info": ("dqx", "0.0.0")})
-        mock_ws.config = mock_config
-        mock_ws.clusters.select_spark_version = Mock()
-        return mock_ws
+        return MagicMock(spec=WorkspaceClient)
 
     @pytest.fixture
     def mock_spark(self):
@@ -172,6 +46,715 @@ class DataContractGeneratorTestBase:
         tests_dir = os.path.dirname(os.path.dirname(__file__))
         return os.path.join(tests_dir, "resources", "sample_datacontract.yaml")
 
+    def get_expected_contract_rules(self):
+        """
+        Expected DQX rules generated from sample data contract.
+        Must match the rules generated from resources/sample_datacontract.yaml.
+        """
+        return [
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'sensor_id'}},
+                'name': 'sensor_id_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'sensor_id',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_unique', 'arguments': {'columns': ['sensor_id']}},
+                'name': 'sensor_id_not_unique',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'sensor_id',
+                    'dimension': 'uniqueness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {'column': 'sensor_id', 'regex': '^SENSOR-[A-Z]{2}-[0-9]{4}$'},
+                },
+                'name': 'sensor_id_invalid_pattern',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'sensor_id',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'sql_expression',
+                    'arguments': {'expression': 'LENGTH(sensor_id) = 15', 'columns': ['sensor_id']},
+                },
+                'name': 'sensor_id_invalid_length',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'sensor_id',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'machine_id'}},
+                'name': 'machine_id_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'machine_id',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {'column': 'machine_id', 'regex': '^MACHINE-[A-Z0-9]{6}$'},
+                },
+                'name': 'machine_id_invalid_pattern',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'machine_id',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'reading_timestamp'}},
+                'name': 'reading_timestamp_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'reading_timestamp',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'is_valid_date',
+                    'arguments': {'column': 'reading_timestamp', 'date_format': '%Y-%m-%d %H:%M:%S'},
+                },
+                'name': 'reading_timestamp_valid_date_format',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'reading_timestamp',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'calibration_date'}},
+                'name': 'calibration_date_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'calibration_date',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'is_valid_date',
+                    'arguments': {'column': 'calibration_date', 'date_format': '%Y-%m-%d'},
+                },
+                'name': 'calibration_date_valid_date_format',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'calibration_date',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'temperature_celsius'}},
+                'name': 'temperature_celsius_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'temperature_celsius',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'sql_expression',
+                    'arguments': {
+                        'expression': 'temperature_celsius >= -273.15 AND temperature_celsius <= 200.0',
+                        'columns': ['temperature_celsius'],
+                    },
+                },
+                'name': 'temperature_celsius_out_of_range',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'temperature_celsius',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'humidity_percentage'}},
+                'name': 'humidity_percentage_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'humidity_percentage',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'sql_expression',
+                    'arguments': {
+                        'expression': 'humidity_percentage >= 0.0 AND humidity_percentage <= 100.0',
+                        'columns': ['humidity_percentage'],
+                    },
+                },
+                'name': 'humidity_percentage_out_of_range',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'humidity_percentage',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'sql_expression',
+                    'arguments': {
+                        'expression': 'pressure_bar >= 0.1 AND pressure_bar <= 10.0',
+                        'columns': ['pressure_bar'],
+                    },
+                },
+                'name': 'pressure_bar_out_of_range',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'pressure_bar',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'vibration_level'}},
+                'name': 'vibration_level_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'vibration_level',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'is_in_range',
+                    'arguments': {'column': 'vibration_level', 'min_limit': 0, 'max_limit': 10},
+                },
+                'name': 'vibration_level_out_of_range',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'vibration_level',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'sensor_status'}},
+                'name': 'sensor_status_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'sensor_status',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {'column': 'sensor_status', 'regex': '^(active|inactive|maintenance|faulty)$'},
+                },
+                'name': 'sensor_status_invalid_pattern',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'sensor_status',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {'column': 'alert_level', 'regex': '^(none|low|medium|high|critical)$'},
+                },
+                'name': 'alert_level_invalid_pattern',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'alert_level',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'location'}},
+                'name': 'location_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'location',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {'column': 'location', 'regex': '^[A-Z]{3}-[A-Z]{2}-[0-9]{3}$'},
+                },
+                'name': 'location_invalid_pattern',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'location',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'sql_expression',
+                    'arguments': {'expression': 'LENGTH(location) = 10', 'columns': ['location']},
+                },
+                'name': 'location_invalid_length',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'location',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {'function': 'is_not_null', 'arguments': {'column': 'device_model'}},
+                'name': 'device_model_is_null',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'device_model',
+                    'dimension': 'completeness',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {'column': 'device_model', 'regex': '^[A-Z]{2}[0-9]{4}-[A-Z]{1}$'},
+                },
+                'name': 'device_model_invalid_pattern',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'device_model',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'sql_expression',
+                    'arguments': {'expression': 'LENGTH(notes) <= 500', 'columns': ['notes']},
+                },
+                'name': 'notes_too_long',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'notes',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {'column': 'technician_id', 'regex': '^TECH-[0-9]{5}$'},
+                },
+                'name': 'technician_id_invalid_pattern',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'technician_id',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {
+                        'column': 'alert_email',
+                        'regex': '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$',
+                    },
+                },
+                'name': 'alert_email_invalid_pattern',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'field': 'alert_email',
+                    'dimension': 'validity',
+                    'rule_type': 'predefined',
+                },
+            },
+            {
+                'check': {
+                    'function': 'is_not_null_and_not_empty',
+                    'arguments': {'column': 'sensor_id', 'trim_strings': True},
+                },
+                'name': 'sensor_id_not_empty',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'explicit',
+                    'field': 'sensor_id',
+                },
+            },
+            {
+                'check': {
+                    'function': 'is_valid_timestamp',
+                    'arguments': {'column': 'reading_timestamp', 'timestamp_format': '%Y-%m-%d %H:%M:%S'},
+                },
+                'name': 'valid_reading_timestamp',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'explicit',
+                    'field': 'reading_timestamp',
+                },
+            },
+            {
+                'check': {
+                    'function': 'sql_expression',
+                    'arguments': {'expression': 'calibration_date <= date(reading_timestamp)'},
+                },
+                'name': 'calibration_date_logical',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'explicit',
+                    'field': 'calibration_date',
+                },
+            },
+            {
+                'check': {
+                    'function': 'is_in_list',
+                    'arguments': {
+                        'column': 'sensor_status',
+                        'allowed': ['active', 'inactive', 'maintenance', 'faulty'],
+                    },
+                },
+                'name': 'sensor_status_valid_values',
+                'criticality': 'warn',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'explicit',
+                    'field': 'sensor_status',
+                },
+            },
+            {
+                'check': {
+                    'function': 'regex_match',
+                    'arguments': {
+                        'column': 'alert_email',
+                        'regex': '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$',
+                    },
+                },
+                'name': 'valid_alert_email',
+                'criticality': 'warn',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'explicit',
+                    'field': 'alert_email',
+                },
+            },
+            {
+                'check': {
+                    'function': 'is_data_fresh_per_time_window',
+                    'arguments': {
+                        'column': 'reading_timestamp',
+                        'window_minutes': 60,
+                        'min_records_per_window': 1,
+                        'lookback_windows': 24,
+                    },
+                },
+                'name': 'sensor_data_freshness',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'explicit',
+                },
+            },
+            {
+                'check': {
+                    'function': 'is_aggr_not_less_than',
+                    'arguments': {'column': 'sensor_id', 'limit': 1, 'aggr_type': 'count'},
+                },
+                'name': 'dataset_not_empty',
+                'criticality': 'warn',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'explicit',
+                },
+            },
+        ]
+
+    def create_basic_contract(
+        self,
+        schema_name: str = "test_table",
+        properties: list[dict] | None = None,
+        contract_id: str = "test",
+        contract_version: str = "1.0.0",
+    ) -> dict:
+        """
+        Create a basic ODCS v3.x contract dictionary with specified properties.
+
+        Args:
+            schema_name: Name of the schema.
+            properties: List of ODCS v3.x property dictionaries. Each property should have:
+                       - name: property name
+                       - logicalType: data type (string, number, integer, etc.)
+                       - required: boolean (optional)
+                       - unique: boolean (optional)
+                       - logicalTypeOptions: dict with pattern, minimum, maximum, etc. (optional)
+                       - quality: list of quality checks (optional)
+            contract_id: Contract ID.
+            contract_version: Contract version.
+
+        Returns:
+            An ODCS v3.x contract dictionary.
+        """
+        if properties is None:
+            properties = [{"name": "user_id", "logicalType": "string", "required": True}]
+
+        return {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": contract_id,
+            "name": contract_id,
+            "version": contract_version,
+            "status": "active",
+            "schema": [{"name": schema_name, "physicalType": "table", "properties": properties}],
+        }
+
+    def create_contract_with_quality(
+        self,
+        property_name: str,
+        logical_type: str,
+        quality_checks: list[dict],
+        schema_name: str = "test_table",
+    ) -> dict:
+        """
+        Create an ODCS v3.x contract with quality checks for a single property.
+
+        Args:
+            property_name: Name of the property.
+            logical_type: Logical type of the property (string, number, etc.).
+            quality_checks: List of ODCS v3.x quality check dictionaries.
+                           For DQX rules, use format:
+                           {
+                               "type": "custom",
+                               "engine": "dqx",
+                               "implementation": {
+                                   "name": "rule_name",
+                                   "criticality": "error|warn",
+                                   "check": {"function": "...", "arguments": {...}}
+                               }
+                           }
+            schema_name: Name of the schema.
+
+        Returns:
+            An ODCS v3.x contract dictionary with quality checks.
+        """
+        # All quality checks should already be in ODCS v3.x format
+        property_def = {"name": property_name, "logicalType": logical_type, "quality": quality_checks}
+
+        return self.create_basic_contract(schema_name=schema_name, properties=[property_def])
+
+    def create_test_contract_file(
+        self,
+        user_id_pattern: str = "^USER-[0-9]{4}$",
+        age_min: int = 0,
+        age_max: int = 120,
+        status_values: list[str] | None = None,
+        custom_contract: dict | None = None,
+    ) -> str:
+        """
+        Create a temporary ODCS v3.x contract file for testing.
+
+        Args:
+            user_id_pattern: Pattern for user_id property.
+            age_min: Minimum age value.
+            age_max: Maximum age value.
+            status_values: List of valid status values.
+            custom_contract: Optional custom contract dict to use instead of default.
+
+        Returns:
+            Path to the temporary contract file.
+        """
+        if custom_contract:
+            contract_dict = custom_contract
+        else:
+            if status_values is None:
+                status_values = ["active", "inactive"]
+
+            # Create ODCS v3.x properties directly
+            properties: list[dict] = [
+                {
+                    "name": "user_id",
+                    "logicalType": "string",
+                    "required": True,
+                    "logicalTypeOptions": {"pattern": user_id_pattern},
+                },
+                {
+                    "name": "age",
+                    "logicalType": "integer",
+                    "logicalTypeOptions": {"minimum": age_min, "maximum": age_max},
+                },
+                {
+                    "name": "status",
+                    "logicalType": "string",
+                    "logicalTypeOptions": {"pattern": f"^({'|'.join(status_values)})$"},  # enum as pattern
+                },
+            ]
+
+            contract_dict = self.create_basic_contract(schema_name="users", properties=properties)
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(contract_dict, f)
+            return f.name
+
 
 class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
     """Test basic data contract generator functionality."""
@@ -180,18 +763,18 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         """Test that appropriate error is raised if datacontract-cli not installed."""
         # This test documents the expected behavior when neither contract nor file is provided
         # In dev env with datacontract-cli, it will raise ValueError
-        with pytest.raises((ImportError, ValueError)):
+        with pytest.raises(ParameterError):
             generator.generate_rules_from_contract(contract_file=None, contract=None)
 
     def test_requires_either_contract_or_file(self, generator):
         """Test that either contract or contract_file must be provided."""
-        with pytest.raises(ValueError, match="Either 'contract' or 'contract_file' must be provided"):
+        with pytest.raises(ParameterError, match="Either 'contract' or 'contract_file' must be provided"):
             generator.generate_rules_from_contract()
 
     def test_requires_either_valid_contract_object(self, generator):
         """Test that either contract or contract_file must be provided."""
         with pytest.raises(
-            ValueError,
+            ParameterError,
             match="DataContract object must have either a file path, data_contract dict, or data_contract_str attribute",
         ):
             generator.generate_rules_from_contract(DataContract())
@@ -199,17 +782,17 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
     def test_cannot_provide_both_contract_and_file(self, generator, sample_contract_path):
         """Test that both contract and contract_file cannot be provided."""
         contract = DataContract(data_contract_file=sample_contract_path)
-        with pytest.raises(ValueError, match="Cannot provide both"):
+        with pytest.raises(ParameterError, match="Cannot provide both"):
             generator.generate_rules_from_contract(contract=contract, contract_file=sample_contract_path)
 
     def test_unsupported_contract_format(self, generator, sample_contract_path):
         """Test error for unsupported contract format."""
-        with pytest.raises(ValueError, match="Contract format 'unknown' not supported"):
+        with pytest.raises(ParameterError, match="Contract format 'unknown' not supported"):
             generator.generate_rules_from_contract(contract_file=sample_contract_path, contract_format="unknown")
 
     def test_explicit_rule_with_criticality_warn(self, generator):
         """Test that explicit DQX rules preserve 'warn' criticality from contract."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="email",
             logical_type="string",
             quality_checks=[
@@ -230,7 +813,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -245,7 +828,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
     def test_explicit_rule_with_criticality_error(self, generator):
         """Test that explicit DQX rules preserve 'error' criticality from contract."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="user_id",
             logical_type="string",
             quality_checks=[
@@ -263,7 +846,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -278,7 +861,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
     def test_explicit_rule_without_criticality_uses_dqx_default(self, generator):
         """Test that explicit DQX rules without criticality use DQX's default (error)."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="user_id",
             logical_type="string",
             quality_checks=[
@@ -296,7 +879,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -313,11 +896,11 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
     def test_predefined_rules_use_default_criticality(self, generator):
         """Test that predefined rules use the default_criticality parameter."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[{"name": "user_id", "logicalType": "string", "required": True}]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Generate with warn as default
@@ -334,6 +917,153 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_generate_rules_from_contract_file(self, generator, sample_contract_path):
+        """Test generating rules from data contract file."""
+        actual_rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=False
+        )
+        assert actual_rules == self.get_expected_contract_rules()
+
+    def test_generate_rules_from_datacontract_object_and_path(self, generator, sample_contract_path):
+        """Test generating rules from DataContract object - should produce same output as from file."""
+        contract = DataContract(data_contract_file=sample_contract_path)
+        rules_from_object = generator.generate_rules_from_contract(contract=contract, process_text_rules=False)
+        assert rules_from_object == self.get_expected_contract_rules()
+
+    def test_generate_rules_with_default_criticality(self, generator, sample_contract_path):
+        """Test that default_criticality is correctly applied."""
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path, default_criticality="warn", process_text_rules=False
+        )
+
+        expected_contract_rules_warn = self.get_expected_contract_rules()
+        for rule in expected_contract_rules_warn:
+            # exclude explicit rules that have criticality set to error in the contract
+            if rule["name"] not in {
+                "sensor_id_not_empty",
+                "valid_reading_timestamp",
+                "calibration_date_logical",
+                "sensor_data_freshness",
+            }:
+                rule["criticality"] = "warn"
+        assert rules == expected_contract_rules_warn
+
+    def test_generate_rules_and_skip_predefined_rules(self, generator, sample_contract_path):
+        """Test that generate_predefined_rules=False skips predefined rules."""
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path, generate_predefined_rules=False, process_text_rules=False
+        )
+
+        # Should only have explicit rules (no predefined rules)
+        # Sample ODCS v3.x contract has 7 explicit DQX rules (5 property-level + 2 schema-level)
+        assert len(rules) == 7
+
+        # Verify all rules are explicit
+        for rule in rules:
+            assert rule["user_metadata"]["rule_type"] == "explicit"
+
+    def test_generate_rules_from_datacontract_obj_with_custom_check_func(
+        self, mock_workspace_client, mock_spark, sample_contract_path
+    ):
+        """Test generating rules with custom check functions."""
+
+        @register_rule("row")
+        def not_ends_with_suffix(column: str, suffix: str):
+            """
+            Example of custom python row-level check function.
+            """
+            return make_condition(
+                F.col(column).endswith(suffix), f"Column {column} ends with {suffix}", f"{column}_ends_with_{suffix}"
+            )
+
+        custom_check_functions = {"not_ends_with_suffix": not_ends_with_suffix}
+
+        generator = DQGenerator(
+            workspace_client=mock_workspace_client, spark=mock_spark, custom_check_functions=custom_check_functions
+        )
+
+        data_contract_str = """
+        kind: DataContract
+        apiVersion: v3.0.2
+        id: urn:datacontract:sensors:iot_sensor_data
+        name: IoT Sensor Data Quality Contract
+        version: 2.1.0
+        status: active
+
+        schema:
+          - name: sensor_readings
+            properties:
+              - name: sensor_id
+                quality:
+                  # Explicit check with error criticality
+                  - type: custom
+                    engine: dqx
+                    description: Sensor ID must not be empty
+                    implementation:
+                      criticality: error
+                      name: sensor_id_not_empty
+                      check:
+                        function: is_not_null_and_not_empty
+                        arguments:
+                          column: sensor_id
+                          trim_strings: true
+                  - type: custom
+                    engine: dqx
+                    description: Sensor name must not end with '_test'
+                    implementation:
+                      criticality: error
+                      name: sensor_name_not_end_with_test
+                      check:
+                        function: not_ends_with_suffix
+                        arguments:
+                          column: sensor_name
+                          suffix: _test"""
+
+        contract = DataContract(data_contract_str=data_contract_str)
+
+        # Generate rules with text processing enabled
+        rules = generator.generate_rules_from_contract(
+            contract=contract, generate_predefined_rules=False, process_text_rules=False
+        )
+
+        # Verify rules were generated
+        expected_rules = [
+            {
+                "check": {
+                    "function": "is_not_null_and_not_empty",
+                    "arguments": {"column": "sensor_id", "trim_strings": True},
+                },
+                "name": "sensor_id_not_empty",
+                "criticality": "error",
+                "user_metadata": {
+                    "contract_id": "urn:datacontract:sensors:iot_sensor_data",
+                    "contract_version": "2.1.0",
+                    "odcs_version": "v3.0.2",
+                    "schema": "sensor_readings",
+                    "rule_type": "explicit",
+                    "field": "sensor_id",
+                },
+            },
+            {
+                "check": {
+                    "function": "not_ends_with_suffix",
+                    "arguments": {"column": "sensor_name", "suffix": "_test"},
+                },
+                "name": "sensor_name_not_end_with_test",
+                "criticality": "error",
+                "user_metadata": {
+                    "contract_id": "urn:datacontract:sensors:iot_sensor_data",
+                    "contract_version": "2.1.0",
+                    "odcs_version": "v3.0.2",
+                    "schema": "sensor_readings",
+                    "rule_type": "explicit",
+                    "field": "sensor_id",
+                },
+            },
+        ]
+
+        assert rules == expected_rules, f"Rules do not match expected: {rules}"
+
 
 class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
     """Test predefined rule generation from field constraints."""
@@ -341,11 +1071,11 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
     def test_required_field_generates_is_not_null(self, generator):
         """Test that required fields generate is_not_null rules."""
         # Create a simple contract with a required property
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[{"name": "user_id", "logicalType": "string", "required": True}]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -362,11 +1092,11 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_unique_field_generates_is_unique(self, generator):
         """Test that unique fields generate is_unique rules."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[{"name": "user_id", "logicalType": "string", "unique": True}]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -379,7 +1109,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_enum_generates_is_in_list(self, generator):
         """Test that enum fields generate regex_match rules (ODCS v3.x uses pattern for enums)."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "status",
@@ -389,7 +1119,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -412,7 +1142,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_pattern_generates_regex_match(self, generator):
         """Test that pattern fields generate regex_match rules."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "code",
@@ -422,7 +1152,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -435,7 +1165,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_range_generates_is_in_range(self, generator):
         """Test that minimum/maximum generate is_in_range rules."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "age",
@@ -445,7 +1175,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -459,7 +1189,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_format_generates_date_validation(self, generator):
         """Test that format generates date/timestamp validation rules."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "event_date",
@@ -474,7 +1204,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(contract_file=temp_path)
@@ -511,7 +1241,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_nested_fields_generate_rules(self, generator):
         """Test that nested field structures generate rules with proper column paths."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "customer",
@@ -543,7 +1273,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             self._verify_nested_field_rules(generator, temp_path)
@@ -576,7 +1306,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_fields_without_quality_checks(self, generator):
         """Test that fields without quality checks are handled gracefully."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {"name": "id", "logicalType": "string", "required": True},
                 {"name": "optional_field", "logicalType": "string", "required": False},
@@ -584,7 +1314,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -600,7 +1330,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_empty_text_description_skipped(self, generator):
         """Test that text quality checks with empty/whitespace descriptions are skipped."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="user_id",
             logical_type="string",
             quality_checks=[
@@ -609,7 +1339,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -643,7 +1373,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Should still generate rules despite warnings
@@ -690,7 +1420,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -710,7 +1440,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_field_with_multiple_constraints(self, generator):
         """Test that fields with multiple constraints generate multiple rules."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "product_code",
@@ -726,7 +1456,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -753,7 +1483,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
     def test_explicit_rules_with_different_criticalities(self, generator):
         """Test that explicit rules preserve their individual criticality levels."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="data",
             logical_type="string",
             quality_checks=[
@@ -781,7 +1511,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -804,7 +1534,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_only_minimum_constraint(self, generator):
         """Test that field with only minimum (no maximum) generates sql_expression rule for float."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "temperature",
@@ -816,7 +1546,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -837,7 +1567,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_only_maximum_constraint(self, generator):
         """Test that field with only maximum (no minimum) generates sql_expression rule for float."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "humidity",
@@ -849,7 +1579,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -870,7 +1600,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_only_integer_maximum_constraint(self, generator):
         """Test that field with only integer maximum generates is_aggr_not_greater_than rule."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "age",
@@ -882,7 +1612,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -903,7 +1633,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_only_integer_minimum_constraint(self, generator):
         """Test that field with only integer minimum generates is_aggr_not_less_than rule."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "quantity",
@@ -915,7 +1645,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -936,7 +1666,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_explicit_dqx_quality_check_detection(self, generator):
         """Test that explicit DQX quality checks are correctly identified."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="data",
             logical_type="string",
             quality_checks=[
@@ -957,7 +1687,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -973,7 +1703,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_non_dqx_custom_quality_checks_ignored(self, generator):
         """Test that custom quality checks with non-dqx engines are ignored."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="data",
             logical_type="string",
             quality_checks=[
@@ -990,7 +1720,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1005,7 +1735,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_minimum_and_maximum_together(self, generator):
         """Test that field with both minimum and maximum generates is_in_range rule."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "age",
@@ -1018,7 +1748,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1039,7 +1769,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_min_length_only(self, generator):
         """Test that field with only minLength generates sql_expression rule."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "code",
@@ -1051,7 +1781,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1072,7 +1802,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_max_length_only(self, generator):
         """Test that field with only maxLength generates sql_expression rule."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "description",
@@ -1084,7 +1814,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1105,7 +1835,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_min_and_max_length_together(self, generator):
         """Test that field with both minLength and maxLength generates a sql_expression rule."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "postal_code",
@@ -1118,7 +1848,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1139,7 +1869,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
     def test_field_with_logical_type_options_but_no_constraints(self, generator):
         """Test field with logicalTypeOptions but no min/max constraints."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "status",
@@ -1152,7 +1882,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1206,14 +1936,14 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_build_schema_info_from_model(self, generator, mock_workspace_client):
         """Test that schema info is correctly built from a model."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {"name": "customer_id", "logicalType": "string"},
                 {"name": "order_date", "logicalType": "date"},
                 {"name": "amount", "logicalType": "number"},
             ]
         )
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             model = self._load_contract_and_get_model(temp_path)
@@ -1259,7 +1989,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_text_rules_with_mocked_llm_output(self, generator):
         """Test text rule processing with mocked LLM output (based on REAL LLM structure)."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="email",
             logical_type="string",
             quality_checks=[
@@ -1269,7 +1999,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 }
             ],
         )
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             mock_llm_engine = self._create_text_rule_llm_mock()
@@ -1283,7 +2013,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_text_rules_skipped_when_llm_disabled(self, generator):
         """Test that text rules are skipped when LLM is not available."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="user_id",
             logical_type="string",
             quality_checks=[
@@ -1294,7 +2024,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Generator without LLM engine (llm_engine=None by default in fixture)
@@ -1310,7 +2040,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_text_rules_skipped_when_process_text_false(self, generator):
         """Test that text rules are skipped when process_text_rules=False."""
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="user_id",
             logical_type="string",
             quality_checks=[
@@ -1321,7 +2051,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Mock LLM engine
@@ -1423,7 +2153,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 }
             ],
         }
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             mock_llm_engine = self._create_multiple_text_rules_llm_mock()
@@ -1439,7 +2169,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_format_generates_timestamp_validation(self, generator):
         """Test that format constraint on timestamp field generates is_valid_timestamp rule."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "created_at",
@@ -1450,7 +2180,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1466,7 +2196,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_format_on_string_type_ignored(self, generator):
         """Test that format on non-date type doesn't generate format validation rules."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "status",
@@ -1476,7 +2206,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1497,7 +2227,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_python_format_passthrough(self, generator):
         """Test that Python format strings (with %) are passed through as-is."""
-        contract_dict = _create_basic_contract(
+        contract_dict = self.create_basic_contract(
             properties=[
                 {
                     "name": "birth_date",
@@ -1507,7 +2237,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ]
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1533,7 +2263,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             "schema": [],  # Empty list
         }
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1563,7 +2293,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
@@ -1589,9 +2319,9 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 "properties": [create_nested_property(depth - 1)],
             }
 
-        contract_dict = _create_basic_contract(properties=[create_nested_property(25)])
+        contract_dict = self.create_basic_contract(properties=[create_nested_property(25)])
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             generator.generate_rules_from_contract(
@@ -1605,7 +2335,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def test_file_not_found_raises_error(self, generator):
         """Test that non-existent contract file raises FileNotFoundError."""
-        with pytest.raises(FileNotFoundError, match="Contract file not found"):
+        with pytest.raises(NotFound, match="Contract file not found"):
             generator.generate_rules_from_contract(contract_file="/nonexistent/path/contract.yaml")
 
     def test_invalid_yaml_raises_value_error(self, generator):
@@ -1619,7 +2349,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             temp_path = f.name
 
         try:
-            with pytest.raises(ValueError, match="Failed to parse ODCS contract"):
+            with pytest.raises(ODCSContractError, match="Failed to parse ODCS contract"):
                 generator.generate_rules_from_contract(contract_file=temp_path)
         finally:
             os.unlink(temp_path)
@@ -1664,7 +2394,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = gen_with_llm.generate_rules_from_contract(
@@ -1680,7 +2410,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
     def test_explicit_rule_with_object_implementation(self, generator):
         """Test explicit rule where implementation is an object with attributes (not dict)."""
         # Load a contract that will have implementation as Pydantic objects
-        contract_dict = _create_contract_with_quality(
+        contract_dict = self.create_contract_with_quality(
             property_name="test_field",
             logical_type="string",
             quality_checks=[
@@ -1696,7 +2426,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         )
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             # Load using datacontract-cli which returns Pydantic models
@@ -1729,7 +2459,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ],
         }
 
-        temp_path = _create_test_contract_file(custom_contract=contract_dict)
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(

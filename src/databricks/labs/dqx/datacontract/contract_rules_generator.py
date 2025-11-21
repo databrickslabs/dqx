@@ -8,11 +8,11 @@ specifications like ODCS (Open Data Contract Standard).
 import json
 import logging
 from collections.abc import Callable
-from importlib.util import find_spec
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
+from databricks.sdk.errors import NotFound
 
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
@@ -22,7 +22,9 @@ from pydantic import ValidationError  # type: ignore
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import ParameterError, ODCSContractError
 from databricks.labs.dqx.telemetry import telemetry_logger
+from databricks.labs.dqx.utils import missing_required_packages
 
 # Type checking imports (for type hints only, not evaluated at runtime)
 if TYPE_CHECKING:
@@ -60,7 +62,7 @@ class DataContractRulesGenerator(DQEngineBase):
         """
         if llm_engine is not None:
             required_llm_specs = ["dspy"]
-            if not all(find_spec(spec) for spec in required_llm_specs):
+            if missing_required_packages(required_llm_specs):
                 raise ImportError(
                     "LLM extras not installed. Install additional dependencies by running "
                     "`pip install databricks-labs-dqx[llm]`."
@@ -101,7 +103,7 @@ class DataContractRulesGenerator(DQEngineBase):
             A list of dictionaries representing the generated DQX quality rules.
 
         Raises:
-            ValueError: If neither or both contract parameters are provided, or format not supported.
+            InvalidParameterError: If neither or both contract parameters are provided, or format not supported.
 
         Note:
             Exactly one of 'contract' or 'contract_file' must be provided.
@@ -118,13 +120,15 @@ class DataContractRulesGenerator(DQEngineBase):
     def _validate_inputs(self, contract: DataContract | None, contract_file: str | None, contract_format: str) -> None:
         """Validate input parameters."""
         if contract is None and contract_file is None:
-            raise ValueError("Either 'contract' or 'contract_file' must be provided")
+            raise ParameterError("Either 'contract' or 'contract_file' must be provided")
 
         if contract is not None and contract_file is not None:
-            raise ValueError("Cannot provide both 'contract' and 'contract_file'")
+            raise ParameterError("Cannot provide both 'contract' and 'contract_file'")
 
         if contract_format != "odcs":
-            raise ValueError(f"Contract format '{contract_format}' not supported. Currently only 'odcs' is supported.")
+            raise ParameterError(
+                f"Contract format '{contract_format}' not supported. Currently only 'odcs' is supported."
+            )
 
     def _load_contract_spec(self, contract: DataContract | None, contract_file: str | None) -> OpenDataContractStandard:
         """Load ODCS v3.x contract natively (no conversion to v1.2.1)."""
@@ -151,11 +155,11 @@ class DataContractRulesGenerator(DQEngineBase):
                 contract_dict = yaml.safe_load(contract_str)
                 return OpenDataContractStandard.model_validate(contract_dict)
 
-            raise ValueError(
+            raise ParameterError(
                 "DataContract object must have either a file path, data_contract dict, or data_contract_str attribute"
             )
 
-        raise ValueError("Either contract or contract_file must be provided")
+        raise ParameterError("Either contract or contract_file must be provided")
 
     def _load_contract_from_file(self, contract_location: str) -> OpenDataContractStandard:
         """
@@ -171,13 +175,13 @@ class DataContractRulesGenerator(DQEngineBase):
             OpenDataContractStandard object
 
         Raises:
-            FileNotFoundError: If contract file doesn't exist
-            ValueError: If contract YAM/JSON is invalid
+            NotFound: If contract file does not exist.
+            ODCSContractError: If contract file cannot be parsed parse.
         """
         contract_path = Path(contract_location)
 
         if not contract_path.exists():
-            raise FileNotFoundError(f"Contract file not found: {contract_location}")
+            raise NotFound(f"Contract file not found: {contract_location}")
 
         with open(contract_path, 'r', encoding='utf-8') as f:
             contract_dict = yaml.safe_load(f)
@@ -185,7 +189,7 @@ class DataContractRulesGenerator(DQEngineBase):
         try:
             return OpenDataContractStandard.model_validate(contract_dict)
         except ValidationError as e:
-            raise ValueError(f"Failed to parse ODCS contract from {contract_location}: {e}") from e
+            raise ODCSContractError(f"Failed to parse ODCS contract from {contract_location}: {e}") from e
 
     def _validate_contract_spec(self, odcs: OpenDataContractStandard) -> None:
         """
@@ -913,7 +917,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _build_explicit_rule_from_quality(
         self,
-        quality_rule,
+        quality_rule: Any,
         property_name: str | None,
         schema_name: str,
         odcs: OpenDataContractStandard,
@@ -926,7 +930,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _build_explicit_rule_from_implementation(
         self,
-        impl,
+        impl: Any,
         property_name: str | None,
         schema_name: str,
         odcs: OpenDataContractStandard,
@@ -942,7 +946,7 @@ class DataContractRulesGenerator(DQEngineBase):
             check_dict = self._convert_check_to_dict(check)
             rule = self._build_rule_dict(check_dict, name, criticality, schema_name, property_name, odcs)
             return rule
-        except (AttributeError, KeyError, TypeError) as e:
+        except Exception as e:
             logger.warning(f"Failed to build explicit rule from implementation: {e}")
             return None
 
@@ -966,11 +970,19 @@ class DataContractRulesGenerator(DQEngineBase):
         # Pydantic v2 models from datacontract-cli
         if hasattr(check, "model_dump") and callable(getattr(check, "model_dump", None)):
             return check.model_dump()
+
         # Plain dict
         if isinstance(check, dict):
             return check
+
         # Custom check object with function and arguments attributes
-        return {"function": check.function, "arguments": check.arguments}
+        if hasattr(check, "function") and hasattr(check, "arguments"):
+            return {"function": check.function, "arguments": check.arguments}
+
+        raise ODCSContractError(
+            f"Invalid check format: expected object with 'function' and 'arguments' attributes, "
+            f"got {type(check).__name__} with attributes {dir(check)}"
+        )
 
     def _build_rule_dict(
         self,

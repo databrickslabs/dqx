@@ -1,11 +1,11 @@
-from importlib.util import find_spec
+from databricks.labs.dqx.utils import missing_required_packages
 
 required_specs = [
     "dspy",
 ]
 
 # Check if required llm packages are installed
-if not all(find_spec(spec) for spec in required_specs):
+if missing_required_packages(required_specs):
     raise ImportError(
         "llm extras not installed. Install additional dependencies by running `pip install databricks-labs-dqx[llm]`."
     )
