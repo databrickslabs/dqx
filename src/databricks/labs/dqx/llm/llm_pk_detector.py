@@ -85,7 +85,7 @@ class TableManager:
                 continue
 
             if in_column_section and not col_name.startswith('#'):
-                nullable = "" if "not null" in str(comment).lower() else ""
+                nullable = " NOT NULL" if "not null" in str(comment).lower() else ""
                 definition_lines.append(f"    {col_name} {data_type}{nullable}")
 
         return definition_lines
