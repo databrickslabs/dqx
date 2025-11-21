@@ -87,26 +87,19 @@ generator = DQGenerator(ws, spark, llm_model_config=llm_model_config)
 # MAGIC %md
 # MAGIC ## Example 1: Simple Primary Key Detection
 # MAGIC
-# MAGIC Detect a single-column primary key in a user table.
+# MAGIC Detect a single-column primary key using the Databricks `samples.tpch.customer` table.
 
 # COMMAND ----------
 
-data = [
-    (1, "Alice", "alice@example.com", "Engineering"),
-    (2, "Bob", "bob@example.com", "Sales"),
-    (3, "Charlie", "charlie@example.com", "Marketing"),
-    (4, "David", "david@example.com", "Engineering"),
-    (5, "Eve", "eve@example.com", "HR"),
-]
+# Use existing sample table
+table_name_simple = "samples.tpch.customer"
 
-df = spark.createDataFrame(data, ["user_id", "username", "email", "department"])
-temp_table = "dqx_demo_simple_pk"
-df.write.mode("overwrite").saveAsTable(temp_table)
-display(df)
+# Preview the table structure
+display(spark.table(table_name_simple).limit(5))
 
 # COMMAND ----------
 
-input_config = InputConfig(location=temp_table)
+input_config = InputConfig(location=table_name_simple)
 pk_result = profiler.detect_primary_keys_with_llm(input_config=input_config, llm_model_config=llm_model_config)
 
 print("=" * 80)
@@ -125,31 +118,19 @@ print("=" * 80)
 # MAGIC %md
 # MAGIC ## Example 2: Composite Primary Key Detection
 # MAGIC
-# MAGIC Detect a multi-column primary key in an order items table.
+# MAGIC Detect a multi-column (composite) primary key using the Databricks `samples.tpch.lineitem` table.
 
 # COMMAND ----------
 
-order_data = [
-    (101, 1, "Laptop", 1200.00, 1),
-    (101, 2, "Mouse", 25.00, 2),
-    (102, 1, "Keyboard", 75.00, 1),
-    (103, 1, "Monitor", 300.00, 1),
-    (103, 2, "Webcam", 50.00, 1),
-    (104, 1, "Headphones", 80.00, 2),
-]
+# Use existing sample table with composite key
+table_name_composite = "samples.tpch.lineitem"
 
-df_orders = spark.createDataFrame(
-    order_data, 
-    ["order_id", "line_item", "product_name", "price", "quantity"]
-)
-
-temp_table_composite = "dqx_demo_composite_pk"
-df_orders.write.mode("overwrite").saveAsTable(temp_table_composite)
-display(df_orders)
+# Preview the table structure
+display(spark.table(table_name_composite).limit(5))
 
 # COMMAND ----------
 
-input_config_composite = InputConfig(location=temp_table_composite)
+input_config_composite = InputConfig(location=table_name_composite)
 pk_result_composite = profiler.detect_primary_keys_with_llm(
     input_config=input_config_composite,
     llm_model_config=llm_model_config
@@ -190,7 +171,7 @@ if pk_result.get("success"):
     print("=" * 80)
     print("GENERATED UNIQUENESS RULE")
     print("=" * 80)
-    print(f"Generated rule for table: {temp_table}")
+    print(f"Generated rule for table: {table_name_simple}")
     print(f"\nRule Details:")
     print(f"  - Name: {rule.get('name')}")
     print(f"  - Check: {rule.get('check')}")
@@ -209,6 +190,11 @@ else:
 
 # COMMAND ----------
 
+# Get current catalog and schema for Unity Catalog compatibility
+current_context = spark.sql("SELECT current_catalog() as catalog, current_schema() as schema").first()
+current_catalog = current_context["catalog"]
+current_schema = current_context["schema"]
+
 source_data = [
     (1, "Alice", "alice@example.com"),
     (2, "Bob", "bob@example.com"),
@@ -224,8 +210,9 @@ target_data = [
 df_source = spark.createDataFrame(source_data, ["id", "name", "email"])
 df_target = spark.createDataFrame(target_data, ["id", "name", "email"])
 
-temp_source = "dqx_demo_source"
-temp_target = "dqx_demo_target"
+# Create fully qualified table names
+temp_source = f"{current_catalog}.{current_schema}.dqx_demo_source"
+temp_target = f"{current_catalog}.{current_schema}.dqx_demo_target"
 df_source.write.mode("overwrite").saveAsTable(temp_source)
 df_target.write.mode("overwrite").saveAsTable(temp_target)
 
@@ -265,8 +252,15 @@ else:
 
 # COMMAND ----------
 
-# Cleanup
-spark.sql(f"DROP TABLE IF EXISTS {temp_table}")
-spark.sql(f"DROP TABLE IF EXISTS {temp_table_composite}")
+# MAGIC %md
+# MAGIC ## Cleanup
+# MAGIC
+# MAGIC Remove the temporary tables created for the comparison example.
+
+# COMMAND ----------
+
+# Cleanup only the tables we created (not the sample tables)
 spark.sql(f"DROP TABLE IF EXISTS {temp_source}")
 spark.sql(f"DROP TABLE IF EXISTS {temp_target}")
+
+print("✅ Cleanup complete!")
