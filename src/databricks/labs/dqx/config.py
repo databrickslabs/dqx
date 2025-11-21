@@ -12,6 +12,8 @@ __all__ = [
     "OutputConfig",
     "ExtraParams",
     "ProfilerConfig",
+    "LLMModelConfig",
+    "LLMConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
@@ -79,6 +81,7 @@ class RunConfig:
     quarantine_config: OutputConfig | None = None  # quarantined data table
     metrics_config: OutputConfig | None = None  # summary metrics table
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+    checks_user_requirements: str | None = None  # user input for AI-assisted rule generation
 
     checks_location: str = (
         "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
@@ -95,6 +98,25 @@ class RunConfig:
     lakebase_instance_name: str | None = None
     lakebase_user: str | None = None
     lakebase_port: str | None = None
+
+
+@dataclass
+class LLMModelConfig:
+    """Configuration for LLM model"""
+
+    # The model to use for the DSPy language model
+    model_name: str = "databricks/databricks-claude-sonnet-4-5"
+    # Optional API key for the model as text or secret scope/key. Not required by foundational models
+    api_key: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
+    # Optional API base URL for the model. Not required by foundational models
+    api_base: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
+
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """Configuration for LLM usage"""
+
+    model: LLMModelConfig = field(default_factory=LLMModelConfig)
 
 
 @dataclass(frozen=True)
@@ -119,6 +141,9 @@ class WorkspaceConfig:
 
     # whether to use serverless clusters for the jobs, only used during workspace installation
     serverless_clusters: bool = True
+    upload_dependencies: bool = (
+        False  # whether to upload dependencies to the workspace during installation to enable DQX in restricted (no-internet) environments
+    )
     extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. result_column_names
 
     # cluster configuration for the jobs (applicable for non-serverless clusters only)
@@ -134,6 +159,8 @@ class WorkspaceConfig:
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
     custom_metrics: list[str] | None = None  # custom summary metrics tracked by the observer when applying checks
+
+    llm_config: LLMConfig = field(default_factory=LLMConfig)
 
     def as_dict(self) -> dict:
         """

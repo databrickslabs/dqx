@@ -1168,6 +1168,7 @@ class DQEngine(DQEngineBase):
         )
         return StreamingMetricsListener(metrics_config, metrics_observation, self.spark, target_query_id)
 
+    @telemetry_logger("engine", "apply_checks_for_run_config")
     def _apply_checks_for_run_config(self, run_config: RunConfig) -> None:
         """
         Applies checks based on a given RunConfig.
