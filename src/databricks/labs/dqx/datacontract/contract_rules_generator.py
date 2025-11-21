@@ -348,7 +348,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _generate_rules_from_direct_attributes(
-        self, prop, column_path: str, field_metadata: dict, default_criticality: str
+        self, prop: SchemaProperty, column_path: str, field_metadata: dict, default_criticality: str
     ) -> list[dict]:
         """Generate rules from direct property attributes (required, unique)."""
         rules = []
@@ -359,7 +359,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _generate_rules_from_logical_type_options(
-        self, prop, column_path: str, field_metadata: dict, default_criticality: str, opts: dict
+        self, prop: SchemaProperty, column_path: str, field_metadata: dict, default_criticality: str, opts: dict
     ) -> list[dict]:
         """Generate rules from logicalTypeOptions (pattern, ranges, length, format)."""
         rules = []
@@ -898,7 +898,7 @@ class DataContractRulesGenerator(DQEngineBase):
         return json.dumps(schema_info)
 
     def _process_explicit_rules_for_schema(
-        self, schema_obj, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+        self, schema_obj: SchemaObject, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
     ) -> list[dict]:
         """Process explicitly defined DQX quality rules from ODCS schema."""
         rules = []
@@ -917,10 +917,14 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _extract_property_explicit_rules(
-        self, prop, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+        self, prop: SchemaProperty, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
     ) -> list[dict]:
         """Extract explicit DQX rules from property quality definitions."""
-        rules = []
+        rules: list[dict] = []
+
+        if prop.quality is None:
+            return rules
+
         for quality_rule in prop.quality:
             if self._is_dqx_explicit_rule(quality_rule):
                 rule = self._build_explicit_rule_from_quality(
@@ -931,7 +935,11 @@ class DataContractRulesGenerator(DQEngineBase):
         return rules
 
     def _extract_schema_explicit_rules(
-        self, quality_list, schema_name: str, odcs: OpenDataContractStandard, default_criticality: str
+        self,
+        quality_list: list[DataQuality],
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
     ) -> list[dict]:
         """Extract explicit DQX rules from schema quality definitions."""
         rules = []
@@ -944,7 +952,7 @@ class DataContractRulesGenerator(DQEngineBase):
                     rules.append(rule)
         return rules
 
-    def _is_dqx_explicit_rule(self, quality_rule) -> bool:
+    def _is_dqx_explicit_rule(self, quality_rule: DataQuality) -> bool:
         """Check if a quality rule is a DQX explicit rule with implementation.
 
         In ODCS v3.x, implementation is always a dict when loaded directly.
@@ -959,7 +967,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _build_explicit_rule_from_quality(
         self,
-        quality_rule: Any,
+        quality_rule: DataQuality,
         property_name: str | None,
         schema_name: str,
         odcs: OpenDataContractStandard,
@@ -972,7 +980,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
     def _build_explicit_rule_from_implementation(
         self,
-        impl: Any,
+        impl: str | dict[str, Any] | None,
         property_name: str | None,
         schema_name: str,
         odcs: OpenDataContractStandard,
@@ -988,21 +996,19 @@ class DataContractRulesGenerator(DQEngineBase):
                 logger.warning("Implementation missing 'check' attribute, skipping rule")
                 return None
 
-            check_dict = self._convert_check_to_dict(check)
-            rule = self._build_rule_dict(check_dict, name, criticality, schema_name, property_name, odcs)
-            return rule
+            return self._build_rule_dict(check, name, criticality, schema_name, property_name, odcs)
         except (AttributeError, KeyError, TypeError) as e:
             # Malformed contract structure - fail fast
             raise ODCSContractError(
                 f"Invalid explicit rule implementation structure in schema '{schema_name}': {e}"
             ) from e
 
-    def _extract_impl_attributes(self, impl: dict[str, Any], default_criticality: str):
+    def _extract_impl_attributes(self, impl: str | dict[str, Any] | None, default_criticality: str):
         """Extract check, name, and criticality from implementation dict.
 
         In ODCS v3.x, implementation is always a dict when loaded directly.
         """
-        if not isinstance(impl, dict):
+        if not impl or not isinstance(impl, dict):
             raise TypeError(
                 f"Unexpected implementation type: {type(impl).__name__}. "
                 f"Expected dict, which is the standard format for ODCS v3.x implementations."
@@ -1011,18 +1017,6 @@ class DataContractRulesGenerator(DQEngineBase):
         name = impl.get("name", "unnamed_rule")
         criticality = impl.get("criticality", default_criticality)
         return check, name, criticality
-
-    def _convert_check_to_dict(self, check: Any) -> dict:
-        """Convert check object to dictionary format.
-
-        In ODCS v3.x, check objects are always dicts when loaded directly.
-        """
-        if isinstance(check, dict):
-            return check
-        raise TypeError(
-            f"Unexpected check type: {type(check).__name__}. "
-            f"Expected dict, which is the standard format for ODCS v3.x check definitions."
-        )
 
     def _build_rule_dict(
         self,

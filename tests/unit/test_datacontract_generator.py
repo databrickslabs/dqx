@@ -2376,7 +2376,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                                         "name": "invalid_rule",
                                         "criticality": "error",
                                     },
-                                }
+                                },
+                                {
+                                    "type": "custom",
+                                    "engine": "dqx",
+                                    "implementation": {
+                                        "check": "invalid_format",
+                                        "name": "invalid_rule",
+                                        "criticality": "error",
+                                    },
+                                },
                             ],
                         }
                     ],
@@ -2398,7 +2407,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             # Should log warning about excluding invalid rule
             assert "Excluding invalid rule" in caplog.text
             assert "invalid_rule" in caplog.text
-            assert "excluded 1 invalid rule(s)" in caplog.text
+            assert "excluded 2 invalid rule(s)" in caplog.text
         finally:
             os.unlink(temp_path)
 
