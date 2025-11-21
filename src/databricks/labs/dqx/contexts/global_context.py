@@ -51,9 +51,7 @@ class GlobalContext(abc.ABC):
     def installation(self) -> Installation:
         if self._install_folder:
             return Installation(
-                self.workspace_client,
-                self.product_info.product_name(),
-                install_folder=self._install_folder
+                self.workspace_client, self.product_info.product_name(), install_folder=self._install_folder
             )
         return Installation.current(self.workspace_client, self.product_info.product_name())
 

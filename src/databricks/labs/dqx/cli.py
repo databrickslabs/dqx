@@ -293,7 +293,9 @@ def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
 
 
 @dqx.command
-def logs(w: WorkspaceClient, *, workflow: str | None = None, install_folder: str = "", ctx: WorkspaceContext | None = None):
+def logs(
+    w: WorkspaceClient, *, workflow: str | None = None, install_folder: str = "", ctx: WorkspaceContext | None = None
+):
     """
     Show logs of the latest job run.
 
