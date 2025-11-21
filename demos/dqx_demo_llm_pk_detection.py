@@ -122,34 +122,8 @@ print("=" * 80)
 
 # COMMAND ----------
 
-# Use existing sample table with composite key
-table_name_composite = "samples.tpch.lineitem"
-
-# Preview the table structure
-display(spark.table(table_name_composite).limit(5))
-
-# COMMAND ----------
-
-input_config_composite = InputConfig(location=table_name_composite)
-pk_result_composite = profiler.detect_primary_keys_with_llm(
-    input_config=input_config_composite,
-    llm_model_config=llm_model_config
-)
-
-print("=" * 80)
-print("COMPOSITE PRIMARY KEY DETECTION")
-print("=" * 80)
-print(f"Table: {pk_result_composite.get('table')}")
-print(f"Success: {pk_result_composite.get('success')}")
-print(f"Primary Key Columns: {pk_result_composite.get('primary_key_columns')}")
-print(f"Confidence: {pk_result_composite.get('confidence')}")
-print(f"\nReasoning:\n{pk_result_composite.get('reasoning')}")
-print("=" * 80)
-
-# COMMAND ----------
-
 # MAGIC %md
-# MAGIC ## Example 3: Generate Uniqueness Rules from Detected PKs
+# MAGIC ## Example 2: Generate Uniqueness Rules from Detected PKs
 # MAGIC
 # MAGIC Use detected primary keys to create `is_unique` data quality rules with the generator.
 
