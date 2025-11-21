@@ -355,7 +355,7 @@ def test_run_dqx_demo_datacontract_odcs(make_notebook, make_job, library_ref):
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_datacontract_odcs")
-    
+
 
 def test_run_dqx_demo_llm_pk_detection(make_notebook, make_job, library_ref):
     ws = WorkspaceClient()
