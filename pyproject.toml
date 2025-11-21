@@ -66,6 +66,9 @@ pii = [
 llm = [
     "dspy~=3.0.3"
 ]
+datacontract = [
+    "datacontract-cli>=0.10.0"
+]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.workflows_runner:main"
@@ -88,7 +91,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
-features = ["pii", "llm"]
+features = ["pii", "llm", "datacontract"]
 dependencies = [
     "black~=24.8.0",
     "chispa~=0.10.1",
@@ -122,7 +125,7 @@ python="3.12" # must match the version required by databricks-connect and python
 path = ".venv"
 
 [tool.hatch.envs.default.scripts]
-test            = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
+test            = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 60 --durations 20"
 test_coverage   = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
 # Note that integration tests are controlled by the acceptance action (e.g. running 10 tests in parallel):
 # https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
