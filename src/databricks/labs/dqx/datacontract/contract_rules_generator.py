@@ -17,6 +17,7 @@ import yaml
 # Import datacontract dependencies (validated in __init__.py)
 from datacontract.data_contract import DataContract  # type: ignore
 from open_data_contract_standard.model import OpenDataContractStandard  # type: ignore
+from pydantic import ValidationError  # type: ignore
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
@@ -183,7 +184,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         try:
             return OpenDataContractStandard.model_validate(contract_dict)
-        except Exception as e:
+        except ValidationError as e:
             raise ValueError(f"Failed to parse ODCS contract from {contract_location}: {e}") from e
 
     def _validate_contract_spec(self, odcs: OpenDataContractStandard) -> None:
@@ -941,7 +942,7 @@ class DataContractRulesGenerator(DQEngineBase):
             check_dict = self._convert_check_to_dict(check)
             rule = self._build_rule_dict(check_dict, name, criticality, schema_name, property_name, odcs)
             return rule
-        except Exception as e:
+        except (AttributeError, KeyError, TypeError) as e:
             logger.warning(f"Failed to build explicit rule from implementation: {e}")
             return None
 
