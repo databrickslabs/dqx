@@ -116,13 +116,6 @@ print("=" * 80)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Example 2: Composite Primary Key Detection
-# MAGIC
-# MAGIC Detect a multi-column (composite) primary key using the Databricks `samples.tpch.lineitem` table.
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ## Example 2: Generate Uniqueness Rules from Detected PKs
 # MAGIC
 # MAGIC Use detected primary keys to create `is_unique` data quality rules with the generator.
