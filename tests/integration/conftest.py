@@ -204,6 +204,9 @@ def setup_workflows_with_custom_folder(
     Set up the workflows with installation in the custom install folder.
     """
 
+    if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
+
     def create(_spark, **kwargs):
         installation_ctx_custom_install_folder.installation_service.run()
 
