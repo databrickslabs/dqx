@@ -3073,7 +3073,7 @@ def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
     # Query returns a single row with a condition column
     # The check will fail because COUNT(*) > 2 is True (we have 4 rows)
     query_fail = "SELECT COUNT(*) > 2 AS condition FROM {{input_view}}"
-    
+
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -3086,9 +3086,9 @@ def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
             },
         ),
     ]
-    
+
     checked = dq_engine.apply_checks(test_df, checks)
-    
+
     # All rows should have the same error result since it's a dataset-level check
     expected = spark.createDataFrame(
         [
@@ -3179,7 +3179,7 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_filter(ws, spark)
     # The query checks if SUM(a) > 2, but only for rows where b >= 10
     # Only 2 rows match the filter: [2, 10, 3] and [1, 20, 4], and SUM(a) = 3 > 2, so condition is True
     query_with_filter = "SELECT SUM(a) > 2 AS condition FROM {{input_view}}"
-    
+
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -3193,9 +3193,9 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_filter(ws, spark)
             },
         ),
     ]
-    
+
     checked = dq_engine.apply_checks(test_df, checks)
-    
+
     # Only rows matching the filter (b >= 10) should have the error
     # Rows not matching the filter should have None for both _errors and _warnings
     expected = spark.createDataFrame(
@@ -3263,7 +3263,7 @@ def test_apply_checks_with_sql_query_without_merge_columns_passes(ws, spark):
 
     # Dataset-level check that passes: COUNT(*) > 100 is False (we only have 2 rows)
     query_pass = "SELECT COUNT(*) > 100 AS condition FROM {{input_view}}"
-    
+
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -3276,9 +3276,9 @@ def test_apply_checks_with_sql_query_without_merge_columns_passes(ws, spark):
             },
         ),
     ]
-    
+
     checked = dq_engine.apply_checks(test_df, checks)
-    
+
     # All rows should have None for errors since condition is False
     expected = spark.createDataFrame(
         [
@@ -3297,7 +3297,7 @@ def test_apply_checks_with_sql_query_without_merge_columns_empty_result(ws, spar
 
     # Query with WHERE 1=0 returns no rows
     query_no_rows = "SELECT TRUE AS condition FROM {{input_view}} WHERE 1=0"
-    
+
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -3310,9 +3310,9 @@ def test_apply_checks_with_sql_query_without_merge_columns_empty_result(ws, spar
             },
         ),
     ]
-    
+
     checked = dq_engine.apply_checks(test_df, checks)
-    
+
     # No rows from query means condition is False, so no violations
     expected = spark.createDataFrame(
         [
@@ -3331,7 +3331,7 @@ def test_apply_checks_with_sql_query_without_merge_columns_negate(ws, spark):
 
     # Query that returns False, but with negate=True should fail
     query_false = "SELECT COUNT(*) > 100 AS condition FROM {{input_view}}"
-    
+
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -3345,9 +3345,9 @@ def test_apply_checks_with_sql_query_without_merge_columns_negate(ws, spark):
             },
         ),
     ]
-    
+
     checked = dq_engine.apply_checks(test_df, checks)
-    
+
     # With negate=True, False becomes violation
     expected = spark.createDataFrame(
         [
@@ -3400,7 +3400,7 @@ def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
 
     # Dataset-level warning: COUNT(*) > 2 is True
     query_warn = "SELECT COUNT(*) > 2 AS condition FROM {{input_view}}"
-    
+
     checks = [
         DQDatasetRule(
             criticality="warn",  # Warning instead of error
@@ -3413,9 +3413,9 @@ def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
             },
         ),
     ]
-    
+
     checked = dq_engine.apply_checks(test_df, checks)
-    
+
     # All rows should have warning (not error)
     expected = spark.createDataFrame(
         [
@@ -3472,6 +3472,143 @@ def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
                         "user_metadata": {},
                     },
                 ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df(ws, spark):
+    """Test sql_query without merge_columns (dataset-level) with reference DataFrame."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    # Main dataset
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200], [3, 30, 300]], SCHEMA)
+
+    # Reference dataset with expected totals
+    ref_df = spark.createDataFrame([[600]], "expected_total: int")
+
+    # Dataset-level check: verify total amount matches expected value in reference table
+    query = """
+        SELECT (SELECT SUM(c) FROM {{input_view}}) = (SELECT expected_total FROM {{expected_totals}}) AS condition
+    """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query,
+                "condition_column": "condition",
+                "msg": "Total amount matches expected",
+                "name": "multi_dataset_check",
+            },
+        ),
+    ]
+
+    ref_dfs = {"expected_totals": ref_df}
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
+
+    # All rows should pass (SUM(100,200,300) = 600)
+    expected = spark.createDataFrame(
+        [
+            [1, 10, 100, None, None],
+            [2, 20, 200, None, None],
+            [3, 30, 300, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, spark):
+    """Test sql_query without merge_columns (dataset-level) with reference DataFrame that fails."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    # Main dataset
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200], [3, 30, 300]], SCHEMA)
+
+    # Reference dataset with expected totals (wrong value)
+    ref_df = spark.createDataFrame([[999]], "expected_total: int")
+
+    # Dataset-level check: verify total amount matches expected value in reference table
+    query = """
+        SELECT (SELECT SUM(c) FROM {{input_view}}) = (SELECT expected_total FROM {{expected_totals}}) AS condition
+    """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query,
+                "condition_column": "condition",
+                "msg": "Total amount does not match expected",
+                "name": "multi_dataset_check",
+            },
+        ),
+    ]
+
+    ref_dfs = {"expected_totals": ref_df}
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
+
+    # All rows should fail (SUM(100,200,300) = 600 != 999)
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                10,
+                100,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                20,
+                200,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                3,
+                30,
+                300,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
             ],
         ],
         EXPECTED_SCHEMA,

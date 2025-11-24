@@ -153,7 +153,7 @@ def test_sql_query_empty_merge_columns():
         check_func=sql_query,
         check_func_kwargs={"query": "SELECT FALSE AS condition", "merge_columns": [], "condition_column": "condition"},
     )
-    assert rule.check_func == sql_query
+    assert rule.check_func is sql_query
 
 
 def test_sql_query_without_merge_columns():
@@ -164,7 +164,7 @@ def test_sql_query_without_merge_columns():
         check_func=sql_query,
         check_func_kwargs={"query": "SELECT FALSE AS condition", "condition_column": "condition"},
     )
-    assert rule.check_func == sql_query
+    assert rule.check_func is sql_query
 
 
 def test_sql_query_unsafe():
