@@ -41,7 +41,7 @@ table_name = dbutils.widgets.get("table_name")
 
 import os, yaml
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
@@ -95,6 +95,6 @@ print(checks)
 
 # COMMAND ----------
 
-checks = generator.generate_dq_rules_ai_assisted(user_input=user_requirement, table_name=table_name)
+checks = generator.generate_dq_rules_ai_assisted(user_input=user_requirement, input_config=InputConfig(location=table_name))
 print("======== Generated checks =========")
 print(checks)

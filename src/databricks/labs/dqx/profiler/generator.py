@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 import json
 from collections.abc import Callable
@@ -6,21 +8,30 @@ from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import MissingParameterError
-from databricks.labs.dqx.utils import get_column_metadata
 
 # Conditional imports for LLM-assisted rules generation
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
+    from databricks.labs.dqx.llm.llm_utils import get_column_metadata
 
     LLM_ENABLED = True
 except ImportError:
     LLM_ENABLED = False
+
+# Conditional imports for data contract support
+try:
+    from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
+    from datacontract.data_contract import DataContract  # type: ignore
+
+    DATACONTRACT_ENABLED = True
+except ImportError:
+    DATACONTRACT_ENABLED = False
 
 logger = logging.getLogger(__name__)
 
@@ -90,14 +101,14 @@ class DQGenerator(DQEngineBase):
         return dq_rules
 
     @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
-    def generate_dq_rules_ai_assisted(self, user_input: str, table_name: str = "") -> list[dict]:
+    def generate_dq_rules_ai_assisted(self, user_input: str, input_config: InputConfig | None = None) -> list[dict]:
         """
         Generates data quality rules using LLM based on natural language input.
 
         Args:
             user_input: Natural language description of data quality requirements.
-            table_name: Optional fully qualified table name.
-                        If not provided, LLM will be used to guess the table schema.
+            input_config: Optional input config providing input data location as a path or fully qualified table name
+                to infer schema. If not provided, LLM will be used to guess the table schema.
 
         Returns:
             A list of dictionaries representing the generated data quality rules.
@@ -112,7 +123,7 @@ class DQGenerator(DQEngineBase):
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-        schema_info = get_column_metadata(self.spark, table_name) if table_name else ""
+        schema_info = get_column_metadata(self.spark, input_config) if input_config else ""
 
         # Generate rules using pre-initialized LLM compiler
         prediction = self.llm_engine.get_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
@@ -127,6 +138,66 @@ class DQGenerator(DQEngineBase):
             logger.info(f"LLM reasoning: {prediction.reasoning}")
 
         return dq_rules
+
+    @telemetry_logger("generator", "generate_rules_from_contract")
+    def generate_rules_from_contract(
+        self,
+        contract: DataContract | None = None,
+        contract_file: str | None = None,
+        contract_format: str = "odcs",
+        generate_predefined_rules: bool = True,
+        process_text_rules: bool = True,
+        default_criticality: str = "error",
+    ) -> list[dict]:
+        """
+        Generate DQX quality rules from a data contract specification.
+
+        Parses a data contract (currently supporting ODCS v3.0.x) and generates rules based on
+        schema properties, explicit quality definitions, and text-based expectations.
+
+        Args:
+            contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
+                - DataContract(data_contract_file=path) - from a file path
+                - DataContract(data_contract_str=yaml_string) - from a YAML/JSON string
+                Either `contract` or `contract_file` must be provided.
+            contract_file: Path to contract YAML file (local, volume, or workspace).
+            contract_format: Contract format specification (default is "odcs").
+            generate_predefined_rules: Whether to generate rules from schema properties.
+            process_text_rules: Whether to process text-based expectations using LLM.
+            default_criticality: Default criticality level for generated rules (default is "error").
+
+        Returns:
+            A list of dictionaries representing the generated DQX quality rules.
+
+        Raises:
+            ImportError: If datacontract-cli is not installed.
+            ValueError: If neither or both parameters are provided, or format not supported.
+
+        Note:
+            Exactly one of 'contract' or 'contract_file' must be provided.
+        """
+        if not DATACONTRACT_ENABLED:
+            raise ImportError(
+                "Data contract support requires datacontract-cli. "
+                "Install it with: pip install 'databricks-labs-dqx[datacontract]'"
+            )
+
+        # Create a contract generator with the same context
+        contract_generator = DataContractRulesGenerator(
+            workspace_client=self._workspace_client,
+            llm_engine=self.llm_engine,
+            custom_check_functions=self.custom_check_functions,
+        )
+
+        # Delegate to the contract generator
+        return contract_generator.generate_rules_from_contract(
+            contract=contract,
+            contract_file=contract_file,
+            contract_format=contract_format,
+            generate_predefined_rules=generate_predefined_rules,
+            process_text_rules=process_text_rules,
+            default_criticality=default_criticality,
+        )
 
     @staticmethod
     def dq_generate_is_in(column: str, level: str = "error", **params: dict):

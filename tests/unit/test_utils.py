@@ -1,11 +1,9 @@
-import json
 from datetime import date, datetime
 from typing import Any
 from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column
-from pyspark.sql.types import StructField, StringType, IntegerType
 
 from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
@@ -17,7 +15,7 @@ from databricks.labs.dqx.utils import (
     is_simple_column_expression,
     normalize_bound_args,
     safe_strip_file_from_path,
-    get_column_metadata,
+    missing_required_packages,
 )
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
@@ -371,24 +369,14 @@ def test_safe_strip_file_from_path(path: str, expected: str):
     assert safe_strip_file_from_path(path) == expected
 
 
-def test_column_metadata():
-    mock_spark = Mock()
-    mock_df = Mock()
-    mock_df.schema.fields = [
-        StructField("customer_id", StringType(), True),
-        StructField("first_name", StringType(), True),
-        StructField("last_name", StringType(), True),
-        StructField("age", IntegerType(), True),
-    ]
-    mock_spark.table.return_value = mock_df
-
-    result = get_column_metadata(mock_spark, "test_table")
-    expected_result = {
-        "columns": [
-            {"name": "customer_id", "type": "string"},
-            {"name": "first_name", "type": "string"},
-            {"name": "last_name", "type": "string"},
-            {"name": "age", "type": "int"},
-        ]
-    }
-    assert result == json.dumps(expected_result)
+@pytest.mark.parametrize(
+    "packages,expected",
+    [
+        (["os", "json"], False),
+        (["os", "definitely_not_a_real_package"], True),
+        (["not_a_real_package1", "not_a_real_package2"], True),
+        ([], False),
+    ],
+)
+def test_missing_required_packages(packages, expected):
+    assert missing_required_packages(packages) == expected
