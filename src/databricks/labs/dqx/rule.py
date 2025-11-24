@@ -1,16 +1,17 @@
 import abc
+import functools as ft
 import inspect
 import logging
-from enum import Enum
-from dataclasses import dataclass, field
-import functools as ft
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
-from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
+from pyspark.sql import Column
+
 from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,19 @@ class MultipleColumnsMixin:
         """
         return F.array(*[F.lit(get_column_name_or_alias(column)) for column in columns])
 
+    def _is_llm_matching_key_detection_enabled(self) -> bool:
+        """Check if LLM matching key detection is enabled in check_func_kwargs."""
+        if not hasattr(self, 'check_func_kwargs'):
+            return False
+
+        # Check for the new nested structure first
+        llm_options = getattr(self, 'check_func_kwargs', {}).get("llm_matching_key_detection_options", {})
+        if isinstance(llm_options, dict) and llm_options.get("enable", False):
+            return True
+
+        # Fallback to old structure for backward compatibility
+        return getattr(self, 'check_func_kwargs', {}).get("enable_llm_matching_key_detection", False)
+
     def _build_columns_args(self, columns: list[str | Column] | None, valid_params: Iterable[str]) -> list:
         """
         Builds positional args list for columns if accepted.
@@ -95,7 +109,9 @@ class MultipleColumnsMixin:
         """
         if columns is not None and "columns" in valid_params:
             if not columns:
-                raise InvalidCheckError("'columns' cannot be empty.")
+                # Allow empty columns if LLM matching key detection is enabled
+                if not self._is_llm_matching_key_detection_enabled():
+                    raise InvalidCheckError("'columns' cannot be empty.")
             for col in columns:
                 if col is None:
                     raise InvalidCheckError("'columns' list contains a None element.")

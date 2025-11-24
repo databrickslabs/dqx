@@ -1,3 +1,4 @@
+import importlib.util
 import os
 from datetime import timedelta
 from io import BytesIO
@@ -90,6 +91,28 @@ def skip_if_runtime_not_geo_compatible(ws, debug_env):
 
     if not valid:
         pytest.skip("This test requires a cluster with runtime 17.1 or above")
+
+
+def _check_llm_dependencies():
+    """Check if LLM dependencies are available."""
+    required_modules = ["dspy", "databricks_langchain", "langchain_core.messages"]
+
+    for module in required_modules:
+        if importlib.util.find_spec(module) is None:
+            return False
+    return True
+
+
+@pytest.fixture
+def skip_if_llm_not_available():
+    """
+    Skip the test if LLM dependencies are not available.
+
+    This fixture checks for the availability of LLM-related dependencies
+    and skips the test if they are not installed or accessible.
+    """
+    if not _check_llm_dependencies():
+        pytest.skip("LLM dependencies not available")
 
 
 class CommonUtils:
