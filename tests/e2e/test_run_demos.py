@@ -142,9 +142,9 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     schema = make_schema(catalog_name=catalog).name
     installation_ctx.replace(
         extend_prompts={
-            r'Provide location for the input data .*': '/databricks-datasets/delta-sharing/samples/nyctaxi_2019',
-            r'Provide output table .*': f'{catalog}.{schema}.output_table',
-            r'Provide quarantined table .*': f'{catalog}.{schema}.quarantine_table',
+            r"Provide location for the input data .*": "/databricks-datasets/delta-sharing/samples/nyctaxi_2019",
+            r"Provide output table .*": f"{catalog}.{schema}.output_table",
+            r"Provide quarantined table .*": f"{catalog}.{schema}.quarantine_table",
         },
     )
     installation_ctx.workspace_installer.run(installation_ctx.config)
@@ -335,6 +335,26 @@ def test_run_dqx_ai_assisted_quality_checks_generation(make_notebook, make_job, 
         callback=lambda r: validate_run_status(r, ws),
     )
     logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
+
+
+def test_run_dqx_demo_datacontract_odcs(make_notebook, make_job, library_ref):
+    """Test the ODCS v3.x data contract demo notebook."""
+    ws = WorkspaceClient()
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_datacontract_odcs.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
+    job = make_job(tasks=[Task(task_key="dqx_demo_datacontract_odcs", notebook_task=notebook_task)])
+
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_datacontract_odcs")
 
 
 def test_dbt_demo(make_schema, make_random, library_ref, debug_env):

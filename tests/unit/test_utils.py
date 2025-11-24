@@ -15,6 +15,7 @@ from databricks.labs.dqx.utils import (
     is_simple_column_expression,
     normalize_bound_args,
     safe_strip_file_from_path,
+    missing_required_packages,
 )
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
@@ -366,3 +367,16 @@ def test_get_reference_dataframes_with_missing_ref_tables() -> None:
 )
 def test_safe_strip_file_from_path(path: str, expected: str):
     assert safe_strip_file_from_path(path) == expected
+
+
+@pytest.mark.parametrize(
+    "packages,expected",
+    [
+        (["os", "json"], False),
+        (["os", "definitely_not_a_real_package"], True),
+        (["not_a_real_package1", "not_a_real_package2"], True),
+        ([], False),
+    ],
+)
+def test_missing_required_packages(packages, expected):
+    assert missing_required_packages(packages) == expected
