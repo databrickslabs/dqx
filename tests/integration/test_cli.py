@@ -430,10 +430,12 @@ def test_e2e_with_custom_folder(ws, spark, setup_workflows_with_custom_folder, c
 
 def test_workflows_with_custom_folder(ws, installation_ctx_custom_install_folder):
     installation_ctx_custom_install_folder.installation_service.run()
+    custom_folder = installation_ctx_custom_install_folder.installation.install_folder()
 
     installed_workflows = workflows(
         installation_ctx_custom_install_folder.workspace_client,
         ctx=installation_ctx_custom_install_folder.workspace_installer,
+        install_folder=custom_folder,
     )
 
     expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]

@@ -277,15 +277,16 @@ def e2e(
 
 
 @dqx.command
-def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
+def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None, install_folder: str = ""):
     """
     Show deployed workflows and their state
 
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
         ctx: The WorkspaceContext instance to use for accessing the workspace.
+        install_folder: Optional custom installation folder path.
     """
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     logger.info("Fetching deployed jobs...")
     latest_job_status = ctx.deployed_workflows.latest_job_status()
     print(json.dumps(latest_job_status))
