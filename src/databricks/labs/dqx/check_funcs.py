@@ -1151,7 +1151,7 @@ def foreign_key(
 @register_rule("dataset")
 def sql_query(
     query: str,
-    merge_columns: list[str],
+    merge_columns: list[str] | None = None,
     msg: str | None = None,
     name: str | None = None,
     negate: bool = False,
@@ -1164,11 +1164,14 @@ def sql_query(
 
     Args:
         query: SQL query that must return as a minimum a condition column and
-            all merge columns. The resulting DataFrame is automatically joined back to the input DataFrame
-            using the merge_columns. Reference DataFrames when provided in the ref_dfs parameter are registered as temp view.
+            all merge columns (if provided). When merge_columns are provided, the resulting DataFrame is
+            automatically joined back to the input DataFrame. When merge_columns are not provided, the check
+            applies to all rows (either all pass or all fail), making it useful for dataset-level validation
+            with custom_metrics. Reference DataFrames when provided in the ref_dfs parameter are registered as temp view.
         condition_column: Column name indicating violation (boolean). Fail the check if True, pass it if False
-        merge_columns: List of columns for join back to the input DataFrame.
-            They must provide a unique key for the join, otherwise a duplicate records may be produced.
+        merge_columns: Optional list of columns for join back to the input DataFrame.
+            When provided, they must provide a unique key for the join, otherwise duplicate records may be produced.
+            When not provided (None or empty list), the check result applies to all rows in the dataset.
         msg: Optional custom message or Column expression.
         name: Optional name for the result.
         negate: If True, the condition is negated (i.e., the check fails when the condition is False).
@@ -1181,13 +1184,19 @@ def sql_query(
         Tuple (condition column, apply function).
 
     Raises:
-        MissingParameterError: if *merge_columns* is None.
-        InvalidParameterError: if *merge_columns* is an empty list.
         UnsafeSqlQueryError: if the SQL query fails the safety check (e.g., contains disallowed operations).
     """
     _validate_sql_query_params(query, merge_columns)
+    
+    # Normalize empty list to None (both mean "no merge columns" / dataset-level check)
+    if merge_columns is not None and not merge_columns:
+        merge_columns = None
 
-    alias_name = name if name else "_".join(merge_columns) + f"_query_{condition_column}_violation"
+    alias_name = name if name else (
+        "_".join(merge_columns) + f"_query_{condition_column}_violation"
+        if merge_columns
+        else f"query_{condition_column}_violation"
+    )
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     unique_condition_column = f"{alias_name}_{condition_column}_{unique_str}"
@@ -1223,6 +1232,31 @@ def sql_query(
             raise UnsafeSqlQueryError(
                 "Resolved SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
             )
+
+        # When merge_columns is None, the check applies to all rows (dataset-level check)
+        if merge_columns is None:
+            # Query should only return the condition column
+            user_query_df = spark.sql(query_resolved).select(F.col(condition_column).alias(unique_condition_column))
+            
+            # Get the first (and should be only) row's condition value
+            # If the query returns no rows, treat it as condition not met (False)
+            condition_result = user_query_df.first()
+            condition_value = condition_result[unique_condition_column] if condition_result else False
+            
+            # Apply the condition consistently with row_filter behavior:
+            # - If row_filter is provided, only rows matching the filter get the condition value
+            # - Rows not matching the filter get None (consistent with row-level checks)
+            if row_filter:
+                filter_expr = F.expr(row_filter)
+                result_df = df.withColumn(
+                    unique_condition_column, 
+                    F.when(filter_expr, F.lit(condition_value)).otherwise(F.lit(None))
+                )
+            else:
+                # No filter: apply condition to all rows
+                result_df = df.withColumn(unique_condition_column, F.lit(condition_value))
+            
+            return result_df
 
         # Resolve the SQL query against the input DataFrame and any reference DataFrames
         user_query_df = spark.sql(query_resolved).select(
@@ -2680,27 +2714,18 @@ def _is_valid_ipv6_cidr_block(cidr: str) -> bool:
         return False
 
 
-def _validate_sql_query_params(query: str, merge_columns: list[str]) -> None:
+def _validate_sql_query_params(query: str, merge_columns: list[str] | None) -> None:
     """
     Validate SQL query parameters to ensure correctness and safety.
-    This helper verifies that:
-    - The SQL query is provided and is a non-empty string.
-    - The 'merge_columns' parameter is provided and is a non-empty list of column names.
-    - The 'merge_columns' list contains valid column names.
+    This helper verifies that the SQL query is safe for execution.
 
     Args:
         query: The SQL query string to validate.
-        merge_columns: The list of column names to validate.
+        merge_columns: Optional list of column names (not validated here as empty list is normalized to None).
 
     Raises:
-        MissingParameterError: If any required parameter is missing.
-        InvalidParameterError: If any parameter is invalid.
         UnsafeSqlQueryError: If the SQL query is unsafe.
     """
-    if merge_columns is None:
-        raise MissingParameterError("'merge_columns' is required and must be a non-empty list of column names.")
-    if not merge_columns:
-        raise InvalidParameterError("'merge_columns' must contain at least one column.")
     if not is_sql_query_safe(query):
         raise UnsafeSqlQueryError(
             "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."

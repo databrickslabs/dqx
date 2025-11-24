@@ -145,13 +145,26 @@ def test_compare_datasets_invalid_tolerance_exceptions(abs_tolerance, rel_tolera
         )
 
 
-def test_sql_query_missing_merge_columns():
-    with pytest.raises(InvalidParameterError, match="'merge_columns' must contain at least one column"):
-        DQDatasetRule(
-            criticality="error",
-            check_func=sql_query,
-            check_func_kwargs={"query": "SELECT 1", "merge_columns": [], "condition_column": "condition"},
-        )
+def test_sql_query_empty_merge_columns():
+    """Test that empty list for merge_columns is treated the same as None (dataset-level check)."""
+    # Should not raise an error - empty list is normalized to None
+    rule = DQDatasetRule(
+        criticality="error",
+        check_func=sql_query,
+        check_func_kwargs={"query": "SELECT FALSE AS condition", "merge_columns": [], "condition_column": "condition"},
+    )
+    assert rule.check_func == sql_query
+
+
+def test_sql_query_without_merge_columns():
+    """Test that merge_columns is optional and can be None."""
+    # Should not raise an error
+    rule = DQDatasetRule(
+        criticality="error",
+        check_func=sql_query,
+        check_func_kwargs={"query": "SELECT FALSE AS condition", "condition_column": "condition"},
+    )
+    assert rule.check_func == sql_query
 
 
 def test_sql_query_unsafe():

@@ -3064,6 +3064,421 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
+    """Test sql_query check without merge_columns - dataset-level validation."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [1, None, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check without merge_columns
+    # Query returns a single row with a condition column
+    # The check will fail because COUNT(*) > 2 is True (we have 4 rows)
+    query_fail = "SELECT COUNT(*) > 2 AS condition FROM {{input_view}}"
+    
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_fail,
+                "condition_column": "condition",
+                "msg": "Dataset has more than 2 rows",
+                "name": "dataset_check_fail",
+            },
+        ),
+    ]
+    
+    checked = dq_engine.apply_checks(test_df, checks)
+    
+    # All rows should have the same error result since it's a dataset-level check
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                None,
+                3,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                1,
+                None,
+                4,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_filter(ws, spark):
+    """Test sql_query check without merge_columns with row_filter - should only apply to filtered rows."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, 10, 3], [1, 20, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check without merge_columns but WITH a filter
+    # The query checks if SUM(a) > 2, but only for rows where b >= 10
+    # Only 2 rows match the filter: [2, 10, 3] and [1, 20, 4], and SUM(a) = 3 > 2, so condition is True
+    query_with_filter = "SELECT SUM(a) > 2 AS condition FROM {{input_view}}"
+    
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            filter="b >= 10",  # Only apply to rows where b >= 10
+            check_func_kwargs={
+                "query": query_with_filter,
+                "condition_column": "condition",
+                "msg": "Filtered sum check failed",
+                "name": "dataset_filtered_check",
+            },
+        ),
+    ]
+    
+    checked = dq_engine.apply_checks(test_df, checks)
+    
+    # Only rows matching the filter (b >= 10) should have the error
+    # Rows not matching the filter should have None for both _errors and _warnings
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                None,  # b=3 doesn't match filter (b >= 10), so no error
+                None,
+            ],
+            [
+                2,
+                10,
+                3,
+                [
+                    {
+                        "name": "dataset_filtered_check",
+                        "message": "Filtered sum check failed",
+                        "columns": None,
+                        "filter": "b >= 10",
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                1,
+                20,
+                4,
+                [
+                    {
+                        "name": "dataset_filtered_check",
+                        "message": "Filtered sum check failed",
+                        "columns": None,
+                        "filter": "b >= 10",
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+                None,  # b=None doesn't match filter, so no error
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_passes(ws, spark):
+    """Test sql_query without merge_columns where condition evaluates to False (no violations)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Dataset-level check that passes: COUNT(*) > 100 is False (we only have 2 rows)
+    query_pass = "SELECT COUNT(*) > 100 AS condition FROM {{input_view}}"
+    
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_pass,
+                "condition_column": "condition",
+                "msg": "Dataset has too many rows",
+                "name": "dataset_size_check",
+            },
+        ),
+    ]
+    
+    checked = dq_engine.apply_checks(test_df, checks)
+    
+    # All rows should have None for errors since condition is False
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 3, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_empty_result(ws, spark):
+    """Test sql_query without merge_columns where query returns no rows (treated as False)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Query with WHERE 1=0 returns no rows
+    query_no_rows = "SELECT TRUE AS condition FROM {{input_view}} WHERE 1=0"
+    
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_no_rows,
+                "condition_column": "condition",
+                "msg": "Empty query result",
+                "name": "empty_query_check",
+            },
+        ),
+    ]
+    
+    checked = dq_engine.apply_checks(test_df, checks)
+    
+    # No rows from query means condition is False, so no violations
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 3, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_negate(ws, spark):
+    """Test sql_query without merge_columns with negate=True."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Query that returns False, but with negate=True should fail
+    query_false = "SELECT COUNT(*) > 100 AS condition FROM {{input_view}}"
+    
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_false,
+                "condition_column": "condition",
+                "msg": "Dataset does not have enough rows",
+                "name": "dataset_min_size_check",
+                "negate": True,  # Fail when condition is False
+            },
+        ),
+    ]
+    
+    checked = dq_engine.apply_checks(test_df, checks)
+    
+    # With negate=True, False becomes violation
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [
+                    {
+                        "name": "dataset_min_size_check",
+                        "message": "Dataset does not have enough rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                None,
+                3,
+                [
+                    {
+                        "name": "dataset_min_size_check",
+                        "message": "Dataset does not have enough rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
+    """Test sql_query without merge_columns with warning criticality."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [3, 4, 5]], SCHEMA)
+
+    # Dataset-level warning: COUNT(*) > 2 is True
+    query_warn = "SELECT COUNT(*) > 2 AS condition FROM {{input_view}}"
+    
+    checks = [
+        DQDatasetRule(
+            criticality="warn",  # Warning instead of error
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_warn,
+                "condition_column": "condition",
+                "msg": "Dataset has more than 2 rows (warning)",
+                "name": "dataset_warn_check",
+            },
+        ),
+    ]
+    
+    checked = dq_engine.apply_checks(test_df, checks)
+    
+    # All rows should have warning (not error)
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                2,
+                None,
+                3,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                3,
+                4,
+                5,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
 def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
