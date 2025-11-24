@@ -306,3 +306,158 @@ def test_logs(ws, installation_ctx, caplog):
         logs(installation_ctx.workspace_client, ctx=installation_ctx.workspace_installer)
 
     assert "No jobs to relay logs for" in caplog.text
+
+
+def test_open_remote_config_with_custom_folder(ws, installation_ctx_custom_install_folder, webbrowser_open):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    custom_folder = installation_ctx_custom_install_folder.installation.install_folder()
+    open_remote_config(w=installation_ctx_custom_install_folder.workspace_client, install_folder=custom_folder)
+    webbrowser_open.assert_called_once_with(
+        installation_ctx_custom_install_folder.installation.workspace_link(WorkspaceConfig.__file__)
+    )
+
+
+def test_open_dashboards_with_custom_folder(ws, installation_ctx_custom_install_folder, webbrowser_open):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    custom_folder = installation_ctx_custom_install_folder.installation.install_folder()
+    open_dashboards(w=installation_ctx_custom_install_folder.workspace_client, install_folder=custom_folder)
+    webbrowser_open.assert_called_once_with(
+        installation_ctx_custom_install_folder.installation.workspace_link("") + "dashboards/"
+    )
+
+
+def test_validate_checks_with_custom_folder(ws, make_workspace_file, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    custom_folder = installation_ctx_custom_install_folder.installation.install_folder()
+
+    checks = [{"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"column": "a"}}}]
+    run_config = installation_ctx_custom_install_folder.config.get_run_config()
+    checks_location = f"{custom_folder}/{run_config.checks_location}"
+    make_workspace_file(path=checks_location, content=yaml.dump(checks))
+
+    errors_list = validate_checks(
+        installation_ctx_custom_install_folder.workspace_client,
+        run_config=run_config.name,
+        install_folder=custom_folder,
+    )
+
+    assert not errors_list
+
+
+def test_validate_checks_with_custom_folder_invalid_checks(
+    ws, make_workspace_file, installation_ctx_custom_install_folder
+):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    custom_folder = installation_ctx_custom_install_folder.installation.install_folder()
+
+    checks = [
+        {"criticality": "warn", "check": {"function": "invalid_func", "arguments": {"column": "a"}}},
+        {"criticality": "warn", "check_missing": {"function": "is_not_null", "arguments": {"column": "b"}}},
+    ]
+    run_config = installation_ctx_custom_install_folder.config.get_run_config()
+    checks_location = f"{custom_folder}/{run_config.checks_location}"
+    make_workspace_file(path=checks_location, content=yaml.dump(checks))
+
+    errors = validate_checks(installation_ctx_custom_install_folder.workspace_client, install_folder=custom_folder)
+
+    expected_errors = [
+        "function 'invalid_func' is not defined",
+        "'check' field is missing",
+    ]
+    assert len(errors) == len(expected_errors)
+    for e in expected_errors:
+        assert any(e in error["error"] for error in errors)
+
+
+def test_profile_with_custom_folder(ws, spark, setup_workflows_with_custom_folder, caplog):
+    installation_ctx, run_config = setup_workflows_with_custom_folder()
+    custom_folder = installation_ctx.installation.install_folder()
+
+    profile(installation_ctx.workspace_client, run_config=run_config.name, install_folder=custom_folder)
+
+    checks = DQEngine(ws, spark).load_checks(
+        config=InstallationChecksStorageConfig(
+            run_config_name=run_config.name,
+            assume_user=True,
+            product_name=installation_ctx.installation.product(),
+            install_folder=custom_folder,
+        ),
+    )
+    assert checks, "Checks were not loaded correctly"
+
+    status = ws.workspace.get_status(f"{custom_folder}/{run_config.profiler_config.summary_stats_file}")
+    assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, install_folder=custom_folder)
+
+    assert "Completed profiler workflow run" in caplog.text
+
+
+def test_apply_checks_with_custom_folder(
+    ws, spark, setup_workflows_with_custom_folder, caplog, expected_quality_checking_output
+):
+    installation_ctx, run_config = setup_workflows_with_custom_folder(checks=True)
+    custom_folder = installation_ctx.installation.install_folder()
+
+    apply_checks(installation_ctx.workspace_client, run_config=run_config.name, install_folder=custom_folder)
+
+    checked_df = spark.table(run_config.output_config.location)
+    assert_df_equality(checked_df, expected_quality_checking_output, ignore_nullable=True)
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, install_folder=custom_folder)
+
+    assert "Completed quality-checker workflow run" in caplog.text
+
+
+def test_e2e_with_custom_folder(ws, spark, setup_workflows_with_custom_folder, caplog):
+    installation_ctx, run_config = setup_workflows_with_custom_folder()
+    custom_folder = installation_ctx.installation.install_folder()
+
+    e2e(installation_ctx.workspace_client, run_config=run_config.name, install_folder=custom_folder)
+
+    checked_df = spark.table(run_config.output_config.location)
+    input_df = spark.table(run_config.input_config.location)
+
+    assert checked_df.count() == input_df.count(), "Output table is empty"
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx.workspace_client, install_folder=custom_folder)
+
+    assert "Completed e2e workflow run" in caplog.text
+
+
+def test_workflows_with_custom_folder(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation_service.run()
+    custom_folder = installation_ctx_custom_install_folder.installation.install_folder()
+
+    installed_workflows = workflows(
+        installation_ctx_custom_install_folder.workspace_client,
+        ctx=installation_ctx_custom_install_folder.workspace_installer,
+        install_folder=custom_folder,
+    )
+
+    expected_workflows_state = [{'workflow': 'profiler', 'state': 'UNKNOWN', 'started': '<never run>'}]
+    for state in expected_workflows_state:
+        assert contains_expected_workflows(installed_workflows, state)
+
+
+def test_logs_with_custom_folder(ws, installation_ctx_custom_install_folder, caplog):
+    installation_ctx_custom_install_folder.installation_service.run()
+    custom_folder = installation_ctx_custom_install_folder.installation.install_folder()
+
+    with caplog.at_level(logging.INFO):
+        logs(installation_ctx_custom_install_folder.workspace_client, install_folder=custom_folder)
+
+    assert "No jobs to relay logs for" in caplog.text
+
+
+def test_validate_checks_with_custom_folder_missing_file(ws, installation_ctx_custom_install_folder):
+    installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
+    custom_folder = installation_ctx_custom_install_folder.installation.install_folder()
+
+    file = f"{custom_folder}/{installation_ctx_custom_install_folder.config.get_run_config().checks_location}"
+
+    with pytest.raises(NotFound, match=f"Checks file {file} missing"):
+        validate_checks(installation_ctx_custom_install_folder.workspace_client, install_folder=custom_folder)

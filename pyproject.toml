@@ -39,7 +39,7 @@ dependencies = [
     "databricks-labs-blueprint>=0.9.1,<0.10",
     "databricks-sdk~=0.71",
     "databricks-labs-lsql>=0.5,<=0.16",
-    "sqlalchemy>=1.4,<3.0",
+    "sqlalchemy>=2.0,<3.0",
 ]
 
 [project.optional-dependencies]
