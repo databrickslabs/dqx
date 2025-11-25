@@ -350,6 +350,45 @@ Apply checks on tables using wildcard patterns:
   </TabItem>
 </Tabs>
 
+### Applying checks using foreachBatch
+
+Spark's `foreachBatch` allows users to define an arbitrary processing function run for each streaming batch. When using DQX in a `foreachBatch` function,
+use a shared `DQEngine` instance with a mock `WorkspaceClient`.
+
+<Admonition type="warning" title="Engine functionality with mocked WorkspaceClient">
+Some DQX engine methods require a valid Databricks `WorkspaceClient`. Methods must support local execution to be run in a `foreachBatch` function with a mocked `WorkspaceClient`. Check the **Supports local execution** column [here](/docs/reference/engine/#dqx-engine-methods) to verify that DQX engine methods can be executed with a mocked client.
+</Admonition>
+
+```python
+from unittest.mock import MagicMock
+from pyspark.sql import DataFrame
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx import check_funcs
+
+# Create the `DQEngine`
+mock_ws = MagicMock(spec=WorkspaceClient)
+dq_engine = DQEngine(mock_ws)
+
+# Define DQX checks
+checks = [
+  DQRowRule(name="col_timestamp_is_null", criticality="error", check_func=check_funcs.is_not_null, column="timestamp"),
+  DQRowRule(name="col_value_is_null", criticality="error", check_func=check_funcs.is_not_null, column="value")
+]
+
+# Define a `foreachBatch` function to check and write the data
+app_id = "my_dqx_app"
+def validate_and_write_micro_batch_data(batch_df: DataFrame, batch_id: int) -> None:
+    valid_df, quarantine_df = dq_engine.apply_checks_and_split(batch_df, checks)
+    valid_df.write.format("delta").option("txnVersion", batch_id).option("txnAppId", app_id).saveAsTable("catalog.schema.valid_data")
+    quarantine_df.write.format("delta").option("txnVersion", batch_id).option("txnAppId", app_id).saveAsTable("catalog.schema.quarantine_data")
+
+# Read the data and apply the `foreachBatch` function
+input_data = spark.readStream.format("rate").load()
+input_data.writeStream.foreachBatch(validate_and_write_micro_batch_data).start()
+```
+
 ### Applying checks in Lakeflow Pipelines
 
 Lakeflow Pipelines (formerly DLT - Delta Live Tables) provides [expectations](https://docs.databricks.com/en/delta-live-tables/expectations.html) to enforce data quality constraints.
