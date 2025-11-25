@@ -3489,9 +3489,9 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df(ws, spark)
     # Reference dataset with expected totals
     ref_df = spark.createDataFrame([[600]], "expected_total: int")
 
-    # Dataset-level check: verify total amount matches expected value in reference table
+    # Dataset-level check: violation occurs when totals do NOT match the reference table
     query = """
-        SELECT (SELECT SUM(c) FROM {{input_view}}) = (SELECT expected_total FROM {{expected_totals}}) AS condition
+        SELECT (SELECT SUM(c) FROM {{input_view}}) != (SELECT expected_total FROM {{expected_totals}}) AS condition
     """
 
     checks = [
@@ -3532,9 +3532,9 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, s
     # Reference dataset with expected totals (wrong value)
     ref_df = spark.createDataFrame([[999]], "expected_total: int")
 
-    # Dataset-level check: verify total amount matches expected value in reference table
+    # Dataset-level check: violation occurs when totals do NOT match the reference table
     query = """
-        SELECT (SELECT SUM(c) FROM {{input_view}}) = (SELECT expected_total FROM {{expected_totals}}) AS condition
+        SELECT (SELECT SUM(c) FROM {{input_view}}) != (SELECT expected_total FROM {{expected_totals}}) AS condition
     """
 
     checks = [
