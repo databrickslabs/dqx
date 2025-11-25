@@ -185,10 +185,10 @@
     function: sql_query
     arguments:
       # sql query for dataset-level check - no merge_columns needed
-      query: SELECT COUNT(*) > 0 AS condition FROM {{ input_view }}
+      query: SELECT COUNT(*) = 0 AS condition FROM {{ input_view }}
       condition_column: condition  # the check fails if this column evaluates to True
-      msg: dataset has records  # optional
-      name: dataset_not_empty  # optional
+      msg: dataset has no records  # optional
+      name: dataset_is_empty  # optional
 
 # apply check to multiple columns
 - criticality: error
