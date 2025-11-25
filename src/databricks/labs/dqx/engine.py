@@ -100,6 +100,15 @@ class DQEngineCore(DQEngineCoreBase):
         else:
             self.run_id = extra_params.run_id_overwrite or str(uuid4())  # auto-generate if not provided
 
+    def _get_serialization_exclusions(self) -> set[str]:
+        exclusions = super()._get_serialization_exclusions()
+        exclusions.update({'spark', 'observer'})
+        return exclusions
+
+    def _restore_after_deserialization(self, state: dict, **kwargs: Any) -> None:
+        self.spark = kwargs.get("spark") or SparkSession.builder.getOrCreate()
+        self.observer = None
+
     @cached_property
     def result_column_names(self) -> dict[ColumnArguments, str]:
         return self._result_column_names
@@ -478,6 +487,16 @@ class DQEngine(DQEngineBase):
         self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
         )
+
+    def _get_serialization_exclusions(self) -> set[str]:
+        exclusions = super()._get_serialization_exclusions()
+        exclusions.update({'spark', '_config_serializer', '_checks_handler_factory'})
+        return exclusions
+
+    def _restore_after_deserialization(self, state: dict, **kwargs: Any) -> None:
+        self.spark = kwargs.get("spark") or SparkSession.builder.getOrCreate()
+        self._config_serializer = ConfigSerializer(self._workspace_client)
+        self._checks_handler_factory = ChecksStorageHandlerFactory(self._workspace_client, self.spark)
 
     @telemetry_logger("engine", "apply_checks")
     def apply_checks(

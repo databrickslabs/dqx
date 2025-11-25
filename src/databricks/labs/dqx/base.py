@@ -4,12 +4,13 @@ from functools import cached_property
 from typing import final
 from pyspark.sql import DataFrame, Observation
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
+from databricks.labs.dqx.mixins import PicklableMixin
 from databricks.labs.dqx.rule import DQRule
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.__about__ import __version__
 
 
-class DQEngineBase(abc.ABC):
+class DQEngineBase(PicklableMixin, abc.ABC):
     def __init__(self, workspace_client: WorkspaceClient):
         self._workspace_client = self._verify_workspace_client(workspace_client)
 
@@ -37,6 +38,10 @@ class DQEngineBase(abc.ABC):
         # use api that works on all workspaces and clusters including group assigned clusters
         ws.clusters.select_spark_version()
         return ws
+
+    def _get_serialization_exclusions(self) -> set[str]:
+        """Exclude WorkspaceClient from serialization."""
+        return {'_workspace_client'}
 
 
 class DQEngineCoreBase(DQEngineBase):

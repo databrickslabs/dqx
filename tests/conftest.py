@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable, Generator
 from dataclasses import replace, dataclass
 from functools import cached_property
+from unittest.mock import MagicMock
 
 import pytest
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
@@ -22,6 +23,7 @@ from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
+from databricks.labs.dqx.mixins import PicklableMixin
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
@@ -796,3 +798,16 @@ def _sort_key(check: dict[str, Any]) -> str:
         The name of the check as a string, or an empty string if not found.
     """
     return str(check.get("name", ""))
+
+
+class TestClass(PicklableMixin):
+    def __init__(self):
+        self._workspace_client = MagicMock(spec=WorkspaceClient)
+        self.data = "test_data"
+
+    @property
+    def ws(self) -> WorkspaceClient:
+        return self._workspace_client
+
+    def _get_serialization_exclusions(self) -> set[str]:
+        return {'_workspace_client'}
