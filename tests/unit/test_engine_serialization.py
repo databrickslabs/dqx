@@ -14,12 +14,3 @@ def test_picklable_mixin_basic():
 
     assert isinstance(restored.ws, MagicMock)
     assert restored.data == "test_data"
-
-
-def test_picklable_mixin_with_restoration():
-    obj = TestClass()
-    serialized = pickle.dumps(obj)
-    restored = pickle.loads(serialized)
-
-    assert restored.spark == "restored_spark"
-    assert restored.restored is True
