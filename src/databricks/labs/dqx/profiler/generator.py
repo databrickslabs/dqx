@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 class DQGenerator(DQEngineBase):
     def __init__(
         self,
-        workspace_client: WorkspaceClient,
+        workspace_client: WorkspaceClient | None = None,
         spark: SparkSession | None = None,
         llm_model_config: LLMModelConfig | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
@@ -48,7 +48,8 @@ class DQGenerator(DQEngineBase):
         Initializes the DQGenerator with optional Spark session and LLM model configuration.
 
         Args:
-            workspace_client: Databricks WorkspaceClient instance.
+            workspace_client: Optional Databricks WorkspaceClient instance used to access the workspace. If not provided, a
+                default WorkspaceClient for the current logged-in user is used.
             spark: Optional SparkSession instance. If not provided, a new session will be created.
             llm_model_config: Optional LLM model configuration for AI-assisted rule generation.
             custom_check_functions: Optional dictionary of custom check functions.

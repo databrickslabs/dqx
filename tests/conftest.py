@@ -27,6 +27,7 @@ from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
+from databricks.sdk.service.compute import DataSecurityMode
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,8 @@ def product_info():
 @pytest.fixture
 def set_utc_timezone():
     """
-    Set the timezone to UTC for the duration of the test to make sure spark timestamps    are handled the same way regardless of the environment.
+    Set the timezone to UTC for the duration of the test to make sure spark timestamps are handled the same way
+    regardless of the environment.
     """
     os.environ["TZ"] = "UTC"
     yield
@@ -90,6 +92,30 @@ def skip_if_runtime_not_geo_compatible(ws, debug_env):
 
     if not valid:
         pytest.skip("This test requires a cluster with runtime 17.1 or above")
+
+
+@pytest.fixture
+def skip_in_non_dedicated_cluster(ws, debug_env):
+    """
+    Skip the test if the cluster is not running in dedicated mode.
+
+    Args:
+        ws (WorkspaceClient): Workspace client to interact with Databricks.
+        debug_env (dict): Test environment variables.
+    """
+    if "DATABRICKS_SERVERLESS_COMPUTE_ID" in debug_env:
+        pytest.skip("Test not supported in Serverless")
+
+    cluster_id = debug_env.get("DATABRICKS_CLUSTER_ID")
+    if not cluster_id:
+        raise ValueError("DATABRICKS_CLUSTER_ID is not set in debug_env")
+
+    cluster_info = ws.clusters.get(cluster_id)
+    if cluster_info.data_security_mode not in (
+        DataSecurityMode.SINGLE_USER,
+        DataSecurityMode.DATA_SECURITY_MODE_DEDICATED,
+    ):
+        pytest.skip("This test requires a dedicated cluster")
 
 
 class CommonUtils:
