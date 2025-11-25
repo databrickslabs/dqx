@@ -23,7 +23,7 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
 import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
-from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID
+from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID, build_quality_violation
 
 from tests.conftest import TEST_CATALOG
 
@@ -3616,6 +3616,32 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, s
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_with_sql_query_without_merge_columns_multiple_rows_error(ws, spark):
+    """Ensure dataset-level sql_query errors when the query returns more than one row."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200]], SCHEMA)
+
+    query_multi_rows = "SELECT a > 0 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_multi_rows,
+                "condition_column": "condition",
+                "msg": "Should never reach application",
+                "name": "dataset_multi_row_error",
+            },
+        ),
+    ]
+
+    with pytest.raises(
+        InvalidParameterError, match="Dataset-level sql_query without merge_columns must return exactly one row"
+    ):
+        dq_engine.apply_checks(test_df, checks)
+
+
 def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
@@ -4432,18 +4458,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     2,
                     None,
                     4,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
                     None,
                 ],
                 [
@@ -4451,47 +4466,14 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     4,
                     None,
                     None,
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
                 [
                     None,
                     None,
                     None,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
             ],
             EXPECTED_SCHEMA_WITH_CUSTOM_NAMES,
@@ -4526,18 +4508,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     2,
                     None,
                     4,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
                     None,
                 ],
                 [
@@ -4545,47 +4516,14 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     4,
                     None,
                     None,
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
                 [
                     None,
                     None,
                     None,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
             ],
             EXPECTED_SCHEMA,

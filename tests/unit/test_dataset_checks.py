@@ -177,6 +177,36 @@ def test_sql_query_unsafe():
         )
 
 
+def test_sql_query_merge_columns_as_string_raises():
+    """Ensure merge_columns must be provided as a sequence, not a single string."""
+    with pytest.raises(
+        InvalidParameterError, match="'merge_columns' must be a sequence of column names \\(e.g., list or tuple\\)"
+    ):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": "SELECT FALSE AS condition",
+                "merge_columns": "id",
+                "condition_column": "condition",
+            },
+        )
+
+
+def test_sql_query_merge_columns_invalid_entries_raise():
+    """Ensure merge_columns entries must be non-empty strings."""
+    with pytest.raises(InvalidParameterError, match="'merge_columns' entries must be non-empty strings."):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": "SELECT FALSE AS condition",
+                "merge_columns": ["id", ""],
+                "condition_column": "condition",
+            },
+        )
+
+
 @pytest.mark.parametrize(
     "lookback_windows, min_records_per_window, window_minutes, expected_message",
     [

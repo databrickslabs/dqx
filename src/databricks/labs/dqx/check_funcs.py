@@ -3,7 +3,7 @@ import re
 import warnings
 import ipaddress
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
 import operator as py_operator
@@ -2732,10 +2732,18 @@ def _apply_dataset_level_sql_check(
     # Query should only return the condition column
     user_query_df = spark.sql(query_resolved).select(F.col(condition_column).alias(unique_condition_column))
 
-    # Get the first (and should be only) row's condition value
-    # If the query returns no rows, treat it as condition not met (False)
-    condition_result = user_query_df.first()
-    condition_value = condition_result[unique_condition_column] if condition_result else False
+    # Capture up to two rows to detect accidental multi-row outputs
+    condition_rows = user_query_df.take(2)
+    if not condition_rows:
+        # No rows returned: treat as condition not met (False)
+        condition_value = False
+    elif len(condition_rows) > 1:
+        raise InvalidParameterError(
+            "Dataset-level sql_query without merge_columns must return exactly one row. "
+            "Provide merge_columns for row-level checks or aggregate the query to a single row."
+        )
+    else:
+        condition_value = condition_rows[0][unique_condition_column]
 
     # Apply the condition consistently with row_filter behavior:
     # - If row_filter is provided, only rows matching the filter get the condition value
@@ -2752,18 +2760,32 @@ def _apply_dataset_level_sql_check(
     return result_df
 
 
-def _validate_sql_query_params(query: str, _merge_columns: list[str] | None) -> None:
+def _validate_sql_query_params(query: str, merge_columns: list[str] | None) -> None:
     """
     Validate SQL query parameters to ensure correctness and safety.
     This helper verifies that the SQL query is safe for execution.
 
     Args:
         query: The SQL query string to validate.
+        merge_columns: Optional list of column names (validated when provided).
 
     Raises:
         UnsafeSqlQueryError: If the SQL query is unsafe.
+        InvalidParameterError: If merge_columns is provided but not a sequence of strings.
     """
     if not is_sql_query_safe(query):
         raise UnsafeSqlQueryError(
             "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
         )
+
+    if merge_columns is None:
+        return
+
+    if isinstance(merge_columns, str) or not isinstance(merge_columns, Sequence):
+        raise InvalidParameterError(
+            "'merge_columns' must be a sequence of column names (e.g., list or tuple) when provided."
+        )
+
+    invalid_columns = [col for col in merge_columns if not isinstance(col, str) or not col]
+    if invalid_columns:
+        raise InvalidParameterError("'merge_columns' entries must be non-empty strings.")
