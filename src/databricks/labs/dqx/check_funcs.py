@@ -1902,7 +1902,7 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
         "",
         F.lit("Value '"),
         F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
-        F.lit(f"' in column '{col_expr_str}' does not conform to expected JSON schema: "),
+        F.lit(f"' in Column '{col_expr_str}' does not conform to expected JSON schema: "),
         F.lit(schema_str),
     )
 
