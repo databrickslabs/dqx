@@ -3,12 +3,15 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
+from unittest.mock import MagicMock
+
 import yaml
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
+import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
 from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.check_funcs import sql_query
 from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams, RunConfig
@@ -22,10 +25,10 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
-import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
-from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID
+from databricks.sdk import WorkspaceClient
 
 from tests.conftest import TEST_CATALOG
+from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID
 
 
 SCHEMA = "a: int, b: int, c: int"
@@ -8528,3 +8531,24 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
         SCHEMA + complex_cols_schema + REPORTING_COLUMNS,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_foreachbatch_with_mock(spark):
+    ws = MagicMock(spec=WorkspaceClient)
+    engine = DQEngine(workspace_client=ws, spark=spark)
+    input_df = spark.readStream.format("rate").load()
+    checks = [
+        DQRowRule(  # 'rate' source has a non-null 'value' column of type 'long'
+            name="value_is_null_or_empty",
+            criticality="warn",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column="value",
+        ),
+    ]
+
+    def batch_handler_function(batch_df: DataFrame, _: int) -> None:
+        expected = batch_df.select("*", F.lit(None).alias("_warnings"), F.lit(None).alias("_errors"))
+        actual = engine.apply_checks(batch_df, checks)
+        assert_df_equality(actual, expected)
+
+    input_df.writeStream.trigger(availableNow=True).foreachBatch(batch_handler_function).start()
