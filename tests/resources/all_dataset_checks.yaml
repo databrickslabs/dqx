@@ -163,7 +163,7 @@
       - ref_col2
       ref_df_name: ref_df_key
 
-# sql_query check
+# sql_query check with merge_columns (row-level validation)
 - criticality: error
   check:
     function: sql_query
@@ -178,6 +178,17 @@
       msg: sql query check failed  # optional
       name: sql_query_violation  # optional
       negate: false  # optional, default False
+
+# sql_query check without merge_columns (dataset-level validation)
+- criticality: warn
+  check:
+    function: sql_query
+    arguments:
+      # sql query for dataset-level check - no merge_columns needed
+      query: SELECT COUNT(*) = 0 AS condition FROM {{ input_view }}
+      condition_column: condition  # the check fails if this column evaluates to True
+      msg: dataset has no records  # optional
+      name: dataset_is_empty  # optional
 
 # apply check to multiple columns
 - criticality: error

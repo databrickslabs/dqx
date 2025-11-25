@@ -145,13 +145,26 @@ def test_compare_datasets_invalid_tolerance_exceptions(abs_tolerance, rel_tolera
         )
 
 
-def test_sql_query_missing_merge_columns():
-    with pytest.raises(InvalidParameterError, match="'merge_columns' must contain at least one column"):
-        DQDatasetRule(
-            criticality="error",
-            check_func=sql_query,
-            check_func_kwargs={"query": "SELECT 1", "merge_columns": [], "condition_column": "condition"},
-        )
+def test_sql_query_empty_merge_columns():
+    """Test that empty list for merge_columns is treated the same as None (dataset-level check)."""
+    # Should not raise an error - empty list is normalized to None
+    rule = DQDatasetRule(
+        criticality="error",
+        check_func=sql_query,
+        check_func_kwargs={"query": "SELECT FALSE AS condition", "merge_columns": [], "condition_column": "condition"},
+    )
+    assert rule.check_func is sql_query
+
+
+def test_sql_query_without_merge_columns():
+    """Test that merge_columns is optional and can be None."""
+    # Should not raise an error
+    rule = DQDatasetRule(
+        criticality="error",
+        check_func=sql_query,
+        check_func_kwargs={"query": "SELECT FALSE AS condition", "condition_column": "condition"},
+    )
+    assert rule.check_func is sql_query
 
 
 def test_sql_query_unsafe():
@@ -161,6 +174,36 @@ def test_sql_query_unsafe():
             criticality="error",
             check_func=sql_query,
             check_func_kwargs={"query": query, "merge_columns": ["col1"], "condition_column": "condition"},
+        )
+
+
+def test_sql_query_merge_columns_as_string_raises():
+    """Ensure merge_columns must be provided as a sequence, not a single string."""
+    with pytest.raises(
+        InvalidParameterError, match="'merge_columns' must be a sequence of column names \\(e.g., list or tuple\\)"
+    ):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": "SELECT FALSE AS condition",
+                "merge_columns": "id",
+                "condition_column": "condition",
+            },
+        )
+
+
+def test_sql_query_merge_columns_invalid_entries_raise():
+    """Ensure merge_columns entries must be non-empty strings."""
+    with pytest.raises(InvalidParameterError, match="'merge_columns' entries must be non-empty strings."):
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": "SELECT FALSE AS condition",
+                "merge_columns": ["id", ""],
+                "condition_column": "condition",
+            },
         )
 
 
