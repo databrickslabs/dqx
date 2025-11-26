@@ -4,7 +4,6 @@ Unit tests for LLM-based primary key detection integration in profiler.
 
 from unittest.mock import Mock
 
-import pytest
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler

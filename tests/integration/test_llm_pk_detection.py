@@ -6,9 +6,7 @@ from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from tests.conftest import TEST_CATALOG
 
 
-def test_detect_primary_keys_simple_table(
-    ws, spark, make_schema, make_table, installation_ctx
-):
+def test_detect_primary_keys_simple_table(ws, spark, make_schema, make_table, installation_ctx):
     """Test primary key detection on a simple table with clear primary key."""
     # Create test table with obvious primary key
     schema = make_schema(catalog_name=TEST_CATALOG)
@@ -93,9 +91,7 @@ def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, insta
         assert len(pk_info["columns"]) >= 1, "At least one primary key column should be detected"
 
 
-def test_detect_primary_keys_no_clear_key(
-    ws, spark, make_schema, make_table, installation_ctx
-):
+def test_detect_primary_keys_no_clear_key(ws, spark, make_schema, make_table, installation_ctx):
     """Test primary key detection on a table with no clear primary key."""
     # Create test table without clear primary key (log-style data)
     schema = make_schema(catalog_name=TEST_CATALOG)
