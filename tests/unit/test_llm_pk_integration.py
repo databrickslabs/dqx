@@ -9,20 +9,7 @@ import pytest
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
-
-try:
-    from databricks.labs.dqx.llm.llm_pk_detector import PrimaryKeyDetector
-
-    LLM_AVAILABLE = True
-except ImportError:
-    LLM_AVAILABLE = False
-
-
-@pytest.fixture
-def skip_if_llm_not_available():
-    """Skip test if LLM dependencies are not installed."""
-    if not LLM_AVAILABLE:
-        pytest.skip("LLM dependencies not installed")
+from databricks.labs.dqx.llm.llm_pk_detector import PrimaryKeyDetector
 
 
 class MockLLMEngine:
@@ -70,7 +57,7 @@ class MockDetector:
         return result
 
 
-def test_profiler_detect_pk_with_llm(skip_if_llm_not_available):
+def test_profiler_detect_pk_with_llm():
     """Test primary key detection using DQProfiler."""
     # Create mock workspace client with proper config
     mock_config = Mock()
@@ -108,7 +95,7 @@ def test_profiler_detect_pk_with_llm(skip_if_llm_not_available):
         pass
 
 
-def test_detect_primary_key_composite(skip_if_llm_not_available):
+def test_detect_primary_key_composite():
     """Test detection of composite primary key."""
     mock_table_definition = """
     CREATE TABLE order_items (
@@ -142,7 +129,7 @@ def test_detect_primary_key_composite(skip_if_llm_not_available):
     assert result["primary_key_columns"] == ["order_id", "product_id"]
 
 
-def test_detect_primary_key_no_clear_key(skip_if_llm_not_available):
+def test_detect_primary_key_no_clear_key():
     """Test when LLM cannot identify a clear primary key."""
     mock_table_definition = """
     CREATE TABLE application_logs (

@@ -1,5 +1,3 @@
-import importlib.util
-import pytest
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.generator import DQGenerator
@@ -7,21 +5,11 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from tests.conftest import TEST_CATALOG
 
-LLM_AVAILABLE = importlib.util.find_spec("databricks.labs.dqx.llm.llm_pk_detector") is not None
-
-
-@pytest.fixture
-def skip_if_llm_not_available():
-    """Skip test if LLM dependencies are not installed."""
-    if not LLM_AVAILABLE:
-        pytest.skip("LLM dependencies not installed")
-
 
 def test_detect_primary_keys_simple_table(
-    ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available
+    ws, spark, make_schema, make_table, installation_ctx
 ):
     """Test primary key detection on a simple table with clear primary key."""
-    _ = skip_if_llm_not_available
     # Create test table with obvious primary key
     schema = make_schema(catalog_name=TEST_CATALOG)
     test_table = make_table(
@@ -44,7 +32,7 @@ def test_detect_primary_keys_simple_table(
 
     # Profile the table
     input_config = InputConfig(location=test_table.full_name)
-    summary_stats, _ = profiler.profile_table(test_table.full_name)
+    summary_stats, _ = profiler.profile_table(InputConfig(test_table.full_name))
 
     # Run PK detection
     runner.detect_primary_keys_using_llm(generator, input_config, summary_stats)
@@ -64,9 +52,8 @@ def test_detect_primary_keys_simple_table(
         assert "user_id" in pk_info["columns"], "user_id should be detected as primary key"
 
 
-def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available):
+def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, installation_ctx):
     """Test primary key detection on a table with composite primary key."""
-    _ = skip_if_llm_not_available
     # Create test table with composite key
     schema = make_schema(catalog_name=TEST_CATALOG)
     test_table = make_table(
@@ -89,7 +76,7 @@ def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, insta
 
     # Profile the table
     input_config = InputConfig(location=test_table.full_name)
-    summary_stats, _ = profiler.profile_table(test_table.full_name)
+    summary_stats, _ = profiler.profile_table(InputConfig(test_table.full_name))
 
     # Run PK detection
     runner.detect_primary_keys_using_llm(generator, input_config, summary_stats)
@@ -107,10 +94,9 @@ def test_detect_primary_keys_composite(ws, spark, make_schema, make_table, insta
 
 
 def test_detect_primary_keys_no_clear_key(
-    ws, spark, make_schema, make_table, installation_ctx, skip_if_llm_not_available
+    ws, spark, make_schema, make_table, installation_ctx
 ):
     """Test primary key detection on a table with no clear primary key."""
-    _ = skip_if_llm_not_available
     # Create test table without clear primary key (log-style data)
     schema = make_schema(catalog_name=TEST_CATALOG)
     test_table = make_table(
@@ -133,7 +119,7 @@ def test_detect_primary_keys_no_clear_key(
 
     # Profile the table
     input_config = InputConfig(location=test_table.full_name)
-    summary_stats, _ = profiler.profile_table(test_table.full_name)
+    summary_stats, _ = profiler.profile_table(InputConfig(test_table.full_name))
 
     # Run PK detection
     runner.detect_primary_keys_using_llm(generator, input_config, summary_stats)

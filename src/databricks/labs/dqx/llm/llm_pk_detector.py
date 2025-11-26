@@ -360,6 +360,7 @@ class PrimaryKeyDetector:
         pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
         print(f"🔍 Checking for duplicates in {table} using columns: {pk_cols_str}")
 
+        # Treats nulls as NOT distinct (NULL and NULL is considered equal)
         duplicate_query = f"""
         SELECT {pk_cols_str}, COUNT(*) as duplicate_count
         FROM {table}
@@ -395,7 +396,6 @@ class PrimaryKeyDetector:
 
         result['has_duplicates'] = has_duplicates
         result['duplicate_count'] = duplicate_count
-        result['validation_performed'] = True
 
         return has_duplicates, duplicate_count
 
@@ -650,15 +650,12 @@ class PrimaryKeyDetector:
 
         logger.info(f"🎯 Confidence: {result['confidence'].upper()}")
 
-        if result.get('validation_performed', False):
-            validation_msg = (
-                "No duplicates found"
-                if not result.get('has_duplicates', True)
-                else f"Found {result.get('duplicate_count', 0)} duplicates"
-            )
-            logger.info(f"🔍 Validation: {validation_msg}")
-        else:
-            logger.info("🔍 Validation: Not performed")
+        validation_msg = (
+            "No duplicates found"
+            if not result.get('has_duplicates', True)
+            else f"Found {result.get('duplicate_count', 0)} duplicates"
+        )
+        logger.info(f"🔍 Validation: {validation_msg}")
         logger.info("")
 
         if result.get('all_attempts') and len(result['all_attempts']) > 1:

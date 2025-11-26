@@ -85,12 +85,13 @@ Profiling and quality checks generation can be run on individual tables.
     ```python
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.config import InputConfig
 
     ws = WorkspaceClient()
     profiler = DQProfiler(ws)
 
     summary_stats, profiles = profiler.profile_table(
-      table="catalog1.schema1.table1",
+      input_config=InputConfig(location="catalog1.schema1.table1")
       columns=["col1", "col2", "col3"],  # specify columns to profile
     )
 
@@ -344,6 +345,7 @@ The profiler supports extensive configuration options to customize the profiling
     ```python
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.sdk import WorkspaceClient
+    from databricks.labs.dqx.config import InputConfig
 
     # Custom profiling options
     custom_options = {
@@ -373,6 +375,8 @@ The profiler supports extensive configuration options to customize the profiling
 
       # Filter Options
       "filter": None,               # No filter (SQL expression)
+
+      "detect_primary_keys": True,  # Detect PKs and generate uniqueness rule if found
     }
 
     ws = WorkspaceClient()
@@ -383,7 +387,7 @@ The profiler supports extensive configuration options to customize the profiling
 
     # Apply custom options for profiling a table
     summary_stats, profiles = profiler.profile_table(
-      table="catalog1.schema1.table1",
+      input_config=InputConfig(location="catalog1.schema1.table1"),
       columns=["col1", "col2", "col3"],
       options=custom_options
     )

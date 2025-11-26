@@ -5,6 +5,7 @@ import pytest
 import pyspark.sql.types as T
 from databricks.sdk.errors import NotFound
 
+from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
 from tests.conftest import TEST_CATALOG
@@ -277,6 +278,7 @@ def test_profiler_non_default_profile_options(spark, ws):
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
         "filter": "t1 > 0",  # filter out the first row
+        "detect_primary_keys": False,  # disable pk detection
     }
 
     stats, rules = profiler.profile(input_df, columns=input_df.columns, options=profile_options)
@@ -382,6 +384,7 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
+        "detect_primary_keys": False,  # disable pk detection
     }
 
     stats, rules = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
@@ -478,6 +481,7 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
+        "detect_primary_keys": False,  # disable pk detection
     }
 
     stats, rules = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
@@ -603,7 +607,9 @@ def test_profile_table(spark, ws, make_schema, make_random):
     input_df.write.format("delta").saveAsTable(table_name)
 
     profiler = DQProfiler(ws)
-    stats, rules = profiler.profile_table(table_name, options={"sample_fraction": None})
+    stats, rules = profiler.profile_table(
+        input_config=InputConfig(location=table_name), options={"sample_fraction": None}
+    )
     expected_rules = [
         DQProfile(name="is_not_null", column="id", description=None, parameters=None),
         DQProfile(
@@ -662,7 +668,7 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
         "remove_outliers": False,
         "trim_strings": False,
     }
-    stats, rules = profiler.profile_table(table_name, options=custom_opts)
+    stats, rules = profiler.profile_table(InputConfig(location=table_name), options=custom_opts)
     expected_rules = [
         DQProfile(
             name="is_not_null",
@@ -702,7 +708,9 @@ def test_profile_table_with_column_selection(spark, ws, make_schema, make_random
 
     profiler = DQProfiler(ws)
     selected_cols = ["col1", "col3"]  # Only profile these columns
-    stats, rules = profiler.profile_table(table_name, columns=selected_cols, options={"sample_fraction": None})
+    stats, rules = profiler.profile_table(
+        input_config=InputConfig(location=table_name), columns=selected_cols, options={"sample_fraction": None}
+    )
     expected_rules = [
         DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
         DQProfile(

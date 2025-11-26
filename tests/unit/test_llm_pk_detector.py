@@ -1,35 +1,18 @@
-"""
-Comprehensive unit tests for LLM-based primary key detection.
-"""
-
 from unittest.mock import Mock
 import pytest
-
-try:
-    import pandas as pd  # type: ignore
-    from databricks.labs.dqx.llm.llm_pk_detector import (
-        DspyLMAdapter,
-        TableManager,
-        PrimaryKeyDetector,
-        configure_databricks_llm,
-        configure_with_tracing,
-    )
-
-    LLM_AVAILABLE = True
-except ImportError:
-    LLM_AVAILABLE, pd = False, None  # type: ignore
-
-try:
-    from databricks.labs.dqx.config import LLMModelConfig, InputConfig
-    from databricks.labs.dqx.profiler.profiler import DQProfiler
-    from databricks.labs.dqx.profiler.generator import DQGenerator
-    from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
-    from databricks.labs.dqx.errors import MissingParameterError
-except ImportError:
-    pass
-
-
-pytestmark = pytest.mark.skipif(not LLM_AVAILABLE, reason="LLM dependencies not installed")
+import pandas as pd  # type: ignore
+from databricks.labs.dqx.llm.llm_pk_detector import (
+    DspyLMAdapter,
+    TableManager,
+    PrimaryKeyDetector,
+    configure_databricks_llm,
+    configure_with_tracing,
+)
+from databricks.labs.dqx.config import LLMModelConfig, InputConfig
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
+from databricks.labs.dqx.errors import MissingParameterError
 
 
 def test_adapter_and_configuration():
@@ -228,7 +211,6 @@ def test_primary_key_detector():
             'primary_key_columns': ['id', 'uid'],
             'confidence': 'medium',
             'retries_attempted': 2,
-            'validation_performed': True,
             'has_duplicates': False,
             'duplicate_count': 0,
             'final_status': 'success',
@@ -246,7 +228,6 @@ def test_primary_key_detector():
             'primary_key_columns': ['id'],
             'confidence': 'low',
             'retries_attempted': 3,
-            'validation_performed': False,
             'has_duplicates': True,
             'duplicate_count': 5,
             'final_status': 'max_retries_reached_with_duplicates',
@@ -258,15 +239,10 @@ def test_primary_key_detector():
 def test_integration_profiler():
     """Test DQProfiler and DQGenerator integration."""
     rule = DQGenerator.dq_generate_is_unique(
-        column="id", level="error", columns=["id"], confidence="high", reasoning="unique"
+        column="id", level="error", columns=["id"], confidence="high", nulls_distinct=True
     )
     assert rule['check']['function'] == 'is_unique'
     assert rule['name'] == 'primary_key_id_validation'
-
-    rule2 = DQGenerator.dq_generate_is_unique(
-        column="id,uid", level="warning", columns=["id", "uid"], confidence="medium", llm_detected=True
-    )
-    assert rule2['user_metadata']['llm_based_detection'] is True
 
     mock_ws = Mock()
     mock_config = Mock()

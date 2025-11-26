@@ -71,11 +71,11 @@ class DQGenerator(DQEngineBase):
         Generates a list of data quality rules based on the provided dq profiles.
 
         Args:
-                profiles: A list of data quality profiles to generate rules for.
-                level: The criticality level of the rules (default is "error").
+            profiles: A list of data quality profiles to generate rules for.
+            level: The criticality level of the rules (default is "error").
 
         Returns:
-                A list of dictionaries representing the data quality rules.
+            A list of dictionaries representing the data quality rules.
         """
         if profiles is None:
             profiles = []
@@ -337,22 +337,12 @@ class DQGenerator(DQEngineBase):
         columns = [col.strip() for col in columns]
 
         confidence = params.get("confidence", "unknown")
-        reasoning = params.get("reasoning", "")
-        nulls_distinct = params.get("nulls_distinct", True)
-        llm_detected = params.get("llm_detected", False)
+        nulls_distinct = params.get("nulls_distinct", False)
 
         # Create base metadata
         user_metadata = {
             "pk_detection_confidence": confidence,
-            "pk_detection_reasoning": reasoning,
-            "detected_primary_key": True,
         }
-
-        # Add LLM-specific metadata if this was LLM-detected
-        if llm_detected:
-            user_metadata.update(
-                {"llm_based_detection": True, "detection_method": "llm_analysis", "requires_llm_dependencies": True}
-            )
 
         return {
             "check": {
