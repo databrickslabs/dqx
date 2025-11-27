@@ -547,17 +547,46 @@ def test_is_aggr_with_count_distinct(spark: SparkSession):
     assert "a_count_distinct_greater_than_limit" in actual.columns
 
 
-def test_is_aggr_with_count_distinct_and_group_by_fails(spark: SparkSession):
-    """Test that count_distinct with group_by raises clear error about Spark limitation."""
+def test_is_aggr_with_count_distinct_and_group_by(spark: SparkSession):
+    """Test that count_distinct with group_by works using two-stage aggregation."""
     test_df = spark.createDataFrame(
-        [["group1", "val1"], ["group1", "val2"]],
+        [
+            ["group1", "val1"],
+            ["group1", "val1"],  # Same value
+            ["group1", "val2"],  # Different value - 2 distinct
+            ["group2", "val3"],
+            ["group2", "val3"],  # Same value - only 1 distinct
+        ],
         "a: string, b: string",
     )
 
-    # count_distinct with group_by should raise InvalidParameterError
-    with pytest.raises(InvalidParameterError, match="count_distinct cannot be used with group_by.*Spark limitation"):
-        _, apply_fn = is_aggr_not_greater_than("b", limit=1, aggr_type="count_distinct", group_by=["a"])
-        apply_fn(test_df)
+    checks = [
+        # group1 has 2 distinct values, should exceed limit of 1
+        is_aggr_not_greater_than("b", limit=1, aggr_type="count_distinct", group_by=["a"]),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    # Check that the check was applied
+    assert "b_count_distinct_group_by_a_greater_than_limit" in actual.columns
+
+    # Verify group1 has violations (2 distinct values > limit 1)
+    group1_violations = (
+        actual.filter(F.col("a") == "group1")
+        .select("b_count_distinct_group_by_a_greater_than_limit")
+        .distinct()
+        .collect()
+    )
+    assert len([r for r in group1_violations if r[0] is not None]) > 0
+
+    # Verify group2 passes (1 distinct value <= limit 1)
+    group2_violations = (
+        actual.filter(F.col("a") == "group2")
+        .select("b_count_distinct_group_by_a_greater_than_limit")
+        .distinct()
+        .collect()
+    )
+    assert len([r for r in group2_violations if r[0] is None]) > 0
 
 
 def test_is_aggr_with_approx_count_distinct(spark: SparkSession):

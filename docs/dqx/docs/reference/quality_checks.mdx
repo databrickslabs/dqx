@@ -1604,11 +1604,19 @@ Complex data types are supported as well.
 
 ## Aggregate Function Types
 
-The `is_aggr_*` functions support a wide range of aggregate functions for data quality checks. Functions are categorized as **curated** (recommended for DQ) or **custom** (user-defined, validated at runtime).
+Use `is_aggr_*` functions to validate metrics across your entire dataset or within groups (e.g., "each country has ≤ 1 country code", "P95 latency < 1s per region").
+
+**When to use:**
+- Validate cardinality and uniqueness constraints
+- Monitor statistical properties (variance, outliers)
+- Enforce SLAs and performance thresholds
+- Detect data quality issues across groups
+
+DQX supports 20 **curated** aggregate functions (recommended for data quality) plus any [Databricks aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) as custom aggregates.
 
 ### Curated Aggregate Functions
 
-Curated functions are validated and optimized for data quality use cases:
+Validated and optimized for data quality use cases:
 
 #### Basic Aggregations
 - `count` - Count records (nulls excluded)
@@ -1618,8 +1626,8 @@ Curated functions are validated and optimized for data quality use cases:
 - `max` - Maximum value
 
 #### Cardinality & Uniqueness
-- `count_distinct` - Exact distinct count (global aggregations only, not supported with `group_by`)
-- `approx_count_distinct` - Approximate distinct count using HyperLogLog++ (works with `group_by`, faster for large datasets)
+- `count_distinct` - Exact distinct count (use for uniqueness validation)
+- `approx_count_distinct` - Fast approximate count (±5% accuracy, ideal for very large datasets)
 - `count_if` - Conditional counting
 
 #### Statistical Analysis
@@ -1638,14 +1646,27 @@ Curated functions are validated and optimized for data quality use cases:
 
 ### Custom Aggregates
 
-Custom aggregate functions (including UDAFs) are supported with runtime validation. A warning will be issued, and the function must return a single numeric value per group.
+Any [Databricks aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) can be used as a custom aggregate. DQX will:
+- Issue a warning (use curated functions when possible)
+- Validate the function returns numeric values
 
-**Not suitable:** Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`, `string_agg`) will fail validation.
+**Note:** Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`) will fail with a clear error message explaining they cannot be compared to numeric limits.
 
 ### Extended Examples
 
 ```yaml
-# count_distinct: Exact distinct count (global only, no group_by)
+# Uniqueness: Each country has exactly one country code
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: country_code
+      aggr_type: count_distinct
+      group_by:
+      - country
+      limit: 1
+
+# Cardinality: Total unique users across entire dataset
 - criticality: error
   check:
     function: is_aggr_not_greater_than
@@ -1654,7 +1675,7 @@ Custom aggregate functions (including UDAFs) are supported with runtime validati
       aggr_type: count_distinct
       limit: 1000000
 
-# approx_count_distinct: Fast cardinality estimation (works with group_by)
+# Fast approximate count for very large datasets
 - criticality: error
   check:
     function: is_aggr_not_greater_than
@@ -1730,6 +1751,7 @@ Custom aggregate functions (including UDAFs) are supported with runtime validati
       - service_name
       limit: 100
 ```
+
 
 ```yaml
 # foreign_key check using reference DataFrame

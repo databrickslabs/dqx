@@ -143,7 +143,7 @@ This approach provides static type checking and autocompletion in IDEs, making i
         check_func=check_funcs.is_aggr_not_greater_than,
         column="country_code",
         check_func_kwargs={
-            "aggr_type": "count_distinct",
+            "aggr_type": "count_distinct",  # Exact distinct count (automatically uses two-stage aggregation)
             "group_by": ["country"],
             "limit": 1
         },
@@ -266,15 +266,21 @@ Monitor service performance and ensure SLA compliance:
       limit: 30.0
 ```
 
-<Admonition type="tip" title="Choosing Aggregate Functions">
-- **count_distinct**: Exact cardinality (global only, cannot use with `group_by` due to Spark limitation)
-- **approx_count_distinct**: Fast cardinality estimation (works with `group_by`, uses HyperLogLog++)
-- **stddev/variance**: Anomaly detection, consistency monitoring
-- **percentile**: SLA compliance, outlier detection (P95, P99)
-- **median**: Baseline checks, central tendency
-- **mode**: Most frequent value checks, categorical data quality
-- **approx_percentile**: Fast percentile estimation for large datasets
-- **approx_count_distinct**: Efficient cardinality for high-cardinality columns
+<Admonition type="tip" title="Choosing the Right Aggregate Function">
+**Uniqueness & Cardinality:**
+- `count_distinct` - Exact distinct counts (uniqueness validation)
+- `approx_count_distinct` - Fast approximate counts (very large datasets)
+
+**Statistical Monitoring:**
+- `stddev` / `variance` - Detect anomalies and inconsistencies
+- `median` - Baseline checks, central tendency
+- `mode` - Most frequent value (categorical data)
+
+**Performance & SLAs:**
+- `percentile` - Exact P95/P99 for SLA compliance
+- `approx_percentile` - Fast percentile estimates for large datasets
+
+**Learn more:** See all [Databricks aggregate functions](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha)
 </Admonition>
 
 ### Checks defined using metadata (list of dictionaries)

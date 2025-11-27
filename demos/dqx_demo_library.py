@@ -869,9 +869,11 @@ display(result_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### Example 5: Count Distinct for Uniqueness Validation
+# MAGIC #### Example 5: Uniqueness Validation with Count Distinct
 # MAGIC
 # MAGIC Ensure referential integrity: each country should have exactly one country code.
+# MAGIC
+# MAGIC Use `count_distinct` for exact cardinality validation across groups.
 
 # COMMAND ----------
 
@@ -891,7 +893,7 @@ checks = [
         check_func=check_funcs.is_aggr_not_greater_than,
         column="country_code",
         check_func_kwargs={
-            "aggr_type": "count_distinct",
+            "aggr_type": "count_distinct",  # Exact distinct count per group
             "group_by": ["country"],
             "limit": 1
         },

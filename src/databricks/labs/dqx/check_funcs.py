@@ -53,6 +53,14 @@ CURATED_AGGR_FUNCTIONS = {
     "approx_percentile",
 }
 
+# Aggregate functions incompatible with Spark window functions
+# These require two-stage aggregation (groupBy + join) instead of window functions when used with group_by
+# Spark limitation: DISTINCT operations are not supported in window functions
+WINDOW_INCOMPATIBLE_AGGREGATES = {
+    "count_distinct",  # DISTINCT_WINDOW_FUNCTION_UNSUPPORTED error
+    # Future: Add other aggregates that don't work with windows (e.g., collect_set with DISTINCT)
+}
+
 
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
@@ -2381,15 +2389,6 @@ def _is_aggr_compare(
         InvalidParameterError: If a custom aggregate returns non-numeric or multiple rows per group.
         MissingParameterError: If required parameters for specific aggregates are not provided.
     """
-    # Validate count_distinct with group_by (Spark limitation)
-    if aggr_type == "count_distinct" and group_by:
-        raise InvalidParameterError(
-            "count_distinct cannot be used with group_by due to Spark limitation: "
-            "DISTINCT is not supported in window functions. "
-            "Use 'approx_count_distinct' instead, which provides fast approximate counting using HyperLogLog++ "
-            "and works with both grouped and ungrouped aggregations."
-        )
-
     # Warn if using non-curated aggregate function
     is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
     if not is_curated:
@@ -2447,12 +2446,29 @@ def _is_aggr_compare(
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         if group_by:
-            window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
-            df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+            # Check if aggregate is incompatible with window functions (e.g., count_distinct with DISTINCT)
+            if aggr_type in WINDOW_INCOMPATIBLE_AGGREGATES:
+                # Use two-stage aggregation: groupBy + join (instead of window functions)
+                # This is required for aggregates like count_distinct that don't support window DISTINCT operations
+                group_cols = [F.col(col) if isinstance(col, str) else col for col in group_by]
+                agg_df = df.groupBy(*group_cols).agg(aggr_expr.alias(metric_col))
 
-            # Validate custom aggregates (type check only - window functions return same row count)
-            if not is_curated:
-                _validate_aggregate_return_type(df, aggr_type, metric_col)
+                # Validate custom aggregates before join
+                if not is_curated:
+                    _validate_aggregate_return_type(agg_df, aggr_type, metric_col)
+
+                # Join aggregated metrics back to original DataFrame to maintain row-level granularity
+                # Use column names for join (extract names from Column objects if present)
+                join_cols = [col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by]
+                df = df.join(agg_df, on=join_cols, how="left")
+            else:
+                # Use standard window function approach for window-compatible aggregates
+                window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
+                df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+
+                # Validate custom aggregates (type check only - window functions return same row count)
+                if not is_curated:
+                    _validate_aggregate_return_type(df, aggr_type, metric_col)
         else:
             # When no group-by columns are provided, using partitionBy would move all rows into a single partition,
             # forcing the window function to process the entire dataset in one task.
