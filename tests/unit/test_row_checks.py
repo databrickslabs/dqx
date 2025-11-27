@@ -1,3 +1,4 @@
+import warnings
 import pytest
 from databricks.labs.dqx.check_funcs import (
     is_equal_to,
@@ -53,17 +54,15 @@ def test_col_is_in_list_missing_allowed_list():
 def test_incorrect_aggr_type():
     # With new implementation, invalid aggr_type triggers a warning (not immediate error)
     # The error occurs at runtime when the apply function is called
-    import warnings
-    
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         condition, apply_fn = is_aggr_not_greater_than("a", 1, aggr_type="invalid")
-        
+
         # Should have warning about non-curated aggregate
         assert len(w) > 0
         assert "non-curated" in str(w[0].message).lower()
         assert "invalid" in str(w[0].message)
-    
+
     # Function should return successfully (error will happen at runtime when applied to DataFrame)
     assert condition is not None
     assert apply_fn is not None

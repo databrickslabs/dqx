@@ -692,7 +692,7 @@ def test_is_aggr_with_collect_list_fails(spark: SparkSession):
     test_df = spark.createDataFrame([(1, 10), (2, 20)], "id: int, value: int")
 
     # collect_list returns array which cannot be compared to numeric limit
-    with pytest.raises(InvalidParameterError, match="ArrayType.*cannot be compared"):
+    with pytest.raises(InvalidParameterError, match="array.*cannot be compared"):
         _, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="collect_list")
         apply_fn(test_df)
 
@@ -705,7 +705,7 @@ def test_is_aggr_with_collect_list_fails_with_group_by(spark: SparkSession):
     )
 
     # This is the bug fix: collect_list with group_by should fail gracefully, not with cryptic Spark error
-    with pytest.raises(InvalidParameterError, match="ArrayType.*cannot be compared"):
+    with pytest.raises(InvalidParameterError, match="array.*cannot be compared"):
         _, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="collect_list", group_by=["category"])
         apply_fn(test_df)
 
