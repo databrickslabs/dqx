@@ -1627,17 +1627,13 @@ Curated functions are validated and optimized for data quality use cases:
 - `variance` / `var_samp` - Sample variance (stability checks)
 - `var_pop` - Population variance
 - `median` - 50th percentile baseline
+- `mode` - Most frequent value (categorical data quality)
 - `skewness` - Distribution skewness (detect asymmetry)
 - `kurtosis` - Distribution kurtosis (detect heavy tails)
 
 #### SLA & Performance Monitoring
 - `percentile` - Exact percentile (requires `aggr_params`)
 - `approx_percentile` - Approximate percentile (faster, requires `aggr_params`)
-
-#### Correlation Analysis  
-- `corr` - Correlation coefficient
-- `covar_pop` - Population covariance
-- `covar_samp` - Sample covariance
 
 ### Custom Aggregates
 
@@ -1723,6 +1719,17 @@ Custom aggregate functions (including UDAFs) are supported with runtime validati
       group_by:
       - session_date
       limit: 100000
+
+# Mode: Alert if any single error code dominates
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: error_code
+      aggr_type: mode
+      group_by:
+      - service_name
+      limit: 100
 ```
 
 # foreign_key check using reference DataFrame

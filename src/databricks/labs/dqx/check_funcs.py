@@ -29,6 +29,7 @@ IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
 
 # Curated aggregate functions for data quality checks
+# These are univariate (single-column) aggregate functions suitable for DQ monitoring
 CURATED_AGGR_FUNCTIONS = {
     "count",
     "sum",
@@ -45,13 +46,11 @@ CURATED_AGGR_FUNCTIONS = {
     "var_pop",
     "var_samp",
     "median",
+    "mode",
     "skewness",
     "kurtosis",
     "percentile",
     "approx_percentile",
-    "corr",
-    "covar_pop",
-    "covar_samp",
 }
 
 
@@ -2312,39 +2311,27 @@ def _build_aggregate_expression(
         ) from exc
 
 
-def _validate_custom_aggregate(
-    agg_df: DataFrame,
+def _validate_aggregate_return_type(
+    df: DataFrame,
     aggr_type: str,
     metric_col: str,
-    expected_row_count: int,
 ) -> None:
     """
-    Validate custom aggregate returns proper single numeric value per group.
+    Validate aggregate returns a numeric type that can be compared to limits.
 
-    This function validates that a custom (non-curated) aggregate function behaves correctly
-    by ensuring it returns the expected number of rows and a numeric data type that can be
-    compared to limits.
+    This is a schema-only validation (no data scanning) that checks whether the aggregate
+    function returns a type compatible with numeric comparisons.
 
     Args:
-        agg_df: DataFrame with aggregated results.
+        df: DataFrame containing the aggregate result column.
         aggr_type: Name of the aggregate function being validated.
         metric_col: Column name containing the aggregate result.
-        expected_row_count: Expected number of rows (1 for no group_by, count of groups for group_by).
 
     Raises:
-        InvalidParameterError: If the aggregate returns more rows than expected (not a proper aggregate)
-            or if it returns a non-numeric type (Array, Map, Struct) that cannot be compared to limits.
+        InvalidParameterError: If the aggregate returns a non-numeric type (Array, Map, Struct)
+            that cannot be compared to limits.
     """
-    # Check 1: Row count (must return exactly expected rows)
-    actual_count = agg_df.count()
-    if actual_count > expected_row_count:
-        raise InvalidParameterError(
-            f"Aggregate function '{aggr_type}' returned {actual_count} rows, "
-            f"expected {expected_row_count}. This is not a proper aggregate function."
-        )
-
-    # Check 2: Return type (must be numeric, not array/struct/map)
-    result_type = agg_df.schema[metric_col].dataType
+    result_type = df.schema[metric_col].dataType
     if isinstance(result_type, (types.ArrayType, types.MapType, types.StructType)):
         raise InvalidParameterError(
             f"Aggregate function '{aggr_type}' returned {result_type.typeName()} "
@@ -2452,6 +2439,10 @@ def _is_aggr_compare(
         if group_by:
             window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
             df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+
+            # Validate custom aggregates (type check only - window functions return same row count)
+            if not is_curated:
+                _validate_aggregate_return_type(df, aggr_type, metric_col)
         else:
             # When no group-by columns are provided, using partitionBy would move all rows into a single partition,
             # forcing the window function to process the entire dataset in one task.
@@ -2460,10 +2451,9 @@ def _is_aggr_compare(
             # so no explicit limit is required (informational only).
             agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
 
-            # Validate custom aggregates
+            # Validate custom aggregates (type check only - we already limited to 1 row)
             if not is_curated:
-                expected_rows = 1  # No group_by means single row expected
-                _validate_custom_aggregate(agg_df, aggr_type, metric_col, expected_rows)
+                _validate_aggregate_return_type(agg_df, aggr_type, metric_col)
 
             df = df.crossJoin(agg_df)  # bring the metric across all rows
 

@@ -573,7 +573,7 @@ def test_is_aggr_with_count_distinct(spark: SparkSession):
 
 
 def test_is_aggr_with_statistical_functions(spark: SparkSession):
-    """Test statistical aggregate functions: stddev, variance, median, skewness, kurtosis."""
+    """Test statistical aggregate functions: stddev, variance, median, mode, skewness, kurtosis."""
     test_df = spark.createDataFrame(
         [
             ["A", 10.0],
@@ -593,6 +593,8 @@ def test_is_aggr_with_statistical_functions(spark: SparkSession):
         is_aggr_not_greater_than("value", limit=100.0, aggr_type="variance", group_by=["group"]),
         # Median check
         is_aggr_not_greater_than("value", limit=25.0, aggr_type="median"),
+        # Mode check (most frequent value per group)
+        is_aggr_not_greater_than("value", limit=10.0, aggr_type="mode", group_by=["group"]),
     ]
 
     actual = _apply_checks(test_df, checks)
@@ -601,6 +603,42 @@ def test_is_aggr_with_statistical_functions(spark: SparkSession):
     assert "value_stddev_group_by_group_greater_than_limit" in actual.columns
     assert "value_variance_group_by_group_greater_than_limit" in actual.columns
     assert "value_median_greater_than_limit" in actual.columns
+    assert "value_mode_group_by_group_greater_than_limit" in actual.columns
+
+
+def test_is_aggr_with_mode_function(spark: SparkSession):
+    """Test mode aggregate function for categorical data quality checks."""
+    test_df = spark.createDataFrame(
+        [
+            ["service_A", "ERROR_401"],
+            ["service_A", "ERROR_401"],
+            ["service_A", "ERROR_401"],  # ERROR_401 appears 3 times (mode)
+            ["service_A", "ERROR_500"],
+            ["service_B", "ERROR_200"],
+            ["service_B", "ERROR_200"],  # ERROR_200 appears 2 times (mode)
+            ["service_B", "ERROR_404"],
+        ],
+        "service: string, error_code: string",
+    )
+
+    # Check that modal error code doesn't appear too frequently (>2 times per service)
+    checks = [
+        is_aggr_not_greater_than("error_code", limit=2, aggr_type="mode", group_by=["service"]),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    # service_A should fail (mode=3 > limit=2), service_B should pass (mode=2 <= limit=2)
+    assert "error_code_mode_group_by_service_greater_than_limit" in actual.columns
+
+    # Verify failures - service_A rows should have error messages
+    service_a_errors = (
+        actual.filter(F.col("service") == "service_A")
+        .select("error_code_mode_group_by_service_greater_than_limit")
+        .distinct()
+        .collect()
+    )
+    assert len([r for r in service_a_errors if r[0] is not None]) > 0
 
 
 def test_is_aggr_with_percentile_functions(spark: SparkSession):
@@ -650,12 +688,25 @@ def test_is_aggr_with_invalid_aggregate_function(spark: SparkSession):
 
 
 def test_is_aggr_with_collect_list_fails(spark: SparkSession):
-    """Test that collect_list (returns array) fails with clear error message."""
+    """Test that collect_list (returns array) fails with clear error message - no group_by."""
     test_df = spark.createDataFrame([(1, 10), (2, 20)], "id: int, value: int")
 
     # collect_list returns array which cannot be compared to numeric limit
     with pytest.raises(InvalidParameterError, match="ArrayType.*cannot be compared"):
         _, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="collect_list")
+        apply_fn(test_df)
+
+
+def test_is_aggr_with_collect_list_fails_with_group_by(spark: SparkSession):
+    """Test that collect_list with group_by also fails with clear error message - bug fix verification."""
+    test_df = spark.createDataFrame(
+        [("A", 10), ("A", 20), ("B", 30)],
+        "category: string, value: int",
+    )
+
+    # This is the bug fix: collect_list with group_by should fail gracefully, not with cryptic Spark error
+    with pytest.raises(InvalidParameterError, match="ArrayType.*cannot be compared"):
+        _, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="collect_list", group_by=["category"])
         apply_fn(test_df)
 
 

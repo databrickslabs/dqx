@@ -691,6 +691,219 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Extended Aggregate Functions for Data Quality Checks
+# MAGIC
+# MAGIC DQX now supports 20 curated aggregate functions for advanced data quality monitoring:
+# MAGIC - **Statistical functions**: `stddev`, `variance`, `median`, `mode`, `skewness`, `kurtosis` for anomaly detection
+# MAGIC - **Percentile functions**: `percentile`, `approx_percentile` for SLA monitoring
+# MAGIC - **Cardinality functions**: `count_distinct`, `approx_count_distinct` for uniqueness validation
+# MAGIC - **Custom aggregates**: Support for user-defined functions with runtime validation
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 1: Statistical Functions - Anomaly Detection with Standard Deviation
+# MAGIC
+# MAGIC Detect unusual variance in sensor readings per machine. High standard deviation indicates unstable sensors that may need calibration.
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx import check_funcs
+from databricks.sdk import WorkspaceClient
+
+# Manufacturing sensor data with readings from multiple machines
+manufacturing_df = spark.createDataFrame([
+    ["M1", "2024-01-01", 20.1],
+    ["M1", "2024-01-02", 20.3],
+    ["M1", "2024-01-03", 20.2],  # Machine 1: stable readings (low stddev)
+    ["M2", "2024-01-01", 18.5],
+    ["M2", "2024-01-02", 25.7],
+    ["M2", "2024-01-03", 15.2],  # Machine 2: unstable readings (high stddev) - should FAIL
+    ["M3", "2024-01-01", 19.8],
+    ["M3", "2024-01-02", 20.1],
+    ["M3", "2024-01-03", 19.9],  # Machine 3: stable readings
+], "machine_id: string, date: string, temperature: double")
+
+# Quality check: Standard deviation should not exceed 3.0 per machine
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="temperature",
+        check_func_kwargs={
+            "aggr_type": "stddev",
+            "group_by": ["machine_id"],
+            "limit": 3.0
+        },
+    ),
+]
+
+dq_engine = DQEngine(WorkspaceClient())
+result_df = dq_engine.apply_checks(manufacturing_df, checks)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 2: Approximate Aggregate Functions - Efficient Cardinality Estimation
+# MAGIC
+# MAGIC **`approx_count_distinct`** provides fast, memory-efficient cardinality estimation for large datasets.
+# MAGIC
+# MAGIC **From [Databricks Documentation](https://docs.databricks.com/aws/en/sql/language-manual/functions/approx_count_distinct.html):**
+# MAGIC - Uses **HyperLogLog++** (HLL++) algorithm, a state-of-the-art cardinality estimator
+# MAGIC - **Accurate within 5%** by default (configurable via `relativeSD` parameter)
+# MAGIC - **Memory efficient**: Uses fixed memory regardless of cardinality
+# MAGIC - **Ideal for**: High-cardinality columns, large datasets, real-time analytics
+# MAGIC
+# MAGIC **Use Case**: Monitor daily active users without expensive exact counting.
+
+# COMMAND ----------
+
+# User activity data with high cardinality
+user_activity_df = spark.createDataFrame([
+    ["2024-01-01", f"user_{i}"] for i in range(1, 95001)  # 95,000 distinct users on day 1
+] + [
+    ["2024-01-02", f"user_{i}"] for i in range(1, 50001)  # 50,000 distinct users on day 2
+], "activity_date: string, user_id: string")
+
+# Quality check: Ensure daily active users don't drop below 60,000
+# Using approx_count_distinct is much faster than count_distinct for large datasets
+checks = [
+    DQDatasetRule(
+        criticality="warn",
+        check_func=check_funcs.is_aggr_not_less_than,
+        column="user_id",
+        check_func_kwargs={
+            "aggr_type": "approx_count_distinct",  # Fast approximate counting
+            "group_by": ["activity_date"],
+            "limit": 60000
+        },
+    ),
+]
+
+result_df = dq_engine.apply_checks(user_activity_df, checks)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 3: Custom Aggregate Functions with Runtime Validation
+# MAGIC
+# MAGIC DQX supports custom aggregate functions (including UDAFs) with:
+# MAGIC - **Warning**: Non-curated functions trigger a warning
+# MAGIC - **Runtime validation**: Ensures the function returns numeric values compatible with comparisons
+# MAGIC - **Graceful errors**: Invalid aggregates (e.g., `collect_list` returning arrays) fail with clear messages
+
+# COMMAND ----------
+
+import warnings
+
+# Sensor data with multiple readings per sensor
+sensor_sample_df = spark.createDataFrame([
+    ["S1", 45.2],
+    ["S1", 45.8],
+    ["S2", 78.1],
+    ["S2", 78.5],
+], "sensor_id: string, reading: double")
+
+# Using a valid but non-curated aggregate function: any_value
+# This will work but produce a warning
+checks = [
+    DQDatasetRule(
+        criticality="warn",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="reading",
+        check_func_kwargs={
+            "aggr_type": "any_value",  # Not in curated list - triggers warning
+            "group_by": ["sensor_id"],
+            "limit": 100.0
+        },
+    ),
+]
+
+# Capture warnings during execution
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    result_df = dq_engine.apply_checks(sensor_sample_df, checks)
+    
+    # Display warning message if present
+    if w:
+        print(f"⚠️  Warning: {w[0].message}")
+
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 4: Percentile Functions for SLA Monitoring
+# MAGIC
+# MAGIC Monitor P95 latency to ensure 95% of API requests meet SLA requirements.
+
+# COMMAND ----------
+
+# API latency data in milliseconds
+api_latency_df = spark.createDataFrame([
+    ["2024-01-01", i * 10.0] for i in range(1, 101)  # 10ms to 1000ms latencies
+], "date: string, latency_ms: double")
+
+# Quality check: P95 latency must be under 950ms
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="latency_ms",
+        check_func_kwargs={
+            "aggr_type": "percentile",
+            "aggr_params": {"percentile": 0.95},  # P95
+            "group_by": ["date"],
+            "limit": 950.0
+        },
+    ),
+]
+
+result_df = dq_engine.apply_checks(api_latency_df, checks)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 5: Count Distinct for Uniqueness Validation
+# MAGIC
+# MAGIC Ensure referential integrity: each country should have exactly one country code.
+
+# COMMAND ----------
+
+# Country data with potential duplicates
+country_df = spark.createDataFrame([
+    ["US", "USA"],
+    ["US", "USA"],  # OK: same code
+    ["FR", "FRA"],
+    ["FR", "FRN"],  # ERROR: different codes for same country
+    ["DE", "DEU"],
+], "country: string, country_code: string")
+
+# Quality check: Each country must have exactly one distinct country code
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="country_code",
+        check_func_kwargs={
+            "aggr_type": "count_distinct",
+            "group_by": ["country"],
+            "limit": 1
+        },
+    ),
+]
+
+result_df = dq_engine.apply_checks(country_df, checks)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Creating custom dataset-level checks
 # MAGIC Requirement: Fail all readings from a sensor if any reading for that sensor exceeds a specified threshold from the sensor specification table.
 
