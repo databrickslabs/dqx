@@ -420,7 +420,7 @@ You can define checks using DQX classes or as metadata (list of dictionaries) or
 
 ### Applying checks using foreachBatch  
   
-Spark's `foreachBatch` allows users to define an arbitrary processing function run for each streaming batch. When using DQX in a `foreachBatch` function, create a `DQEngine` instance with a mock `WorkspaceClient`.  
+Spark's `foreachBatch` allows users to define an arbitrary processing function run for each streaming batch. DQX requires authentication with a Databricks SDK `WorkspaceClient` which is not supported inside `foreachBatch`. To use DQX in a `foreachBatch` function, create a `DQEngine` instance with a mock `WorkspaceClient`.  
   
 <Admonition type="warning" title="Engine functionality with mocked WorkspaceClient">  
 Some DQX engine methods require a valid Databricks `WorkspaceClient`. Methods must support local execution to be run in a `foreachBatch` function with a mocked `WorkspaceClient`. Check the **Supports local execution** column [here](/docs/reference/engine/#dqx-engine-methods) to verify that DQX engine methods can be executed with a mocked client.  
