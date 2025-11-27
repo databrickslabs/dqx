@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import tempfile
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 import pyspark.sql.functions as F
@@ -10,35 +10,17 @@ import yaml
 from datacontract.data_contract import DataContract
 from datacontract.lint.resolve import resolve_data_contract_v2
 
-from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import ODCSContractError, ParameterError
+from databricks.labs.dqx.errors import ODCSContractError, ParameterError, MissingParameterError
 from databricks.labs.dqx.profiler.generator import DQGenerator
 
 
 class DataContractGeneratorTestBase:
     """Base class with shared fixtures for data contract generator tests."""
-
-    @pytest.fixture
-    def mock_workspace_client(self):
-        """Create mock WorkspaceClient."""
-        return MagicMock(spec=WorkspaceClient)
-
-    @pytest.fixture
-    def mock_spark(self):
-        """Create mock SparkSession."""
-        return Mock()
-
-    @pytest.fixture
-    def generator(self, mock_workspace_client, mock_spark):
-        """Create DQGenerator instance."""
-        gen = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
-        gen.llm_engine = None
-        return gen
 
     @pytest.fixture
     def sample_contract_path(self):
@@ -1236,7 +1218,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         monkeypatch.setattr(generator_module, "DATACONTRACT_ENABLED", False)
 
         # Attempt to generate rules should raise ImportError
-        with pytest.raises(ImportError, match="Data contract support requires datacontract-cli"):
+        with pytest.raises(MissingParameterError, match="Data contract support requires datacontract-cli"):
             generator.generate_rules_from_contract(contract_file="dummy.yaml")
 
     def test_nested_fields_generate_rules(self, generator):

@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from unittest.mock import create_autospec
-from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 from databricks.sdk.errors import DatabricksError
@@ -53,12 +52,10 @@ def test_engine_core_creation_with_observer():
     assert engine_core.run_id == observer.id
 
 
-def test_engine_creation_no_workspace_connection():
-    spark_mock = create_autospec(SparkSession)
-    ws = MagicMock(spec=WorkspaceClient)
-    ws.clusters.select_spark_version.side_effect = DatabricksError()
+def test_engine_creation_no_workspace_connection(mock_workspace_client, mock_spark):
+    mock_workspace_client.clusters.select_spark_version.side_effect = DatabricksError()
 
     with pytest.raises(DatabricksError):
-        DQEngine(spark=spark_mock, workspace_client=ws)
+        DQEngine(spark=mock_spark, workspace_client=mock_workspace_client)
     with pytest.raises(DatabricksError):
-        DQEngineCore(spark=spark_mock, workspace_client=ws)
+        DQEngineCore(spark=mock_spark, workspace_client=mock_workspace_client)

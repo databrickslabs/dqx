@@ -163,8 +163,7 @@ def test_get_training_examples_with_custom_check_functions():
         ("s3://bucket/path/to/data", "load"),
     ],
 )
-def test_get_column_metadata(location, spark_read_mock_method):
-    mock_spark = Mock()
+def test_get_column_metadata(location, spark_read_mock_method, mock_spark):
     mock_df = Mock()
     mock_schema = Mock()
     mock_schema.fields = [

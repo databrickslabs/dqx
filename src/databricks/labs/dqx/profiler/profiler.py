@@ -154,7 +154,7 @@ class DQProfiler(DQEngineBase):
             A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
         if not input_config or not input_config.location:
-            raise MissingParameterError("Input config with location (table name) is required")
+            raise MissingParameterError("Input config with location is required")
 
         logger.info(f"Profiling {input_config.location} with options: {options}")
         df = read_input_data(spark=self.spark, input_config=input_config)

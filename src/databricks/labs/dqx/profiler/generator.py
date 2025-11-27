@@ -66,13 +66,13 @@ class DQGenerator(DQEngineBase):
         )
 
     @telemetry_logger("generator", "generate_dq_rules")
-    def generate_dq_rules(self, profiles: list[DQProfile] | None = None, level: str = "error") -> list[dict]:
+    def generate_dq_rules(self, profiles: list[DQProfile] | None = None, criticality: str = "error") -> list[dict]:
         """
         Generates a list of data quality rules based on the provided dq profiles.
 
         Args:
             profiles: A list of data quality profiles to generate rules for.
-            level: The criticality level of the rules (default is "error").
+            criticality: The criticality of the rules as "warn" or "error (default is "error").
 
         Returns:
             A list of dictionaries representing the data quality rules.
@@ -88,7 +88,7 @@ class DQGenerator(DQEngineBase):
             if rule_name not in self._checks_mapping:
                 logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
                 continue
-            expr = self._checks_mapping[rule_name](column, level, **params)
+            expr = self._checks_mapping[rule_name](column, criticality, **params)
 
             if expr:
                 if dataset_filter is not None:
@@ -164,20 +164,20 @@ class DQGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs").
             generate_predefined_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
-            default_criticality: Default criticality level for generated rules (default is "error").
+            default_criticality: Default criticality for generated rules as "warn" or "error" (default is "error").
 
         Returns:
             A list of dictionaries representing the generated DQX quality rules.
 
         Raises:
-            ImportError: If datacontract-cli is not installed.
-            ValueError: If neither or both parameters are provided, or format not supported.
+            MissingParameterError: If datacontract-cli is not installed.
+            ParameterError: If neither or both parameters are provided, or format not supported.
 
         Note:
             Exactly one of 'contract' or 'contract_file' must be provided.
         """
         if not DATACONTRACT_ENABLED:
-            raise ImportError(
+            raise MissingParameterError(
                 "Data contract support requires datacontract-cli. "
                 "Install it with: pip install 'databricks-labs-dqx[datacontract]'"
             )
@@ -200,13 +200,13 @@ class DQGenerator(DQEngineBase):
         )
 
     @staticmethod
-    def dq_generate_is_in(column: str, level: str = "error", **params: dict):
+    def dq_generate_is_in(column: str, criticality: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is in a specified list.
 
         Args:
                 column: The name of the column to check.
-                level: The criticality level of the rule (default is "error").
+                criticality: The criticality of the rule as "warn" or "error"  (default is "error").
                 params: Additional parameters, including the list of values to check against.
 
         Returns:
@@ -215,17 +215,17 @@ class DQGenerator(DQEngineBase):
         return {
             "check": {"function": "is_in_list", "arguments": {"column": column, "allowed": params["in"]}},
             "name": f"{column}_other_value",
-            "criticality": level,
+            "criticality": criticality,
         }
 
     @staticmethod
-    def dq_generate_min_max(column: str, level: str = "error", **params: dict):
+    def dq_generate_min_max(column: str, criticality: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is within a specified range.
 
         Args:
                 column: The name of the column to check.
-                level: The criticality level of the rule (default is "error").
+                criticality: The criticality of the rule as "warn" or "error"  (default is "error").
                 params: Additional parameters, including the minimum and maximum values.
 
         Returns:
@@ -248,7 +248,7 @@ class DQGenerator(DQEngineBase):
                     },
                 },
                 "name": f"{column}_isnt_in_range",
-                "criticality": level,
+                "criticality": criticality,
             }
 
         if max_limit is not None:
@@ -258,7 +258,7 @@ class DQGenerator(DQEngineBase):
                     "arguments": {"column": column, "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
                 },
                 "name": f"{column}_not_greater_than",
-                "criticality": level,
+                "criticality": criticality,
             }
 
         if min_limit is not None:
@@ -268,19 +268,19 @@ class DQGenerator(DQEngineBase):
                     "arguments": {"column": column, "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
                 },
                 "name": f"{column}_not_less_than",
-                "criticality": level,
+                "criticality": criticality,
             }
 
         return None
 
     @staticmethod
-    def dq_generate_is_not_null(column: str, level: str = "error", **params: dict):
+    def dq_generate_is_not_null(column: str, criticality: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null.
 
         Args:
                 column: The name of the column to check.
-                level: The criticality level of the rule (default is "error").
+                criticality: The criticality of the rule as "warn" or "error"  (default is "error").
                 params: Additional parameters.
 
         Returns:
@@ -291,17 +291,17 @@ class DQGenerator(DQEngineBase):
         return {
             "check": {"function": "is_not_null", "arguments": {"column": column}},
             "name": f"{column}_is_null",
-            "criticality": level,
+            "criticality": criticality,
         }
 
     @staticmethod
-    def dq_generate_is_not_null_or_empty(column: str, level: str = "error", **params: dict):
+    def dq_generate_is_not_null_or_empty(column: str, criticality: str = "error", **params: dict):
         """
         Generates a data quality rule to check if a column's value is not null or empty.
 
         Args:
                 column: The name of the column to check.
-                level: The criticality level of the rule (default is "error").
+                criticality: The criticality of the rule as "warn" or "error"  (default is "error").
                 params: Additional parameters, including whether to trim strings.
 
         Returns:
@@ -314,18 +314,18 @@ class DQGenerator(DQEngineBase):
                 "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
             },
             "name": f"{column}_is_null_or_empty",
-            "criticality": level,
+            "criticality": criticality,
         }
 
     @staticmethod
-    def dq_generate_is_unique(column: str, level: str = "error", **params: dict):
+    def dq_generate_is_unique(column: str, criticality: str = "error", **params: dict):
         """Generates a data quality rule to check if specified columns are unique.
 
         Uses is_unique with nulls_distinct=True for uniqueness validation.
 
         Args:
             column: Comma-separated list of column names that form the primary key. Uses all columns if not provided.
-            level: The criticality level of the rule (default is "error").
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
             params: Additional parameters including columns list, confidence, reasoning, etc.
 
         Returns:
@@ -350,7 +350,7 @@ class DQGenerator(DQEngineBase):
                 "arguments": {"columns": columns, "nulls_distinct": nulls_distinct},
             },
             "name": f"primary_key_{'_'.join(columns)}_validation",
-            "criticality": level,
+            "criticality": criticality,
             "user_metadata": user_metadata,
         }
 
