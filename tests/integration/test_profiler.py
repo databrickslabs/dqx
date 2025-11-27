@@ -5,7 +5,7 @@ import pytest
 import pyspark.sql.types as T
 from databricks.sdk.errors import NotFound
 
-from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
 from tests.conftest import TEST_CATALOG
@@ -69,9 +69,9 @@ def test_profiler(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, rules = profiler.profile(inp_df, options={"sample_fraction": None})
+    stats, profiles = profiler.profile(inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
 
-    expected_rules = [
+    expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
@@ -106,7 +106,7 @@ def test_profiler(spark, ws):
     ]
     print(stats)
     assert len(stats.keys()) > 0
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profiler_rounding_midnight_behavior(spark, ws):
@@ -167,9 +167,9 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    stats, rules = profiler.profile(inp_df, options={"sample_fraction": None})
+    stats, profiles = profiler.profile(inp_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
 
-    expected_rules = [
+    expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
@@ -203,7 +203,7 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
         DQProfile(name="is_not_null", column="b1", description=None, parameters=None),
     ]
     assert len(stats.keys()) > 0
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profiler_non_default_profile_options(spark, ws):
@@ -273,17 +273,17 @@ def test_profiler_non_default_profile_options(spark, ws):
         "outlier_columns": ["t1", "s1"],  # remove outliers in all columns of appropriate type
         "num_sigmas": 1,  # number of sigmas to use when remove_outliers is True
         "trim_strings": False,  # trim whitespace from strings
-        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
+        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty profile if we have less than 1 percent of empty strings
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
         "filter": "t1 > 0",  # filter out the first row
-        "detect_primary_keys": False,  # disable pk detection
+        "llm_primary_key_detection": False,  # disable pk detection
     }
 
-    stats, rules = profiler.profile(input_df, columns=input_df.columns, options=profile_options)
+    stats, profiles = profiler.profile(input_df, columns=input_df.columns, options=profile_options)
 
-    expected_rules = [
+    expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
             name="min_max",
@@ -319,7 +319,7 @@ def test_profiler_non_default_profile_options(spark, ws):
     ]
     print(stats)
     assert len(stats.keys()) > 0
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns(spark, ws):
@@ -380,16 +380,16 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         "remove_outliers": True,  # remove outliers
         "num_sigmas": 1,  # number of sigmas to use when remove_outliers is True
         "trim_strings": False,  # trim whitespace from strings
-        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
+        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty profile if we have less than 1 percent of empty strings
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
-        "detect_primary_keys": False,  # disable pk detection
+        "llm_primary_key_detection": False,  # disable pk detection
     }
 
-    stats, rules = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
+    stats, profiles = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
 
-    expected_rules = [
+    expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
@@ -415,7 +415,7 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         ),
     ]
     assert len(stats.keys()) > 0
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
@@ -477,16 +477,16 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
         "outlier_columns": ["t1", "s1"],  # remove outliers in all columns of appropriate type
         "num_sigmas": 1,  # number of sigmas to use when remove_outliers is True
         "trim_strings": False,  # trim whitespace from strings
-        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty rule if we have less than 1 percent of empty strings
+        "max_empty_ratio": 0.01,  # generate is_not_null_or_empty profile if we have less than 1 percent of empty strings
         "sample_fraction": 1.0,  # fraction of data to sample
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
-        "detect_primary_keys": False,  # disable pk detection
+        "llm_primary_key_detection": False,  # disable pk detection
     }
 
-    stats, rules = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
+    stats, profiles = profiler.profile(inp_df, columns=inp_df.columns, options=profile_options)
 
-    expected_rules = [
+    expected_profiles = [
         DQProfile(name="is_not_null", column="t1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
@@ -509,17 +509,17 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
         ),
     ]
     assert len(stats.keys()) > 0
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profiler_empty_df(spark, ws):
     test_df = spark.createDataFrame([], "data: string")
 
     profiler = DQProfiler(ws)
-    actual_summary_stats, actual_dq_rules = profiler.profile(test_df)
+    actual_summary_stats, actual_dq_profiles = profiler.profile(test_df)
 
     assert len(actual_summary_stats.keys()) > 0
-    assert len(actual_dq_rules) == 0
+    assert len(actual_dq_profiles) == 0
 
 
 def test_profiler_when_numeric_field_is_empty(spark, ws):
@@ -527,9 +527,9 @@ def test_profiler_when_numeric_field_is_empty(spark, ws):
     input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], schema)
 
     profiler = DQProfiler(ws)
-    stats, rules = profiler.profile(input_df, options={"sample_fraction": None})
+    stats, profiles = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
 
-    expected_rules = [
+    expected_profiles = [
         DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
         DQProfile(
             name='min_max', column='col1', description='Real min/max values were used', parameters={'max': 2, 'min': 1}
@@ -547,8 +547,12 @@ def test_profiler_when_numeric_field_is_empty(spark, ws):
         ),
     ]
 
+    for profile in profiles:
+        if profile.name == "is_unique":
+            profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+
     assert len(stats.keys()) > 0
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profiler_sampling(spark, ws):
@@ -570,15 +574,19 @@ def test_profiler_sampling(spark, ws):
     )
 
     profiler = DQProfiler(ws)
-    profiler_opts = {"sample_seed": 44, "limit": 7}  # default sample_fraction is 0.3
+    profiler_opts = {
+        "sample_seed": 44,
+        "limit": 7,
+        "llm_primary_key_detection": False,
+    }  # default sample_fraction is 0.3
     cols = ["col1", "col2", "col4"]
-    stats, rules = profiler.profile(input_df, columns=cols, options=profiler_opts)
-    stats2, rules2 = profiler.profile(input_df, columns=cols, options=profiler_opts)
+    stats, profiles = profiler.profile(input_df, columns=cols, options=profiler_opts)
+    stats2, profiles2 = profiler.profile(input_df, columns=cols, options=profiler_opts)
 
     assert len(stats.keys()) == 3
-    assert len(rules) > 0
+    assert len(profiles) > 0
     assert stats == stats2
-    assert rules == rules2
+    assert profiles == profiles2
 
 
 def test_profile_table(spark, ws, make_schema, make_random):
@@ -607,10 +615,11 @@ def test_profile_table(spark, ws, make_schema, make_random):
     input_df.write.format("delta").saveAsTable(table_name)
 
     profiler = DQProfiler(ws)
-    stats, rules = profiler.profile_table(
-        input_config=InputConfig(location=table_name), options={"sample_fraction": None}
+    stats, profiles = profiler.profile_table(
+        input_config=InputConfig(location=table_name),
+        options={"sample_fraction": None, "llm_primary_key_detection": False},
     )
-    expected_rules = [
+    expected_profiles = [
         DQProfile(name="is_not_null", column="id", description=None, parameters=None),
         DQProfile(
             name="min_max", column="id", description="Real min/max values were used", parameters={"min": 1, "max": 4}
@@ -635,7 +644,7 @@ def test_profile_table(spark, ws, make_schema, make_random):
 
     assert len(stats.keys()) > 0
     assert stats["id"]["count"] == 4  # Verify we got all records
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
@@ -667,9 +676,10 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
         "max_null_ratio": 0.5,
         "remove_outliers": False,
         "trim_strings": False,
+        "llm_primary_key_detection": False,
     }
-    stats, rules = profiler.profile_table(InputConfig(location=table_name), options=custom_opts)
-    expected_rules = [
+    stats, profiles = profiler.profile_table(InputConfig(location=table_name), options=custom_opts)
+    expected_profiles = [
         DQProfile(
             name="is_not_null",
             column="category",
@@ -687,7 +697,7 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
 
     assert len(stats.keys()) > 0
     assert stats["category"]["count"] == 10
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profile_table_with_column_selection(spark, ws, make_schema, make_random):
@@ -708,10 +718,12 @@ def test_profile_table_with_column_selection(spark, ws, make_schema, make_random
 
     profiler = DQProfiler(ws)
     selected_cols = ["col1", "col3"]  # Only profile these columns
-    stats, rules = profiler.profile_table(
-        input_config=InputConfig(location=table_name), columns=selected_cols, options={"sample_fraction": None}
+    stats, profiles = profiler.profile_table(
+        input_config=InputConfig(location=table_name),
+        columns=selected_cols,
+        options={"sample_fraction": None, "llm_primary_key_detection": False},
     )
-    expected_rules = [
+    expected_profiles = [
         DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
         DQProfile(
             name="min_max", column="col1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
@@ -730,7 +742,7 @@ def test_profile_table_with_column_selection(spark, ws, make_schema, make_random
     assert "col3" in stats
     assert "col2" not in stats  # Should not be included
     assert "col4" not in stats  # Should not be included
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profile_tables_for_patterns(spark, ws, make_schema, make_random):
@@ -749,11 +761,11 @@ def test_profile_tables_for_patterns(spark, ws, make_schema, make_random):
 
     profiler = DQProfiler(ws)
     options = [
-        {"table": table1_name, "options": {"sample_fraction": None}},
-        {"table": table2_name, "options": {"sample_fraction": None}},
+        {"table": table1_name, "options": {"sample_fraction": None, "llm_primary_key_detection": False}},
+        {"table": table2_name, "options": {"sample_fraction": None, "llm_primary_key_detection": False}},
     ]
     profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
-    expected_rules = {
+    expected_profiles = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
             DQProfile(
@@ -795,9 +807,9 @@ def test_profile_tables_for_patterns(spark, ws, make_schema, make_random):
             ),
         ],
     }
-    for table_name, (stats, rules) in profiles.items():
+    for table_name, (stats, profiles) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        assert profiles == expected_profiles[table_name], f"Profiles did not match expected for {table_name}"
 
 
 def test_profile_tables_for_patterns_with_exclude_patterns(spark, ws, make_schema, make_random):
@@ -819,7 +831,7 @@ def test_profile_tables_for_patterns_with_exclude_patterns(spark, ws, make_schem
 
     profiler = DQProfiler(ws)
     options = [
-        {"table": table_name, "options": {"sample_fraction": None}},
+        {"table": table_name, "options": {"sample_fraction": None, "llm_primary_key_detection": False}},
     ]
     profiles = profiler.profile_tables_for_patterns(
         patterns=[table_name],
@@ -827,7 +839,7 @@ def test_profile_tables_for_patterns_with_exclude_patterns(spark, ws, make_schem
         exclude_patterns=[f"*{output_table_suffix}", f"*{quarantine_table_suffix}"],
     )
 
-    expected_rules = {
+    expected_profiles = {
         table_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
             DQProfile(
@@ -858,9 +870,9 @@ def test_profile_tables_for_patterns_with_exclude_patterns(spark, ws, make_schem
             ),
         ],
     }
-    for table_name, (stats, rules) in profiles.items():
+    for table_name, (stats, profiles) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        assert profiles == expected_profiles[table_name], f"Profiles did not match expected for {table_name}"
 
 
 def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
@@ -879,13 +891,13 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
     input_df2.write.format("delta").saveAsTable(table2_name)
 
     options = [
-        {"table": f"*{known_random}", "options": {"sample_fraction": None}},
-        {"table": table2_name, "options": {"sample_fraction": None}},
+        {"table": f"*{known_random}", "options": {"sample_fraction": None, "llm_primary_key_detection": False}},
+        {"table": table2_name, "options": {"sample_fraction": None, "llm_primary_key_detection": False}},
     ]
     profiles = DQProfiler(ws).profile_tables_for_patterns(
         patterns=[f"{catalog_name}.{schema_name}.*{known_random}"], options=options
     )
-    expected_rules = {
+    expected_profiles = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
             DQProfile(
@@ -917,9 +929,9 @@ def test_profile_tables_include_patterns(spark, ws, make_schema, make_random):
         ],
     }
 
-    for table_name, (stats, rules) in profiles.items():
+    for table_name, (stats, profiles) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        assert profiles == expected_profiles[table_name], f"Profiles did not match expected for {table_name}"
 
 
 def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
@@ -933,7 +945,7 @@ def test_profile_tables_no_pattern_match(spark, ws, make_schema, make_random):
 
     no_match_pattern = "nonexistent_catalog.*"
     profiler = DQProfiler(ws)
-    options = [{"table": table1_name, "options": {"sample_fraction": None}}]
+    options = [{"table": table1_name, "options": {"sample_fraction": None, "llm_primary_key_detection": False}}]
     with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
         profiler.profile_tables_for_patterns(patterns=[no_match_pattern], options=options)
 
@@ -961,7 +973,7 @@ def test_profile_tables_for_patterns_with_no_options(spark, ws, make_schema, mak
 
     for table_name, (stats, _) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        # not asserting rules here because of default sampling which creates non-deterministic results
+        # not asserting profiles here because of default sampling which creates non-deterministic results
 
 
 def test_profile_tables_for_patterns_with_no_matched_options(spark, ws, make_schema, make_random):
@@ -980,13 +992,16 @@ def test_profile_tables_for_patterns_with_no_matched_options(spark, ws, make_sch
 
     profiler = DQProfiler(ws)
     options = [
-        {"table": "unmatched_catalog.*", "options": {"max_null_ratio": 1.0}},
-        {"table": f"{catalog_name}.unmatched_schema.*", "options": {"max_null_ratio": 1.0}},
-        {"table": table1_name, "options": {"sample_fraction": 1.0}},
-        {"table": table2_name, "options": {"sample_fraction": 1.0}},
+        {"table": "unmatched_catalog.*", "options": {"max_null_ratio": 1.0, "llm_primary_key_detection": False}},
+        {
+            "table": f"{catalog_name}.unmatched_schema.*",
+            "options": {"max_null_ratio": 1.0, "llm_primary_key_detection": False},
+        },
+        {"table": table1_name, "options": {"sample_fraction": 1.0, "llm_primary_key_detection": False}},
+        {"table": table2_name, "options": {"sample_fraction": 1.0, "llm_primary_key_detection": False}},
     ]
     profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
-    expected_rules = {
+    expected_profiles = {
         table1_name: [
             DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
             DQProfile(name="is_not_null_or_empty", column="col2", description=None, parameters={"trim_strings": True}),
@@ -998,9 +1013,9 @@ def test_profile_tables_for_patterns_with_no_matched_options(spark, ws, make_sch
             DQProfile(name="is_not_null", column="col3", description=None, parameters=None),
         ],
     }
-    for table_name, (stats, rules) in profiles.items():
+    for table_name, (stats, profiles) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        assert profiles == expected_profiles[table_name], f"Profiles did not match expected for {table_name}"
 
 
 def test_profile_tables_for_patterns_with_common_opts(spark, ws, make_schema, make_random):
@@ -1037,11 +1052,12 @@ def test_profile_tables_for_patterns_with_common_opts(spark, ws, make_schema, ma
                 "remove_outliers": False,
                 "sample_fraction": 1.0,
                 "trim_strings": False,
+                "llm_primary_key_detection": False,
             },
         }
     ]
     profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
-    expected_rules = {
+    expected_profiles = {
         table1_name: [
             DQProfile(
                 name="is_not_null",
@@ -1079,9 +1095,9 @@ def test_profile_tables_for_patterns_with_common_opts(spark, ws, make_schema, ma
         ],
     }
 
-    for table_name, (stats, rules) in profiles.items():
+    for table_name, (stats, profiles) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        assert profiles == expected_profiles[table_name], f"Profiles did not match expected for {table_name}"
 
 
 def test_profile_tables_for_patterns_with_different_opts(spark, ws, make_schema, make_random):
@@ -1119,6 +1135,7 @@ def test_profile_tables_for_patterns_with_different_opts(spark, ws, make_schema,
                 "max_null_ratio": 0.5,
                 "sample_fraction": 1.0,
                 "trim_strings": False,
+                "llm_primary_key_detection": False,
             },
         },
         {
@@ -1126,6 +1143,7 @@ def test_profile_tables_for_patterns_with_different_opts(spark, ws, make_schema,
             "options": {
                 "remove_outliers": False,
                 "sample_fraction": 1.0,
+                "llm_primary_key_detection": False,
             },
         },
     ]
@@ -1135,7 +1153,7 @@ def test_profile_tables_for_patterns_with_different_opts(spark, ws, make_schema,
         options=table_opts,
     )
 
-    expected_rules = {
+    expected_profiles = {
         table1_name: [
             DQProfile(
                 name="is_not_null",
@@ -1168,9 +1186,9 @@ def test_profile_tables_for_patterns_with_different_opts(spark, ws, make_schema,
         ],
     }
 
-    for table_name, (stats, rules) in profiles.items():
+    for table_name, (stats, profiles) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        assert profiles == expected_profiles[table_name], f"Profiles did not match expected for {table_name}"
 
 
 def test_profile_tables_for_patterns_with_partial_opts_match(spark, ws, make_schema, make_random):
@@ -1207,6 +1225,7 @@ def test_profile_tables_for_patterns_with_partial_opts_match(spark, ws, make_sch
                 "max_null_ratio": 0.5,
                 "sample_fraction": 1.0,
                 "trim_strings": False,
+                "llm_primary_key_detection": False,
             },
         },
         {
@@ -1215,11 +1234,12 @@ def test_profile_tables_for_patterns_with_partial_opts_match(spark, ws, make_sch
                 "remove_outliers": False,
                 "sample_fraction": 1.0,
                 "trim_strings": True,
+                "llm_primary_key_detection": False,
             },
         },
     ]
     profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=table_opts)
-    expected_rules = {
+    expected_profiles = {
         table1_name: [
             DQProfile(
                 name="is_not_null",
@@ -1249,9 +1269,9 @@ def test_profile_tables_for_patterns_with_partial_opts_match(spark, ws, make_sch
         ],
     }
 
-    for table_name, (stats, rules) in profiles.items():
+    for table_name, (stats, profiles) in profiles.items():
         assert len(stats.keys()) > 0, f"Stats did not match expected for {table_name}"
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        assert profiles == expected_profiles[table_name], f"Profiles did not match expected for {table_name}"
 
 
 def test_profile_tables_for_patterns_with_selected_columns(spark, ws, make_schema, make_random):
@@ -1288,14 +1308,14 @@ def test_profile_tables_for_patterns_with_selected_columns(spark, ws, make_schem
         table2_name: ["id", "value"],  # Only profile numeric columns
     }
     table_options = [
-        {"table": table1_name, "options": {"sample_fraction": None}},
-        {"table": table2_name, "options": {"sample_fraction": None}},
+        {"table": table1_name, "options": {"sample_fraction": None, "llm_primary_key_detection": False}},
+        {"table": table2_name, "options": {"sample_fraction": None, "llm_primary_key_detection": False}},
     ]
 
     profiles = profiler.profile_tables_for_patterns(
         patterns=[table1_name, table2_name], columns=table_columns, options=table_options
     )
-    expected_rules = {
+    expected_profiles = {
         table1_name: [
             DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
             DQProfile(
@@ -1330,7 +1350,7 @@ def test_profile_tables_for_patterns_with_selected_columns(spark, ws, make_schem
         ],
     }
 
-    for table_name, (stats, rules) in profiles.items():
+    for table_name, (stats, profiles) in profiles.items():
         if table_name == table1_name:
             assert len(stats.keys()) == 2
             assert "col1" in stats
@@ -1344,7 +1364,7 @@ def test_profile_tables_for_patterns_with_selected_columns(spark, ws, make_schem
             assert "name" not in stats
             assert "active" not in stats
 
-        assert rules == expected_rules[table_name], f"Rules did not match expected for {table_name}"
+        assert profiles == expected_profiles[table_name], f"Profiles did not match expected for {table_name}"
 
 
 def test_profile_with_dataset_filter(spark, ws):
@@ -1432,13 +1452,14 @@ def test_profile_with_dataset_filter(spark, ws):
         "round": False,
         "limit": None,
         "filter": "machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
+        "llm_primary_key_detection": False,
     }
 
     profiler = DQProfiler(ws)
 
-    stats, rules = profiler.profile(input_df, options=custom_options)
+    stats, profiles = profiler.profile(input_df, options=custom_options)
 
-    expected_rules = [
+    expected_profiles = [
         DQProfile(
             name="is_not_null",
             column="machine_id",
@@ -1502,7 +1523,7 @@ def test_profile_with_dataset_filter(spark, ws):
     ]
 
     assert len(stats.keys()) > 0
-    assert rules == expected_rules
+    assert profiles == expected_profiles
 
 
 def test_profile_with_no_filter(spark, ws):
@@ -1591,10 +1612,11 @@ def test_profile_with_no_filter(spark, ws):
         "round": True,
         "limit": None,
         "filter": None,
+        "llm_primary_key_detection": False,
     }
-    stats, rules = profiler.profile(input_df, options=custom_options)
+    stats, profiles = profiler.profile(input_df, options=custom_options)
 
-    expected_rules = [
+    expected_profiles = [
         DQProfile(
             name="is_not_null",
             column="machine_id",
@@ -1659,4 +1681,210 @@ def test_profile_with_no_filter(spark, ws):
     ]
 
     assert len(stats.keys()) > 0
-    assert rules == expected_rules
+    assert profiles == expected_profiles
+
+
+def test_profiler_with_pk_detection(spark, ws):
+    schema = "col1: int, col2: int, col3: int, col4 int"
+    input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], schema)
+
+    llm_model_config = LLMModelConfig()
+    profiler = DQProfiler(ws, llm_model_config=llm_model_config)
+    stats, profiles = profiler.profile(input_df, options={"sample_fraction": None})
+
+    expected_profiles = [
+        DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+        DQProfile(
+            name='min_max', column='col1', description='Real min/max values were used', parameters={'max': 2, 'min': 1}
+        ),
+        DQProfile(
+            name='min_max', column='col2', description='Real min/max values were used', parameters={'max': 3, 'min': 2}
+        ),
+        DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+        DQProfile(
+            name='min_max', column='col3', description='Real min/max values were used', parameters={'max': 4, 'min': 3}
+        ),
+        DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
+        DQProfile(
+            name='min_max', column='col4', description='Real min/max values were used', parameters={'max': 4, 'min': 1}
+        ),
+        DQProfile(
+            name='is_unique',
+            column='col1,col2',
+            description='LLM-detected primary key columns: col1, col2',
+            parameters={"nulls_distinct": False},
+        ),
+    ]
+
+    for profile in profiles:
+        if profile.name == "is_unique":
+            profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+
+    assert len(stats.keys()) > 0
+    assert profiles == expected_profiles
+
+
+def test_profile_table_with_pk_detection(spark, ws, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    input_schema = T.StructType(
+        [
+            T.StructField("id", T.IntegerType()),
+            T.StructField("name", T.StringType()),
+            T.StructField("amount", T.DecimalType(10, 2)),
+            T.StructField("created_date", T.DateType()),
+            T.StructField("is_active", T.BooleanType()),
+        ]
+    )
+    input_df = spark.createDataFrame(
+        [
+            [1, "Alice", Decimal("100.50"), date(2023, 1, 1), True],
+            [2, "Bob", Decimal("250.75"), date(2023, 1, 2), False],
+            [3, "Charlie", Decimal("175.25"), date(2023, 1, 3), True],
+            [4, None, Decimal("300.00"), date(2023, 1, 4), True],
+        ],
+        schema=input_schema,
+    )
+    input_df.write.format("delta").saveAsTable(table_name)
+
+    profiler = DQProfiler(ws)
+    stats, profiles = profiler.profile_table(
+        input_config=InputConfig(location=table_name), options={"sample_fraction": None}
+    )
+    expected_profiles = [
+        DQProfile(name="is_not_null", column="id", description=None, parameters=None),
+        DQProfile(
+            name="min_max", column="id", description="Real min/max values were used", parameters={"min": 1, "max": 4}
+        ),
+        DQProfile(name="is_not_null_or_empty", column="name", description=None, parameters={"trim_strings": True}),
+        DQProfile(name="is_not_null", column="amount", description=None, parameters=None),
+        DQProfile(
+            name="min_max",
+            column="amount",
+            description="Real min/max values were used",
+            parameters={"min": Decimal("100.50"), "max": Decimal("300.00")},
+        ),
+        DQProfile(name="is_not_null", column="created_date", description=None, parameters=None),
+        DQProfile(
+            name="min_max",
+            column="created_date",
+            description="Real min/max values were used",
+            parameters={"min": date(2023, 1, 1), "max": date(2023, 1, 4)},
+        ),
+        DQProfile(name="is_not_null", column="is_active", description=None, parameters=None),
+        DQProfile(
+            name='is_unique',
+            column='id',
+            description='LLM-detected primary key columns: id',
+            parameters={"nulls_distinct": False},
+        ),
+    ]
+
+    for profile in profiles:
+        if profile.name == "is_unique":
+            profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+
+    assert len(stats.keys()) > 0
+    assert stats["id"]["count"] == 4  # Verify we got all records
+    assert profiles == expected_profiles
+
+
+def test_profile_tables_for_patterns_with_pk_detection(spark, ws, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    input_schema = "col1: int, col2: int, col3: int, col4 int"
+    input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema)
+    input_df.write.format("delta").saveAsTable(table_name)
+
+    profiler = DQProfiler(ws)
+    options = [
+        {"table": table_name, "options": {"sample_fraction": None}},
+    ]
+    profiles = profiler.profile_tables_for_patterns(patterns=[table_name], options=options)
+    expected_profiles = [
+        DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+        DQProfile(
+            name='min_max',
+            column='col1',
+            description='Real min/max values were used',
+            parameters={'max': 2, 'min': 1},
+        ),
+        DQProfile(
+            name='min_max',
+            column='col2',
+            description='Real min/max values were used',
+            parameters={'max': 3, 'min': 2},
+        ),
+        DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+        DQProfile(
+            name='min_max',
+            column='col3',
+            description='Real min/max values were used',
+            parameters={'max': 4, 'min': 3},
+        ),
+        DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
+        DQProfile(
+            name='min_max',
+            column='col4',
+            description='Real min/max values were used',
+            parameters={'max': 4, 'min': 1},
+        ),
+        DQProfile(
+            name='is_unique',
+            column='col1,col2',
+            description='LLM-detected primary key columns: col1, col2',
+            parameters={"nulls_distinct": False},
+        ),
+    ]
+
+    for table_name, (stats, profiles) in profiles.items():
+        assert len(stats.keys()) > 0, "Stats did not match expected"
+
+        for profile in profiles:
+            if profile.name == "is_unique":
+                profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+
+        assert profiles == expected_profiles, "Profiles did not match expected"
+
+
+def test_profiler_with_pk_detection_no_pk_found(spark, ws):
+    schema = "col1: int, col2: int, col3: int, col4 int"
+    input_df = spark.createDataFrame(
+        [[1, 1, 1, 1], [2, 2, 2, 2], [None, None, None, None], [None, None, None, None]], schema
+    )
+
+    profiler = DQProfiler(ws)
+    stats, profiles = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": True})
+
+    assert len(stats.keys()) > 0
+    for profile in profiles:
+        if profile.name == "is_unique":
+            assert False, "No primary key profiles should be detected"
+
+
+def test_profiler_with_pk_detection_null_distinct(spark, ws):
+    schema = "col1: int, col2: int, col3: int, col4 int"
+    input_df = spark.createDataFrame([[1, 1, 1, 1], [2, 1, 1, 1], [3, 1, 1, 1], [None, None, None, None]], schema)
+
+    profiler = DQProfiler(ws)
+    stats, profiles = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": True})
+
+    actual_pk_profile = None
+    for profile in profiles:
+        if profile.name == "is_unique":
+            profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+            actual_pk_profile = profile
+
+    expected_pk_profile = DQProfile(
+        name='is_unique',
+        column='col1',
+        description='LLM-detected primary key columns: col1',
+        parameters={"nulls_distinct": False},
+    )
+
+    assert len(stats.keys()) > 0
+    assert actual_pk_profile == expected_pk_profile

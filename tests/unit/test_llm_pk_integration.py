@@ -1,11 +1,6 @@
-"""
-Unit tests for LLM-based primary key detection integration in profiler.
-"""
-
 from unittest.mock import Mock
-from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler
-from databricks.labs.dqx.profiler.profiler_runner import ProfilerRunner
 from databricks.labs.dqx.llm.llm_pk_detector import PrimaryKeyDetector
 
 
@@ -37,6 +32,9 @@ class MockTableManager:
     def check_duplicates(self, _table_name, _pk_columns, _catalog=None, _schema=None):
         return False, 0
 
+    def get_table_column_names(self, _table_name, _catalog=None, _schema=None):
+        return ["order_id", "product_id", "quantity", "price"]
+
 
 class MockDetector:
     """Test double for DSPy detector."""
@@ -67,22 +65,17 @@ def test_profiler_detect_pk_with_llm():
     mock_spark = Mock()
 
     # Create profiler
-    profiler = DQProfiler(mock_ws, mock_spark)
+    profiler = DQProfiler(mock_ws, mock_spark, llm_model_config=LLMModelConfig(model_name="test-model"))
 
     # Verify method exists and is callable
     assert hasattr(profiler, 'detect_primary_keys_with_llm')
     assert callable(profiler.detect_primary_keys_with_llm)
 
-    input_config = InputConfig(location="test_table")
-
     # Verify method accepts correct parameters
     # This will fail on actual execution without real table/endpoint,
     # but we're testing the interface
     try:
-        result = profiler.detect_primary_keys_with_llm(
-            input_config=input_config,
-            llm_model_config=LLMModelConfig(model_name="test-model"),
-        )
+        result = profiler.detect_primary_keys_with_llm(table="test_table")
         # If it somehow works, verify result structure
         assert isinstance(result, dict)
         assert "table" in result
@@ -103,14 +96,11 @@ def test_detect_primary_key_composite():
     )
     """
     mock_metadata = "Table: order_items, Columns: 4, Primary constraints: None"
-    mock_chat_databricks = Mock()
 
     detector = PrimaryKeyDetector(
         table="order_items",
-        model_config=LLMModelConfig(model_name="mock-endpoint"),
         show_live_reasoning=False,
         spark_session=None,
-        chat_databricks_cls=mock_chat_databricks,
     )
 
     detector.table_manager = MockTableManager(mock_table_definition, mock_metadata)
@@ -120,7 +110,7 @@ def test_detect_primary_key_composite():
         reasoning="Combination of order_id and product_id forms composite primary key for order items",
     )
 
-    result = detector.detect_primary_keys()
+    result = detector.detect_primary_keys_with_llm()
 
     assert result["success"] is True
     assert result["primary_key_columns"] == ["order_id", "product_id"]
@@ -137,14 +127,11 @@ def test_detect_primary_key_no_clear_key():
     )
     """
     mock_metadata = "Table: application_logs, Columns: 4, Primary constraints: None"
-    mock_chat_databricks = Mock()
 
     detector = PrimaryKeyDetector(
         table="application_logs",
-        model_config=LLMModelConfig(model_name="mock-endpoint"),
         show_live_reasoning=False,
         spark_session=None,
-        chat_databricks_cls=mock_chat_databricks,
     )
 
     detector.table_manager = MockTableManager(mock_table_definition, mock_metadata)
@@ -154,98 +141,7 @@ def test_detect_primary_key_no_clear_key():
         reasoning="No clear primary key identified - all columns are nullable and none appear to be unique identifiers",
     )
 
-    result = detector.detect_primary_keys()
+    result = detector.detect_primary_keys_with_llm()
 
-    assert result["success"] is True
-    assert result["primary_key_columns"] == ["none"]
-
-
-def test_profiler_runner_integration():
-    """Test ProfilerRunner integration with PK detection."""
-    mock_profiler = Mock()
-    mock_profiler.detect_primary_keys_with_llm.return_value = {
-        'table': 'test_table',
-        'success': True,
-        'primary_key_columns': ['id'],
-        'confidence': 'high',
-        'reasoning': 'id is primary key',
-        'has_duplicates': False,
-        'duplicate_count': 0,
-    }
-
-    runner = ProfilerRunner(
-        ws=Mock(),
-        spark=Mock(),
-        dq_engine=Mock(),
-        installation=Mock(),
-        profiler=mock_profiler,
-    )
-
-    mock_generator = Mock()
-    mock_generator.llm_engine = MockLLMEngine()
-
-    input_config = InputConfig(location="test_table")
-    summary_stats = {}
-
-    runner.detect_primary_keys_using_llm(mock_generator, input_config, summary_stats)
-
-    assert 'primary_keys' in summary_stats
-    assert summary_stats['primary_keys']['columns'] == ['id']
-    assert summary_stats['primary_keys']['confidence'] == 'high'
-    assert summary_stats['primary_keys']['has_duplicates'] is False
-    assert summary_stats['primary_keys']['duplicate_count'] == 0
-    mock_profiler.detect_primary_keys_with_llm.assert_called_once_with(input_config)
-
-
-def test_profiler_runner_llm_not_enabled():
-    """Test ProfilerRunner when LLM is not enabled."""
-    mock_profiler = Mock()
-
-    runner = ProfilerRunner(
-        ws=Mock(),
-        spark=Mock(),
-        dq_engine=Mock(),
-        installation=Mock(),
-        profiler=mock_profiler,
-    )
-
-    mock_generator = Mock()
-    mock_generator.llm_engine = None
-
-    input_config = InputConfig(location="test_table")
-    summary_stats = {}
-
-    runner.detect_primary_keys_using_llm(mock_generator, input_config, summary_stats)
-
-    assert 'primary_keys' not in summary_stats
-    mock_profiler.detect_primary_keys_with_llm.assert_not_called()
-
-
-def test_profiler_runner_pk_detection_error():
-    """Test ProfilerRunner when PK detection fails."""
-    mock_profiler = Mock()
-    mock_profiler.detect_primary_keys_with_llm.return_value = {
-        'table': 'test_table',
-        'success': False,
-        'error': 'Table not found',
-    }
-
-    runner = ProfilerRunner(
-        ws=Mock(),
-        spark=Mock(),
-        dq_engine=Mock(),
-        installation=Mock(),
-        profiler=mock_profiler,
-    )
-
-    mock_generator = Mock()
-    mock_generator.llm_engine = MockLLMEngine()
-
-    input_config = InputConfig(location="test_table")
-    summary_stats = {}
-
-    runner.detect_primary_keys_using_llm(mock_generator, input_config, summary_stats)
-
-    assert 'primary_keys' in summary_stats
-    assert 'error' in summary_stats['primary_keys']
-    assert summary_stats['primary_keys']['error'] == 'Table not found'
+    assert result["success"] is False
+    assert result["primary_key_columns"] == []

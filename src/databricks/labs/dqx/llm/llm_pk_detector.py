@@ -8,8 +8,6 @@ from databricks_langchain import ChatDatabricks  # type: ignore
 from langchain_core.messages import HumanMessage  # type: ignore
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.config import LLMModelConfig
-
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +70,57 @@ class TableManager:
                 else:
                     raise
 
+    def get_table_definition(self, table: str) -> str:
+        """Retrieve table definition using Spark SQL DESCRIBE commands."""
+        if not self.spark:
+            raise ValueError("Spark session not available")
+
+        try:
+            print(f"🔍 Retrieving schema for table: {table}")
+
+            definition_lines = self._get_table_columns(table)
+            existing_pk = self._get_existing_primary_key(table)
+            table_definition = self._build_table_definition_string(definition_lines, existing_pk)
+
+            print("✅ Table definition retrieved successfully")
+            return table_definition
+
+        except (ValueError, RuntimeError) as e:
+            logger.error(f"Error retrieving table definition for {table}: {e}")
+            raise
+        except (AttributeError, TypeError, KeyError) as e:
+            logger.error(f"Unexpected error retrieving table definition for {table}: {e}")
+            raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
+
+    def get_table_metadata_info(self, table: str) -> str:
+        """Get additional metadata information to help with primary key detection."""
+        if not self.spark:
+            return "No metadata available (Spark session not found)"
+
+        try:
+            metadata_info = []
+
+            # Get table properties
+            metadata_info.extend(self._get_table_properties(table))
+
+            # Get column statistics
+            metadata_info.extend(self._get_column_statistics(table))
+
+            return (
+                "Metadata information:\n" + "\n".join(metadata_info) if metadata_info else "Limited metadata available"
+            )
+
+        except (ValueError, RuntimeError) as e:
+            return f"Could not retrieve metadata: {e}"
+        except (AttributeError, TypeError, KeyError) as e:
+            logger.warning(f"Unexpected error retrieving metadata: {e}")
+            return f"Could not retrieve metadata due to unexpected error: {e}"
+
+    def get_table_column_names(self, table: str) -> list[str]:
+        """Get table column names."""
+        df = self.spark.table(table)
+        return df.columns
+
     def _get_table_columns(self, table: str) -> list[str]:
         """Get table column definitions from DESCRIBE TABLE."""
         describe_query = f"DESCRIBE TABLE EXTENDED {table}"
@@ -118,28 +167,6 @@ class TableManager:
         if existing_pk:
             table_definition += f"\n-- Existing Primary Key: {existing_pk}"
         return table_definition
-
-    def get_table_definition(self, table: str) -> str:
-        """Retrieve table definition using Spark SQL DESCRIBE commands."""
-        if not self.spark:
-            raise ValueError("Spark session not available")
-
-        try:
-            print(f"🔍 Retrieving schema for table: {table}")
-
-            definition_lines = self._get_table_columns(table)
-            existing_pk = self._get_existing_primary_key(table)
-            table_definition = self._build_table_definition_string(definition_lines, existing_pk)
-
-            print("✅ Table definition retrieved successfully")
-            return table_definition
-
-        except (ValueError, RuntimeError) as e:
-            logger.error(f"Error retrieving table definition for {table}: {e}")
-            raise
-        except (AttributeError, TypeError, KeyError) as e:
-            logger.error(f"Unexpected error retrieving table definition for {table}: {e}")
-            raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
 
     @staticmethod
     def _extract_useful_properties(stats_df) -> list[str]:
@@ -216,44 +243,6 @@ class TableManager:
             # Silently continue if table properties are not accessible
             return []
 
-    def get_table_metadata_info(self, table: str) -> str:
-        """Get additional metadata information to help with primary key detection."""
-        if not self.spark:
-            return "No metadata available (Spark session not found)"
-
-        try:
-            metadata_info = []
-
-            # Get table properties
-            metadata_info.extend(self._get_table_properties(table))
-
-            # Get column statistics
-            metadata_info.extend(self._get_column_statistics(table))
-
-            return (
-                "Metadata information:\n" + "\n".join(metadata_info) if metadata_info else "Limited metadata available"
-            )
-
-        except (ValueError, RuntimeError) as e:
-            return f"Could not retrieve metadata: {e}"
-        except (AttributeError, TypeError, KeyError) as e:
-            logger.warning(f"Unexpected error retrieving metadata: {e}")
-            return f"Could not retrieve metadata due to unexpected error: {e}"
-
-
-def configure_databricks_llm(model_config: LLMModelConfig, chat_databricks_cls=None):
-    """Configure DSPy to use Databricks model serving."""
-    language_model = DspyLMAdapter(endpoint=model_config.model_name, chat_databricks_cls=chat_databricks_cls)
-    dspy.configure(lm=language_model)
-    logger.info(f"Configured DSPy model for PK detection: {model_config.model_name}")
-    return language_model
-
-
-def configure_with_tracing():
-    """Enable DSPy tracing to see live reasoning."""
-    dspy.settings.configure(trace=[])
-    return True
-
 
 class PrimaryKeyDetection(dspy.Signature):
     """Analyze table schema and metadata step-by-step to identify the most likely primary key columns."""
@@ -276,28 +265,22 @@ class PrimaryKeyDetector:
         self,
         table: str,
         *,
-        model_config: LLMModelConfig | None = None,
         context: str = "",
         spark_session=None,
         show_live_reasoning: bool = True,
         max_retries: int = 3,
-        chat_databricks_cls=None,
         detector_cls=None,
     ):
         self.table = table
         self.context = context
         self.llm_provider = "databricks"  # Fixed to databricks provider
-        self.model_config = model_config or LLMModelConfig()
         self.spark = spark_session
         self.detector = detector_cls if detector_cls else dspy.ChainOfThought(PrimaryKeyDetection)
         self.table_manager = TableManager(spark_session)
         self.show_live_reasoning = show_live_reasoning
         self.max_retries = max_retries
 
-        configure_databricks_llm(model_config=self.model_config, chat_databricks_cls=chat_databricks_cls)
-        configure_with_tracing()
-
-    def detect_primary_keys(self) -> dict[str, Any]:
+    def detect_primary_keys_with_llm(self) -> dict[str, Any]:
         """
         Detect primary keys for tables and views.
         """
@@ -307,6 +290,7 @@ class PrimaryKeyDetector:
     def _detect_primary_keys_from_table(self) -> dict[str, Any]:
         """Detect primary keys from a registered table or view."""
         try:
+            columns = self.table_manager.get_table_column_names(self.table)
             table_definition = self.table_manager.get_table_definition(self.table)
             metadata_info = self.table_manager.get_table_metadata_info(self.table)
         except (ValueError, RuntimeError, OSError) as e:
@@ -327,6 +311,7 @@ class PrimaryKeyDetector:
 
         return self._predict_with_retry_logic(
             self.table,
+            columns,
             table_definition,
             self.context,
             metadata_info,
@@ -528,6 +513,7 @@ class PrimaryKeyDetector:
     def _predict_with_retry_logic(
         self,
         table: str,
+        columns: list[str],
         table_definition: str,
         context: str,
         metadata_info: str,
@@ -547,6 +533,17 @@ class PrimaryKeyDetector:
 
             all_attempts.append(result.copy())
             pk_columns = result['primary_key_columns']
+
+            invalid_columns = [col for col in pk_columns if col not in columns]
+            if invalid_columns:
+                error_msg = f"Predicted columns do not exist in table: {', '.join(invalid_columns)}"
+                result['primary_key_columns'] = []
+                result['success'] = False
+                result['error'] = error_msg
+                result['retries_attempted'] = attempt
+                result['all_attempts'] = all_attempts
+                result['final_status'] = 'invalid_columns'
+                return result
 
             logger.info("Validating primary key prediction...")
             result, previous_attempts, should_stop = self._validate_pk_duplicates(
@@ -583,7 +580,7 @@ class PrimaryKeyDetector:
             error_msg = f"Error during prediction: {str(e)}"
             logger.error(error_msg)
             return {'table': table, 'success': False, 'error': error_msg}
-        except (TypeError, KeyError, ImportError) as e:
+        except Exception as e:
             error_msg = f"Unexpected error during prediction: {str(e)}"
             logger.error(error_msg)
             logger.debug("Full traceback:", exc_info=True)

@@ -71,15 +71,13 @@ class ProfilerRunner:
                 "sample_seed": run_config.profiler_config.sample_seed,
                 "limit": run_config.profiler_config.limit,
                 "filter": run_config.profiler_config.filter,
+                "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,
             },
         )
         checks = generator.generate_dq_rules(profiles)  # use default criticality level "error"
         logger.info(f"Using options: \n{run_config.profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
         logger.info(f"Generated summary statistics: \n{summary_stats}")
-
-        # Detect primary keys with LLM if enabled
-        self.detect_primary_keys_using_llm(generator, run_config.input_config, summary_stats)
 
         if run_config.checks_user_requirements:
             checks += generator.generate_dq_rules_ai_assisted(
@@ -138,9 +136,6 @@ class ProfilerRunner:
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
-            # Detect primary keys with LLM if enabled
-            self.detect_primary_keys_using_llm(generator, InputConfig(location=table), summary_stats)
-
             if run_config.checks_user_requirements:
                 checks += generator.generate_dq_rules_ai_assisted(
                     user_input=run_config.checks_user_requirements, input_config=InputConfig(location=table)
@@ -158,48 +153,6 @@ class ProfilerRunner:
                 run_config_name=table,
             )
             self.save(checks, summary_stats, storage_config, run_config.profiler_config.summary_stats_file)
-
-    def detect_primary_keys_using_llm(
-        self,
-        generator: DQGenerator,
-        input_config: InputConfig,
-        summary_stats: dict[str, Any],
-    ) -> None:
-        """
-        Detect primary keys using LLM if enabled and add results to summary stats.
-
-        Args:
-            generator: DQGenerator instance with optional LLM engine.
-            input_config: Input configuration containing the table location.
-            summary_stats: Summary statistics dictionary to update with PK detection results.
-        """
-        if generator.llm_engine is None:
-            logger.debug("LLM engine not available, skipping primary key detection")
-            return
-
-        try:
-            logger.info(f"Detecting primary keys with LLM for table: {input_config.location}")
-            pk_result = self.profiler.detect_primary_keys_with_llm(input_config)
-
-            if pk_result.get("success"):
-                summary_stats["primary_keys"] = {
-                    "columns": pk_result.get("primary_key_columns", []),
-                    "confidence": pk_result.get("confidence", "unknown"),
-                    "reasoning": pk_result.get("reasoning", ""),
-                    "has_duplicates": pk_result.get("has_duplicates", False),
-                    "duplicate_count": pk_result.get("duplicate_count", 0),
-                }
-                logger.info(f"Primary keys detected: {pk_result.get('primary_key_columns')}")
-            else:
-                logger.warning(f"Primary key detection failed: {pk_result.get('error', 'Unknown error')}")
-                summary_stats["primary_keys"] = {
-                    "error": pk_result.get("error", "Unknown error"),
-                }
-        except Exception as e:
-            logger.error(f"Error during primary key detection: {e}")
-            summary_stats["primary_keys"] = {
-                "error": str(e),
-            }
 
     def save(
         self,

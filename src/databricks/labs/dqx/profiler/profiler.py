@@ -1,6 +1,7 @@
 import datetime
 import decimal
 import math
+import uuid
 import logging
 import os
 from concurrent import futures
@@ -25,13 +26,12 @@ from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import InvalidParameterError
 
-# Conditional imports for LLM-based primary key detection
 try:
-    from databricks.labs.dqx.llm.llm_pk_detector import PrimaryKeyDetector
+    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
 
-    LLM_PK_ENABLED = True
+    LLM_ENABLED = True
 except ImportError:
-    LLM_PK_ENABLED = False
+    LLM_ENABLED = False
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +48,17 @@ class DQProfile:
 class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
 
-    def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession | None = None):
+    def __init__(
+        self,
+        workspace_client: WorkspaceClient,
+        spark: SparkSession | None = None,
+        llm_model_config: LLMModelConfig | None = None,
+    ):
         super().__init__(workspace_client=workspace_client)
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+
+        llm_model_config = llm_model_config or LLMModelConfig()
+        self.llm_engine = DQLLMEngine(model_config=llm_model_config) if LLM_ENABLED else None
 
     default_profile_options = {
         "round": True,  # round the min/max values
@@ -66,7 +74,7 @@ class DQProfiler(DQEngineBase):
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
         "filter": None,  # filter to apply to the dataset
-        "detect_primary_keys": True,  # detect primary keys
+        "llm_primary_key_detection": True,  # detect primary keys
     }
 
     @staticmethod
@@ -198,8 +206,7 @@ class DQProfiler(DQEngineBase):
     @telemetry_logger("profiler", "detect_primary_keys_with_llm")
     def detect_primary_keys_with_llm(
         self,
-        input_config: InputConfig,
-        llm_model_config: LLMModelConfig | None = None,
+        table: str,
         max_retries: int = 3,
     ) -> dict[str, Any]:
         """
@@ -208,8 +215,7 @@ class DQProfiler(DQEngineBase):
         This method analyzes table schema and metadata to identify primary key columns.
 
         Args:
-            input_config: Input configuration containing the table location.
-            llm_model_config: Optional LLM model configuration. If not provided, uses default model.
+            table: Input table name
             max_retries: Maximum number of retries to find unique primary key combination.
 
         Returns:
@@ -222,34 +228,14 @@ class DQProfiler(DQEngineBase):
             - has_duplicates: Whether duplicates were found (if validation performed)
             - duplicate_count: Number of duplicate combinations (if validation performed)
             - error: Error message (if failed)
-
-        Raises:
-            MissingParameterError: If LLM engine is not available or input_config is missing.
         """
-        if not LLM_PK_ENABLED:
+        if self.llm_engine is None:
             raise MissingParameterError(
-                "LLM dependencies not available. Install with: pip install 'databricks-labs-dqx[llm]'"
+                "LLM engine not available. Make sure LLM dependencies are installed: "
+                "pip install 'databricks-labs-dqx[llm]'"
             )
 
-        if not input_config or not input_config.location:
-            raise MissingParameterError("Input config with location (table name) is required for PK detection")
-
-        table_name = input_config.location
-        logger.info(f"Detecting primary keys with LLM for table: {table_name}")
-
-        # Use model from LLM config
-        model_config = llm_model_config or LLMModelConfig()
-        detector = PrimaryKeyDetector(
-            table=table_name,
-            model_config=model_config,
-            spark_session=self.spark,
-            max_retries=max_retries,
-        )
-
-        result = detector.detect_primary_keys()
-
-        logger.info(f"Primary key detection completed for {table_name}: {result.get('success', False)}")
-        return result
+        return self.llm_engine.detect_primary_keys_with_llm(self.spark, table, max_retries)
 
     def _profile_tables(
         self,
@@ -398,19 +384,17 @@ class DQProfiler(DQEngineBase):
             summary_stats: Summary statistics dictionary to update with PK detection results
             opts: A dictionary of options for profiling.
         """
-        if not LLM_PK_ENABLED or not opts.get("detect_primary_keys", False):
+        if not LLM_ENABLED or not opts.get("llm_primary_key_detection", False):
             return
 
         logger.info("🤖 Starting LLM-based primary key detection for DataFrame")
 
-        temp_view_name = f"temp_dataframe_analysis_{id(df)}"
+        temp_view_name = f"temp_from_dataframe_{id(df)}_{uuid.uuid4().hex}"
         pk_result: dict[str, Any] = {}
 
         try:
             df.createOrReplaceTempView(temp_view_name)
-
-            input_config = InputConfig(location=temp_view_name)
-            pk_result = self.detect_primary_keys_with_llm(input_config=input_config)
+            pk_result = self.detect_primary_keys_with_llm(table=temp_view_name)
         finally:
             try:  # Clean up the temporary view using SQL (Unity Catalog compatible)
                 self.spark.sql(f"DROP VIEW IF EXISTS {temp_view_name}")

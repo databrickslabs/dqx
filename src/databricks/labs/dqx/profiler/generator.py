@@ -126,7 +126,7 @@ class DQGenerator(DQEngineBase):
         schema_info = get_column_metadata(self.spark, input_config) if input_config else ""
 
         # Generate rules using pre-initialized LLM compiler
-        prediction = self.llm_engine.get_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
+        prediction = self.llm_engine.detect_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
 
         # Validate the generated rules
         dq_rules = json.loads(prediction.quality_rules)
