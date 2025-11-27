@@ -1,13 +1,11 @@
 from unittest.mock import Mock
 import pytest
 import pandas as pd  # type: ignore
-from databricks.labs.dqx.llm.llm_pk_detector import (
-    DspyLMAdapter,
-    TableManager,
-)
-from databricks.labs.dqx.config import LLMModelConfig
+
+from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector
+from databricks.labs.dqx.llm.llm_utils import TableManager
 from databricks.labs.dqx.profiler.profiler import DQProfiler
-from databricks.labs.dqx.llm.llm_pk_detector import PrimaryKeyDetector
 
 
 class MockLLMEngine:
@@ -25,20 +23,20 @@ class MockTableManager:
         self.metadata_info = metadata_info
         self.should_raise = should_raise
 
-    def get_table_definition(self, _table_name, _catalog=None, _schema=None):
+    def get_table_definition(self):
         if self.should_raise:
             raise ValueError("Table not found")
         return self.table_definition
 
-    def get_table_metadata_info(self, _table_name, _catalog=None, _schema=None):
+    def get_table_metadata_info(self):
         if self.should_raise:
             raise ValueError("Metadata not available")
         return self.metadata_info
 
-    def check_duplicates(self, _table_name, _pk_columns, _catalog=None, _schema=None):
+    def check_duplicates(self, _pk_columns):
         return False, 0
 
-    def get_table_column_names(self, _table_name, _catalog=None, _schema=None):
+    def get_table_column_names(self):
         return ["order_id", "product_id", "quantity", "price"]
 
 
@@ -58,45 +56,11 @@ class MockDetector:
         return result
 
 
-def test_adapter_and_configuration():
-    """Test DspyLMAdapter initialization, calls, error handling, and configuration."""
-    mock_chat_cls = Mock()
-    mock_chat_instance = Mock()
-    mock_chat_cls.return_value = mock_chat_instance
-    mock_response = Mock()
-    mock_response.content = "response_content"
-    mock_chat_instance.invoke.return_value = mock_response
-
-    adapter = DspyLMAdapter(endpoint="test-endpoint", max_tokens=500, chat_databricks_cls=mock_chat_cls)
-    assert adapter.endpoint == "test-endpoint"
-    assert adapter(prompt="test prompt") == ["response_content"]
-    assert adapter(messages=[Mock()]) == ["response_content"]
-
-    # Test all error types
-    mock_chat_instance.invoke = Mock(side_effect=ConnectionError("Connection failed"))
-    assert adapter(prompt="test") == ["Error: Connection failed"]
-    mock_chat_instance.invoke = Mock(side_effect=TimeoutError("Timeout"))
-    assert adapter(prompt="test") == ["Error: Timeout"]
-    mock_chat_instance.invoke = Mock(side_effect=ValueError("Invalid"))
-    assert adapter(prompt="test") == ["Error: Invalid"]
-    mock_chat_instance.invoke = Mock(side_effect=RuntimeError("Runtime"))
-    assert adapter(prompt="test") == ["Unexpected error: Runtime"]
-    mock_chat_instance.invoke = Mock(side_effect=AttributeError("Attr"))
-    assert "Unexpected error" in adapter(prompt="test")[0]
-
-    adapter2 = DspyLMAdapter(endpoint="databricks/model", chat_databricks_cls=mock_chat_cls)
-    assert adapter2.endpoint == "databricks/model"
-
-
 def test_table_manager(mock_spark):
     """Test TableManager initialization, operations, and metadata."""
-    manager = TableManager(spark_session=mock_spark)
+    table = "test"
+    manager = TableManager(table=table, spark=mock_spark)
     assert manager.spark == mock_spark
-
-    manager_none = TableManager(spark_session=None)
-    with pytest.raises(ValueError, match="Spark session not available"):
-        manager_none.get_table_definition("test")
-    assert "No metadata available" in manager_none.get_table_metadata_info("test")
 
     # Test successful operations
     mock_df = pd.DataFrame({'col_name': ['id', 'name'], 'data_type': ['bigint', 'string'], 'comment': ['', '']})
@@ -105,15 +69,15 @@ def test_table_manager(mock_spark):
     mock_pk = Mock()
     mock_pk.toPandas.return_value = pd.DataFrame({'key': ['delta.constraints.primary_key'], 'value': ['id']})
     mock_spark.sql = Mock(side_effect=[mock_result, mock_pk])
-    definition = manager.get_table_definition("test")
+    definition = manager.get_table_definition()
     assert 'id bigint' in definition and 'Existing Primary Key: id' in definition
 
     mock_spark.sql = Mock(side_effect=ValueError("Not found"))
     with pytest.raises(ValueError):
-        manager.get_table_definition("test")
+        manager.get_table_definition()
     mock_spark.sql = Mock(side_effect=TypeError("Type error"))
     with pytest.raises(RuntimeError, match="Failed to retrieve table definition"):
-        manager.get_table_definition("test")
+        manager.get_table_definition()
 
     props_df = pd.DataFrame({'key': ['delta.numRows', 'rawdatasize'], 'value': ['1000', '5000']})
     cols_df = pd.DataFrame(
@@ -124,30 +88,24 @@ def test_table_manager(mock_spark):
     mock_cols = Mock()
     mock_cols.toPandas.return_value = cols_df
     mock_spark.sql = Mock(side_effect=[mock_props, mock_cols])
-    metadata = manager.get_table_metadata_info("test")
+    metadata = manager.get_table_metadata_info()
     assert 'numRows' in metadata or 'Metadata' in metadata
 
 
 def test_profiler_detect_pk_with_llm(mock_workspace_client, mock_spark):
-    """Test primary key detection using DQProfiler."""
-    # Create mock workspace client with proper config
-    mock_config = Mock()
-    # Use setattr to avoid pylint protected-access warning
-    setattr(mock_config, '_product_info', ("dqx", "1.0.0"))
-    mock_workspace_client.config = mock_config
-
     # Create profiler
     profiler = DQProfiler(mock_workspace_client, mock_spark, llm_model_config=LLMModelConfig(model_name="test-model"))
 
     # Verify method accepts correct parameters
-    result = profiler.detect_primary_keys_with_llm(table="test_table")
+    result = profiler.detect_primary_keys_with_llm(input_config=InputConfig(location="test_table"))
 
-    # If it somehow works, verify result structure
+    # verify the basic structure
     assert isinstance(result, dict)
-    assert "table" in result
+    assert result["success"] is False
+    assert result["table"] == "test_table"
 
 
-def test_detect_primary_key_composite():
+def test_detect_primary_key_composite(mock_spark):
     """Test detection of composite primary key."""
     mock_table_definition = """
     CREATE TABLE order_items (
@@ -159,10 +117,10 @@ def test_detect_primary_key_composite():
     """
     mock_metadata = "Table: order_items, Columns: 4, Primary constraints: None"
 
-    detector = PrimaryKeyDetector(
+    detector = LLMPrimaryKeyDetector(
         table="order_items",
         show_live_reasoning=False,
-        spark_session=None,
+        spark=mock_spark,
     )
 
     detector.table_manager = MockTableManager(mock_table_definition, mock_metadata)
@@ -171,14 +129,13 @@ def test_detect_primary_key_composite():
         confidence="high",
         reasoning="Combination of order_id and product_id forms composite primary key for order items",
     )
-
     result = detector.detect_primary_keys_with_llm()
 
     assert result["success"] is True
     assert result["primary_key_columns"] == ["order_id", "product_id"]
 
 
-def test_detect_primary_key_no_clear_key():
+def test_detect_primary_key_no_clear_key(mock_spark):
     """Test when LLM cannot identify a clear primary key."""
     mock_table_definition = """
     CREATE TABLE application_logs (
@@ -190,10 +147,10 @@ def test_detect_primary_key_no_clear_key():
     """
     mock_metadata = "Table: application_logs, Columns: 4, Primary constraints: None"
 
-    detector = PrimaryKeyDetector(
+    detector = LLMPrimaryKeyDetector(
         table="application_logs",
         show_live_reasoning=False,
-        spark_session=None,
+        spark=mock_spark,
     )
 
     detector.table_manager = MockTableManager(mock_table_definition, mock_metadata)

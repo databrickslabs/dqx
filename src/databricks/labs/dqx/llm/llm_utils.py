@@ -16,6 +16,188 @@ from databricks.labs.dqx.io import read_input_data
 logger = logging.getLogger(__name__)
 
 
+class TableManager:
+    """Manages table operations for schema retrieval and metadata checking."""
+
+    def __init__(self, table: str, spark: SparkSession | None = None):
+        """Initialize with Spark session."""
+        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+        self.table = table
+
+    def get_table_definition(self) -> str:
+        """Retrieve table definition using Spark SQL DESCRIBE commands."""
+        if not self.spark:
+            raise ValueError("Spark session not available")
+
+        try:
+            logger.info(f"🔍 Retrieving schema for table: {self.table}")
+
+            definition_lines = self._get_table_columns()
+            existing_pk = self._get_existing_primary_key()
+            table_definition = self._build_table_definition_string(definition_lines, existing_pk)
+
+            logger.info("✅ Table definition retrieved successfully")
+            return table_definition
+
+        except (ValueError, RuntimeError) as e:
+            logger.error(f"Error retrieving table definition for {self.table}: {e}")
+            raise
+        except (AttributeError, TypeError, KeyError) as e:
+            logger.error(f"Unexpected error retrieving table definition for {self.table}: {e}")
+            raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
+
+    def get_table_metadata_info(self) -> str:
+        """Get additional metadata information to help with primary key detection."""
+        if not self.spark:
+            return "No metadata available (Spark session not found)"
+
+        try:
+            metadata_info = []
+
+            # Get table properties
+            metadata_info.extend(self._get_table_properties())
+
+            # Get column statistics
+            metadata_info.extend(self._get_column_statistics())
+
+            return (
+                "Metadata information:\n" + "\n".join(metadata_info) if metadata_info else "Limited metadata available"
+            )
+
+        except (ValueError, RuntimeError) as e:
+            return f"Could not retrieve metadata: {e}"
+        except (AttributeError, TypeError, KeyError) as e:
+            logger.warning(f"Unexpected error retrieving metadata: {e}")
+            return f"Could not retrieve metadata due to unexpected error: {e}"
+
+    def get_table_column_names(self) -> list[str]:
+        """Get table column names."""
+        df = self.spark.table(self.table)
+        return df.columns
+
+    def _get_table_columns(self) -> list[str]:
+        """Get table column definitions from DESCRIBE TABLE."""
+        describe_query = f"DESCRIBE TABLE EXTENDED {self.table}"
+        describe_result = self.spark.sql(describe_query)
+        describe_df = describe_result.toPandas()
+
+        definition_lines = []
+        in_column_section = True
+
+        for _, row in describe_df.iterrows():
+            col_name = row['col_name']
+            data_type = row['data_type']
+            comment = row['comment'] if 'comment' in row else ''
+
+            if col_name.startswith('#') or col_name.strip() == '':
+                in_column_section = False
+                continue
+
+            if in_column_section and not col_name.startswith('#'):
+                nullable = " NOT NULL" if "not null" in str(comment).lower() else ""
+                definition_lines.append(f"    {col_name} {data_type}{nullable}")
+
+        return definition_lines
+
+    def _get_existing_primary_key(self) -> str | None:
+        """Get existing primary key from table properties."""
+        try:
+            pk_query = f"SHOW TBLPROPERTIES {self.table}"
+            pk_result = self.spark.sql(pk_query)
+            pk_df = pk_result.toPandas()
+
+            for _, row in pk_df.iterrows():
+                if 'primary' in str(row.get('key', '')).lower():
+                    return row.get('value', '')
+        except (ValueError, RuntimeError, KeyError):
+            # Silently continue if table properties are not accessible
+            pass
+        return None
+
+    @staticmethod
+    def _build_table_definition_string(definition_lines: list[str], existing_pk: str | None) -> str:
+        """Build the final table definition string."""
+        table_definition = "{\n" + ",\n".join(definition_lines) + "\n}"
+        if existing_pk:
+            table_definition += f"\n-- Existing Primary Key: {existing_pk}"
+        return table_definition
+
+    @staticmethod
+    def _extract_useful_properties(stats_df) -> list[str]:
+        """Extract useful properties from table properties DataFrame."""
+        metadata_info = []
+        for _, row in stats_df.iterrows():
+            key = row.get('key', '')
+            value = row.get('value', '')
+            if any(keyword in key.lower() for keyword in ('numrows', 'rawdatasize', 'totalsize', 'primary', 'unique')):
+                metadata_info.append(f"{key}: {value}")
+        return metadata_info
+
+    def _get_table_properties(self) -> list[str]:
+        """Get table properties metadata."""
+        try:
+            stats_query = f"SHOW TBLPROPERTIES {self.table}"
+            stats_result = self.spark.sql(stats_query)
+            stats_df = stats_result.toPandas()
+            return self._extract_useful_properties(stats_df)
+        except (ValueError, RuntimeError, KeyError):
+            # Silently continue if table properties are not accessible
+            return []
+
+    @staticmethod
+    def _categorize_columns_by_type(col_df) -> tuple[list[str], list[str], list[str], list[str]]:
+        """Categorize columns by their data types."""
+        numeric_cols = []
+        string_cols = []
+        date_cols = []
+        timestamp_cols = []
+
+        for _, row in col_df.iterrows():
+            col_name = row.get('col_name', '')
+            data_type = str(row.get('data_type', '')).lower()
+
+            if col_name.startswith('#') or col_name.strip() == '':
+                break
+
+            if any(t in data_type for t in ('int', 'long', 'bigint', 'decimal', 'double', 'float')):
+                numeric_cols.append(col_name)
+            elif any(t in data_type for t in ('string', 'varchar', 'char')):
+                string_cols.append(col_name)
+            elif 'date' in data_type:
+                date_cols.append(col_name)
+            elif 'timestamp' in data_type:
+                timestamp_cols.append(col_name)
+
+        return numeric_cols, string_cols, date_cols, timestamp_cols
+
+    @staticmethod
+    def _format_column_distribution(
+        numeric_cols: list[str], string_cols: list[str], date_cols: list[str], timestamp_cols: list[str]
+    ) -> list[str]:
+        """Format column type distribution information."""
+        metadata_info = [
+            "Column type distribution:",
+            f"  Numeric columns ({len(numeric_cols)}): {', '.join(numeric_cols[:5])}",
+            f"  String columns ({len(string_cols)}): {', '.join(string_cols[:5])}",
+            f"  Date columns ({len(date_cols)}): {', '.join(date_cols)}",
+            f"  Timestamp columns ({len(timestamp_cols)}): {', '.join(timestamp_cols)}",
+        ]
+        return metadata_info
+
+    def _get_column_statistics(self) -> list[str]:
+        """Get column statistics and type distribution."""
+        try:
+            col_stats_query = f"DESCRIBE TABLE EXTENDED {self.table}"
+            col_result = self.spark.sql(col_stats_query)
+            col_df = col_result.toPandas()
+
+            numeric_cols, string_cols, date_cols, timestamp_cols = self._categorize_columns_by_type(col_df)
+            return self._format_column_distribution(numeric_cols, string_cols, date_cols, timestamp_cols)
+        except (ValueError, RuntimeError, KeyError):
+            # Silently continue if table properties are not accessible
+            return []
+
+
 def get_check_function_definitions(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:
     """
     A utility function to get the definition of all check functions.

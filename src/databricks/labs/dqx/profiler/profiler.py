@@ -20,8 +20,8 @@ from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
-from databricks.labs.dqx.errors import MissingParameterError
-from databricks.labs.dqx.io import read_input_data
+from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
+from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -206,7 +206,7 @@ class DQProfiler(DQEngineBase):
     @telemetry_logger("profiler", "detect_primary_keys_with_llm")
     def detect_primary_keys_with_llm(
         self,
-        table: str,
+        input_config: InputConfig,
         max_retries: int = 3,
     ) -> dict[str, Any]:
         """
@@ -215,7 +215,7 @@ class DQProfiler(DQEngineBase):
         This method analyzes table schema and metadata to identify primary key columns.
 
         Args:
-            table: Input table name
+            input_config: Input configuration containing the table location.
             max_retries: Maximum number of retries to find unique primary key combination.
 
         Returns:
@@ -235,7 +235,26 @@ class DQProfiler(DQEngineBase):
                 "pip install 'databricks-labs-dqx[llm]'"
             )
 
-        return self.llm_engine.detect_primary_keys_with_llm(self.spark, table, max_retries)
+        if not input_config.location:
+            raise InvalidConfigError("Input location not configured")
+
+        def _detect_with_temp_view(df: DataFrame, view_name: str) -> dict[str, Any]:
+            try:
+                df.createOrReplaceTempView(view_name)
+                assert self.llm_engine is not None  # for mypy
+                return self.llm_engine.detect_primary_keys_with_llm(self.spark, view_name, max_retries)
+            finally:
+                try:
+                    self.spark.sql(f"DROP VIEW IF EXISTS {view_name}")
+                except AnalysisException:
+                    pass
+
+        if STORAGE_PATH_PATTERN.match(input_config.location):
+            input_df = read_input_data(self.spark, input_config)
+            temp_view_name = f"temp_from_dataframe_{id(input_df)}_{uuid.uuid4().hex}"
+            return _detect_with_temp_view(input_df, temp_view_name)
+
+        return self.llm_engine.detect_primary_keys_with_llm(self.spark, input_config.location, max_retries)
 
     def _profile_tables(
         self,
@@ -394,7 +413,7 @@ class DQProfiler(DQEngineBase):
 
         try:
             df.createOrReplaceTempView(temp_view_name)
-            pk_result = self.detect_primary_keys_with_llm(table=temp_view_name)
+            pk_result = self.detect_primary_keys_with_llm(input_config=InputConfig(location=temp_view_name))
         finally:
             try:  # Clean up the temporary view using SQL (Unity Catalog compatible)
                 self.spark.sql(f"DROP VIEW IF EXISTS {temp_view_name}")

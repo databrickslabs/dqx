@@ -67,7 +67,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx import check_funcs
 import pyspark.sql.functions as F
@@ -97,19 +97,8 @@ display(input_df.limit(5))
 # COMMAND ----------
 
 profiler = DQProfiler(ws, spark, llm_model_config=llm_model_config)
-pk_result = profiler.detect_primary_keys_with_llm(table=input_table_name)
+pk_result = profiler.detect_primary_keys_with_llm(input_config=InputConfig(location=input_table_name))
 pk_columns = pk_result.get('primary_key_columns')
-
-print("=" * 80)
-print("PRIMARY KEY DETECTION RESULT")
-print("=" * 80)
-print(f"Table: {pk_result.get('table')}")
-print(f"Success: {pk_result.get('success')}")
-print(f"Primary Key Columns: {pk_result.get('primary_key_columns')}")
-print(f"Confidence: {pk_result.get('confidence')}")
-print(f"Has Duplicates: {pk_result.get('has_duplicates')}")
-print(f"\nReasoning:\n{pk_result.get('reasoning')}")
-print("=" * 80)
 
 # COMMAND ----------
 

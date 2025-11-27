@@ -104,7 +104,7 @@ def test_profiler(spark, ws):
         ),
         DQProfile(name="is_not_null", column="b1", description=None, parameters=None),
     ]
-    print(stats)
+
     assert len(stats.keys()) > 0
     assert profiles == expected_profiles
 
@@ -317,7 +317,7 @@ def test_profiler_non_default_profile_options(spark, ws):
             filter="t1 > 0",
         ),
     ]
-    print(stats)
+
     assert len(stats.keys()) > 0
     assert profiles == expected_profiles
 
@@ -1888,3 +1888,68 @@ def test_profiler_with_pk_detection_null_distinct(spark, ws):
 
     assert len(stats.keys()) > 0
     assert actual_pk_profile == expected_pk_profile
+
+
+def test_profiler_detect_pk_from_table_with_llm(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    input_schema = T.StructType(
+        [
+            T.StructField("id", T.IntegerType()),
+            T.StructField("name", T.StringType()),
+        ]
+    )
+    input_df = spark.createDataFrame(
+        [
+            [1, "Alice"],
+            [2, "Charlie"],
+            [3, "Charlie"],
+            [4, None],
+        ],
+        schema=input_schema,
+    )
+    input_df.write.format("delta").saveAsTable(table_name)
+
+    profiler = DQProfiler(ws, spark)
+    result = profiler.detect_primary_keys_with_llm(input_config=InputConfig(location=table_name))
+
+    assert result["success"]
+    assert result["table"] == table_name
+    assert result["primary_key_columns"] == ["id"]
+    assert result["confidence"]
+    assert result["reasoning"]
+
+
+def test_profiler_detect_pk_from_path_with_llm(ws, spark, make_schema, make_random, make_volume):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
+    volume_path = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/"
+
+    input_schema = T.StructType(
+        [
+            T.StructField("id", T.IntegerType()),
+            T.StructField("name", T.StringType()),
+        ]
+    )
+    input_df = spark.createDataFrame(
+        [
+            [1, "Alice"],
+            [2, "Bob"],
+            [3, "Charlie"],
+            [4, None],
+        ],
+        schema=input_schema,
+    )
+    input_df.write.format("delta").save(volume_path)
+
+    profiler = DQProfiler(ws, spark)
+    result = profiler.detect_primary_keys_with_llm(input_config=InputConfig(location=volume_path))
+
+    assert result["success"]
+    assert result["table"]
+    assert result["primary_key_columns"] == ["id"]
+    assert result["confidence"]
+    assert result["reasoning"]

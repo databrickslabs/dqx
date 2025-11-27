@@ -7,7 +7,7 @@ import dspy  # type: ignore
 from pyspark.sql import SparkSession
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.llm.llm_core import LLMRuleCompiler
-from databricks.labs.dqx.llm.llm_pk_detector import PrimaryKeyDetector
+from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector
 from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ class DQLLMEngine:
         """
         self._available_check_functions = json.dumps(get_required_check_functions_definitions(custom_check_functions))
 
+        # compiler configures and initializes the LLM model
         self._llm_compiler = LLMRuleCompiler(
             model_config=model_config,
             custom_check_functions=custom_check_functions,
@@ -100,13 +101,10 @@ class DQLLMEngine:
         Raises:
             MissingParameterError: If LLM engine is not available or input_config is missing.
         """
-        detector = PrimaryKeyDetector(
-            table=table,
-            spark_session=spark,
-            max_retries=max_retries,
-        )
+        # The initialization of the DSPy model is performed by the compiler in the constructor!
+        detector = LLMPrimaryKeyDetector(table=table, spark=spark, max_retries=max_retries)
 
         result = detector.detect_primary_keys_with_llm()
 
-        logger.info(f"Primary key detection completed for {table}: {result.get('success', False)}")
+        logger.info(f"✅ Primary key detection completed for {table}: {result.get('success', False)}")
         return result

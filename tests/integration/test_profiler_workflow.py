@@ -432,7 +432,7 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark,
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
-    print(checks)
+
     actual_ai_generated_check = None
     for check in checks:
         if check["check"]["function"] == "not_ends_with_suffix":

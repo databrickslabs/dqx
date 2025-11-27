@@ -1,253 +1,19 @@
-"""Primary Key Detection using DSPy with Databricks Model Serving."""
-
 import logging
 from typing import Any
 
 import dspy  # type: ignore
-from databricks_langchain import ChatDatabricks  # type: ignore
-from langchain_core.messages import HumanMessage  # type: ignore
+
 from pyspark.sql import SparkSession
+
+from databricks.labs.dqx.llm.llm_utils import TableManager
 
 logger = logging.getLogger(__name__)
 
 
-class DspyLMAdapter(dspy.LM):
-    """Custom DSPy LM adapter for Databricks Model Serving."""
-
-    def __init__(self, endpoint: str, max_tokens: int = 1000, chat_databricks_cls=None):
-        self.endpoint = endpoint
-        self.max_tokens = max_tokens
-
-        # Allow injection of ChatDatabricks class for testing
-        chat_cls = chat_databricks_cls or ChatDatabricks
-
-        model = endpoint
-        if endpoint.startswith("databricks/"):
-            model = endpoint.removeprefix("databricks/")
-
-        self.llm = chat_cls(model=model, temperature=0.1, max_tokens=max_tokens)
-
-        super().__init__(model=endpoint)
-
-    def __call__(self, prompt=None, messages=None, **kwargs):
-        """Call the Databricks model serving endpoint."""
-        try:
-            if messages:
-                response = self.llm.invoke(messages)
-            else:
-                response = self.llm.invoke([HumanMessage(content=prompt)])
-
-            return [response.content]
-
-        except (ConnectionError, TimeoutError, ValueError) as e:
-            print(f"Error calling Databricks model: {e}")
-            return [f"Error: {str(e)}"]
-        except (AttributeError, TypeError, RuntimeError) as e:
-            print(f"Unexpected error calling Databricks model: {e}")
-            return [f"Unexpected error: {str(e)}"]
-
-
-class TableManager:
-    """Manages table operations for schema retrieval and metadata checking."""
-
-    def __init__(self, spark_session=None):
-        """Initialize with Spark session."""
-        self.spark = spark_session
-        if not self.spark:
-            try:
-                self.spark = SparkSession.getActiveSession()
-                if not self.spark:
-                    self.spark = SparkSession.builder.appName("PKDetection").getOrCreate()
-            except ImportError:
-                logger.warning("PySpark not available. Some features may not work.")
-            except RuntimeError as e:
-                # Handle case where only remote Spark sessions are supported (e.g., in unit tests)
-                if "Only remote Spark sessions using Databricks Connect are supported" in str(e):
-                    logger.warning(
-                        "Local Spark session not available. Using None - features requiring Spark will not work."
-                    )
-                    self.spark = None
-                else:
-                    raise
-
-    def get_table_definition(self, table: str) -> str:
-        """Retrieve table definition using Spark SQL DESCRIBE commands."""
-        if not self.spark:
-            raise ValueError("Spark session not available")
-
-        try:
-            print(f"🔍 Retrieving schema for table: {table}")
-
-            definition_lines = self._get_table_columns(table)
-            existing_pk = self._get_existing_primary_key(table)
-            table_definition = self._build_table_definition_string(definition_lines, existing_pk)
-
-            print("✅ Table definition retrieved successfully")
-            return table_definition
-
-        except (ValueError, RuntimeError) as e:
-            logger.error(f"Error retrieving table definition for {table}: {e}")
-            raise
-        except (AttributeError, TypeError, KeyError) as e:
-            logger.error(f"Unexpected error retrieving table definition for {table}: {e}")
-            raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
-
-    def get_table_metadata_info(self, table: str) -> str:
-        """Get additional metadata information to help with primary key detection."""
-        if not self.spark:
-            return "No metadata available (Spark session not found)"
-
-        try:
-            metadata_info = []
-
-            # Get table properties
-            metadata_info.extend(self._get_table_properties(table))
-
-            # Get column statistics
-            metadata_info.extend(self._get_column_statistics(table))
-
-            return (
-                "Metadata information:\n" + "\n".join(metadata_info) if metadata_info else "Limited metadata available"
-            )
-
-        except (ValueError, RuntimeError) as e:
-            return f"Could not retrieve metadata: {e}"
-        except (AttributeError, TypeError, KeyError) as e:
-            logger.warning(f"Unexpected error retrieving metadata: {e}")
-            return f"Could not retrieve metadata due to unexpected error: {e}"
-
-    def get_table_column_names(self, table: str) -> list[str]:
-        """Get table column names."""
-        df = self.spark.table(table)
-        return df.columns
-
-    def _get_table_columns(self, table: str) -> list[str]:
-        """Get table column definitions from DESCRIBE TABLE."""
-        describe_query = f"DESCRIBE TABLE EXTENDED {table}"
-        describe_result = self.spark.sql(describe_query)
-        describe_df = describe_result.toPandas()
-
-        definition_lines = []
-        in_column_section = True
-
-        for _, row in describe_df.iterrows():
-            col_name = row['col_name']
-            data_type = row['data_type']
-            comment = row['comment'] if 'comment' in row else ''
-
-            if col_name.startswith('#') or col_name.strip() == '':
-                in_column_section = False
-                continue
-
-            if in_column_section and not col_name.startswith('#'):
-                nullable = " NOT NULL" if "not null" in str(comment).lower() else ""
-                definition_lines.append(f"    {col_name} {data_type}{nullable}")
-
-        return definition_lines
-
-    def _get_existing_primary_key(self, table: str) -> str | None:
-        """Get existing primary key from table properties."""
-        try:
-            pk_query = f"SHOW TBLPROPERTIES {table}"
-            pk_result = self.spark.sql(pk_query)
-            pk_df = pk_result.toPandas()
-
-            for _, row in pk_df.iterrows():
-                if 'primary' in str(row.get('key', '')).lower():
-                    return row.get('value', '')
-        except (ValueError, RuntimeError, KeyError):
-            # Silently continue if table properties are not accessible
-            pass
-        return None
-
-    @staticmethod
-    def _build_table_definition_string(definition_lines: list[str], existing_pk: str | None) -> str:
-        """Build the final table definition string."""
-        table_definition = "{\n" + ",\n".join(definition_lines) + "\n}"
-        if existing_pk:
-            table_definition += f"\n-- Existing Primary Key: {existing_pk}"
-        return table_definition
-
-    @staticmethod
-    def _extract_useful_properties(stats_df) -> list[str]:
-        """Extract useful properties from table properties DataFrame."""
-        metadata_info = []
-        for _, row in stats_df.iterrows():
-            key = row.get('key', '')
-            value = row.get('value', '')
-            if any(keyword in key.lower() for keyword in ('numrows', 'rawdatasize', 'totalsize', 'primary', 'unique')):
-                metadata_info.append(f"{key}: {value}")
-        return metadata_info
-
-    def _get_table_properties(self, table: str) -> list[str]:
-        """Get table properties metadata."""
-        try:
-            stats_query = f"SHOW TBLPROPERTIES {table}"
-            stats_result = self.spark.sql(stats_query)
-            stats_df = stats_result.toPandas()
-            return self._extract_useful_properties(stats_df)
-        except (ValueError, RuntimeError, KeyError):
-            # Silently continue if table properties are not accessible
-            return []
-
-    @staticmethod
-    def _categorize_columns_by_type(col_df) -> tuple[list[str], list[str], list[str], list[str]]:
-        """Categorize columns by their data types."""
-        numeric_cols = []
-        string_cols = []
-        date_cols = []
-        timestamp_cols = []
-
-        for _, row in col_df.iterrows():
-            col_name = row.get('col_name', '')
-            data_type = str(row.get('data_type', '')).lower()
-
-            if col_name.startswith('#') or col_name.strip() == '':
-                break
-
-            if any(t in data_type for t in ('int', 'long', 'bigint', 'decimal', 'double', 'float')):
-                numeric_cols.append(col_name)
-            elif any(t in data_type for t in ('string', 'varchar', 'char')):
-                string_cols.append(col_name)
-            elif 'date' in data_type:
-                date_cols.append(col_name)
-            elif 'timestamp' in data_type:
-                timestamp_cols.append(col_name)
-
-        return numeric_cols, string_cols, date_cols, timestamp_cols
-
-    @staticmethod
-    def _format_column_distribution(
-        numeric_cols: list[str], string_cols: list[str], date_cols: list[str], timestamp_cols: list[str]
-    ) -> list[str]:
-        """Format column type distribution information."""
-        metadata_info = [
-            "Column type distribution:",
-            f"  Numeric columns ({len(numeric_cols)}): {', '.join(numeric_cols[:5])}",
-            f"  String columns ({len(string_cols)}): {', '.join(string_cols[:5])}",
-            f"  Date columns ({len(date_cols)}): {', '.join(date_cols)}",
-            f"  Timestamp columns ({len(timestamp_cols)}): {', '.join(timestamp_cols)}",
-        ]
-        return metadata_info
-
-    def _get_column_statistics(self, table: str) -> list[str]:
-        """Get column statistics and type distribution."""
-        try:
-            col_stats_query = f"DESCRIBE TABLE EXTENDED {table}"
-            col_result = self.spark.sql(col_stats_query)
-            col_df = col_result.toPandas()
-
-            numeric_cols, string_cols, date_cols, timestamp_cols = self._categorize_columns_by_type(col_df)
-            return self._format_column_distribution(numeric_cols, string_cols, date_cols, timestamp_cols)
-        except (ValueError, RuntimeError, KeyError):
-            # Silently continue if table properties are not accessible
-            return []
-
-
-class PrimaryKeyDetection(dspy.Signature):
+class DspPrimaryKeyDetectionSignature(dspy.Signature):
     """Analyze table schema and metadata step-by-step to identify the most likely primary key columns."""
 
-    table: str = dspy.InputField(desc="Name of the database table")
+    table: str = dspy.InputField(desc="Fully qualified table name")
     table_definition: str = dspy.InputField(desc="Complete table schema definition")
     context: str = dspy.InputField(desc="Context about similar tables or patterns")
     previous_attempts: str = dspy.InputField(desc="Previous failed attempts and why they failed")
@@ -258,41 +24,44 @@ class PrimaryKeyDetection(dspy.Signature):
     reasoning: str = dspy.OutputField(desc="Step-by-step reasoning for the selection based on metadata analysis")
 
 
-class PrimaryKeyDetector:
-    """Primary Key Detector optimized for Databricks Spark environment."""
+class LLMPrimaryKeyDetector:
+    """
+    The Primary Key Detector uses DSPy to analyze table metadata.
+    The initialization of the DSPy model should be done prior to instantiating this class.
+    """
 
     def __init__(
         self,
         table: str,
         *,
         context: str = "",
-        spark_session=None,
+        spark: SparkSession | None = None,
         show_live_reasoning: bool = True,
         max_retries: int = 3,
-        detector_cls=None,
     ):
         self.table = table
         self.context = context
-        self.llm_provider = "databricks"  # Fixed to databricks provider
-        self.spark = spark_session
-        self.detector = detector_cls if detector_cls else dspy.ChainOfThought(PrimaryKeyDetection)
-        self.table_manager = TableManager(spark_session)
         self.show_live_reasoning = show_live_reasoning
         self.max_retries = max_retries
+        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+        self.table_manager = TableManager(table, spark=self.spark)
+        self.detector = dspy.ChainOfThought(DspPrimaryKeyDetectionSignature)
 
     def detect_primary_keys_with_llm(self) -> dict[str, Any]:
         """
         Detect primary keys for tables and views.
         """
         logger.info(f"Starting primary key detection for table: {self.table}")
-        return self._detect_primary_keys_from_table()
+        result = self._detect_primary_keys_from_table()
+        self.print_pk_detection_summary(result)
+        return result
 
     def _detect_primary_keys_from_table(self) -> dict[str, Any]:
         """Detect primary keys from a registered table or view."""
         try:
-            columns = self.table_manager.get_table_column_names(self.table)
-            table_definition = self.table_manager.get_table_definition(self.table)
-            metadata_info = self.table_manager.get_table_metadata_info(self.table)
+            columns = self.table_manager.get_table_column_names()
+            table_definition = self.table_manager.get_table_definition()
+            metadata_info = self.table_manager.get_table_metadata_info()
         except (ValueError, RuntimeError, OSError) as e:
             return {
                 'table': self.table,
@@ -333,17 +102,15 @@ class PrimaryKeyDetector:
 
         except (ValueError, RuntimeError) as e:
             logger.error(f"Error checking duplicates: {e}")
-            print(f"❌ Error checking duplicates: {e}")
             return False, 0
         except (AttributeError, TypeError, KeyError) as e:
             logger.error(f"Unexpected error checking duplicates: {e}")
-            print(f"❌ Unexpected error checking duplicates: {e}")
             return False, 0
 
     def _execute_duplicate_check_query(self, table: str, pk_columns: list[str]) -> tuple[bool, int, Any]:
         """Execute the duplicate check query and return results."""
         pk_cols_str = ", ".join([f"`{col}`" for col in pk_columns])
-        print(f"🔍 Checking for duplicates in {table} using columns: {pk_cols_str}")
+        logger.debug(f"🔍 Checking for duplicates in {table} using columns: {pk_cols_str}")
 
         # Treats nulls as NOT distinct (NULL and NULL is considered equal)
         duplicate_query = f"""
@@ -365,15 +132,13 @@ class PrimaryKeyDetector:
         if has_duplicates and duplicates_df is not None:
             total_duplicate_records = duplicates_df['duplicate_count'].sum()
             logger.warning(
-                f"Found {duplicate_count} duplicate key combinations affecting {total_duplicate_records} total records"
+                f"Found {duplicate_count} duplicate key combinations for: {', '.join(pk_columns)} affecting {total_duplicate_records} total records"
             )
-            print(f"⚠️  Found {duplicate_count} duplicate combinations for: {', '.join(pk_columns)}")
             if len(duplicates_df) > 0:
-                print("Sample duplicates:")
-                print(duplicates_df.head().to_string(index=False))
+                logger.warning("Sample duplicates:")
+                logger.warning(duplicates_df.head().to_string(index=False))
         else:
-            logger.info(f"No duplicates found for predicted primary key: {', '.join(pk_columns)}")
-            print(f"✅ No duplicates found for: {', '.join(pk_columns)}")
+            logger.info(f"✅ No duplicates found for predicted primary key: {', '.join(pk_columns)}")
 
     def _check_duplicates_and_update_result(self, table: str, pk_columns: list[str], result: dict) -> tuple[bool, int]:
         """Check for duplicates and update result with validation info."""
@@ -383,18 +148,6 @@ class PrimaryKeyDetector:
         result['duplicate_count'] = duplicate_count
 
         return has_duplicates, duplicate_count
-
-    @staticmethod
-    def _handle_successful_validation(
-        result: dict, attempt: int, all_attempts: list, previous_attempts: str
-    ) -> tuple[dict, str, bool]:
-        """Handle successful validation (no duplicates found)."""
-        logger.info("No duplicates found - Primary key prediction validated!")
-        result['retries_attempted'] = attempt
-        result['all_attempts'] = all_attempts
-        result['final_status'] = 'success'
-
-        return result, previous_attempts, True  # Success, stop retrying
 
     def _handle_duplicates_found(
         self,
@@ -436,6 +189,18 @@ class PrimaryKeyDetector:
         result['all_attempts'] = all_attempts
         result['final_status'] = 'max_retries_reached_with_duplicates'
         return result, previous_attempts, True  # Stop retrying, max attempts reached
+
+    @staticmethod
+    def _handle_successful_validation(
+        result: dict, attempt: int, all_attempts: list, previous_attempts: str
+    ) -> tuple[dict, str, bool]:
+        """Handle successful validation (no duplicates found)."""
+        logger.info("No duplicates found - Primary key prediction validated!")
+        result['retries_attempted'] = attempt
+        result['all_attempts'] = all_attempts
+        result['final_status'] = 'success'
+
+        return result, previous_attempts, True  # Success, stop retrying
 
     @staticmethod
     def _handle_validation_error(
@@ -554,7 +319,7 @@ class PrimaryKeyDetector:
                 return result
 
         # This shouldn't be reached, but just in case
-        return all_attempts[-1] if all_attempts else {'success': False, 'error': 'No attempts made'}
+        return all_attempts[-1] if all_attempts else {'table': table, 'success': False, 'error': 'No attempts made'}
 
     def _single_prediction(
         self, table: str, table_definition: str, context: str, previous_attempts: str, metadata_info: str
@@ -590,7 +355,7 @@ class PrimaryKeyDetector:
     def _print_reasoning_formatted(reasoning):
         """Format and print reasoning step by step."""
         if not reasoning:
-            print("No reasoning provided")
+            logger.debug("No reasoning provided")
             return
 
         lines = reasoning.split('\n')
@@ -602,16 +367,16 @@ class PrimaryKeyDetector:
                 continue
 
             if line.lower().startswith('step'):
-                print(f"📝 {line}")
+                logger.debug(f"📝 {line}")
             elif line.startswith('-') or line.startswith('•'):
-                print(f"   {line}")
+                logger.debug(f"   {line}")
             elif len(line) > 10 and any(
                 word in line.lower() for word in ('analyze', 'consider', 'look', 'notice', 'think')
             ):
-                print(f"📝 Step {step_counter}: {line}")
+                logger.debug(f"📝 Step {step_counter}: {line}")
                 step_counter += 1
             else:
-                print(f"   {line}")
+                logger.debug(f"   {line}")
 
     @staticmethod
     def _print_trace_if_available():
@@ -630,15 +395,20 @@ class PrimaryKeyDetector:
     def print_pk_detection_summary(result):
         """Print summary based on result dictionary."""
 
+        retries_attempted = result.get('retries_attempted', 0)
+
         logger.info("=" * 60)
         logger.info("🎯 PRIMARY KEY DETECTION SUMMARY")
         logger.info("=" * 60)
         logger.info(f"Table: {result['table']}")
         logger.info(f"Status: {'✅ SUCCESS' if result['success'] else '❌ FAILED'}")
-        logger.info(f"Attempts: {result.get('retries_attempted', 0) + 1}")
-        if result.get('retries_attempted', 0) > 0:
-            logger.info(f"Retries needed: {result['retries_attempted']}")
+        logger.info(f"Attempts: {retries_attempted + 1}")
+        if retries_attempted > 0:
+            logger.info(f"Retries needed: {retries_attempted}")
         logger.info("")
+
+        if not result['success']:
+            return
 
         logger.info("📋 FINAL PRIMARY KEY:")
         for col in result['primary_key_columns']:
@@ -655,7 +425,7 @@ class PrimaryKeyDetector:
         logger.info(f"🔍 Validation: {validation_msg}")
         logger.info("")
 
-        if result.get('all_attempts') and len(result['all_attempts']) > 1:
+        if result.get('all_attempts', None) and len(result['all_attempts']) > 1:
             logger.info("📝 ATTEMPT HISTORY:")
             for i, attempt in enumerate(result['all_attempts']):
                 cols_str = ', '.join(attempt['primary_key_columns'])
@@ -670,7 +440,7 @@ class PrimaryKeyDetector:
 
         status = result.get('final_status', 'unknown')
         if status == 'success':
-            logger.info("✅ RECOMMENDATION: Use the detected composite key")
+            logger.info("✅ RECOMMENDATION: Use as a primary key")
         elif status == 'max_retries_reached_with_duplicates':
             logger.info("⚠️  RECOMMENDATION: Manual review needed - duplicates persist")
         else:
