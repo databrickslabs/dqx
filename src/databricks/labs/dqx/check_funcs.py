@@ -1305,7 +1305,7 @@ def is_aggr_not_greater_than(
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
-        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., {"percentile": 0.95}).
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
 
@@ -1348,7 +1348,7 @@ def is_aggr_not_less_than(
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
-        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., {"percentile": 0.95}).
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
 
@@ -1391,7 +1391,7 @@ def is_aggr_equal(
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
-        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., {"percentile": 0.95}).
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
 
@@ -1434,7 +1434,7 @@ def is_aggr_not_equal(
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
-        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., {"percentile": 0.95}).
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
 
