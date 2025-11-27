@@ -1612,7 +1612,7 @@ Use `is_aggr_*` functions to validate metrics across your entire dataset or with
 - Enforce SLAs and performance thresholds
 - Detect data quality issues across groups
 
-DQX supports 20 **curated** aggregate functions (recommended for data quality) plus any [Databricks aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) as custom aggregates.
+DQX supports 20 **curated** aggregate functions (recommended for data quality) plus any other [Databricks built-in aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha).
 
 ### Curated Aggregate Functions
 
@@ -1644,13 +1644,15 @@ Validated and optimized for data quality use cases:
 - `percentile` - Exact percentile (requires `aggr_params`)
 - `approx_percentile` - Approximate percentile (faster, requires `aggr_params`)
 
-### Custom Aggregates
+### Non-Curated Aggregates
 
-Any [Databricks aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) can be used as a custom aggregate. DQX will:
-- Issue a warning (use curated functions when possible)
+Any [Databricks built-in aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) can be used beyond the curated list. DQX will:
+- Issue a warning (recommending curated functions when possible)
 - Validate the function returns numeric values
 
-**Note:** Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`) will fail with a clear error message explaining they cannot be compared to numeric limits.
+**Limitations:**
+- Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`) will fail with a clear error message explaining they cannot be compared to numeric limits
+- **User-Defined Aggregate Functions (UDAFs) are not currently supported** - only Databricks built-in functions in `pyspark.sql.functions`
 
 ### Extended Examples
 

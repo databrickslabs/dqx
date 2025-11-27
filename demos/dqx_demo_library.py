@@ -696,8 +696,8 @@ display(valid_and_quarantine_df)
 # MAGIC DQX now supports 20 curated aggregate functions for advanced data quality monitoring:
 # MAGIC - **Statistical functions**: `stddev`, `variance`, `median`, `mode`, `skewness`, `kurtosis` for anomaly detection
 # MAGIC - **Percentile functions**: `percentile`, `approx_percentile` for SLA monitoring
-# MAGIC - **Cardinality functions**: `count_distinct` (global only), `approx_count_distinct` (works with group_by, uses HyperLogLog++)
-# MAGIC - **Custom aggregates**: Support for user-defined functions with runtime validation
+# MAGIC - **Cardinality functions**: `count_distinct`, `approx_count_distinct` (uses HyperLogLog++)
+# MAGIC - **Any Databricks built-in aggregate**: Supported with runtime validation
 
 # COMMAND ----------
 
@@ -789,12 +789,14 @@ display(result_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### Example 3: Custom Aggregate Functions with Runtime Validation
+# MAGIC #### Example 3: Non-Curated Aggregate Functions with Runtime Validation
 # MAGIC
-# MAGIC DQX supports custom aggregate functions (including UDAFs) with:
+# MAGIC DQX supports any Databricks built-in aggregate function beyond the curated list:
 # MAGIC - **Warning**: Non-curated functions trigger a warning
 # MAGIC - **Runtime validation**: Ensures the function returns numeric values compatible with comparisons
 # MAGIC - **Graceful errors**: Invalid aggregates (e.g., `collect_list` returning arrays) fail with clear messages
+# MAGIC
+# MAGIC **Note**: User-Defined Aggregate Functions (UDAFs) are not currently supported.
 
 # COMMAND ----------
 

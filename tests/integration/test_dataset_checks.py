@@ -759,8 +759,8 @@ def test_is_aggr_with_collect_list_fails_with_group_by(spark: SparkSession):
         apply_fn(test_df)
 
 
-def test_is_aggr_custom_aggregate_with_warning(spark: SparkSession):
-    """Test that custom (non-curated) aggregates work but produce warning."""
+def test_is_aggr_non_curated_aggregate_with_warning(spark: SparkSession):
+    """Test that non-curated (built-in but not in curated list) aggregates work but produce warning."""
     test_df = spark.createDataFrame(
         [("A", 10), ("B", 20), ("C", 30)],
         "a: string, b: int",

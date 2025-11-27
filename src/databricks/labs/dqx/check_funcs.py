@@ -1306,13 +1306,13 @@ def is_aggr_not_greater_than(
 
     This function verifies that an aggregation on a column or group of columns does not exceed
     a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
-    and custom aggregates. Rows where the aggregation result exceeds the limit are flagged.
+    and any Databricks built-in aggregate. Rows where the aggregation result exceeds the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
-            count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
@@ -1349,17 +1349,16 @@ def is_aggr_not_less_than(
 
     This function verifies that an aggregation on a column or group of columns is not below
     a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
-    and custom aggregates. Rows where the aggregation result is below the limit are flagged.
+    and any Databricks built-in aggregate. Rows where the aggregation result is below the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
-            count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
-
 
     Returns:
         A tuple of:
@@ -1393,13 +1392,13 @@ def is_aggr_equal(
 
     This function verifies that an aggregation on a column or group of columns is equal to
     a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
-    and custom aggregates. Rows where the aggregation result is not equal to the limit are flagged.
+    and any Databricks built-in aggregate. Rows where the aggregation result is not equal to the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
-            count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
@@ -1436,13 +1435,13 @@ def is_aggr_not_equal(
 
     This function verifies that an aggregation on a column or group of columns is not equal to
     a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
-    and custom aggregates. Rows where the aggregation result is equal to the limit are flagged.
+    and any Databricks built-in aggregate. Rows where the aggregation result is equal to the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
-            count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
@@ -2370,8 +2369,8 @@ def _is_aggr_compare(
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type. Curated functions include 'count', 'sum', 'avg', 'min', 'max',
-            'count_distinct', 'stddev', 'percentile', and more. Custom aggregate functions are
-            supported but will trigger a warning and runtime validation.
+            'count_distinct', 'stddev', 'percentile', and more. Any Databricks built-in aggregate
+            function is supported (will trigger a warning for non-curated functions).
         aggr_params: Optional dictionary of parameters for aggregate functions that require them
             (e.g., percentile functions need {"percentile": 0.95}).
         group_by: Optional list of columns or Column expressions to group by.
@@ -2386,7 +2385,7 @@ def _is_aggr_compare(
             - A closure that applies the aggregation check logic.
 
     Raises:
-        InvalidParameterError: If a custom aggregate returns non-numeric or multiple rows per group.
+        InvalidParameterError: If an aggregate returns non-numeric types or is not found.
         MissingParameterError: If required parameters for specific aggregates are not provided.
     """
     # Warn if using non-curated aggregate function
@@ -2395,7 +2394,7 @@ def _is_aggr_compare(
         warnings.warn(
             f"Using non-curated aggregate function '{aggr_type}'. "
             f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
-            f"Custom aggregates must return a single numeric value per group.",
+            f"Non-curated aggregates must return a single numeric value per group.",
             UserWarning,
             stacklevel=2,
         )
@@ -2453,7 +2452,7 @@ def _is_aggr_compare(
                 group_cols = [F.col(col) if isinstance(col, str) else col for col in group_by]
                 agg_df = df.groupBy(*group_cols).agg(aggr_expr.alias(metric_col))
 
-                # Validate custom aggregates before join
+                # Validate non-curated aggregates before join
                 if not is_curated:
                     _validate_aggregate_return_type(agg_df, aggr_type, metric_col)
 
@@ -2466,7 +2465,7 @@ def _is_aggr_compare(
                 window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
                 df = df.withColumn(metric_col, aggr_expr.over(window_spec))
 
-                # Validate custom aggregates (type check only - window functions return same row count)
+                # Validate non-curated aggregates (type check only - window functions return same row count)
                 if not is_curated:
                     _validate_aggregate_return_type(df, aggr_type, metric_col)
         else:
@@ -2477,7 +2476,7 @@ def _is_aggr_compare(
             # so no explicit limit is required (informational only).
             agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
 
-            # Validate custom aggregates (type check only - we already limited to 1 row)
+            # Validate non-curated aggregates (type check only - we already limited to 1 row)
             if not is_curated:
                 _validate_aggregate_return_type(agg_df, aggr_type, metric_col)
 
