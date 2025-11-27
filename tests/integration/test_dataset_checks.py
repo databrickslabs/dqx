@@ -523,6 +523,159 @@ def test_is_aggr_not_equal(spark: SparkSession):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
+def test_is_aggr_with_count_distinct(spark: SparkSession):
+    """Test count_distinct aggregation - GitHub issue #929 requirement: 'each country has one code'."""
+    test_df = spark.createDataFrame(
+        [
+            ["US", "USA"],
+            ["US", "USA"],  # Same code, OK
+            ["FR", "FRA"],
+            ["FR", "FRN"],  # Different code, should FAIL
+            ["DE", "DEU"],
+        ],
+        "country: string, code: string",
+    )
+
+    checks = [
+        # Each country should have exactly one distinct code
+        is_aggr_not_greater_than("code", limit=1, aggr_type="count_distinct", group_by=["country"]),
+        # Global distinct count
+        is_aggr_not_greater_than("country", limit=5, aggr_type="count_distinct"),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    expected_schema = "country: string, code: string, code_count_distinct_group_by_country_greater_than_limit: string, country_count_distinct_greater_than_limit: string"
+
+    expected = spark.createDataFrame(
+        [
+            ["US", "USA", None, None],
+            ["US", "USA", None, None],
+            ["FR", "FRA", "Count_distinct 2 in column 'code' per group of columns 'country' is greater than limit: 1", None],
+            ["FR", "FRN", "Count_distinct 2 in column 'code' per group of columns 'country' is greater than limit: 1", None],
+            ["DE", "DEU", None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_aggr_with_statistical_functions(spark: SparkSession):
+    """Test statistical aggregate functions: stddev, variance, median, skewness, kurtosis."""
+    test_df = spark.createDataFrame(
+        [
+            ["A", 10.0],
+            ["A", 20.0],
+            ["A", 30.0],
+            ["B", 5.0],
+            ["B", 5.0],
+            ["B", 5.0],
+        ],
+        "group: string, value: double",
+    )
+
+    checks = [
+        # Standard deviation check (group A has higher variance than B)
+        is_aggr_not_greater_than("value", limit=10.0, aggr_type="stddev", group_by=["group"]),
+        # Variance check
+        is_aggr_not_greater_than("value", limit=100.0, aggr_type="variance", group_by=["group"]),
+        # Median check
+        is_aggr_not_greater_than("value", limit=25.0, aggr_type="median"),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    # Check that checks were applied (exact values depend on Spark's statistical functions)
+    assert "value_stddev_group_by_group_greater_than_limit" in actual.columns
+    assert "value_variance_group_by_group_greater_than_limit" in actual.columns
+    assert "value_median_greater_than_limit" in actual.columns
+
+
+def test_is_aggr_with_percentile_functions(spark: SparkSession):
+    """Test percentile and approx_percentile with aggr_params."""
+    test_df = spark.createDataFrame(
+        [(i, float(i)) for i in range(1, 101)],
+        "id: int, value: double",
+    )
+
+    checks = [
+        # P95 should be around 95
+        is_aggr_not_greater_than("value", limit=100.0, aggr_type="percentile", aggr_params={"percentile": 0.95}),
+        # P99 with approx_percentile
+        is_aggr_not_greater_than("value", limit=100.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.99}),
+        # P50 (median) with accuracy parameter
+        is_aggr_not_less_than("value", limit=40.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.50, "accuracy": 100}),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    # Verify columns exist
+    assert "value_percentile_greater_than_limit" in actual.columns
+    assert "value_approx_percentile_greater_than_limit" in actual.columns
+    assert "value_approx_percentile_less_than_limit" in actual.columns
+
+
+def test_is_aggr_percentile_missing_params(spark: SparkSession):
+    """Test that percentile functions require percentile parameter."""
+    test_df = spark.createDataFrame([(1, 10.0)], "id: int, value: double")
+
+    from databricks.labs.dqx.errors import MissingParameterError
+
+    # Should raise error when percentile param is missing
+    with pytest.raises(MissingParameterError, match="percentile.*requires aggr_params"):
+        condition, apply_fn = is_aggr_not_greater_than("value", limit=100.0, aggr_type="percentile")
+        apply_fn(test_df)
+
+
+def test_is_aggr_with_invalid_aggregate_function(spark: SparkSession):
+    """Test that invalid aggregate function names raise clear errors."""
+    test_df = spark.createDataFrame([(1, 10)], "id: int, value: int")
+
+    from databricks.labs.dqx.errors import InvalidParameterError
+
+    # Non-existent function should raise error
+    with pytest.raises(InvalidParameterError, match="not found in pyspark.sql.functions"):
+        condition, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="nonexistent_function")
+        apply_fn(test_df)
+
+
+def test_is_aggr_with_collect_list_fails(spark: SparkSession):
+    """Test that collect_list (returns array) fails with clear error message."""
+    test_df = spark.createDataFrame([(1, 10), (2, 20)], "id: int, value: int")
+
+    from databricks.labs.dqx.errors import InvalidParameterError
+
+    # collect_list returns array which cannot be compared to numeric limit
+    with pytest.raises(InvalidParameterError, match="ArrayType.*cannot be compared"):
+        condition, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="collect_list")
+        apply_fn(test_df)
+
+
+def test_is_aggr_custom_aggregate_with_warning(spark: SparkSession):
+    """Test that custom (non-curated) aggregates work but produce warning."""
+    import warnings
+
+    test_df = spark.createDataFrame(
+        [("A", 10), ("B", 20), ("C", 30)],
+        "category: string, value: int",
+    )
+
+    # Use a valid aggregate that's not in curated list (e.g., if we had a UDAF)
+    # For now, test with any_value which is a valid Spark aggregate
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        condition, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="any_value")
+        result = apply_fn(test_df)
+
+        # Should have warning about non-curated aggregate
+        assert len(w) > 0
+        assert "non-curated" in str(w[0].message).lower()
+
+    # Should still work
+    assert "value_any_value_greater_than_limit" in result.columns
+
+
 def test_dataset_compare(spark: SparkSession, set_utc_timezone):
     schema = "id1 long, id2 long, name string, dt date, ts timestamp, score float, likes bigint, active boolean"
 

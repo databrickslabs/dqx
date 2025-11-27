@@ -27,6 +27,37 @@ _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
 
+# Curated aggregate functions for data quality checks
+CURATED_AGGR_FUNCTIONS = {
+    # Basic aggregations (5)
+    "count",
+    "sum",
+    "avg",
+    "min",
+    "max",
+    # Cardinality & Uniqueness (3)
+    "count_distinct",
+    "approx_count_distinct",
+    "count_if",
+    # Statistical Analysis (9)
+    "stddev",
+    "stddev_pop",
+    "stddev_samp",
+    "variance",
+    "var_pop",
+    "var_samp",
+    "median",
+    "skewness",
+    "kurtosis",
+    # SLA & Performance Monitoring (2)
+    "percentile",
+    "approx_percentile",
+    # Correlation Analysis (3)
+    "corr",
+    "covar_pop",
+    "covar_samp",
+}
+
 
 class DQPattern(Enum):
     """Enum class to represent DQ patterns used to match data in columns."""
@@ -1263,20 +1294,23 @@ def is_aggr_not_greater_than(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
+    aggr_params: dict[str, any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
 
-    This function verifies that an aggregation (count, sum, avg, min, max) on a column
-    or group of columns does not exceed a specified limit. Rows where the aggregation
-    result exceeds the limit are flagged.
+    This function verifies that an aggregation on a column or group of columns does not exceed
+    a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
+    and custom aggregates. Rows where the aggregation result exceeds the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., {"percentile": 0.95}).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
 
@@ -1289,6 +1323,7 @@ def is_aggr_not_greater_than(
         column,
         limit,
         aggr_type,
+        aggr_params,
         group_by,
         row_filter,
         compare_op=py_operator.gt,
@@ -1302,20 +1337,23 @@ def is_aggr_not_less_than(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
+    aggr_params: dict[str, any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
 
-    This function verifies that an aggregation (count, sum, avg, min, max) on a column
-    or group of columns is not below a specified limit. Rows where the aggregation
-    result is below the limit are flagged.
+    This function verifies that an aggregation on a column or group of columns is not below
+    a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
+    and custom aggregates. Rows where the aggregation result is below the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., {"percentile": 0.95}).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
 
@@ -1328,6 +1366,7 @@ def is_aggr_not_less_than(
         column,
         limit,
         aggr_type,
+        aggr_params,
         group_by,
         row_filter,
         compare_op=py_operator.lt,
@@ -1341,20 +1380,23 @@ def is_aggr_equal(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
+    aggr_params: dict[str, any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
 
-    This function verifies that an aggregation (count, sum, avg, min, max) on a column
-    or group of columns is equal to a specified limit. Rows where the aggregation
-    result is not equal to the limit are flagged.
+    This function verifies that an aggregation on a column or group of columns is equal to
+    a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
+    and custom aggregates. Rows where the aggregation result is not equal to the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., {"percentile": 0.95}).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
 
@@ -1367,6 +1409,7 @@ def is_aggr_equal(
         column,
         limit,
         aggr_type,
+        aggr_params,
         group_by,
         row_filter,
         compare_op=py_operator.ne,
@@ -1380,20 +1423,23 @@ def is_aggr_not_equal(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
+    aggr_params: dict[str, any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
 
-    This function verifies that an aggregation (count, sum, avg, min, max) on a column
-    or group of columns is not equal to a specified limit. Rows where the aggregation
-    result is equal to the limit are flagged.
+    This function verifies that an aggregation on a column or group of columns is not equal to
+    a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
+    and custom aggregates. Rows where the aggregation result is equal to the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., {"percentile": 0.95}).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
 
@@ -1406,6 +1452,7 @@ def is_aggr_not_equal(
         column,
         limit,
         aggr_type,
+        aggr_params,
         group_by,
         row_filter,
         compare_op=py_operator.eq,
@@ -2221,10 +2268,52 @@ def _add_compare_condition(
     )
 
 
+def _validate_custom_aggregate(
+    agg_df: DataFrame,
+    aggr_type: str,
+    metric_col: str,
+    expected_row_count: int,
+) -> None:
+    """
+    Validate custom aggregate returns proper single numeric value per group.
+
+    This function validates that a custom (non-curated) aggregate function behaves correctly
+    by ensuring it returns the expected number of rows and a numeric data type that can be
+    compared to limits.
+
+    Args:
+        agg_df: DataFrame with aggregated results.
+        aggr_type: Name of the aggregate function being validated.
+        metric_col: Column name containing the aggregate result.
+        expected_row_count: Expected number of rows (1 for no group_by, count of groups for group_by).
+
+    Raises:
+        InvalidParameterError: If the aggregate returns more rows than expected (not a proper aggregate)
+            or if it returns a non-numeric type (Array, Map, Struct) that cannot be compared to limits.
+    """
+    # Check 1: Row count (must return exactly expected rows)
+    actual_count = agg_df.count()
+    if actual_count > expected_row_count:
+        raise InvalidParameterError(
+            f"Aggregate function '{aggr_type}' returned {actual_count} rows, "
+            f"expected {expected_row_count}. This is not a proper aggregate function."
+        )
+
+    # Check 2: Return type (must be numeric, not array/struct/map)
+    result_type = agg_df.schema[metric_col].dataType
+    if isinstance(result_type, (types.ArrayType, types.MapType, types.StructType)):
+        raise InvalidParameterError(
+            f"Aggregate function '{aggr_type}' returned {result_type.typeName()} "
+            f"which cannot be compared to numeric limits. "
+            f"Use aggregate functions that return numeric values (e.g., count, sum, avg)."
+        )
+
+
 def _is_aggr_compare(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str,
+    aggr_params: dict[str, any] | None,
     group_by: list[str | Column] | None,
     row_filter: str | None,
     compare_op: Callable[[Column, Column], Column],
@@ -2240,7 +2329,11 @@ def _is_aggr_compare(
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max'.
+        aggr_type: Aggregation type. Curated functions include 'count', 'sum', 'avg', 'min', 'max',
+            'count_distinct', 'stddev', 'percentile', and more. Custom aggregate functions are
+            supported but will trigger a warning and runtime validation.
+        aggr_params: Optional dictionary of parameters for aggregate functions that require them
+            (e.g., percentile functions need {"percentile": 0.95}).
         group_by: Optional list of columns or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation.
         compare_op: Comparison operator (e.g., operator.gt, operator.lt).
@@ -2253,11 +2346,19 @@ def _is_aggr_compare(
             - A closure that applies the aggregation check logic.
 
     Raises:
-        InvalidParameterError: If an unsupported aggregation type is provided.
+        InvalidParameterError: If a custom aggregate returns non-numeric or multiple rows per group.
+        MissingParameterError: If required parameters for specific aggregates are not provided.
     """
-    supported_aggr_types = {"count", "sum", "avg", "min", "max"}
-    if aggr_type not in supported_aggr_types:
-        raise InvalidParameterError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
+    # Warn if using non-curated aggregate function
+    is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
+    if not is_curated:
+        warnings.warn(
+            f"Using non-curated aggregate function '{aggr_type}'. "
+            f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
+            f"Custom aggregates must return a single numeric value per group.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
 
@@ -2300,7 +2401,41 @@ def _is_aggr_compare(
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
         filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
-        aggr_expr = getattr(F, aggr_type)(filtered_expr)
+        
+        # Build aggregation expression based on function type
+        if aggr_type == "count_distinct":
+            # Spark uses countDistinct, not count_distinct
+            aggr_expr = F.countDistinct(filtered_expr)
+        elif aggr_type in ("percentile", "approx_percentile"):
+            # Percentile functions require percentile parameter
+            if not aggr_params or "percentile" not in aggr_params:
+                raise MissingParameterError(
+                    f"'{aggr_type}' requires aggr_params with 'percentile' key (e.g., {{'percentile': 0.95}})"
+                )
+            pct = aggr_params["percentile"]
+            
+            if aggr_type == "percentile":
+                aggr_expr = F.percentile(filtered_expr, pct)
+            else:  # approx_percentile
+                # Check if accuracy parameter is provided
+                if "accuracy" in aggr_params:
+                    aggr_expr = F.approx_percentile(filtered_expr, pct, aggr_params["accuracy"])
+                else:
+                    aggr_expr = F.approx_percentile(filtered_expr, pct)
+        else:
+            # All other aggregate functions (curated and custom)
+            try:
+                aggr_func = getattr(F, aggr_type)
+                # Apply aggr_params if provided and function supports them
+                if aggr_params:
+                    aggr_expr = aggr_func(filtered_expr, **aggr_params)
+                else:
+                    aggr_expr = aggr_func(filtered_expr)
+            except AttributeError:
+                raise InvalidParameterError(
+                    f"Aggregate function '{aggr_type}' not found in pyspark.sql.functions. "
+                    f"Verify the function name is correct."
+                )
 
         if group_by:
             window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
@@ -2312,6 +2447,12 @@ def _is_aggr_compare(
             # Note: The aggregation naturally returns a single row without a groupBy clause,
             # so no explicit limit is required (informational only).
             agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
+            
+            # Validate custom aggregates
+            if not is_curated:
+                expected_rows = 1  # No group_by means single row expected
+                _validate_custom_aggregate(agg_df, aggr_type, metric_col, expected_rows)
+            
             df = df.crossJoin(agg_df)  # bring the metric across all rows
 
         df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))

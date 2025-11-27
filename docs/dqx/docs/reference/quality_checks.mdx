@@ -1601,6 +1601,130 @@ Complex data types are supported as well.
       - col3
       limit: 200
 
+## Aggregate Function Types
+
+The `is_aggr_*` functions support a wide range of aggregate functions for data quality checks. Functions are categorized as **curated** (recommended for DQ) or **custom** (user-defined, validated at runtime).
+
+### Curated Aggregate Functions
+
+Curated functions are validated and optimized for data quality use cases:
+
+#### Basic Aggregations
+- `count` - Count records (nulls excluded)
+- `sum` - Sum of values
+- `avg` - Average of values  
+- `min` - Minimum value
+- `max` - Maximum value
+
+#### Cardinality & Uniqueness
+- `count_distinct` - Count unique values (e.g., "each country has one code")
+- `approx_count_distinct` - Approximate distinct count (faster for large datasets)
+- `count_if` - Conditional counting
+
+#### Statistical Analysis
+- `stddev` / `stddev_samp` - Sample standard deviation (anomaly detection)
+- `stddev_pop` - Population standard deviation
+- `variance` / `var_samp` - Sample variance (stability checks)
+- `var_pop` - Population variance
+- `median` - 50th percentile baseline
+- `skewness` - Distribution skewness (detect asymmetry)
+- `kurtosis` - Distribution kurtosis (detect heavy tails)
+
+#### SLA & Performance Monitoring
+- `percentile` - Exact percentile (requires `aggr_params`)
+- `approx_percentile` - Approximate percentile (faster, requires `aggr_params`)
+
+#### Correlation Analysis  
+- `corr` - Correlation coefficient
+- `covar_pop` - Population covariance
+- `covar_samp` - Sample covariance
+
+### Custom Aggregates
+
+Custom aggregate functions (including UDAFs) are supported with runtime validation. A warning will be issued, and the function must return a single numeric value per group.
+
+**Not suitable:** Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`, `string_agg`) will fail validation.
+
+### Extended Examples
+
+```yaml
+# count_distinct: Ensure each country has exactly one country code
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: country_code
+      aggr_type: count_distinct
+      group_by:
+      - country
+      limit: 1
+
+# Standard deviation: Detect unusual variance in sensor readings per machine
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: temperature
+      aggr_type: stddev
+      group_by:
+      - machine_id
+      limit: 5.0
+
+# Percentile: Monitor P95 latency for SLA compliance
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: latency_ms
+      aggr_type: percentile
+      aggr_params:
+        percentile: 0.95
+      limit: 1000
+
+# Approximate percentile: Fast P99 check with accuracy control
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: response_time
+      aggr_type: approx_percentile
+      aggr_params:
+        percentile: 0.99
+        accuracy: 10000
+      limit: 5000
+
+# Median: Baseline check for central tendency
+- criticality: warn
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: order_value
+      aggr_type: median
+      group_by:
+      - product_category
+      limit: 50.0
+
+# Variance: Stability check for financial data
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: daily_revenue
+      aggr_type: variance
+      limit: 1000000.0
+
+# Approximate count distinct: Efficient cardinality estimation
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: user_id
+      aggr_type: approx_count_distinct
+      group_by:
+      - session_date
+      limit: 100000
+```
+
 # foreign_key check using reference DataFrame
 - criticality: error
   check:

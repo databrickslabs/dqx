@@ -135,6 +135,41 @@ This approach provides static type checking and autocompletion in IDEs, making i
         column="col1",
         check_func_kwargs={"aggr_type": "avg", "group_by": ["col2"], "limit": 10.5},
       ),
+
+      # Extended aggregate functions for advanced data quality checks
+
+      DQDatasetRule(  # Uniqueness check: each country should have one country code
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="country_code",
+        check_func_kwargs={
+            "aggr_type": "count_distinct",
+            "group_by": ["country"],
+            "limit": 1
+        },
+      ),
+
+      DQDatasetRule(  # Anomaly detection: detect unusual variance in sensor readings
+        criticality="warn",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="temperature",
+        check_func_kwargs={
+            "aggr_type": "stddev",
+            "group_by": ["machine_id"],
+            "limit": 5.0
+        },
+      ),
+
+      DQDatasetRule(  # SLA monitoring: P95 latency must be under 1 second
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="latency_ms",
+        check_func_kwargs={
+            "aggr_type": "percentile",
+            "aggr_params": {"percentile": 0.95},
+            "limit": 1000
+        },
+      ),
     ]
     ```
   </TabItem>
@@ -142,6 +177,102 @@ This approach provides static type checking and autocompletion in IDEs, making i
 
 <Admonition type="info" title="Note">
 The validation of arguments and keyword arguments for the check function is automatically performed upon creating a `DQRowRule`.
+</Admonition>
+
+## Practical Use Cases for Extended Aggregates
+
+### Uniqueness Validation with count_distinct
+
+Ensure referential integrity by verifying that each entity has exactly one identifier:
+
+```yaml
+# Each country should have exactly one country code
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: country_code
+      aggr_type: count_distinct
+      group_by:
+      - country
+      limit: 1
+```
+
+### Anomaly Detection with Statistical Functions
+
+Detect unusual patterns in sensor data or business metrics:
+
+```yaml
+# Alert on unusually high temperature variance per machine
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: temperature
+      aggr_type: stddev
+      group_by:
+      - machine_id
+      limit: 5.0
+
+# Monitor revenue stability across product lines
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: daily_revenue
+      aggr_type: variance
+      group_by:
+      - product_line
+      limit: 1000000.0
+```
+
+### SLA and Performance Monitoring with Percentiles
+
+Monitor service performance and ensure SLA compliance:
+
+```yaml
+# P95 API latency must be under 1 second
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: latency_ms
+      aggr_type: percentile
+      aggr_params:
+        percentile: 0.95
+      limit: 1000
+
+# P99 response time check (fast approximate)
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: response_time_ms
+      aggr_type: approx_percentile
+      aggr_params:
+        percentile: 0.99
+        accuracy: 10000
+      limit: 5000
+
+# Median baseline for order processing time
+- criticality: warn
+  check:
+    function: is_aggr_not_less_than
+    arguments:
+      column: processing_time_sec
+      aggr_type: median
+      group_by:
+      - order_type
+      limit: 30.0
+```
+
+<Admonition type="tip" title="Choosing Aggregate Functions">
+- **count_distinct**: Uniqueness validation, cardinality checks
+- **stddev/variance**: Anomaly detection, consistency monitoring
+- **percentile**: SLA compliance, outlier detection (P95, P99)
+- **median**: Baseline checks, central tendency
+- **approx_percentile**: Fast percentile estimation for large datasets
+- **approx_count_distinct**: Efficient cardinality for high-cardinality columns
 </Admonition>
 
 ### Checks defined using metadata (list of dictionaries)
