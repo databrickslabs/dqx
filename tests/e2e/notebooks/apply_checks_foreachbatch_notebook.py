@@ -18,6 +18,7 @@ from chispa import assert_df_equality
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk import WorkspaceClient
 
 def test_apply_checks_foreachbatch():
@@ -34,7 +35,11 @@ def test_apply_checks_foreachbatch():
     def batch_handler_function(batch_df: DataFrame, _: int) -> None:
         mock_ws = MagicMock(spec=WorkspaceClient)
         engine = DQEngine(mock_ws)
-        expected = batch_df.select("*", lit(None).alias("_warnings"), lit(None).alias("_errors"))
+        expected = batch_df.select(
+            "*",
+            lit(None).cast(dq_result_schema.simpleString()).alias("_errors"),
+            lit(None).cast(dq_result_schema.simpleString()).alias("_warnings"),
+        )
         actual = engine.apply_checks(batch_df, checks)
         assert_df_equality(actual, expected)
 
