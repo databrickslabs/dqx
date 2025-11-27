@@ -57,7 +57,6 @@ else:
 # COMMAND ----------
 
 model_name = "databricks/databricks-claude-sonnet-4-5"
-
 dbutils.widgets.text("model_name", model_name, "Model Name")
 model_name = dbutils.widgets.get("model_name")
 
@@ -68,7 +67,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.config import LLMModelConfig, InputConfig
+from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx import check_funcs
 import pyspark.sql.functions as F
@@ -84,10 +83,11 @@ llm_model_config = LLMModelConfig(model_name=model_name)
 
 # Use existing sample table
 input_table_name = "samples.tpch.customer"
-input_config = InputConfig(location=input_table_name)
+
+input_df = spark.table(input_table_name)
 
 # Preview the table structure
-display(spark.table(input_table_name).limit(5))
+display(input_df.limit(5))
 
 # COMMAND ----------
 
@@ -96,8 +96,8 @@ display(spark.table(input_table_name).limit(5))
 
 # COMMAND ----------
 
-profiler = DQProfiler(ws, spark)
-pk_result = profiler.detect_primary_keys_with_llm(input_config=input_config, llm_model_config=llm_model_config)
+profiler = DQProfiler(ws, spark, llm_model_config=llm_model_config)
+pk_result = profiler.detect_primary_keys_with_llm(table=input_table_name)
 pk_columns = pk_result.get('primary_key_columns')
 
 print("=" * 80)
@@ -130,8 +130,6 @@ checks = [
     ),
 ]
 
-input_df = spark.table(input_table_name)
-
 # prepare reference DataFrame
 ref_df = input_df.withColumn("c_name", F.when(F.col("c_custkey") == F.lit("412445"), "fake").otherwise(F.col("c_name")))
 ref_dfs = {"ref_df_key": ref_df}
@@ -155,7 +153,7 @@ generator = DQGenerator(ws, spark)
 # COMMAND ----------
 
 # run one of the profiling methods
-summary_stats, profiles = profiler.profile_table(input_config)
+summary_stats, profiles = profiler.profile(input_df)
 
 print("=" * 80)
 print("SUMMARY STATISTICS")
