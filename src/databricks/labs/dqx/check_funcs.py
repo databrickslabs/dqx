@@ -1315,9 +1315,9 @@ def is_aggr_not_greater_than(
             count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
-        aggr_params: Optional dict of parameters for aggregates requiring them. The dict is unpacked as keyword
-            arguments to the Spark function. Single parameter: `{"percentile": 0.95}`. Multiple parameters:
-            `{"percentile": 0.99, "accuracy": 10000}`.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
 
     Returns:
         A tuple of:
@@ -1360,9 +1360,9 @@ def is_aggr_not_less_than(
             count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
-        aggr_params: Optional dict of parameters for aggregates requiring them. The dict is unpacked as keyword
-            arguments to the Spark function. Single parameter: `{"percentile": 0.95}`. Multiple parameters:
-            `{"percentile": 0.99, "accuracy": 10000}`.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
 
     Returns:
         A tuple of:
@@ -1405,9 +1405,9 @@ def is_aggr_equal(
             count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
-        aggr_params: Optional dict of parameters for aggregates requiring them. The dict is unpacked as keyword
-            arguments to the Spark function. Single parameter: `{"percentile": 0.95}`. Multiple parameters:
-            `{"percentile": 0.99, "accuracy": 10000}`.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
 
     Returns:
         A tuple of:
@@ -1450,9 +1450,9 @@ def is_aggr_not_equal(
             count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
-        aggr_params: Optional dict of parameters for aggregates requiring them. The dict is unpacked as keyword
-            arguments to the Spark function. Single parameter: `{"percentile": 0.95}`. Multiple parameters:
-            `{"percentile": 0.99, "accuracy": 10000}`.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
 
     Returns:
         A tuple of:
