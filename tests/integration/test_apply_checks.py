@@ -8534,7 +8534,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
 
 
 def test_apply_checks_foreachbatch(spark):
-    input_df = spark.readStream.format("rate-micro-batch").load()
+    input_df = spark.readStream.format("rate-micro-batch").option("rowsPerBatch", 100).load()
     checks = [
         DQRowRule(  # 'rate-micro-batch' source has a non-null 'value' column of type 'long'
             name="value_is_null_or_empty",

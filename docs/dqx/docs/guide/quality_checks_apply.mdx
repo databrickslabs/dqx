@@ -463,7 +463,7 @@ def validate_and_write_micro_batch_data(batch_df: DataFrame, _: int) -> None:
   valid_and_invalid_df.write.format("delta").saveAsTable("catalog.schema.output")  
 
 # Read the data and apply the `foreachBatch` function
-input_data = spark.readStream.format("rate-micro-batch").load()
+input_data = spark.readStream.format("rate-micro-batch").option("rowsPerBatch", 100).load()
 input_data.writeStream.foreachBatch(validate_and_write_micro_batch_data).start()
 ```
 
