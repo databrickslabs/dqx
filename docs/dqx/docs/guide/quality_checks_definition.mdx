@@ -267,7 +267,8 @@ Monitor service performance and ensure SLA compliance:
 ```
 
 <Admonition type="tip" title="Choosing Aggregate Functions">
-- **count_distinct**: Uniqueness validation, cardinality checks
+- **count_distinct**: Exact cardinality (global only, cannot use with `group_by` due to Spark limitation)
+- **approx_count_distinct**: Fast cardinality estimation (works with `group_by`, uses HyperLogLog++)
 - **stddev/variance**: Anomaly detection, consistency monitoring
 - **percentile**: SLA compliance, outlier detection (P95, P99)
 - **median**: Baseline checks, central tendency

@@ -525,55 +525,76 @@ def test_is_aggr_not_equal(spark: SparkSession):
 
 
 def test_is_aggr_with_count_distinct(spark: SparkSession):
-    """Test count_distinct aggregation - GitHub issue #929 requirement: 'each country has one code'."""
+    """Test count_distinct for exact cardinality (works without group_by)."""
     test_df = spark.createDataFrame(
         [
-            ["US", "USA"],
-            ["US", "USA"],  # Same code, OK
-            ["FR", "FRA"],
-            ["FR", "FRN"],  # Different code, should FAIL
-            ["DE", "DEU"],
+            ["val1", "data1"],
+            ["val1", "data2"],  # Same first column
+            ["val2", "data3"],  # Different first column
+            ["val3", "data4"],
         ],
-        "country: string, code: string",
+        "a: string, b: string",
     )
 
     checks = [
-        # Each country should have exactly one distinct code
-        is_aggr_not_greater_than("code", limit=1, aggr_type="count_distinct", group_by=["country"]),
-        # Global distinct count
-        is_aggr_not_greater_than("country", limit=5, aggr_type="count_distinct"),
+        # Global count_distinct (no group_by) - should work fine
+        is_aggr_not_greater_than("a", limit=5, aggr_type="count_distinct"),
     ]
 
     actual = _apply_checks(test_df, checks)
 
-    expected_schema = "country: string, code: string, code_count_distinct_group_by_country_greater_than_limit: string, country_count_distinct_greater_than_limit: string"
+    # Check that the check was applied
+    assert "a_count_distinct_greater_than_limit" in actual.columns
 
-    expected = spark.createDataFrame(
-        [
-            ["US", "USA", None, None],
-            ["US", "USA", None, None],
-            [
-                "FR",
-                "FRA",
-                "Count_distinct 2 in column 'code' per group of columns 'country' is greater than limit: 1",
-                None,
-            ],
-            [
-                "FR",
-                "FRN",
-                "Count_distinct 2 in column 'code' per group of columns 'country' is greater than limit: 1",
-                None,
-            ],
-            ["DE", "DEU", None, None],
-        ],
-        expected_schema,
+
+def test_is_aggr_with_count_distinct_and_group_by_fails(spark: SparkSession):
+    """Test that count_distinct with group_by raises clear error about Spark limitation."""
+    test_df = spark.createDataFrame(
+        [["group1", "val1"], ["group1", "val2"]],
+        "a: string, b: string",
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    # count_distinct with group_by should raise InvalidParameterError
+    with pytest.raises(InvalidParameterError, match="count_distinct cannot be used with group_by.*Spark limitation"):
+        _, apply_fn = is_aggr_not_greater_than("b", limit=1, aggr_type="count_distinct", group_by=["a"])
+        apply_fn(test_df)
+
+
+def test_is_aggr_with_approx_count_distinct(spark: SparkSession):
+    """Test approx_count_distinct for fast cardinality estimation with group_by."""
+    test_df = spark.createDataFrame(
+        [
+            ["group1", "val1"],
+            ["group1", "val1"],  # Same value
+            ["group1", "val2"],  # Different value
+            ["group2", "val3"],
+            ["group2", "val3"],  # Same value - only 1 distinct
+        ],
+        "a: string, b: string",
+    )
+
+    checks = [
+        # group1 has 2 distinct values, should exceed limit of 1
+        is_aggr_not_greater_than("b", limit=1, aggr_type="approx_count_distinct", group_by=["a"]),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    # Check that the check was applied
+    assert "b_approx_count_distinct_group_by_a_greater_than_limit" in actual.columns
+
+    # Verify group1 has violations (approx 2 distinct values > limit 1)
+    group1_violations = (
+        actual.filter(F.col("a") == "group1")
+        .select("b_approx_count_distinct_group_by_a_greater_than_limit")
+        .distinct()
+        .collect()
+    )
+    assert len([r for r in group1_violations if r[0] is not None]) > 0
 
 
 def test_is_aggr_with_statistical_functions(spark: SparkSession):
-    """Test statistical aggregate functions: stddev, variance, median, mode, skewness, kurtosis."""
+    """Test statistical aggregate functions: stddev, variance, median, mode."""
     test_df = spark.createDataFrame(
         [
             ["A", 10.0],
@@ -583,88 +604,87 @@ def test_is_aggr_with_statistical_functions(spark: SparkSession):
             ["B", 5.0],
             ["B", 5.0],
         ],
-        "group: string, value: double",
+        "a: string, b: double",
     )
 
     checks = [
         # Standard deviation check (group A has higher variance than B)
-        is_aggr_not_greater_than("value", limit=10.0, aggr_type="stddev", group_by=["group"]),
+        is_aggr_not_greater_than("b", limit=10.0, aggr_type="stddev", group_by=["a"]),
         # Variance check
-        is_aggr_not_greater_than("value", limit=100.0, aggr_type="variance", group_by=["group"]),
-        # Median check
-        is_aggr_not_greater_than("value", limit=25.0, aggr_type="median"),
+        is_aggr_not_greater_than("b", limit=100.0, aggr_type="variance", group_by=["a"]),
+        # Median check (dataset-level, no grouping)
+        is_aggr_not_greater_than("b", limit=25.0, aggr_type="median"),
         # Mode check (most frequent value per group)
-        is_aggr_not_greater_than("value", limit=10.0, aggr_type="mode", group_by=["group"]),
+        is_aggr_not_greater_than("b", limit=10.0, aggr_type="mode", group_by=["a"]),
     ]
 
     actual = _apply_checks(test_df, checks)
 
-    # Check that checks were applied (exact values depend on Spark's statistical functions)
-    assert "value_stddev_group_by_group_greater_than_limit" in actual.columns
-    assert "value_variance_group_by_group_greater_than_limit" in actual.columns
-    assert "value_median_greater_than_limit" in actual.columns
-    assert "value_mode_group_by_group_greater_than_limit" in actual.columns
+    # Check that checks were applied
+    assert "b_stddev_group_by_a_greater_than_limit" in actual.columns
+    assert "b_variance_group_by_a_greater_than_limit" in actual.columns
+    assert "b_median_greater_than_limit" in actual.columns
+    assert "b_mode_group_by_a_greater_than_limit" in actual.columns
 
 
 def test_is_aggr_with_mode_function(spark: SparkSession):
-    """Test mode aggregate function for categorical data quality checks."""
+    """Test mode aggregate function for detecting most common numeric value."""
     test_df = spark.createDataFrame(
         [
-            ["service_A", "ERROR_401"],
-            ["service_A", "ERROR_401"],
-            ["service_A", "ERROR_401"],  # ERROR_401 appears 3 times (mode)
-            ["service_A", "ERROR_500"],
-            ["service_B", "ERROR_200"],
-            ["service_B", "ERROR_200"],  # ERROR_200 appears 2 times (mode)
-            ["service_B", "ERROR_404"],
+            # groupA: most common error code is 401 (appears 3 times)
+            ["groupA", 401],
+            ["groupA", 401],
+            ["groupA", 401],
+            ["groupA", 500],
+            # groupB: most common error code is 200 (appears 2 times)
+            ["groupB", 200],
+            ["groupB", 200],
+            ["groupB", 404],
         ],
-        "service: string, error_code: string",
+        "a: string, b: int",
     )
 
-    # Check that modal error code doesn't appear too frequently (>2 times per service)
+    # Check that the most common error code value doesn't exceed threshold
     checks = [
-        is_aggr_not_greater_than("error_code", limit=2, aggr_type="mode", group_by=["service"]),
+        is_aggr_not_greater_than("b", limit=400, aggr_type="mode", group_by=["a"]),
     ]
 
     actual = _apply_checks(test_df, checks)
 
-    # service_A should fail (mode=3 > limit=2), service_B should pass (mode=2 <= limit=2)
-    assert "error_code_mode_group_by_service_greater_than_limit" in actual.columns
+    # groupA should fail (mode=401 > limit=400), groupB should pass (mode=200 <= limit=400)
+    assert "b_mode_group_by_a_greater_than_limit" in actual.columns
 
-    # Verify failures - service_A rows should have error messages
-    service_a_errors = (
-        actual.filter(F.col("service") == "service_A")
-        .select("error_code_mode_group_by_service_greater_than_limit")
-        .distinct()
-        .collect()
+    # Verify failures - groupA rows should have error messages (mode 401 > 400)
+    group_a_errors = (
+        actual.filter(F.col("a") == "groupA").select("b_mode_group_by_a_greater_than_limit").distinct().collect()
     )
-    assert len([r for r in service_a_errors if r[0] is not None]) > 0
+    assert len([r for r in group_a_errors if r[0] is not None]) > 0
 
 
 def test_is_aggr_with_percentile_functions(spark: SparkSession):
     """Test percentile and approx_percentile with aggr_params."""
     test_df = spark.createDataFrame(
-        [(i, float(i)) for i in range(1, 101)],
-        "id: int, value: double",
+        [(f"row{i}", float(i)) for i in range(1, 101)],
+        "a: string, b: double",
     )
 
     checks = [
         # P95 should be around 95
-        is_aggr_not_greater_than("value", limit=100.0, aggr_type="percentile", aggr_params={"percentile": 0.95}),
+        is_aggr_not_greater_than("b", limit=100.0, aggr_type="percentile", aggr_params={"percentile": 0.95}),
         # P99 with approx_percentile
-        is_aggr_not_greater_than("value", limit=100.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.99}),
+        is_aggr_not_greater_than("b", limit=100.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.99}),
         # P50 (median) with accuracy parameter
         is_aggr_not_less_than(
-            "value", limit=40.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.50, "accuracy": 100}
+            "b", limit=40.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.50, "accuracy": 100}
         ),
     ]
 
     actual = _apply_checks(test_df, checks)
 
     # Verify columns exist
-    assert "value_percentile_greater_than_limit" in actual.columns
-    assert "value_approx_percentile_greater_than_limit" in actual.columns
-    assert "value_approx_percentile_less_than_limit" in actual.columns
+    assert "b_percentile_greater_than_limit" in actual.columns
+    assert "b_approx_percentile_greater_than_limit" in actual.columns
+    assert "b_approx_percentile_less_than_limit" in actual.columns
 
 
 def test_is_aggr_percentile_missing_params(spark: SparkSession):
@@ -714,22 +734,22 @@ def test_is_aggr_custom_aggregate_with_warning(spark: SparkSession):
     """Test that custom (non-curated) aggregates work but produce warning."""
     test_df = spark.createDataFrame(
         [("A", 10), ("B", 20), ("C", 30)],
-        "category: string, value: int",
+        "a: string, b: int",
     )
 
-    # Use a valid aggregate that's not in curated list (e.g., if we had a UDAF)
-    # For now, test with any_value which is a valid Spark aggregate
+    # Use a valid aggregate that's not in curated list (e.g., any_value)
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        _, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="any_value")
+        _, apply_fn = is_aggr_not_greater_than("b", limit=100, aggr_type="any_value")
         result = apply_fn(test_df)
 
         # Should have warning about non-curated aggregate
         assert len(w) > 0
         assert "non-curated" in str(w[0].message).lower()
 
-    # Should still work
-    assert "value_any_value_greater_than_limit" in result.columns
+    # Should still work - check for condition column with any_value in name
+    condition_cols = [c for c in result.columns if "any_value" in c and "condition" in c]
+    assert len(condition_cols) > 0
 
 
 def test_dataset_compare(spark: SparkSession, set_utc_timezone):

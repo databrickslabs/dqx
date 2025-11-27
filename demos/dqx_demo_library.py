@@ -696,7 +696,7 @@ display(valid_and_quarantine_df)
 # MAGIC DQX now supports 20 curated aggregate functions for advanced data quality monitoring:
 # MAGIC - **Statistical functions**: `stddev`, `variance`, `median`, `mode`, `skewness`, `kurtosis` for anomaly detection
 # MAGIC - **Percentile functions**: `percentile`, `approx_percentile` for SLA monitoring
-# MAGIC - **Cardinality functions**: `count_distinct`, `approx_count_distinct` for uniqueness validation
+# MAGIC - **Cardinality functions**: `count_distinct` (global only), `approx_count_distinct` (works with group_by, uses HyperLogLog++)
 # MAGIC - **Custom aggregates**: Support for user-defined functions with runtime validation
 
 # COMMAND ----------

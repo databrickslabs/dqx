@@ -1618,8 +1618,8 @@ Curated functions are validated and optimized for data quality use cases:
 - `max` - Maximum value
 
 #### Cardinality & Uniqueness
-- `count_distinct` - Count unique values (e.g., "each country has one code")
-- `approx_count_distinct` - Approximate distinct count (faster for large datasets)
+- `count_distinct` - Exact distinct count (global aggregations only, not supported with `group_by`)
+- `approx_count_distinct` - Approximate distinct count using HyperLogLog++ (works with `group_by`, faster for large datasets)
 - `count_if` - Conditional counting
 
 #### Statistical Analysis
@@ -1645,16 +1645,25 @@ Custom aggregate functions (including UDAFs) are supported with runtime validati
 ### Extended Examples
 
 ```yaml
-# count_distinct: Ensure each country has exactly one country code
+# count_distinct: Exact distinct count (global only, no group_by)
 - criticality: error
   check:
     function: is_aggr_not_greater_than
     arguments:
-      column: country_code
+      column: user_id
       aggr_type: count_distinct
+      limit: 1000000
+
+# approx_count_distinct: Fast cardinality estimation (works with group_by)
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: user_id
+      aggr_type: approx_count_distinct
       group_by:
-      - country
-      limit: 1
+      - session_date
+      limit: 100000
 
 # Standard deviation: Detect unusual variance in sensor readings per machine
 - criticality: warn
@@ -1709,17 +1718,6 @@ Custom aggregate functions (including UDAFs) are supported with runtime validati
       column: daily_revenue
       aggr_type: variance
       limit: 1000000.0
-
-# Approximate count distinct: Efficient cardinality estimation
-- criticality: warn
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: user_id
-      aggr_type: approx_count_distinct
-      group_by:
-      - session_date
-      limit: 100000
 
 # Mode: Alert if any single error code dominates
 - criticality: warn

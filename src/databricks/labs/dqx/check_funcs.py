@@ -1289,9 +1289,9 @@ def is_aggr_not_greater_than(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
-    aggr_params: dict[str, Any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1305,9 +1305,9 @@ def is_aggr_not_greater_than(
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
-        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
 
     Returns:
         A tuple of:
@@ -1332,9 +1332,9 @@ def is_aggr_not_less_than(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
-    aggr_params: dict[str, Any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1348,9 +1348,10 @@ def is_aggr_not_less_than(
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
-        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
+
 
     Returns:
         A tuple of:
@@ -1375,9 +1376,9 @@ def is_aggr_equal(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
-    aggr_params: dict[str, Any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1391,9 +1392,9 @@ def is_aggr_equal(
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
-        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
 
     Returns:
         A tuple of:
@@ -1418,9 +1419,9 @@ def is_aggr_not_equal(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
-    aggr_params: dict[str, Any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1434,9 +1435,9 @@ def is_aggr_not_equal(
         limit: Numeric value, column name, or SQL expression for the limit.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Custom aggregates are supported with validation.
-        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., `{"percentile": 0.95}`).
 
     Returns:
         A tuple of:
@@ -2380,6 +2381,15 @@ def _is_aggr_compare(
         InvalidParameterError: If a custom aggregate returns non-numeric or multiple rows per group.
         MissingParameterError: If required parameters for specific aggregates are not provided.
     """
+    # Validate count_distinct with group_by (Spark limitation)
+    if aggr_type == "count_distinct" and group_by:
+        raise InvalidParameterError(
+            "count_distinct cannot be used with group_by due to Spark limitation: "
+            "DISTINCT is not supported in window functions. "
+            "Use 'approx_count_distinct' instead, which provides fast approximate counting using HyperLogLog++ "
+            "and works with both grouped and ungrouped aggregations."
+        )
+
     # Warn if using non-curated aggregate function
     is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
     if not is_curated:
