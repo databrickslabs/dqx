@@ -1685,6 +1685,13 @@ Any [Databricks built-in aggregate function](https://docs.databricks.com/aws/en/
 - Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`) will fail with a clear error message explaining they cannot be compared to numeric limits
 - **User-Defined Aggregate Functions (UDAFs) are not currently supported** - only Databricks built-in functions in `pyspark.sql.functions`
 
+**Runtime Compatibility:**
+DQX requires **Databricks Runtime 15.4+ (Spark 3.5+)**. Some newer functions may not be available on older runtimes:
+- `mode`, `median` - Require Spark 3.4+ (DBR 13.3+)
+- Most statistical functions - Available in all supported versions
+
+Unsupported functions will fail with an error message and version guidance.
+
 ### Extended Examples
 
 ```yaml

@@ -2323,7 +2323,9 @@ def _build_aggregate_expression(
     except AttributeError as exc:
         raise InvalidParameterError(
             f"Aggregate function '{aggr_type}' not found in pyspark.sql.functions. "
-            f"Verify the function name is correct."
+            f"Verify the function name is correct, or check if your Databricks Runtime version supports this function. "
+            f"Some newer aggregate functions (e.g., mode, median) require DBR 15.4+ (Spark 3.5+). "
+            f"See: https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha"
         ) from exc
 
 
