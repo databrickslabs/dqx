@@ -622,6 +622,42 @@ def test_is_aggr_with_approx_count_distinct(spark: SparkSession):
     assert len([r for r in group1_violations if r[0] is not None]) > 0
 
 
+def test_is_aggr_with_aggr_params_generic(spark: SparkSession):
+    """Test aggr_params passed through to generic aggregate function (not percentile)."""
+    test_df = spark.createDataFrame(
+        [
+            ["group1", "val1"],
+            ["group1", "val1"],
+            ["group1", "val2"],
+            ["group1", "val3"],
+            ["group2", "valA"],
+            ["group2", "valA"],
+        ],
+        "a: string, b: string",
+    )
+
+    # Test approx_count_distinct with rsd (relative standard deviation) parameter
+    # This tests the generic aggr_params pass-through (line 2313 in check_funcs.py)
+    checks = [
+        is_aggr_not_greater_than(
+            "b",
+            limit=5,
+            aggr_type="approx_count_distinct",
+            aggr_params={"rsd": 0.01},  # More accurate approximation (1% relative error)
+            group_by=["a"],
+        ),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    # Check that the check was applied with custom rsd parameter
+    assert "b_approx_count_distinct_group_by_a_greater_than_limit" in actual.columns
+
+    # Verify results are computed (group1 has ~3 distinct, group2 has ~1 distinct)
+    result_count = actual.select("b_approx_count_distinct_group_by_a_greater_than_limit").count()
+    assert result_count == 6  # All rows should have the metric
+
+
 def test_is_aggr_with_statistical_functions(spark: SparkSession):
     """Test statistical aggregate functions: stddev, variance, median, mode."""
     test_df = spark.createDataFrame(

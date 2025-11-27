@@ -1644,6 +1644,37 @@ Validated and optimized for data quality use cases:
 - `percentile` - Exact percentile (requires `aggr_params`)
 - `approx_percentile` - Approximate percentile (faster, requires `aggr_params`)
 
+### Using `aggr_params` for Function Parameters
+
+Some aggregate functions require additional parameters beyond the column. Pass these as a dictionary:
+
+**Python:**
+```python
+check_func_kwargs={
+    "aggr_type": "percentile",
+    "aggr_params": {"percentile": 0.95},  # Single parameter
+    "limit": 1000
+}
+
+# Multiple parameters:
+check_func_kwargs={
+    "aggr_type": "approx_percentile",
+    "aggr_params": {
+        "percentile": 0.99,
+        "accuracy": 10000  # Multiple parameters as dict
+    }
+}
+```
+
+**YAML:**
+```yaml
+aggr_params:
+  percentile: 0.95
+  accuracy: 10000  # Multiple parameters as nested YAML
+```
+
+The `aggr_params` dictionary is unpacked as keyword arguments to the Spark aggregate function. See [Databricks function documentation](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) for available parameters for each function.
+
 ### Non-Curated Aggregates
 
 Any [Databricks built-in aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) can be used beyond the curated list. DQX will:

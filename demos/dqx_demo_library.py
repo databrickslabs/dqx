@@ -842,6 +842,10 @@ display(result_df)
 # MAGIC #### Example 4: Percentile Functions for SLA Monitoring
 # MAGIC
 # MAGIC Monitor P95 latency to ensure 95% of API requests meet SLA requirements.
+# MAGIC
+# MAGIC **Using `aggr_params`:** Pass aggregate function parameters as a dictionary.
+# MAGIC - Single parameter: `aggr_params={"percentile": 0.95}`
+# MAGIC - Multiple parameters: `aggr_params={"percentile": 0.99, "accuracy": 10000}`
 
 # COMMAND ----------
 
@@ -858,7 +862,7 @@ checks = [
         column="latency_ms",
         check_func_kwargs={
             "aggr_type": "percentile",
-            "aggr_params": {"percentile": 0.95},  # P95
+            "aggr_params": {"percentile": 0.95},  # aggr_params as dict
             "group_by": ["date"],
             "limit": 950.0
         },
