@@ -7,6 +7,7 @@ from collections.abc import Callable
 from enum import Enum
 from itertools import zip_longest
 import operator as py_operator
+from typing import Any
 import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -29,17 +30,14 @@ IPV4_BIT_LENGTH = 32
 
 # Curated aggregate functions for data quality checks
 CURATED_AGGR_FUNCTIONS = {
-    # Basic aggregations (5)
     "count",
     "sum",
     "avg",
     "min",
     "max",
-    # Cardinality & Uniqueness (3)
     "count_distinct",
     "approx_count_distinct",
     "count_if",
-    # Statistical Analysis (9)
     "stddev",
     "stddev_pop",
     "stddev_samp",
@@ -49,10 +47,8 @@ CURATED_AGGR_FUNCTIONS = {
     "median",
     "skewness",
     "kurtosis",
-    # SLA & Performance Monitoring (2)
     "percentile",
     "approx_percentile",
-    # Correlation Analysis (3)
     "corr",
     "covar_pop",
     "covar_samp",
@@ -1294,7 +1290,7 @@ def is_aggr_not_greater_than(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
-    aggr_params: dict[str, any] | None = None,
+    aggr_params: dict[str, Any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
@@ -1337,7 +1333,7 @@ def is_aggr_not_less_than(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
-    aggr_params: dict[str, any] | None = None,
+    aggr_params: dict[str, Any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
@@ -1380,7 +1376,7 @@ def is_aggr_equal(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
-    aggr_params: dict[str, any] | None = None,
+    aggr_params: dict[str, Any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
@@ -1423,7 +1419,7 @@ def is_aggr_not_equal(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str = "count",
-    aggr_params: dict[str, any] | None = None,
+    aggr_params: dict[str, Any] | None = None,
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
 ) -> tuple[Column, Callable]:
@@ -2268,6 +2264,54 @@ def _add_compare_condition(
     )
 
 
+def _build_aggregate_expression(
+    aggr_type: str,
+    filtered_expr: Column,
+    aggr_params: dict[str, Any] | None,
+) -> Column:
+    """
+    Build the appropriate Spark aggregate expression based on function type and parameters.
+
+    Args:
+        aggr_type: Name of the aggregate function.
+        filtered_expr: Column expression with filters applied.
+        aggr_params: Optional parameters for the aggregate function.
+
+    Returns:
+        Spark Column expression for the aggregate.
+
+    Raises:
+        MissingParameterError: If required parameters are missing for specific aggregates.
+        InvalidParameterError: If the aggregate function is not found.
+    """
+    if aggr_type == "count_distinct":
+        return F.countDistinct(filtered_expr)
+
+    if aggr_type in {"percentile", "approx_percentile"}:
+        if not aggr_params or "percentile" not in aggr_params:
+            raise MissingParameterError(
+                f"'{aggr_type}' requires aggr_params with 'percentile' key (e.g., {{'percentile': 0.95}})"
+            )
+        pct = aggr_params["percentile"]
+
+        if aggr_type == "percentile":
+            return F.percentile(filtered_expr, pct)
+        if "accuracy" in aggr_params:
+            return F.approx_percentile(filtered_expr, pct, aggr_params["accuracy"])
+        return F.approx_percentile(filtered_expr, pct)
+
+    try:
+        aggr_func = getattr(F, aggr_type)
+        if aggr_params:
+            return aggr_func(filtered_expr, **aggr_params)
+        return aggr_func(filtered_expr)
+    except AttributeError as exc:
+        raise InvalidParameterError(
+            f"Aggregate function '{aggr_type}' not found in pyspark.sql.functions. "
+            f"Verify the function name is correct."
+        ) from exc
+
+
 def _validate_custom_aggregate(
     agg_df: DataFrame,
     aggr_type: str,
@@ -2313,7 +2357,7 @@ def _is_aggr_compare(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str,
-    aggr_params: dict[str, any] | None,
+    aggr_params: dict[str, Any] | None,
     group_by: list[str | Column] | None,
     row_filter: str | None,
     compare_op: Callable[[Column, Column], Column],
@@ -2401,41 +2445,9 @@ def _is_aggr_compare(
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
         filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
-        
-        # Build aggregation expression based on function type
-        if aggr_type == "count_distinct":
-            # Spark uses countDistinct, not count_distinct
-            aggr_expr = F.countDistinct(filtered_expr)
-        elif aggr_type in ("percentile", "approx_percentile"):
-            # Percentile functions require percentile parameter
-            if not aggr_params or "percentile" not in aggr_params:
-                raise MissingParameterError(
-                    f"'{aggr_type}' requires aggr_params with 'percentile' key (e.g., {{'percentile': 0.95}})"
-                )
-            pct = aggr_params["percentile"]
-            
-            if aggr_type == "percentile":
-                aggr_expr = F.percentile(filtered_expr, pct)
-            else:  # approx_percentile
-                # Check if accuracy parameter is provided
-                if "accuracy" in aggr_params:
-                    aggr_expr = F.approx_percentile(filtered_expr, pct, aggr_params["accuracy"])
-                else:
-                    aggr_expr = F.approx_percentile(filtered_expr, pct)
-        else:
-            # All other aggregate functions (curated and custom)
-            try:
-                aggr_func = getattr(F, aggr_type)
-                # Apply aggr_params if provided and function supports them
-                if aggr_params:
-                    aggr_expr = aggr_func(filtered_expr, **aggr_params)
-                else:
-                    aggr_expr = aggr_func(filtered_expr)
-            except AttributeError:
-                raise InvalidParameterError(
-                    f"Aggregate function '{aggr_type}' not found in pyspark.sql.functions. "
-                    f"Verify the function name is correct."
-                )
+
+        # Build aggregation expression
+        aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         if group_by:
             window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
@@ -2447,12 +2459,12 @@ def _is_aggr_compare(
             # Note: The aggregation naturally returns a single row without a groupBy clause,
             # so no explicit limit is required (informational only).
             agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
-            
+
             # Validate custom aggregates
             if not is_curated:
                 expected_rows = 1  # No group_by means single row expected
                 _validate_custom_aggregate(agg_df, aggr_type, metric_col, expected_rows)
-            
+
             df = df.crossJoin(agg_df)  # bring the metric across all rows
 
         df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))

@@ -3,6 +3,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 import json
 import itertools
+import warnings
 import pytest
 
 import pyspark.sql.functions as F
@@ -22,7 +23,7 @@ from databricks.labs.dqx.check_funcs import (
     has_valid_schema,
 )
 from databricks.labs.dqx.utils import get_column_name_or_alias
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
 
 from tests.conftest import TEST_CATALOG
 
@@ -551,8 +552,18 @@ def test_is_aggr_with_count_distinct(spark: SparkSession):
         [
             ["US", "USA", None, None],
             ["US", "USA", None, None],
-            ["FR", "FRA", "Count_distinct 2 in column 'code' per group of columns 'country' is greater than limit: 1", None],
-            ["FR", "FRN", "Count_distinct 2 in column 'code' per group of columns 'country' is greater than limit: 1", None],
+            [
+                "FR",
+                "FRA",
+                "Count_distinct 2 in column 'code' per group of columns 'country' is greater than limit: 1",
+                None,
+            ],
+            [
+                "FR",
+                "FRN",
+                "Count_distinct 2 in column 'code' per group of columns 'country' is greater than limit: 1",
+                None,
+            ],
             ["DE", "DEU", None, None],
         ],
         expected_schema,
@@ -605,7 +616,9 @@ def test_is_aggr_with_percentile_functions(spark: SparkSession):
         # P99 with approx_percentile
         is_aggr_not_greater_than("value", limit=100.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.99}),
         # P50 (median) with accuracy parameter
-        is_aggr_not_less_than("value", limit=40.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.50, "accuracy": 100}),
+        is_aggr_not_less_than(
+            "value", limit=40.0, aggr_type="approx_percentile", aggr_params={"percentile": 0.50, "accuracy": 100}
+        ),
     ]
 
     actual = _apply_checks(test_df, checks)
@@ -620,11 +633,9 @@ def test_is_aggr_percentile_missing_params(spark: SparkSession):
     """Test that percentile functions require percentile parameter."""
     test_df = spark.createDataFrame([(1, 10.0)], "id: int, value: double")
 
-    from databricks.labs.dqx.errors import MissingParameterError
-
     # Should raise error when percentile param is missing
     with pytest.raises(MissingParameterError, match="percentile.*requires aggr_params"):
-        condition, apply_fn = is_aggr_not_greater_than("value", limit=100.0, aggr_type="percentile")
+        _, apply_fn = is_aggr_not_greater_than("value", limit=100.0, aggr_type="percentile")
         apply_fn(test_df)
 
 
@@ -632,11 +643,9 @@ def test_is_aggr_with_invalid_aggregate_function(spark: SparkSession):
     """Test that invalid aggregate function names raise clear errors."""
     test_df = spark.createDataFrame([(1, 10)], "id: int, value: int")
 
-    from databricks.labs.dqx.errors import InvalidParameterError
-
     # Non-existent function should raise error
     with pytest.raises(InvalidParameterError, match="not found in pyspark.sql.functions"):
-        condition, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="nonexistent_function")
+        _, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="nonexistent_function")
         apply_fn(test_df)
 
 
@@ -644,18 +653,14 @@ def test_is_aggr_with_collect_list_fails(spark: SparkSession):
     """Test that collect_list (returns array) fails with clear error message."""
     test_df = spark.createDataFrame([(1, 10), (2, 20)], "id: int, value: int")
 
-    from databricks.labs.dqx.errors import InvalidParameterError
-
     # collect_list returns array which cannot be compared to numeric limit
     with pytest.raises(InvalidParameterError, match="ArrayType.*cannot be compared"):
-        condition, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="collect_list")
+        _, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="collect_list")
         apply_fn(test_df)
 
 
 def test_is_aggr_custom_aggregate_with_warning(spark: SparkSession):
     """Test that custom (non-curated) aggregates work but produce warning."""
-    import warnings
-
     test_df = spark.createDataFrame(
         [("A", 10), ("B", 20), ("C", 30)],
         "category: string, value: int",
@@ -665,7 +670,7 @@ def test_is_aggr_custom_aggregate_with_warning(spark: SparkSession):
     # For now, test with any_value which is a valid Spark aggregate
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        condition, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="any_value")
+        _, apply_fn = is_aggr_not_greater_than("value", limit=100, aggr_type="any_value")
         result = apply_fn(test_df)
 
         # Should have warning about non-curated aggregate
