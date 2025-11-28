@@ -98,6 +98,7 @@ class DQGenerator(DQEngineBase):
         status = DQEngine.validate_checks(dq_rules, self.custom_check_functions)
         assert not status.has_errors
 
+        logger.info(f"✅ Quality rules generation completed. Generated {len(dq_rules)} rules.")
         return dq_rules
 
     @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
@@ -137,6 +138,7 @@ class DQGenerator(DQEngineBase):
             logger.info(f"Generated {len(dq_rules)} rules with LLM: {dq_rules}")
             logger.info(f"LLM reasoning: {prediction.reasoning}")
 
+        logger.info(f"✅ AI-Assisted quality rules generation completed. Generated {len(dq_rules)} rules.")
         return dq_rules
 
     @telemetry_logger("generator", "generate_rules_from_contract")
@@ -190,7 +192,7 @@ class DQGenerator(DQEngineBase):
         )
 
         # Delegate to the contract generator
-        return contract_generator.generate_rules_from_contract(
+        dq_rules = contract_generator.generate_rules_from_contract(
             contract=contract,
             contract_file=contract_file,
             contract_format=contract_format,
@@ -198,6 +200,10 @@ class DQGenerator(DQEngineBase):
             process_text_rules=process_text_rules,
             default_criticality=default_criticality,
         )
+        logger.info(
+            f"✅ Quality rules generation from a data contract specification completed. Generated {len(dq_rules)} rules."
+        )
+        return dq_rules
 
     @staticmethod
     def dq_generate_is_in(column: str, criticality: str = "error", **params: dict):

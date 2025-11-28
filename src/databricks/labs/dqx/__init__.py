@@ -9,13 +9,15 @@ install_logger()
 
 logging.getLogger("databricks").setLevel(logging.INFO)
 logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.ERROR)
+logging.getLogger("mlflow").setLevel(logging.ERROR)
 
 # Disable MLflow Trace UI in notebooks
 # databricks-langchain automatically enables MLflow tracing when it's imported
 try:
     import mlflow
 
-    # Disable the notebook display widget
+    # Disable the mlflow tracing and notebook display widget
+    mlflow.tracing.disable()
     mlflow.tracing.disable_notebook_display()
     # Disable automatic tracing for LangChain (source of the trace data)
     mlflow.langchain.autolog(disable=True)
