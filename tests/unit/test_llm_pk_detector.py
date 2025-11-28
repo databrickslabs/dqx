@@ -23,20 +23,20 @@ class MockTableManager:
         self.metadata_info = metadata_info
         self.should_raise = should_raise
 
-    def get_table_definition(self):
+    def get_table_definition(self, _table: str):
         if self.should_raise:
             raise ValueError("Table not found")
         return self.table_definition
 
-    def get_table_metadata_info(self):
+    def get_table_metadata_info(self, _table: str):
         if self.should_raise:
             raise ValueError("Metadata not available")
         return self.metadata_info
 
-    def check_duplicates(self, _pk_columns):
+    def check_duplicates(self, _table: str, _pk_columns: list[str]):
         return False, 0
 
-    def get_table_column_names(self):
+    def get_table_column_names(self, _table: str):
         return ["order_id", "product_id", "quantity", "price"]
 
 
@@ -59,7 +59,7 @@ class MockDetector:
 def test_table_manager(mock_spark):
     """Test TableManager initialization, operations, and metadata."""
     table = "test"
-    manager = TableManager(table=table, spark=mock_spark)
+    manager = TableManager(spark=mock_spark)
     assert manager.spark == mock_spark
 
     # Test successful operations
@@ -69,15 +69,15 @@ def test_table_manager(mock_spark):
     mock_pk = Mock()
     mock_pk.toPandas.return_value = pd.DataFrame({'key': ['delta.constraints.primary_key'], 'value': ['id']})
     mock_spark.sql = Mock(side_effect=[mock_result, mock_pk])
-    definition = manager.get_table_definition()
+    definition = manager.get_table_definition(table=table)
     assert 'id bigint' in definition and 'Existing Primary Key: id' in definition
 
     mock_spark.sql = Mock(side_effect=ValueError("Not found"))
     with pytest.raises(ValueError):
-        manager.get_table_definition()
+        manager.get_table_definition(table=table)
     mock_spark.sql = Mock(side_effect=TypeError("Type error"))
-    with pytest.raises(RuntimeError, match="Failed to retrieve table definition"):
-        manager.get_table_definition()
+    with pytest.raises(TypeError, match="Type error"):
+        manager.get_table_definition(table=table)
 
     props_df = pd.DataFrame({'key': ['delta.numRows', 'rawdatasize'], 'value': ['1000', '5000']})
     cols_df = pd.DataFrame(
@@ -88,7 +88,7 @@ def test_table_manager(mock_spark):
     mock_cols = Mock()
     mock_cols.toPandas.return_value = cols_df
     mock_spark.sql = Mock(side_effect=[mock_props, mock_cols])
-    metadata = manager.get_table_metadata_info()
+    metadata = manager.get_table_metadata_info(table=table)
     assert 'numRows' in metadata or 'Metadata' in metadata
 
 
@@ -118,7 +118,6 @@ def test_detect_primary_key_composite(mock_spark):
     mock_metadata = "Table: order_items, Columns: 4, Primary constraints: None"
 
     detector = LLMPrimaryKeyDetector(
-        table="order_items",
         show_live_reasoning=False,
         spark=mock_spark,
     )
@@ -129,7 +128,7 @@ def test_detect_primary_key_composite(mock_spark):
         confidence="high",
         reasoning="Combination of order_id and product_id forms composite primary key for order items",
     )
-    result = detector.detect_primary_keys_with_llm()
+    result = detector.detect_primary_keys_with_llm(table="order_items")
 
     assert result["success"] is True
     assert result["primary_key_columns"] == ["order_id", "product_id"]
@@ -148,7 +147,6 @@ def test_detect_primary_key_no_clear_key(mock_spark):
     mock_metadata = "Table: application_logs, Columns: 4, Primary constraints: None"
 
     detector = LLMPrimaryKeyDetector(
-        table="application_logs",
         show_live_reasoning=False,
         spark=mock_spark,
     )
@@ -160,7 +158,7 @@ def test_detect_primary_key_no_clear_key(mock_spark):
         reasoning="No clear primary key identified - all columns are nullable and none appear to be unique identifiers",
     )
 
-    result = detector.detect_primary_keys_with_llm()
+    result = detector.detect_primary_keys_with_llm(table="application_logs")
 
     assert result["success"] is False
     assert result["primary_key_columns"] == []

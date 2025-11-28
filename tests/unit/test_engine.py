@@ -8,6 +8,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.engine import InvalidParameterError, OutputConfig
 
 
 def test_engine_creation():
@@ -59,3 +60,16 @@ def test_engine_creation_no_workspace_connection(mock_workspace_client, mock_spa
         DQEngine(spark=mock_spark, workspace_client=mock_workspace_client)
     with pytest.raises(DatabricksError):
         DQEngineCore(spark=mock_spark, workspace_client=mock_workspace_client)
+
+
+def test_get_streaming_metrics_listener_invalid_engine(mock_workspace_client, mock_spark):
+    engine = DQEngine(mock_workspace_client, mock_spark)
+    with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine"):
+        engine.get_streaming_metrics_listener(metrics_config=OutputConfig(location="dummy"))
+
+
+def test_get_streaming_metrics_listener_no_observer(mock_workspace_client, mock_spark):
+    engine = DQEngine(mock_workspace_client, mock_spark)
+    engine._engine.observer = None
+    with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine with no observer"):
+        engine.get_streaming_metrics_listener(metrics_config=OutputConfig(location="dummy"))

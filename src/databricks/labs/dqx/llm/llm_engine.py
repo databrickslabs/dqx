@@ -102,9 +102,9 @@ class DQLLMEngine:
             MissingParameterError: If LLM engine is not available or input_config is missing.
         """
         # The initialization of the DSPy model is performed by the compiler in the constructor!
-        detector = LLMPrimaryKeyDetector(table=table, spark=spark, max_retries=max_retries)
+        detector = LLMPrimaryKeyDetector(spark=spark, max_retries=max_retries)
 
-        result = detector.detect_primary_keys_with_llm()
+        result = detector.detect_primary_keys_with_llm(table=table)
 
         logger.info(f"✅ Primary key detection completed for {table}: {result.get('success', False)}")
         return result

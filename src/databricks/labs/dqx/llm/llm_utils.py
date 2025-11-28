@@ -9,6 +9,7 @@ import yaml
 import dspy  # type: ignore
 from pyspark.sql import SparkSession
 from databricks.labs.dqx.checks_resolver import resolve_check_function
+from databricks.labs.dqx.errors import DQXError
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.io import read_input_data
@@ -19,65 +20,47 @@ logger = logging.getLogger(__name__)
 class TableManager:
     """Manages table operations for schema retrieval and metadata checking."""
 
-    def __init__(self, table: str, spark: SparkSession | None = None):
+    def __init__(self, spark: SparkSession | None = None):
         """Initialize with Spark session."""
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self.table = table
 
-    def get_table_definition(self) -> str:
+    def get_table_definition(self, table: str) -> str:
         """Retrieve table definition using Spark SQL DESCRIBE commands."""
-        if not self.spark:
-            raise ValueError("Spark session not available")
+        logger.info(f"🔍 Retrieving schema for table: {table}")
 
-        try:
-            logger.info(f"🔍 Retrieving schema for table: {self.table}")
+        definition_lines = self._get_table_columns(table)
+        existing_pk = self._get_existing_primary_key(table)
+        table_definition = self._build_table_definition_string(definition_lines, existing_pk)
 
-            definition_lines = self._get_table_columns()
-            existing_pk = self._get_existing_primary_key()
-            table_definition = self._build_table_definition_string(definition_lines, existing_pk)
+        logger.info("✅ Table definition retrieved successfully")
+        return table_definition
 
-            logger.info("✅ Table definition retrieved successfully")
-            return table_definition
-
-        except (ValueError, RuntimeError) as e:
-            logger.error(f"Error retrieving table definition for {self.table}: {e}")
-            raise
-        except (AttributeError, TypeError, KeyError) as e:
-            logger.error(f"Unexpected error retrieving table definition for {self.table}: {e}")
-            raise RuntimeError(f"Failed to retrieve table definition: {e}") from e
-
-    def get_table_metadata_info(self) -> str:
+    def get_table_metadata_info(self, table: str) -> str:
         """Get additional metadata information to help with primary key detection."""
-        if not self.spark:
-            return "No metadata available (Spark session not found)"
-
         try:
             metadata_info = []
 
             # Get table properties
-            metadata_info.extend(self._get_table_properties())
+            metadata_info.extend(self._get_table_properties(table))
 
             # Get column statistics
-            metadata_info.extend(self._get_column_statistics())
+            metadata_info.extend(self._get_column_statistics(table))
 
             return (
                 "Metadata information:\n" + "\n".join(metadata_info) if metadata_info else "Limited metadata available"
             )
-
-        except (ValueError, RuntimeError) as e:
-            return f"Could not retrieve metadata: {e}"
-        except (AttributeError, TypeError, KeyError) as e:
+        except Exception as e:
             logger.warning(f"Unexpected error retrieving metadata: {e}")
             return f"Could not retrieve metadata due to unexpected error: {e}"
 
-    def get_table_column_names(self) -> list[str]:
+    def get_table_column_names(self, table: str) -> list[str]:
         """Get table column names."""
-        df = self.spark.table(self.table)
+        df = self.spark.table(table)
         return df.columns
 
-    def _get_table_columns(self) -> list[str]:
+    def _get_table_columns(self, table: str) -> list[str]:
         """Get table column definitions from DESCRIBE TABLE."""
-        describe_query = f"DESCRIBE TABLE EXTENDED {self.table}"
+        describe_query = f"DESCRIBE TABLE EXTENDED {table}"
         describe_result = self.spark.sql(describe_query)
         describe_df = describe_result.toPandas()
 
@@ -99,10 +82,10 @@ class TableManager:
 
         return definition_lines
 
-    def _get_existing_primary_key(self) -> str | None:
+    def _get_existing_primary_key(self, table: str) -> str | None:
         """Get existing primary key from table properties."""
         try:
-            pk_query = f"SHOW TBLPROPERTIES {self.table}"
+            pk_query = f"SHOW TBLPROPERTIES {table}"
             pk_result = self.spark.sql(pk_query)
             pk_df = pk_result.toPandas()
 
@@ -133,10 +116,10 @@ class TableManager:
                 metadata_info.append(f"{key}: {value}")
         return metadata_info
 
-    def _get_table_properties(self) -> list[str]:
+    def _get_table_properties(self, table: str) -> list[str]:
         """Get table properties metadata."""
         try:
-            stats_query = f"SHOW TBLPROPERTIES {self.table}"
+            stats_query = f"SHOW TBLPROPERTIES {table}"
             stats_result = self.spark.sql(stats_query)
             stats_df = stats_result.toPandas()
             return self._extract_useful_properties(stats_df)
@@ -184,10 +167,10 @@ class TableManager:
         ]
         return metadata_info
 
-    def _get_column_statistics(self) -> list[str]:
+    def _get_column_statistics(self, table) -> list[str]:
         """Get column statistics and type distribution."""
         try:
-            col_stats_query = f"DESCRIBE TABLE EXTENDED {self.table}"
+            col_stats_query = f"DESCRIBE TABLE EXTENDED {table}"
             col_result = self.spark.sql(col_stats_query)
             col_df = col_result.toPandas()
 
@@ -314,6 +297,6 @@ def _load_training_examples() -> list[dict[str, Any]]:
     training_examples = yaml.safe_load(training_examples_as_text)
 
     if not isinstance(training_examples, list):
-        raise ValueError("YAML file must contain a list at the root level.")
+        raise DQXError("YAML file must contain a list at the root level.")
 
     return training_examples

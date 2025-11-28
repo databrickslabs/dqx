@@ -32,57 +32,54 @@ class LLMPrimaryKeyDetector:
 
     def __init__(
         self,
-        table: str,
-        *,
-        context: str = "",
         spark: SparkSession | None = None,
         show_live_reasoning: bool = True,
         max_retries: int = 3,
     ):
-        self.table = table
-        self.context = context
         self.show_live_reasoning = show_live_reasoning
         self.max_retries = max_retries
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self.table_manager = TableManager(table, spark=self.spark)
+        self.table_manager = TableManager(spark=self.spark)
+        # Dspy model should be configured before
         self.detector = dspy.ChainOfThought(DspPrimaryKeyDetectionSignature)
 
-    def detect_primary_keys_with_llm(self) -> dict[str, Any]:
+    def detect_primary_keys_with_llm(self, table: str, context: str = "") -> dict[str, Any]:
         """
         Detect primary keys for tables and views.
+
+        Args:
+            table: The fully qualified table name to analyze.
+            context: Optional context about similar tables or patterns.
+
+        Returns:
+            A dictionary containing the primary key detection result.
         """
-        logger.info(f"Starting primary key detection for table: {self.table}")
-        result = self._detect_primary_keys_from_table()
+        logger.info(f"Starting primary key detection for table: {table}")
+        result = self._detect_primary_keys_from_table(table, context)
         self.print_pk_detection_summary(result)
         return result
 
-    def _detect_primary_keys_from_table(self) -> dict[str, Any]:
+    def _detect_primary_keys_from_table(self, table: str, context: str) -> dict[str, Any]:
         """Detect primary keys from a registered table or view."""
         try:
-            columns = self.table_manager.get_table_column_names()
-            table_definition = self.table_manager.get_table_definition()
-            metadata_info = self.table_manager.get_table_metadata_info()
-        except (ValueError, RuntimeError, OSError) as e:
-            return {
-                'table': self.table,
-                'success': False,
-                'error': f"Failed to retrieve table metadata: {str(e)}",
-                'retries_attempted': 0,
-            }
-        except (AttributeError, TypeError, KeyError) as e:
+            columns = self.table_manager.get_table_column_names(table)
+            table_definition = self.table_manager.get_table_definition(table)
+            metadata_info = self.table_manager.get_table_metadata_info(table)
+        except Exception as e:
             logger.error(f"Unexpected error during table metadata retrieval: {e}")
             return {
-                'table': self.table,
-                'success': False,
-                'error': f"Unexpected error retrieving table metadata: {str(e)}",
-                'retries_attempted': 0,
+                "table": table,
+                "success": False,
+                "primary_key_columns": [],
+                "error": f"Unexpected error retrieving table metadata: {str(e)}",
+                "retries_attempted": 0,
             }
 
         return self._predict_with_retry_logic(
-            self.table,
+            table,
             columns,
             table_definition,
-            self.context,
+            context,
             metadata_info,
         )
 
@@ -92,19 +89,12 @@ class LLMPrimaryKeyDetector:
         pk_columns: list[str],
     ) -> tuple[bool, int]:
         """Check for duplicates using Spark SQL GROUP BY and HAVING."""
-        if not self.spark:
-            raise ValueError("Spark session not available")
-
         try:
             has_duplicates, duplicate_count, duplicates_df = self._execute_duplicate_check_query(table, pk_columns)
             self._report_duplicate_results(has_duplicates, duplicate_count, pk_columns, duplicates_df)
             return has_duplicates, duplicate_count
-
-        except (ValueError, RuntimeError) as e:
+        except Exception as e:
             logger.error(f"Error checking duplicates: {e}")
-            return False, 0
-        except (AttributeError, TypeError, KeyError) as e:
-            logger.error(f"Unexpected error checking duplicates: {e}")
             return False, 0
 
     def _execute_duplicate_check_query(self, table: str, pk_columns: list[str]) -> tuple[bool, int, Any]:
@@ -130,7 +120,7 @@ class LLMPrimaryKeyDetector:
     ):
         """Report the results of duplicate checking."""
         if has_duplicates and duplicates_df is not None:
-            total_duplicate_records = duplicates_df['duplicate_count'].sum()
+            total_duplicate_records = duplicates_df["duplicate_count"].sum()
             logger.warning(
                 f"Found {duplicate_count} duplicate key combinations for: {', '.join(pk_columns)} affecting {total_duplicate_records} total records"
             )
@@ -144,8 +134,8 @@ class LLMPrimaryKeyDetector:
         """Check for duplicates and update result with validation info."""
         has_duplicates, duplicate_count = self.check_duplicates(table, pk_columns)
 
-        result['has_duplicates'] = has_duplicates
-        result['duplicate_count'] = duplicate_count
+        result["has_duplicates"] = has_duplicates
+        result["duplicate_count"] = duplicate_count
 
         return has_duplicates, duplicate_count
 
@@ -180,14 +170,15 @@ class LLMPrimaryKeyDetector:
         logger.info(f"Maximum retries ({self.max_retries}) reached. Primary key validation failed.")
 
         # Always fail when duplicates are found - primary keys must be unique
-        result['success'] = False
-        result['error'] = (
+        result["success"] = False
+        result["error"] = (
             f"Primary key validation failed: Found {duplicate_count} duplicate combinations "
             f"in suggested columns {pk_columns} after {self.max_retries} retry attempts"
         )
-        result['retries_attempted'] = attempt
-        result['all_attempts'] = all_attempts
-        result['final_status'] = 'max_retries_reached_with_duplicates'
+        result["retries_attempted"] = attempt
+        result["all_attempts"] = all_attempts
+        result["final_status"] = "max_retries_reached_with_duplicates"
+
         return result, previous_attempts, True  # Stop retrying, max attempts reached
 
     @staticmethod
@@ -196,9 +187,9 @@ class LLMPrimaryKeyDetector:
     ) -> tuple[dict, str, bool]:
         """Handle successful validation (no duplicates found)."""
         logger.info("No duplicates found - Primary key prediction validated!")
-        result['retries_attempted'] = attempt
-        result['all_attempts'] = all_attempts
-        result['final_status'] = 'success'
+        result["retries_attempted"] = attempt
+        result["all_attempts"] = all_attempts
+        result["final_status"] = "success"
 
         return result, previous_attempts, True  # Success, stop retrying
 
@@ -208,10 +199,11 @@ class LLMPrimaryKeyDetector:
     ) -> tuple[dict, str, bool]:
         """Handle validation errors."""
         logger.error(f"Error during duplicate validation: {error}")
-        result['validation_error'] = str(error)
-        result['retries_attempted'] = attempt
-        result['all_attempts'] = all_attempts
-        result['final_status'] = 'validation_error'
+        result["validation_error"] = str(error)
+        result["retries_attempted"] = attempt
+        result["all_attempts"] = all_attempts
+        result["final_status"] = "validation_error"
+
         return result, previous_attempts, True  # Stop retrying due to error
 
     def _validate_pk_duplicates(
@@ -233,8 +225,7 @@ class LLMPrimaryKeyDetector:
             return self._handle_duplicates_found(
                 pk_columns, duplicate_count, attempt, result, all_attempts, previous_attempts
             )
-
-        except (ValueError, RuntimeError) as e:
+        except Exception as e:
             return self._handle_validation_error(e, result, attempt, all_attempts, previous_attempts)
 
     def _execute_single_prediction(
@@ -260,14 +251,14 @@ class LLMPrimaryKeyDetector:
                 metadata_info=metadata_info,
             )
 
-        pk_columns = [col.strip() for col in result.primary_key_columns.split(',')]
+        pk_columns = [col.strip() for col in result.primary_key_columns.split(",")]
 
         final_result = {
-            'table': table,
-            'primary_key_columns': pk_columns,
-            'confidence': result.confidence,
-            'reasoning': result.reasoning,
-            'success': True,
+            "table": table,
+            "primary_key_columns": pk_columns,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+            "success": True,
         }
 
         logger.info(f"Primary Key: {', '.join(pk_columns)}")
@@ -293,21 +284,21 @@ class LLMPrimaryKeyDetector:
 
             result = self._single_prediction(table, table_definition, context, previous_attempts, metadata_info)
 
-            if not result['success']:
+            if not result["success"]:
                 return result
 
             all_attempts.append(result.copy())
-            pk_columns = result['primary_key_columns']
+            pk_columns = result["primary_key_columns"]
 
             invalid_columns = [col for col in pk_columns if col not in columns]
             if invalid_columns:
                 error_msg = f"Predicted columns do not exist in table: {', '.join(invalid_columns)}"
-                result['primary_key_columns'] = []
-                result['success'] = False
-                result['error'] = error_msg
-                result['retries_attempted'] = attempt
-                result['all_attempts'] = all_attempts
-                result['final_status'] = 'invalid_columns'
+                result["primary_key_columns"] = []
+                result["success"] = False
+                result["error"] = error_msg
+                result["retries_attempted"] = attempt
+                result["all_attempts"] = all_attempts
+                result["final_status"] = "invalid_columns"
                 return result
 
             logger.info("Validating primary key prediction...")
@@ -319,7 +310,7 @@ class LLMPrimaryKeyDetector:
                 return result
 
         # This shouldn't be reached, but just in case
-        return all_attempts[-1] if all_attempts else {'table': table, 'success': False, 'error': 'No attempts made'}
+        return all_attempts[-1] if all_attempts else {"table": table, "success": False, "error": "No attempts made"}
 
     def _single_prediction(
         self, table: str, table_definition: str, context: str, previous_attempts: str, metadata_info: str
@@ -334,22 +325,17 @@ class LLMPrimaryKeyDetector:
             )
 
             # Print reasoning if available
-            if 'reasoning' in final_result:
-                self._print_reasoning_formatted(final_result['reasoning'])
+            if "reasoning" in final_result:
+                self._print_reasoning_formatted(final_result["reasoning"])
 
             self._print_trace_if_available()
 
             return final_result
-
-        except (ValueError, RuntimeError, AttributeError) as e:
+        except Exception as e:
             error_msg = f"Error during prediction: {str(e)}"
             logger.error(error_msg)
-            return {'table': table, 'success': False, 'error': error_msg}
-        except Exception as e:
-            error_msg = f"Unexpected error during prediction: {str(e)}"
-            logger.error(error_msg)
             logger.debug("Full traceback:", exc_info=True)
-            return {'table': table, 'success': False, 'error': error_msg}
+            return {"table": table, "success": False, "error": error_msg}
 
     @staticmethod
     def _print_reasoning_formatted(reasoning):
@@ -358,7 +344,7 @@ class LLMPrimaryKeyDetector:
             logger.debug("No reasoning provided")
             return
 
-        lines = reasoning.split('\n')
+        lines = reasoning.split("\n")
         step_counter = 1
 
         for line in lines:
@@ -366,12 +352,12 @@ class LLMPrimaryKeyDetector:
             if not line:
                 continue
 
-            if line.lower().startswith('step'):
+            if line.lower().startswith("step"):
                 logger.debug(f"📝 {line}")
-            elif line.startswith('-') or line.startswith('•'):
+            elif line.startswith("-") or line.startswith("•"):
                 logger.debug(f"   {line}")
             elif len(line) > 10 and any(
-                word in line.lower() for word in ('analyze', 'consider', 'look', 'notice', 'think')
+                word in line.lower() for word in ("analyze", "consider", "look", "notice", "think")
             ):
                 logger.debug(f"📝 Step {step_counter}: {line}")
                 step_counter += 1
@@ -382,7 +368,7 @@ class LLMPrimaryKeyDetector:
     def _print_trace_if_available():
         """Print DSPy trace if available."""
         try:
-            if hasattr(dspy.settings, 'trace') and dspy.settings.trace:
+            if hasattr(dspy.settings, "trace") and dspy.settings.trace:
                 logger.debug("\n🔬 TRACE INFORMATION:")
                 logger.debug("-" * 60)
                 for i, trace_item in enumerate(dspy.settings.trace[-3:]):
@@ -395,7 +381,7 @@ class LLMPrimaryKeyDetector:
     def print_pk_detection_summary(result):
         """Print summary based on result dictionary."""
 
-        retries_attempted = result.get('retries_attempted', 0)
+        retries_attempted = result.get("retries_attempted", 0)
 
         logger.info("=" * 60)
         logger.info("🎯 PRIMARY KEY DETECTION SUMMARY")
@@ -407,11 +393,11 @@ class LLMPrimaryKeyDetector:
             logger.info(f"Retries needed: {retries_attempted}")
         logger.info("")
 
-        if not result['success']:
+        if not result["success"]:
             return
 
         logger.info("📋 FINAL PRIMARY KEY:")
-        for col in result['primary_key_columns']:
+        for col in result["primary_key_columns"]:
             logger.info(f"   • {col}")
         logger.info("")
 
@@ -419,29 +405,29 @@ class LLMPrimaryKeyDetector:
 
         validation_msg = (
             "No duplicates found"
-            if not result.get('has_duplicates', True)
+            if not result.get("has_duplicates", True)
             else f"Found {result.get('duplicate_count', 0)} duplicates"
         )
         logger.info(f"🔍 Validation: {validation_msg}")
         logger.info("")
 
-        if result.get('all_attempts', None) and len(result['all_attempts']) > 1:
+        if result.get("all_attempts", None) and len(result["all_attempts"]) > 1:
             logger.info("📝 ATTEMPT HISTORY:")
-            for i, attempt in enumerate(result['all_attempts']):
-                cols_str = ', '.join(attempt['primary_key_columns'])
+            for i, attempt in enumerate(result["all_attempts"]):
+                cols_str = ", ".join(attempt["primary_key_columns"])
                 if i == 0:
                     logger.info(f"   1st attempt: {cols_str} → Found duplicates")
                 else:
                     attempt_num = i + 1
                     suffix = "nd" if attempt_num == 2 else "rd" if attempt_num == 3 else "th"
-                    status_msg = "Success!" if i == len(result['all_attempts']) - 1 else "Still had duplicates"
+                    status_msg = "Success!" if i == len(result["all_attempts"]) - 1 else "Still had duplicates"
                     logger.info(f"   {attempt_num}{suffix} attempt: {cols_str} → {status_msg}")
             logger.info("")
 
-        status = result.get('final_status', 'unknown')
-        if status == 'success':
+        status = result.get("final_status", "unknown")
+        if status == "success":
             logger.info("✅ RECOMMENDATION: Use as a primary key")
-        elif status == 'max_retries_reached_with_duplicates':
+        elif status == "max_retries_reached_with_duplicates":
             logger.info("⚠️  RECOMMENDATION: Manual review needed - duplicates persist")
         else:
             logger.info(f"ℹ️  STATUS: {status}")
