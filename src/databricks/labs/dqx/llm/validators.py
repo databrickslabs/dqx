@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from databricks.labs.dqx.engine import DQEngineCore
+from databricks.labs.dqx.errors import InvalidParameterError
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ class LLMValidationScoreWeights:
         """Validate weights sum to 1.0."""
         total = self.json_parsing + self.rule_validation
         if not 0.99 <= total <= 1.01:  # Allow for floating point precision
-            raise ValueError(f"Weights must sum to 1.0, got {total}")
+            raise InvalidParameterError(f"Weights must sum to 1.0, got {total}")
 
 
 class RuleValidator:

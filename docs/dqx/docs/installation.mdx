@@ -306,6 +306,7 @@ run_configs:                        # <- list of run configurations, each run co
     sample_seed: 30                           # <- optional seed for reproducible sampling
     limit: 1000                               # <- limit the number of records to profile
     filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source
+    llm_primary_key_detection: false          # <- whether to use llm-assisted pk detection to generate uniqueness check
 
   checks_user_requirements: business rules description  # <- optional user input for AI-assisted rule generation; only supported if `serverless_clusters` is enabled
 

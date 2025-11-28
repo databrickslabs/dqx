@@ -70,7 +70,7 @@ def test_get_check_function_definitions_with_custom_check_functions_missing_spec
 
 def test_get_required_check_function_definitions():
     custom_check_functions = {"dummy_custom_check_function_test": dummy_custom_check_function_test}
-    print(get_required_check_functions_definitions(custom_check_functions))
+
     result = list(
         filter(
             lambda x: x['check_function_name'] == 'dummy_custom_check_function_test',
@@ -163,8 +163,7 @@ def test_get_training_examples_with_custom_check_functions():
         ("s3://bucket/path/to/data", "load"),
     ],
 )
-def test_get_column_metadata(location, spark_read_mock_method):
-    mock_spark = Mock()
+def test_get_column_metadata(location, spark_read_mock_method, mock_spark):
     mock_df = Mock()
     mock_schema = Mock()
     mock_schema.fields = [
