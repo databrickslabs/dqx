@@ -1592,3 +1592,62 @@ def test_benchmark_foreach_has_valid_schema(benchmark, ws, generated_string_df):
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
     assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_count_distinct_with_group_by(benchmark, ws, generated_df):
+    """Benchmark count_distinct with group_by (uses two-stage aggregation: groupBy + join)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "group_by": ["col3"],
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_approx_count_distinct_with_group_by(benchmark, ws, generated_df):
+    """Benchmark approx_count_distinct with group_by (uses window functions - should be faster)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "approx_count_distinct",
+                "group_by": ["col3"],
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_count_distinct_no_group_by(benchmark, ws, generated_df):
+    """Benchmark count_distinct without group_by (baseline - uses standard aggregation)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
