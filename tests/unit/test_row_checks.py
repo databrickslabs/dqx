@@ -51,8 +51,14 @@ def test_col_is_in_list_missing_allowed_list():
 
 
 def test_incorrect_aggr_type():
-    with pytest.raises(InvalidParameterError, match="Unsupported aggregation type"):
-        is_aggr_not_greater_than("a", 1, aggr_type="invalid")
+    # With new implementation, invalid aggr_type triggers a warning (not immediate error)
+    # The error occurs at runtime when the apply function is called
+    with pytest.warns(UserWarning, match="non-curated.*invalid"):
+        condition, apply_fn = is_aggr_not_greater_than("a", 1, aggr_type="invalid")
+
+    # Function should return successfully (error will happen at runtime when applied to DataFrame)
+    assert condition is not None
+    assert apply_fn is not None
 
 
 def test_col_is_ipv4_address_in_cidr_missing_cidr_block():
