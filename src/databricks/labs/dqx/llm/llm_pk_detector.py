@@ -190,7 +190,7 @@ class DuplicateValidator:
         has_duplicates = len(duplicates_df) > 0
         duplicate_count = len(duplicates_df)
 
-        if has_duplicates and len(duplicates_df) > 0:
+        if has_duplicates:
             total_duplicate_records = duplicates_df["duplicate_count"].sum()
             logger.warning(f"Sample duplicates affecting {total_duplicate_records} total records:")
             logger.warning(duplicates_df.head().to_string(index=False))

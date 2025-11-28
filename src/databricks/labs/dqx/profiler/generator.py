@@ -72,7 +72,7 @@ class DQGenerator(DQEngineBase):
 
         Args:
             profiles: A list of data quality profiles to generate rules for.
-            criticality: The criticality of the rules as "warn" or "error (default is "error").
+            criticality: The criticality of the rules as "warn" or "error" (default is "error").
 
         Returns:
             A list of dictionaries representing the data quality rules.
