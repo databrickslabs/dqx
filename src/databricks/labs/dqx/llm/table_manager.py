@@ -22,7 +22,6 @@ class TableDataProvider(Protocol):
         Returns:
             DataFrame with columns: col_name, data_type, comment.
         """
-        ...  # pylint: disable=unnecessary-ellipsis
 
     def get_existing_primary_key(self, table: str) -> str | None:
         """
@@ -34,7 +33,6 @@ class TableDataProvider(Protocol):
         Returns:
             Primary key constraint string if exists, None otherwise.
         """
-        ...  # pylint: disable=unnecessary-ellipsis
 
     def get_table_properties(self, table: str) -> DataFrame:
         """
@@ -46,7 +44,6 @@ class TableDataProvider(Protocol):
         Returns:
             DataFrame with columns: key, value containing table properties.
         """
-        ...  # pylint: disable=unnecessary-ellipsis
 
     def get_column_statistics(self, table: str) -> DataFrame:
         """
@@ -58,7 +55,6 @@ class TableDataProvider(Protocol):
         Returns:
             DataFrame with columns: col_name, data_type, and other stats.
         """
-        ...  # pylint: disable=unnecessary-ellipsis
 
     def get_table_column_names(self, table: str) -> list[str]:
         """
@@ -70,7 +66,6 @@ class TableDataProvider(Protocol):
         Returns:
             List of column names.
         """
-        ...  # pylint: disable=unnecessary-ellipsis
 
     def execute_query(self, query: str) -> DataFrame:
         """
@@ -85,7 +80,6 @@ class TableDataProvider(Protocol):
         Raises:
             ValueError: If query execution fails.
         """
-        ...  # pylint: disable=unnecessary-ellipsis
 
 
 class SparkTableDataProvider:
