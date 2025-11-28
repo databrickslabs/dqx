@@ -17,7 +17,6 @@ try:
     import mlflow
 
     # Disable the mlflow tracing and notebook display widget
-    mlflow.tracing.disable()
     mlflow.tracing.disable_notebook_display()
     # Disable automatic tracing for LangChain (source of the trace data)
     mlflow.langchain.autolog(disable=True)
