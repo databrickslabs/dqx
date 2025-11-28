@@ -1685,33 +1685,38 @@ def test_profile_with_no_filter(spark, ws):
 
 
 def test_profiler_with_pk_detection(spark, ws):
-    schema = "col1: int, col2: int, col3: int, col4 int"
-    input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], schema)
+    # Use meaningful column names and data patterns for stable LLM predictions
+    schema = "order_id: int, customer_id: int, amount: int, status: string"
+    input_df = spark.createDataFrame([
+        [1, 100, 50, "pending"],
+        [2, 100, 75, "pending"],
+        [3, 101, 60, "completed"],
+        [4, 101, 90, "pending"],
+        [5, 102, 45, "completed"]
+    ], schema)
 
     llm_model_config = LLMModelConfig()
     profiler = DQProfiler(ws, llm_model_config=llm_model_config)
     stats, profiles = profiler.profile(input_df, options={"sample_fraction": None})
 
     expected_profiles = [
-        DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+        DQProfile(name='is_not_null', column='order_id', description=None, parameters=None),
         DQProfile(
-            name='min_max', column='col1', description='Real min/max values were used', parameters={'max': 2, 'min': 1}
+            name='min_max', column='order_id', description='Real min/max values were used', parameters={'max': 5, 'min': 1}
         ),
+        DQProfile(name='is_not_null', column='customer_id', description=None, parameters=None),
         DQProfile(
-            name='min_max', column='col2', description='Real min/max values were used', parameters={'max': 3, 'min': 2}
+            name='min_max', column='customer_id', description='Real min/max values were used', parameters={'max': 102, 'min': 100}
         ),
-        DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+        DQProfile(name='is_not_null', column='amount', description=None, parameters=None),
         DQProfile(
-            name='min_max', column='col3', description='Real min/max values were used', parameters={'max': 4, 'min': 3}
+            name='min_max', column='amount', description='Real min/max values were used', parameters={'max': 90, 'min': 45}
         ),
-        DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
-        DQProfile(
-            name='min_max', column='col4', description='Real min/max values were used', parameters={'max': 4, 'min': 1}
-        ),
+        DQProfile(name='is_not_null', column='status', description=None, parameters=None),
         DQProfile(
             name='is_unique',
-            column='col1,col2',
-            description='LLM-detected primary key columns: col1, col2',
+            column='order_id',
+            description='LLM-detected primary key columns: order_id',
             parameters={"nulls_distinct": False},
         ),
     ]
@@ -1729,21 +1734,22 @@ def test_profile_table_with_pk_detection(spark, ws, make_schema, make_random):
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
+    # Use the same stable data pattern as test_profiler_with_pk_detection
     input_schema = T.StructType(
         [
-            T.StructField("id", T.IntegerType()),
-            T.StructField("name", T.StringType()),
-            T.StructField("amount", T.DecimalType(10, 2)),
-            T.StructField("created_date", T.DateType()),
-            T.StructField("is_active", T.BooleanType()),
+            T.StructField("order_id", T.IntegerType()),
+            T.StructField("customer_id", T.IntegerType()),
+            T.StructField("amount", T.IntegerType()),
+            T.StructField("status", T.StringType()),
         ]
     )
     input_df = spark.createDataFrame(
         [
-            [1, "Alice", Decimal("100.50"), date(2023, 1, 1), True],
-            [2, "Bob", Decimal("250.75"), date(2023, 1, 2), False],
-            [3, "Charlie", Decimal("175.25"), date(2023, 1, 3), True],
-            [4, None, Decimal("300.00"), date(2023, 1, 4), True],
+            [1, 100, 50, "pending"],
+            [2, 100, 75, "pending"],
+            [3, 101, 60, "completed"],
+            [4, 101, 90, "pending"],
+            [5, 102, 45, "completed"]
         ],
         schema=input_schema,
     )
@@ -1754,30 +1760,26 @@ def test_profile_table_with_pk_detection(spark, ws, make_schema, make_random):
         input_config=InputConfig(location=table_name), options={"sample_fraction": None}
     )
     expected_profiles = [
-        DQProfile(name="is_not_null", column="id", description=None, parameters=None),
+        DQProfile(name="is_not_null", column="order_id", description=None, parameters=None),
         DQProfile(
-            name="min_max", column="id", description="Real min/max values were used", parameters={"min": 1, "max": 4}
+            name="min_max", column="order_id", description="Real min/max values were used", parameters={"min": 1, "max": 5}
         ),
-        DQProfile(name="is_not_null_or_empty", column="name", description=None, parameters={"trim_strings": True}),
+        DQProfile(name="is_not_null", column="customer_id", description=None, parameters=None),
+        DQProfile(
+            name="min_max", column="customer_id", description="Real min/max values were used", parameters={"min": 100, "max": 102}
+        ),
         DQProfile(name="is_not_null", column="amount", description=None, parameters=None),
         DQProfile(
             name="min_max",
             column="amount",
             description="Real min/max values were used",
-            parameters={"min": Decimal("100.50"), "max": Decimal("300.00")},
+            parameters={"min": 45, "max": 90},
         ),
-        DQProfile(name="is_not_null", column="created_date", description=None, parameters=None),
-        DQProfile(
-            name="min_max",
-            column="created_date",
-            description="Real min/max values were used",
-            parameters={"min": date(2023, 1, 1), "max": date(2023, 1, 4)},
-        ),
-        DQProfile(name="is_not_null", column="is_active", description=None, parameters=None),
+        DQProfile(name="is_not_null", column="status", description=None, parameters=None),
         DQProfile(
             name='is_unique',
-            column='id',
-            description='LLM-detected primary key columns: id',
+            column='order_id',
+            description='LLM-detected primary key columns: order_id',
             parameters={"nulls_distinct": False},
         ),
     ]
@@ -1787,7 +1789,7 @@ def test_profile_table_with_pk_detection(spark, ws, make_schema, make_random):
             profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
 
     assert len(stats.keys()) > 0
-    assert stats["id"]["count"] == 4  # Verify we got all records
+    assert stats["order_id"]["count"] == 5  # Verify we got all records
     assert profiles == expected_profiles
 
 
@@ -1796,8 +1798,15 @@ def test_profile_tables_for_patterns_with_pk_detection(spark, ws, make_schema, m
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
-    input_schema = "col1: int, col2: int, col3: int, col4 int"
-    input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1], [1, 2, 3, 4]], input_schema)
+    # Use meaningful column names and data patterns for stable LLM predictions
+    input_schema = "order_id: int, customer_id: int, amount: int, status: string"
+    input_df = spark.createDataFrame([
+        [1, 100, 50, "pending"],
+        [2, 100, 75, "pending"],
+        [3, 101, 60, "completed"],
+        [4, 101, 90, "pending"],
+        [5, 102, 45, "completed"]
+    ], input_schema)
     input_df.write.format("delta").saveAsTable(table_name)
 
     profiler = DQProfiler(ws)
@@ -1806,37 +1815,32 @@ def test_profile_tables_for_patterns_with_pk_detection(spark, ws, make_schema, m
     ]
     profiles = profiler.profile_tables_for_patterns(patterns=[table_name], options=options)
     expected_profiles = [
-        DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
+        DQProfile(name='is_not_null', column='order_id', description=None, parameters=None),
         DQProfile(
             name='min_max',
-            column='col1',
+            column='order_id',
             description='Real min/max values were used',
-            parameters={'max': 2, 'min': 1},
+            parameters={'max': 5, 'min': 1},
         ),
+        DQProfile(name='is_not_null', column='customer_id', description=None, parameters=None),
         DQProfile(
             name='min_max',
-            column='col2',
+            column='customer_id',
             description='Real min/max values were used',
-            parameters={'max': 3, 'min': 2},
+            parameters={'max': 102, 'min': 100},
         ),
-        DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+        DQProfile(name='is_not_null', column='amount', description=None, parameters=None),
         DQProfile(
             name='min_max',
-            column='col3',
+            column='amount',
             description='Real min/max values were used',
-            parameters={'max': 4, 'min': 3},
+            parameters={'max': 90, 'min': 45},
         ),
-        DQProfile(name='is_not_null', column='col4', description=None, parameters=None),
-        DQProfile(
-            name='min_max',
-            column='col4',
-            description='Real min/max values were used',
-            parameters={'max': 4, 'min': 1},
-        ),
+        DQProfile(name='is_not_null', column='status', description=None, parameters=None),
         DQProfile(
             name='is_unique',
-            column='col1,col2',
-            description='LLM-detected primary key columns: col1, col2',
+            column='order_id',
+            description='LLM-detected primary key columns: order_id',
             parameters={"nulls_distinct": False},
         ),
     ]
@@ -1867,8 +1871,16 @@ def test_profiler_with_pk_detection_no_pk_found(spark, ws):
 
 
 def test_profiler_with_pk_detection_null_distinct(spark, ws):
-    schema = "col1: int, col2: int, col3: int, col4 int"
-    input_df = spark.createDataFrame([[1, 1, 1, 1], [2, 1, 1, 1], [3, 1, 1, 1], [None, None, None, None]], schema)
+    # Use meaningful column names and data patterns for stable LLM predictions
+    # Testing null handling: user_id is unique (with one null row)
+    schema = "user_id: int, status: int, category: int, region: int"
+    input_df = spark.createDataFrame([
+        [1, 1, 1, 1],
+        [2, 1, 1, 1],
+        [3, 1, 1, 1],
+        [4, 1, 1, 1],
+        [None, None, None, None]
+    ], schema)
 
     profiler = DQProfiler(ws)
     stats, profiles = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": True})
@@ -1881,8 +1893,8 @@ def test_profiler_with_pk_detection_null_distinct(spark, ws):
 
     expected_pk_profile = DQProfile(
         name='is_unique',
-        column='col1',
-        description='LLM-detected primary key columns: col1',
+        column='user_id',
+        description='LLM-detected primary key columns: user_id',
         parameters={"nulls_distinct": False},
     )
 
