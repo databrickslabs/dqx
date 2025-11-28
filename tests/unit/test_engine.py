@@ -70,6 +70,5 @@ def test_get_streaming_metrics_listener_invalid_engine(mock_workspace_client, mo
 
 def test_get_streaming_metrics_listener_no_observer(mock_workspace_client, mock_spark):
     engine = DQEngine(mock_workspace_client, mock_spark)
-    engine._engine.observer = None
     with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine with no observer"):
         engine.get_streaming_metrics_listener(metrics_config=OutputConfig(location="dummy"))
