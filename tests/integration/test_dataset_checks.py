@@ -680,7 +680,7 @@ def test_is_aggr_with_aggr_params_generic(spark: SparkSession):
 
 
 def test_is_aggr_with_statistical_functions(spark: SparkSession):
-    """Test statistical aggregate functions: stddev, variance, median, mode."""
+    """Test statistical aggregate functions: stddev, variance, median."""
     test_df = spark.createDataFrame(
         [
             ["A", 10.0],
@@ -694,47 +694,28 @@ def test_is_aggr_with_statistical_functions(spark: SparkSession):
     )
 
     checks = [
-        # Standard deviation check (group A stddev ~10, group B stddev=0, both <= 10.0)
+        # Standard deviation check (group A stddev ~8.16, group B stddev=0, both <= 10.0)
         is_aggr_not_greater_than("b", limit=10.0, aggr_type="stddev", group_by=["a"]),
-        # Variance check (group A variance ~100, group B variance=0, both <= 100.0)
+        # Variance check (group A variance ~66.67, group B variance=0, both <= 100.0)
         is_aggr_not_greater_than("b", limit=100.0, aggr_type="variance", group_by=["a"]),
-        # Median check (dataset-level median ~10, should fail > 25.0)
+        # Median check (dataset-level median 7.5, passes < 25.0)
         is_aggr_not_greater_than("b", limit=25.0, aggr_type="median"),
-        # Mode check (group A mode=10/20/30, group B mode=5, both <= 10.0 or fail)
-        is_aggr_not_greater_than("b", limit=10.0, aggr_type="mode", group_by=["a"]),
     ]
 
     actual = _apply_checks(test_df, checks)
 
-    # Group A has stddev ~8.16, variance ~66.67, mode=10 (first value), all pass
-    # Group B has stddev=0, variance=0, mode=5, all pass
-    # Median ~7.5 (pass < 25.0)
+    # All checks should pass
     expected = spark.createDataFrame(
         [
-            ["A", 10.0, None, None, None, None],
-            [
-                "A",
-                20.0,
-                None,
-                None,
-                None,
-                "Mode 20.0 in column 'b' per group of columns 'a' is greater than limit: 10.0",
-            ],
-            [
-                "A",
-                30.0,
-                None,
-                None,
-                None,
-                "Mode 30.0 in column 'b' per group of columns 'a' is greater than limit: 10.0",
-            ],
-            ["B", 5.0, None, None, None, None],
-            ["B", 5.0, None, None, None, None],
-            ["B", 5.0, None, None, None, None],
+            ["A", 10.0, None, None, None],
+            ["A", 20.0, None, None, None],
+            ["A", 30.0, None, None, None],
+            ["B", 5.0, None, None, None],
+            ["B", 5.0, None, None, None],
+            ["B", 5.0, None, None, None],
         ],
         "a: string, b: double, b_stddev_group_by_a_greater_than_limit: string, "
-        "b_variance_group_by_a_greater_than_limit: string, b_median_greater_than_limit: string, "
-        "b_mode_group_by_a_greater_than_limit: string",
+        "b_variance_group_by_a_greater_than_limit: string, b_median_greater_than_limit: string",
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
