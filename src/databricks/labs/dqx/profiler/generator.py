@@ -60,7 +60,7 @@ class DQGenerator(DQEngineBase):
 
         llm_model_config = llm_model_config or LLMModelConfig()
         self.llm_engine = (
-            DQLLMEngine(model_config=llm_model_config, custom_check_functions=custom_check_functions)
+            DQLLMEngine(model_config=llm_model_config, spark=self.spark, custom_check_functions=custom_check_functions)
             if LLM_ENABLED
             else None
         )

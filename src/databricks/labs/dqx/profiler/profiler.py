@@ -58,7 +58,7 @@ class DQProfiler(DQEngineBase):
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
         llm_model_config = llm_model_config or LLMModelConfig()
-        self.llm_engine = DQLLMEngine(model_config=llm_model_config) if LLM_ENABLED else None
+        self.llm_engine = DQLLMEngine(model_config=llm_model_config, spark=self.spark) if LLM_ENABLED else None
 
     default_profile_options = {
         "round": True,  # round the min/max values
@@ -204,11 +204,7 @@ class DQProfiler(DQEngineBase):
         )
 
     @telemetry_logger("profiler", "detect_primary_keys_with_llm")
-    def detect_primary_keys_with_llm(
-        self,
-        input_config: InputConfig,
-        max_retries: int = 3,
-    ) -> dict[str, Any]:
+    def detect_primary_keys_with_llm(self, input_config: InputConfig) -> dict[str, Any]:
         """
         Detects primary keys using LLM-based analysis.
 
@@ -216,7 +212,6 @@ class DQProfiler(DQEngineBase):
 
         Args:
             input_config: Input configuration containing the table location.
-            max_retries: Maximum number of retries to find unique primary key combination.
 
         Returns:
             A dictionary containing the primary key detection result with the following keys:
@@ -242,7 +237,7 @@ class DQProfiler(DQEngineBase):
             try:
                 df.createOrReplaceTempView(view_name)
                 assert self.llm_engine is not None  # for mypy
-                return self.llm_engine.detect_primary_keys_with_llm(self.spark, view_name, max_retries)
+                return self.llm_engine.detect_primary_keys_with_llm(view_name)
             finally:
                 try:
                     self.spark.sql(f"DROP VIEW IF EXISTS {view_name}")
@@ -254,7 +249,7 @@ class DQProfiler(DQEngineBase):
             temp_view_name = f"temp_from_dataframe_{id(input_df)}_{uuid.uuid4().hex}"
             return _detect_with_temp_view(input_df, temp_view_name)
 
-        return self.llm_engine.detect_primary_keys_with_llm(self.spark, input_config.location, max_retries)
+        return self.llm_engine.detect_primary_keys_with_llm(input_config.location)
 
     def _profile_tables(
         self,

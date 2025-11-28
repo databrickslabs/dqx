@@ -6,9 +6,9 @@ from typing import Any
 import dspy  # type: ignore
 from pyspark.sql import SparkSession
 from databricks.labs.dqx.config import LLMModelConfig
-from databricks.labs.dqx.llm.llm_core import LLMRuleCompiler
+from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator, LLMRuleCompiler
 from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector
-from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions
+from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions, TableManager
 
 logger = logging.getLogger(__name__)
 
@@ -24,24 +24,30 @@ class DQLLMEngine:
     def __init__(
         self,
         model_config: LLMModelConfig,
+        spark: SparkSession | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
     ):
         """
         Initialize the LLM engine.
 
+        This class configures the DSPy model once and then creates components
+        that rely on this global configuration.
+
         Args:
             model_config: Configuration for the LLM model.
+            spark: Optional Spark session. If None, a new session is created.
             custom_check_functions: Optional custom check functions to include.
         """
+        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+
         self._available_check_functions = json.dumps(get_required_check_functions_definitions(custom_check_functions))
 
-        # compiler configures and initializes the LLM model
-        self._llm_compiler = LLMRuleCompiler(
-            model_config=model_config,
-            custom_check_functions=custom_check_functions,
-        )
+        # Configure DSPy model once for all LLM components
+        configurator = LLMModelConfigurator(model_config)
+        configurator.configure()
 
-        logger.info(f"LLM engine initialized with model: {model_config.model_name}")
+        self._llm_rule_compiler = LLMRuleCompiler(custom_check_functions=custom_check_functions)
+        self._llm_pk_detector = LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
 
     def detect_business_rules_with_llm(
         self, user_input: str, schema_info: str = ""
@@ -65,27 +71,20 @@ class DQLLMEngine:
                 - assumptions_bullets: Assumptions made (if schema was inferred)
                 - schema_info: The final schema used (if schema was inferred)
         """
-        return self._llm_compiler.model(
+        return self._llm_rule_compiler.model(
             schema_info=schema_info,
             business_description=user_input,
             available_functions=self._available_check_functions,
         )
 
-    def detect_primary_keys_with_llm(
-        self,
-        spark: SparkSession,
-        table: str,
-        max_retries: int = 3,
-    ) -> dict[str, Any]:
+    def detect_primary_keys_with_llm(self, table: str) -> dict[str, Any]:
         """
         Detects primary keys using LLM-based analysis.
 
         This method analyzes table schema and metadata to identify primary key columns.
 
         Args:
-            spark: Spark session to access the table.
             table: The table name to analyze.
-            max_retries: Maximum number of retries to find unique primary key combination.
 
         Returns:
             A dictionary containing the primary key detection result with the following keys:
@@ -97,14 +96,5 @@ class DQLLMEngine:
             - has_duplicates: Whether duplicates were found (if validation performed)
             - duplicate_count: Number of duplicate combinations (if validation performed)
             - error: Error message (if failed)
-
-        Raises:
-            MissingParameterError: If LLM engine is not available or input_config is missing.
         """
-        # The initialization of the DSPy model is performed by the compiler in the constructor!
-        detector = LLMPrimaryKeyDetector(spark=spark, max_retries=max_retries)
-
-        result = detector.detect_primary_keys_with_llm(table=table)
-
-        logger.info(f"✅ Primary key detection completed for {table}: {result.get('success', False)}")
-        return result
+        return self._llm_pk_detector.detect_primary_keys_with_llm(table=table)

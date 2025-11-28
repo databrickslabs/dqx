@@ -1,6 +1,7 @@
 from unittest.mock import Mock
 import pytest
 import pandas as pd  # type: ignore
+from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector
@@ -15,13 +16,14 @@ class MockLLMEngine:
         """Initialize mock LLM engine."""
 
 
-class MockTableManager:
+class MockTableManager(TableManager):
     """Test double for TableManager."""
 
-    def __init__(self, table_definition="", metadata_info="", should_raise=False):
+    def __init__(self, spark: SparkSession, table_definition="", metadata_info="", should_raise=False):
         self.table_definition = table_definition
         self.metadata_info = metadata_info
         self.should_raise = should_raise
+        super().__init__(spark)
 
     def get_table_definition(self, _table: str):
         if self.should_raise:
@@ -118,11 +120,10 @@ def test_detect_primary_key_composite(mock_spark):
     mock_metadata = "Table: order_items, Columns: 4, Primary constraints: None"
 
     detector = LLMPrimaryKeyDetector(
+        table_manager=MockTableManager(mock_spark, mock_table_definition, mock_metadata),
         show_live_reasoning=False,
-        spark=mock_spark,
     )
 
-    detector.table_manager = MockTableManager(mock_table_definition, mock_metadata)
     detector.detector = MockDetector(
         primary_key_columns="order_id, product_id",
         confidence="high",
@@ -147,11 +148,10 @@ def test_detect_primary_key_no_clear_key(mock_spark):
     mock_metadata = "Table: application_logs, Columns: 4, Primary constraints: None"
 
     detector = LLMPrimaryKeyDetector(
+        table_manager=MockTableManager(mock_spark, mock_table_definition, mock_metadata),
         show_live_reasoning=False,
-        spark=mock_spark,
     )
 
-    detector.table_manager = MockTableManager(mock_table_definition, mock_metadata)
     detector.detector = MockDetector(
         primary_key_columns="none",
         confidence="low",

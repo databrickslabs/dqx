@@ -3,8 +3,6 @@ from typing import Any
 
 import dspy  # type: ignore
 
-from pyspark.sql import SparkSession
-
 from databricks.labs.dqx.llm.llm_utils import TableManager
 
 logger = logging.getLogger(__name__)
@@ -26,21 +24,30 @@ class DspPrimaryKeyDetectionSignature(dspy.Signature):
 
 class LLMPrimaryKeyDetector:
     """
-    The Primary Key Detector uses DSPy to analyze table metadata.
-    The initialization of the DSPy model should be done prior to instantiating this class.
+    Detects primary keys using LLM-based analysis of table metadata.
+
+    Note: This class assumes DSPy is already configured with a language model.
+    The configuration should be done externally before instantiating this class.
     """
 
     def __init__(
         self,
-        spark: SparkSession | None = None,
+        table_manager: TableManager,
         show_live_reasoning: bool = True,
         max_retries: int = 3,
     ):
+        """
+        Initialize the primary key detector.
+
+        Note: DSPy must be configured before creating this instance.
+
+        Args:
+            show_live_reasoning: Whether to display live reasoning during detection.
+            max_retries: Maximum number of retries to find unique primary key combination.
+        """
         self.show_live_reasoning = show_live_reasoning
         self.max_retries = max_retries
-        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self.table_manager = TableManager(spark=self.spark)
-        # Dspy model should be configured before
+        self.table_manager = table_manager
         self.detector = dspy.ChainOfThought(DspPrimaryKeyDetectionSignature)
 
     def detect_primary_keys_with_llm(self, table: str, context: str = "") -> dict[str, Any]:
@@ -110,7 +117,7 @@ class LLMPrimaryKeyDetector:
         HAVING COUNT(*) > 1
         """
 
-        duplicate_result = self.spark.sql(duplicate_query)
+        duplicate_result = self.table_manager.run_sql(duplicate_query)
         duplicates_df = duplicate_result.toPandas()
         return len(duplicates_df) > 0, len(duplicates_df), duplicates_df
 

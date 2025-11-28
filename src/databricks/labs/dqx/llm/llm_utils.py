@@ -58,6 +58,10 @@ class TableManager:
         df = self.spark.table(table)
         return df.columns
 
+    def run_sql(self, query: str):
+        """Run a SQL query and return the result DataFrame."""
+        return self.spark.sql(query)
+
     def _get_table_columns(self, table: str) -> list[str]:
         """Get table column definitions from DESCRIBE TABLE."""
         describe_query = f"DESCRIBE TABLE EXTENDED {table}"

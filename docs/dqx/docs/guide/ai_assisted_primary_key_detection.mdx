@@ -58,7 +58,7 @@ This will install required packages including DSPy and other LLM-related depende
 
     # Initialize workspace client and profiler
     ws = WorkspaceClient()
-    profiler = DQProfiler(ws, spark)
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
 
     # Detect primary keys for a table
     input_config = InputConfig(location="catalog.schema.users")
@@ -91,7 +91,7 @@ You can configure the profiler to use custom models:
       model_name="databricks/databricks-llama-4-maverick"
     )
 
-    profiler = DQProfiler(ws, spark, llm_model_config=llm_config)
+    profiler = DQProfiler(workspace_client=ws, spark=spark, llm_model_config=llm_config)
 
     input_config = InputConfig(location="catalog.schema.users")
     result = profiler.detect_primary_keys_with_llm(input_config=input_config)
@@ -116,8 +116,8 @@ The DQX generator automatically creates `is_unique` rules for columns identified
 
     # Create profiler and generator, the llm config is optional
     llm_config = LLMModelConfig()
-    profiler = DQProfiler(ws, spark, llm_model_config=llm_config)
-    generator = DQGenerator(ws, spark, llm_model_config=llm_config)
+    profiler = DQProfiler(workspace_client=ws, spark=spark, llm_model_config=llm_config)
+    generator = DQGenerator(workspace_client=ws, spark=spark, llm_model_config=llm_config)
 
     # Run one of the profiling methods
     input_config = InputConfig(location="catalog.schema.users")
@@ -150,7 +150,7 @@ One of the most powerful use cases is automatic join key detection for dataset c
 
     # Initialize workspace client and profiler
     ws = WorkspaceClient()
-    profiler = DQProfiler(ws, spark)
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
 
     # Detect primary keys for a table
     input_config = InputConfig(location="catalog.schema.users")
