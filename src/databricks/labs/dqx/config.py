@@ -69,6 +69,9 @@ class ProfilerConfig:
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
     filter: str | None = None  # filter to apply to the data before profiling
+    llm_primary_key_detection: bool = (
+        False  # whether to use LLM for primary key detection to generate uniqueness checks
+    )
 
 
 @dataclass

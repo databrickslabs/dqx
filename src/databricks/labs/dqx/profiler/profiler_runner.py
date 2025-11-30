@@ -71,9 +71,10 @@ class ProfilerRunner:
                 "sample_seed": run_config.profiler_config.sample_seed,
                 "limit": run_config.profiler_config.limit,
                 "filter": run_config.profiler_config.filter,
+                "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,
             },
         )
-        checks = generator.generate_dq_rules(profiles)  # use default criticality level "error"
+        checks = generator.generate_dq_rules(profiles)  # use default criticality "error"
         logger.info(f"Using options: \n{run_config.profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
         logger.info(f"Generated summary statistics: \n{summary_stats}")
@@ -131,7 +132,7 @@ class ProfilerRunner:
         )
 
         for table, (summary_stats, profiles) in results.items():
-            checks = generator.generate_dq_rules(profiles)  # use default criticality level "error"
+            checks = generator.generate_dq_rules(profiles)  # use default criticality "error"
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 

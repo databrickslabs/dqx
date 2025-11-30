@@ -812,7 +812,7 @@ class DataContractRulesGenerator(DQEngineBase):
             if quality_rule.type == 'text' and quality_rule.description:
                 logger.info(f"Processing text rule for property '{prop.name}': {quality_rule.description}")
 
-                prediction = self.llm_engine.get_business_rules_with_llm(
+                prediction = self.llm_engine.detect_business_rules_with_llm(
                     user_input=quality_rule.description, schema_info=schema_info_json
                 )
 
@@ -844,7 +844,7 @@ class DataContractRulesGenerator(DQEngineBase):
             if quality_rule.type == 'text' and quality_rule.description:
                 logger.info(f"Processing text rule for schema '{schema_name}': {quality_rule.description}")
 
-                prediction = self.llm_engine.get_business_rules_with_llm(
+                prediction = self.llm_engine.detect_business_rules_with_llm(
                     user_input=quality_rule.description, schema_info=schema_info_json
                 )
 

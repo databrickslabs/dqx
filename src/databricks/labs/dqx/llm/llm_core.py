@@ -207,16 +207,25 @@ class DspyRuleGenerationWithSchemaInference(dspy.Module):
 
 
 class LLMRuleCompiler:
+    """
+    Compiles and optimizes LLM-based data quality rules.
+
+    Note: This class assumes DSPy is already configured with a language model.
+    The configuration should be done externally before instantiating this class.
+    """
+
     def __init__(
         self,
-        model_config: LLMModelConfig,
         custom_check_functions: dict[str, Callable] | None = None,
         rule_validator: RuleValidator | None = None,
         optimizer: BootstrapFewShotOptimizer | None = None,
     ):
         """
+        Initialize the rule compiler.
+
+        Note: DSPy must be configured before creating this instance.
+
         Args:
-            model_config: Configuration for the LLM model.
             custom_check_functions: Optional custom check functions.
             rule_validator: Optional rule validator instance.
             optimizer: Optional optimizer instance.
@@ -224,10 +233,6 @@ class LLMRuleCompiler:
         self._custom_check_functions = custom_check_functions
         self._optimizer = optimizer or BootstrapFewShotOptimizer()
         self._rule_validator = rule_validator or RuleValidator(custom_check_functions)
-
-        configurator = LLMModelConfigurator(model_config)
-        configurator.configure()
-
         self._dq_model = DspyRuleGenerationWithSchemaInference()
 
     @cached_property
