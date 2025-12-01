@@ -1150,10 +1150,12 @@ class DQEngine(DQEngineBase):
         """
 
         if not isinstance(self._engine, DQEngineCore):
-            raise ValueError(f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'")
+            raise InvalidParameterError(
+                f"Metrics cannot be collected for engine with type '{self._engine.__class__.__name__}'"
+            )
 
         if not self._engine.observer:
-            raise ValueError("Metrics cannot be collected for engine with no observer")
+            raise InvalidParameterError("Metrics cannot be collected for engine with no observer")
 
         metrics_observation = DQMetricsObservation(
             run_id=self._engine.run_id,

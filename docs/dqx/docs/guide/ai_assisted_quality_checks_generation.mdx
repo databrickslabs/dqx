@@ -65,7 +65,7 @@ Here's a simple example of generating quality rules from a natural language desc
 
     # Initialize the generator
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Generate rules from natural language description
     user_input = """
@@ -94,7 +94,7 @@ The LLM will analyze the schema of the input data to generate more accurate rule
     from databricks.sdk import WorkspaceClient
 
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Generate rules with input data schema awareness
     user_input = """
@@ -142,6 +142,7 @@ Custom Python check functions can be passed to the generator, allowing the LLM t
     ws = WorkspaceClient()
     generator = DQGenerator(
       workspace_client=ws,
+      spark=spark,
       custom_check_functions=custom_check_functions
     )
 
@@ -177,7 +178,7 @@ You can configure the generator to use custom models or API endpoints:
     model_config = LLMModelConfig(
       model_name="databricks/databricks-claude-sonnet-4-5"  # default
     )
-    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
+    generator = DQGenerator(workspace_client=ws, spark=spark, llm_model_config=model_config)
 
     # Option 2: Using Databricks Foundation Model API with explicit credentials
     model_config = LLMModelConfig(
@@ -185,7 +186,7 @@ You can configure the generator to use custom models or API endpoints:
       api_key="your-api-key",
       api_base="https://your-workspace.azuredatabricks.net/serving-endpoints"
     )
-    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
+    generator = DQGenerator(workspace_client=ws, spark=spark, llm_model_config=model_config)
 
     # Option 3: Using an arbitrary LLM model
     model_config = LLMModelConfig(
@@ -193,7 +194,7 @@ You can configure the generator to use custom models or API endpoints:
       api_key="your-api-key",
       api_base="https://your-workspace.azuredatabricks.net/serving-endpoints"
     )
-    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
+    generator = DQGenerator(workspace_client=ws, spark=spark, llm_model_config=model_config)
 
     user_input = "All fields should contain data and have no empty values"
     checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
@@ -217,7 +218,7 @@ Here's a complete workflow showing how to generate, review, and save AI-assisted
 
     # Initialize workspace client and generator
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Define business requirements in natural language
     business_requirements = """
@@ -275,11 +276,11 @@ You can combine AI-assisted rules with profiler-generated rules for comprehensiv
     ws = WorkspaceClient()
 
     # Step 1: Profile the data to generate statistics-based (technical) rules
-    profiler = DQProfiler(ws)
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
     input_df = spark.read.table("catalog1.schema1.sales_data")
     summary_stats, profiles = profiler.profile(input_df)
 
-    generator = DQGenerator(ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Generate profiler-based rules
     profiler_checks = generator.generate_dq_rules(profiles)
@@ -421,9 +422,9 @@ Use a slash-separated format for specifying the scope and key, such as `api_key:
 
 ## Troubleshooting
 
-### Error: DSPy compiler not available
+### Error: LLM dependencies not installed
 
-**Problem**: You receive an error saying "DSPy compiler not available".
+**Problem**: You receive an error saying "LLM engine not available. Make sure LLM dependencies are installed".
 
 **Solution**: Install the LLM dependencies:
 ```bash

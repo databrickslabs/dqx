@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import tempfile
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 import pyspark.sql.functions as F
@@ -10,35 +10,17 @@ import yaml
 from datacontract.data_contract import DataContract
 from datacontract.lint.resolve import resolve_data_contract_v2
 
-from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
 from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import ODCSContractError, ParameterError
+from databricks.labs.dqx.errors import ODCSContractError, ParameterError, MissingParameterError
 from databricks.labs.dqx.profiler.generator import DQGenerator
 
 
 class DataContractGeneratorTestBase:
     """Base class with shared fixtures for data contract generator tests."""
-
-    @pytest.fixture
-    def mock_workspace_client(self):
-        """Create mock WorkspaceClient."""
-        return MagicMock(spec=WorkspaceClient)
-
-    @pytest.fixture
-    def mock_spark(self):
-        """Create mock SparkSession."""
-        return Mock()
-
-    @pytest.fixture
-    def generator(self, mock_workspace_client, mock_spark):
-        """Create DQGenerator instance."""
-        gen = DQGenerator(workspace_client=mock_workspace_client, spark=mock_spark)
-        gen.llm_engine = None
-        return gen
 
     @pytest.fixture
     def sample_contract_path(self):
@@ -1236,7 +1218,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         monkeypatch.setattr(generator_module, "DATACONTRACT_ENABLED", False)
 
         # Attempt to generate rules should raise ImportError
-        with pytest.raises(ImportError, match="Data contract support requires datacontract-cli"):
+        with pytest.raises(MissingParameterError, match="Data contract support requires datacontract-cli"):
             generator.generate_rules_from_contract(contract_file="dummy.yaml")
 
     def test_nested_fields_generate_rules(self, generator):
@@ -1974,12 +1956,12 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ]
         )
         mock_llm_engine = Mock()
-        mock_llm_engine.get_business_rules_with_llm.return_value = mock_prediction
+        mock_llm_engine.detect_business_rules_with_llm.return_value = mock_prediction
         return mock_llm_engine
 
     def _verify_text_rules(self, rules, mock_llm_engine):
         """Helper to verify text rule generation."""
-        assert mock_llm_engine.get_business_rules_with_llm.called
+        assert mock_llm_engine.detect_business_rules_with_llm.called
         assert len(rules) > 0
         text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
         assert len(text_rules) > 0
@@ -2066,7 +2048,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             )
 
             # Should not call LLM
-            assert not mock_llm_engine.get_business_rules_with_llm.called
+            assert not mock_llm_engine.detect_business_rules_with_llm.called
 
             # Should generate no rules
             assert len(rules) == 0, "Should skip text rules when process_text_rules=False"
@@ -2101,12 +2083,12 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             ]
         )
         mock_llm_engine = Mock()
-        mock_llm_engine.get_business_rules_with_llm.side_effect = [mock_prediction1, mock_prediction2]
+        mock_llm_engine.detect_business_rules_with_llm.side_effect = [mock_prediction1, mock_prediction2]
         return mock_llm_engine
 
     def _verify_multiple_text_rules(self, rules, mock_llm_engine):
         """Helper to verify multiple text rules were generated."""
-        assert mock_llm_engine.get_business_rules_with_llm.call_count == 2
+        assert mock_llm_engine.detect_business_rules_with_llm.call_count == 2
         assert len(rules) == 2
         fields_with_rules = {r["user_metadata"]["field"] for r in rules}
         assert "order_id" in fields_with_rules
@@ -2462,7 +2444,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
     def test_schema_level_text_rules(self, generator, mock_workspace_client, mock_spark):
         """Test text rules defined at schema level (not property level)."""
         mock_llm = Mock()
-        mock_llm.get_business_rules_with_llm = Mock(
+        mock_llm.detect_business_rules_with_llm = Mock(
             return_value=Mock(
                 quality_rules=[
                     {
@@ -2507,7 +2489,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             )
 
             # Should have called LLM for schema-level text rule
-            assert mock_llm.get_business_rules_with_llm.called
+            assert mock_llm.detect_business_rules_with_llm.called
             assert len(rules) >= 1
         finally:
             os.unlink(temp_path)

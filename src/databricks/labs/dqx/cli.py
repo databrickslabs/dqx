@@ -23,29 +23,31 @@ logger = get_logger(__file__)
 
 
 @dqx.command
-def open_remote_config(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
+def open_remote_config(w: WorkspaceClient, *, install_folder: str = "", ctx: WorkspaceContext | None = None):
     """
     Opens remote configuration in the browser.
 
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
+        install_folder: Optional custom installation folder path.
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     workspace_link = ctx.installation.workspace_link(WorkspaceConfig.__file__)
     webbrowser.open(workspace_link)
 
 
 @dqx.command
-def open_dashboards(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
+def open_dashboards(w: WorkspaceClient, *, install_folder: str = "", ctx: WorkspaceContext | None = None):
     """
     Opens remote dashboard directory in the browser.
 
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
+        install_folder: Optional custom installation folder path.
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     workspace_link = ctx.installation.workspace_link("")
     webbrowser.open(f"{workspace_link}dashboards/")
 
@@ -85,6 +87,7 @@ def validate_checks(
     *,
     run_config: str = "",
     validate_custom_check_functions: bool = True,
+    install_folder: str = "",
     ctx: WorkspaceContext | None = None,
 ) -> list[dict]:
     """
@@ -94,9 +97,10 @@ def validate_checks(
         w: The WorkspaceClient instance to use for accessing the workspace.
         run_config: The name of the run configuration to use. If not provided, run it for all run configs.
         validate_custom_check_functions: Whether to validate custom check functions (default is True).
+        install_folder: Optional custom installation folder path.
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     config = ctx.installation.load(WorkspaceConfig)
 
     errors_list = []
@@ -154,6 +158,7 @@ def profile(
     patterns: str = "",
     exclude_patterns: str = "",
     timeout_minutes: int = 30,
+    install_folder: str = "",
     ctx: WorkspaceContext | None = None,
 ) -> None:
     """
@@ -168,10 +173,11 @@ def profile(
         exclude_patterns: Semicolon-separated list of location patterns to exclude.
             Useful to skip existing output and quarantine tables based on suffixes.
         timeout_minutes: The timeout for the workflow run in minutes (default is 30).
+        install_folder: Optional custom installation folder path.
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     ctx.deployed_workflows.run_workflow(
         workflow="profiler",
         run_config_name=run_config,
@@ -191,6 +197,7 @@ def apply_checks(
     output_table_suffix: str = "_dq_output",
     quarantine_table_suffix: str = "_dq_quarantine",
     timeout_minutes: int = 30,
+    install_folder: str = "",
     ctx: WorkspaceContext | None = None,
 ) -> None:
     """
@@ -207,10 +214,11 @@ def apply_checks(
         output_table_suffix: Suffix to append to the output table names (default is "_dq_output").
         quarantine_table_suffix: Suffix to append to the quarantine table names (default is "_dq_quarantine").
         timeout_minutes: The timeout for the workflow run in minutes (default is 30).
+        install_folder: Optional custom installation folder path.
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     ctx.deployed_workflows.run_workflow(
         workflow="quality-checker",
         run_config_name=run_config,
@@ -232,6 +240,7 @@ def e2e(
     output_table_suffix: str = "_dq_output",
     quarantine_table_suffix: str = "_dq_quarantine",
     timeout_minutes: int = 60,
+    install_folder: str = "",
     ctx: WorkspaceContext | None = None,
 ) -> None:
     """
@@ -251,10 +260,11 @@ def e2e(
         output_table_suffix: Suffix to append to the output table names (default is "_dq_output").
         quarantine_table_suffix: Suffix to append to the quarantine table names (default is "_dq_quarantine").
         timeout_minutes: The timeout for the workflow run in minutes (default is 60).
+        install_folder: Optional custom installation folder path.
         ctx: The WorkspaceContext instance to use for accessing the workspace.
     """
     timeout = timedelta(minutes=timeout_minutes)
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     ctx.deployed_workflows.run_workflow(
         workflow="e2e",
         run_config_name=run_config,
@@ -267,15 +277,16 @@ def e2e(
 
 
 @dqx.command
-def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
+def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None, install_folder: str = ""):
     """
     Show deployed workflows and their state
 
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
         ctx: The WorkspaceContext instance to use for accessing the workspace.
+        install_folder: Optional custom installation folder path.
     """
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     logger.info("Fetching deployed jobs...")
     latest_job_status = ctx.deployed_workflows.latest_job_status()
     print(json.dumps(latest_job_status))
@@ -283,16 +294,19 @@ def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None):
 
 
 @dqx.command
-def logs(w: WorkspaceClient, *, workflow: str | None = None, ctx: WorkspaceContext | None = None):
+def logs(
+    w: WorkspaceClient, *, workflow: str | None = None, install_folder: str = "", ctx: WorkspaceContext | None = None
+):
     """
     Show logs of the latest job run.
 
     Args:
         w: The WorkspaceClient instance to use for accessing the workspace.
         workflow: The name of the workflow to show logs for.
+        install_folder: Optional custom installation folder path.
         ctx: The WorkspaceContext instance to use for accessing the workspace
     """
-    ctx = ctx or WorkspaceContext(w)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
     ctx.deployed_workflows.relay_logs(workflow)
 
 
