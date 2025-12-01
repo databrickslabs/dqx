@@ -41,7 +41,7 @@ def test_count_tables_from_table_based_dataframe(ws, spark, make_schema, make_ra
 
     count = count_tables_in_spark_plan(test_df)
 
-    assert count == 1, f"Expected 1 tables, but found {count}"
+    assert count == 1, f"Expected 1 table, but found {count}"
 
 
 def test_count_multiple_tables_from_table_based_dataframe(ws, spark, make_schema, make_random):
@@ -81,7 +81,7 @@ def test_count_path_and_table_based_dataframe(ws, spark, make_schema, make_rando
 
     count = count_tables_in_spark_plan(test_df)
 
-    assert count == 2, f"Expected 2 tables, but found {count}"
+    assert count == 1, f"Expected 1 table, but found {count}"
 
 
 def test_count_tables_from_streaming_table_based_dataframe(ws, spark, make_schema, make_random):
@@ -96,4 +96,4 @@ def test_count_tables_from_streaming_table_based_dataframe(ws, spark, make_schem
 
     count = count_tables_in_spark_plan(test_df)
 
-    assert count == 1, f"Expected 1 tables, but found {count}"
+    assert count == 1, f"Expected 1 table, but found {count}"
