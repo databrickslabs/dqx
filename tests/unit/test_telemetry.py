@@ -25,7 +25,7 @@ class MockDataFrameWithPlan:
     def __init__(self, plan_output):
         self.plan_output = plan_output
 
-    def explain(self, extended=False):
+    def explain(self, _extended=False):
         print(self.plan_output, end='')
 
 
