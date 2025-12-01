@@ -461,6 +461,7 @@ def is_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
             The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+            String literals must be single quoted, e.g. 'string_value'.
 
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
@@ -492,6 +493,7 @@ def is_not_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
             The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+            String literals must be single quoted, e.g. 'string_value'.
 
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
@@ -1353,7 +1355,7 @@ def is_aggr_equal(
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
         aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
@@ -1392,7 +1394,7 @@ def is_aggr_not_equal(
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
         aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
