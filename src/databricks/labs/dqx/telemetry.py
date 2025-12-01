@@ -69,6 +69,29 @@ def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") ->
     return decorator
 
 
+def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFrame):
+    """
+    Log telemetry information about a Spark DataFrame to the Databricks workspace including:
+    - Number of input tables and non-table inputs
+    - Whether the DataFrame is streaming
+    - Whether running in a Delta Live Tables (DLT) pipeline
+
+    Args:
+        ws: WorkspaceClient
+        spark: SparkSession
+        df: DataFrame to analyze
+
+    Returns:
+        None
+    """
+    input_table_count = count_tables_in_spark_plan(df)
+    log_telemetry(ws, "table_input_count", str(input_table_count))
+    # assume 1 input if no tables
+    log_telemetry(ws, "non_table_input_count", str(0 if input_table_count > 0 else 1))
+    log_telemetry(ws, "streaming", str(df.isStreaming).lower())
+    log_telemetry(ws, "dlt", str(is_dlt_pipeline(spark)).lower())
+
+
 def count_tables_in_spark_plan(df: DataFrame) -> int:
     """
     Count the number of tables referenced in a DataFrame's Spark execution plan.
@@ -96,6 +119,15 @@ def count_tables_in_spark_plan(df: DataFrame) -> int:
 
 
 def is_dlt_pipeline(spark: SparkSession) -> bool:
+    """
+    Determine if the current Spark session is running within a Databricks Delta Live Tables (DLT) pipeline.
+
+    Args:
+        spark: The SparkSession to check
+
+    Returns:
+        True if running in a DLT pipeline, False otherwise
+    """
     try:
         # Attempt to retrieve the DLT pipeline ID from the Spark configuration
         dlt_pipeline_id = spark.conf.get('pipelines.id', None)
