@@ -43,7 +43,7 @@ from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
 from databricks.labs.dqx.metrics_listener import StreamingMetricsListener
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
-from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
+from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry, count_tables_in_spark_plan, is_dlt_pipeline
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
 from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path
@@ -494,7 +494,7 @@ class DQEngine(DQEngineBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        self._log_telemetry_for_streaming(df)
+        self._log_dataframe_telemetry(df)
         return self._engine.apply_checks(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_split")
@@ -517,7 +517,7 @@ class DQEngine(DQEngineBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
-        self._log_telemetry_for_streaming(df)
+        self._log_dataframe_telemetry(df)
         return self._engine.apply_checks_and_split(df, checks, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_by_metadata")
@@ -544,7 +544,7 @@ class DQEngine(DQEngineBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        self._log_telemetry_for_streaming(df)
+        self._log_dataframe_telemetry(df)
         return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
@@ -573,7 +573,7 @@ class DQEngine(DQEngineBase):
             with errors or warnings and the corresponding result columns) and an optional Observation which tracks data
             quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        self._log_telemetry_for_streaming(df)
+        self._log_dataframe_telemetry(df)
         return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs)
 
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
@@ -1236,15 +1236,10 @@ class DQEngine(DQEngineBase):
         if quarantine_query and quarantine_config and is_one_time_trigger(quarantine_config.trigger):
             quarantine_query.awaitTermination()
 
-    def _log_telemetry_for_streaming(self, df):
+    def _log_dataframe_telemetry(self, df):
+        input_table_count = count_tables_in_spark_plan(df)
+        log_telemetry(self.ws, "table_input_count", str(input_table_count))
+        # assume 1 input if no tables
+        log_telemetry(self.ws, "non_table_input_count", str(0 if input_table_count > 0 else 1))
         log_telemetry(self.ws, "streaming", str(df.isStreaming).lower())
-        log_telemetry(self.ws, "dlt", str(self._is_dlt_pipeline()).lower())
-
-    def _is_dlt_pipeline(self) -> bool:
-        try:
-            # Attempt to retrieve the DLT pipeline ID from the Spark configuration
-            dlt_pipeline_id = self.spark.conf.get('pipelines.id', None)
-            return bool(dlt_pipeline_id)  # Return True if the ID exists, otherwise False
-        except Exception:
-            # Return False if an exception occurs (e.g. in non-DLT serverless clusters)
-            return False
+        log_telemetry(self.ws, "dlt", str(is_dlt_pipeline(self.spark)).lower())

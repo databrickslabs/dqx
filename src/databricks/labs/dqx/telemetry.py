@@ -1,6 +1,10 @@
+import re
+import sys
 import functools
 import logging
+from io import StringIO
 from collections.abc import Callable
+from pyspark.sql import DataFrame, SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError
 
@@ -63,3 +67,97 @@ def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") ->
         return wrapper
 
     return decorator
+
+
+def count_tables_in_spark_plan(df: DataFrame) -> int:
+    """
+    Count the number of tables referenced in a DataFrame's Spark execution plan.
+
+    This function analyzes the Analyzed Logical Plan section of the Spark execution plan
+    to identify table references (via SubqueryAlias nodes). File-based DataFrames and
+    in-memory DataFrames will return 0.
+
+    Args:
+        df: The Spark DataFrame to analyze
+
+    Returns:
+        The number of distinct tables found in the execution plan. Returns 0 if the plan
+        cannot be retrieved or contains no table references.
+    """
+    try:
+        plan_str = _get_spark_plan_as_string(df)
+        if not plan_str:
+            return 0
+        tables = _extract_tables_from_spark_plan(plan_str)
+        return len(tables)
+    except Exception as e:
+        logger.debug(f"Failed to count tables in Spark plan: {e}")
+        return 0
+
+
+def is_dlt_pipeline(spark: SparkSession) -> bool:
+    try:
+        # Attempt to retrieve the DLT pipeline ID from the Spark configuration
+        dlt_pipeline_id = spark.conf.get('pipelines.id', None)
+        return bool(dlt_pipeline_id)  # Return True if the ID exists, otherwise False
+    except Exception:
+        # Return False if an exception occurs (e.g. in non-DLT serverless clusters)
+        return False
+
+
+def _get_spark_plan_as_string(df: DataFrame) -> str:
+    """
+    Retrieve the Spark execution plan as a string by capturing df.explain() output.
+
+    This function temporarily redirects stdout to capture the output of df.explain(True),
+    which prints the detailed execution plan including the Analyzed Logical Plan.
+
+    Args:
+        df: The Spark DataFrame to get the execution plan from
+
+    Returns:
+        The complete execution plan as a string, or empty string if explain() fails
+    """
+    buf = StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = buf
+    try:
+        df.explain(True)
+    except Exception as e:
+        logger.debug(f"Failed to get Spark execution plan: {e}")
+        return ""
+    finally:
+        sys.stdout = old_stdout
+    return buf.getvalue()
+
+
+def _extract_tables_from_spark_plan(plan_str: str) -> set[str]:
+    """
+    Extract table names from the Analyzed Logical Plan section of a Spark execution plan.
+
+    This function parses the Analyzed Logical Plan section and identifies table references
+    by finding SubqueryAlias nodes, which Spark uses to represent table references in the
+    logical plan. File-based sources (e.g., Delta files from volumes) and in-memory DataFrames
+    do not create SubqueryAlias nodes and therefore won't be counted as tables.
+
+    Args:
+        plan_str: The complete Spark execution plan string (from df.explain(True))
+
+    Returns:
+        A set of distinct table names found in the plan. Returns empty set if no
+        Analyzed Logical Plan section is found or no tables are referenced.
+    """
+    tables: set[str] = set()
+
+    # Extract Analyzed Logical Plan section (stop at next "==")
+    match = re.search(r"== Analyzed Logical Plan ==\s*(.*?)\n==", plan_str, re.DOTALL)  # non-greedy until next section
+    if not match:
+        return tables
+
+    analyzed_text = match.group(1)
+
+    # Extract SubqueryAlias names (only present if table is used)
+    subquery_aliases = re.findall(r"SubqueryAlias\s+([^\s]+)", analyzed_text)
+    tables.update(subquery_aliases)
+
+    return tables
