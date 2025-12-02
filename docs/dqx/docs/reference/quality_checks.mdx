@@ -1653,14 +1653,9 @@ Validated and optimized for data quality use cases:
 - `approx_percentile` - Approximate percentile (faster, requires `aggr_params`)
 
 <Admonition type="warning" title="Performance: count_distinct with group_by">
-`count_distinct` with `group_by` uses two-stage aggregation (groupBy + join) due to Spark's DISTINCT window limitation. **For large-scale datasets with many groups**, prefer `approx_count_distinct` which:
-- Uses efficient window functions (no two-stage aggregation)
-- Provides ±5% accuracy via HyperLogLog++
-- Scales better for high-cardinality groups
+Using `count_distinct` with `group_by` performs multiple expensive operations. **For large-scale datasets, use `approx_count_distinct` instead**—it processes efficiently and scales well with high-cardinality groups.
 
-Use `count_distinct` when exact counts are critical; use `approx_count_distinct` for large datasets or when approximation is acceptable.
-
-**Performance benchmarks**: See [benchmarks](/docs/reference/benchmarks) for performance comparison across different cardinality levels.
+**Performance benchmarks**: See [benchmarks](/docs/reference/benchmarks) for detailed comparison.
 </Admonition>
 
 ### Using `aggr_params` for Function Parameters {#using-aggr_params-for-function-parameters}
@@ -1694,7 +1689,7 @@ aggr_params:
 
 The `aggr_params` dictionary is unpacked as keyword arguments to the Spark aggregate function. See [Databricks function documentation](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) for available parameters for each function.
 
-### Non-Curated Aggregates {#non-curated-aggregates}
+### Non-Curated Aggregate Functions {#non-curated-aggregates}
 
 Any [Databricks built-in aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) can be used beyond the curated list. DQX will:
 - Issue a warning (recommending curated functions when possible)
@@ -1704,12 +1699,9 @@ Any [Databricks built-in aggregate function](https://docs.databricks.com/aws/en/
 - Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`) will fail with a clear error message explaining they cannot be compared to numeric limits
 - **User-Defined Aggregate Functions (UDAFs) are not currently supported** - only Databricks built-in functions in `pyspark.sql.functions`
 
-**Runtime Compatibility:**
-DQX requires **Databricks Runtime 15.4+ (Spark 3.5+)**. Some newer functions may not be available on older runtimes:
-- `mode`, `median` - Require Spark 3.4+ (DBR 13.3+)
-- Most statistical functions - Available in all supported versions
-
-Unsupported functions will fail with an error message and version guidance.
+<Admonition type="warning" title="Runtime Compatibility">
+Some aggregate functions require newer Spark versions. If a function is unavailable, the error message will indicate the minimum required Spark version. **Use the latest Databricks Runtime for best compatibility.**
+</Admonition>
 
 ### Extended Examples {#aggregate-extended-examples}
 
