@@ -6872,7 +6872,7 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6951,7 +6951,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -6961,7 +6961,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7050,7 +7050,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7060,7 +7060,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7272,7 +7272,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7334,7 +7334,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_not_equal_to_limit",
-                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "message": "Average 4.0 in column 'c' is equal to limit: 4.0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
@@ -7371,7 +7371,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7381,7 +7381,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7443,7 +7443,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_not_equal_to_limit",
-                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "message": "Average 4.0 in column 'c' is equal to limit: 4.0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
@@ -7490,7 +7490,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7500,7 +7500,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
+                        "message": "Average 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7592,7 +7592,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "c_avg_not_equal_to_limit",
-                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "message": "Average 4.0 in column 'c' is equal to limit: 4.0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_equal",

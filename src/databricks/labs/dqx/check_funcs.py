@@ -30,27 +30,28 @@ IPV4_BIT_LENGTH = 32
 
 # Curated aggregate functions for data quality checks
 # These are univariate (single-column) aggregate functions suitable for DQ monitoring
+# Maps function names to human-readable display names for error messages
 CURATED_AGGR_FUNCTIONS = {
-    "count",
-    "sum",
-    "avg",
-    "min",
-    "max",
-    "count_distinct",
-    "approx_count_distinct",
-    "count_if",
-    "stddev",
-    "stddev_pop",
-    "stddev_samp",
-    "variance",
-    "var_pop",
-    "var_samp",
-    "median",
-    "mode",
-    "skewness",
-    "kurtosis",
-    "percentile",
-    "approx_percentile",
+    "count": "Count",
+    "sum": "Sum",
+    "avg": "Average",
+    "min": "Min value",
+    "max": "Max value",
+    "count_distinct": "Distinct value count",
+    "approx_count_distinct": "Approximate distinct value count",
+    "count_if": "Conditional count",
+    "stddev": "Standard deviation",
+    "stddev_pop": "Population standard deviation",
+    "stddev_samp": "Sample standard deviation",
+    "variance": "Variance",
+    "var_pop": "Population variance",
+    "var_samp": "Sample variance",
+    "median": "Median",
+    "mode": "Mode",
+    "skewness": "Skewness",
+    "kurtosis": "Kurtosis",
+    "percentile": "Percentile",
+    "approx_percentile": "Approximate percentile",
 }
 
 # Aggregate functions incompatible with Spark window functions
@@ -2303,7 +2304,7 @@ def _build_aggregate_expression(
         return F.countDistinct(filtered_expr)
 
     if aggr_type in {"percentile", "approx_percentile"}:
-        if not aggr_params or not aggr_params.get("percentile"):
+        if not aggr_params or "percentile" not in aggr_params:
             raise MissingParameterError(
                 f"'{aggr_type}' requires aggr_params with 'percentile' key (e.g., {{'percentile': 0.95}})"
             )
@@ -2311,7 +2312,7 @@ def _build_aggregate_expression(
 
         if aggr_type == "percentile":
             return F.percentile(filtered_expr, pct)
-        if aggr_params.get("accuracy"):
+        if "accuracy" in aggr_params:
             return F.approx_percentile(filtered_expr, pct, aggr_params["accuracy"])
         return F.approx_percentile(filtered_expr, pct)
 
@@ -2498,11 +2499,14 @@ def _is_aggr_compare(
 
         return df
 
+    # Get human-readable display name for aggregate function
+    aggr_display_name = _get_aggregate_display_name(aggr_type)
+    
     condition = make_condition(
         condition=F.col(condition_col),
         message=F.concat_ws(
             "",
-            F.lit(f"{aggr_type.capitalize()} "),
+            F.lit(f"{aggr_display_name} "),
             F.col(metric_col).cast("string"),
             F.lit(f" in column '{aggr_col_str}'"),
             F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
@@ -2629,6 +2633,24 @@ def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Col
     col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
+
+
+def _get_aggregate_display_name(aggr_type: str) -> str:
+    """
+    Get a human-readable display name for an aggregate function.
+
+    This helper provides user-friendly names for aggregate functions in error messages,
+    transforming technical function names (e.g., 'count_distinct') into readable text
+    (e.g., 'Distinct value count').
+
+    Args:
+        aggr_type: The aggregate function name (e.g., 'count_distinct', 'max', 'avg').
+
+    Returns:
+        A human-readable display name for the aggregate function. If no mapping exists,
+        returns the capitalized function name.
+    """
+    return CURATED_AGGR_FUNCTIONS.get(aggr_type, aggr_type.capitalize())
 
 
 def _get_column_expr(column: Column | str) -> Column:
