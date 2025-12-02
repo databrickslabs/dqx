@@ -577,9 +577,72 @@ def test_is_aggr_with_count_distinct_and_group_by(spark: SparkSession):
 
     expected = spark.createDataFrame(
         [
-            ["group1", "val1", "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1"],
-            ["group1", "val1", "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1"],
-            ["group1", "val2", "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1"],
+            [
+                "group1",
+                "val1",
+                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+            ],
+            [
+                "group1",
+                "val1",
+                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+            ],
+            [
+                "group1",
+                "val2",
+                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+            ],
+            ["group2", "val3", None],
+            ["group2", "val3", None],
+        ],
+        "a: string, b: string, b_count_distinct_group_by_a_greater_than_limit: string",
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_is_aggr_with_count_distinct_and_column_expression_in_group_by(spark: SparkSession):
+    """Test count_distinct with Column expression (F.col) in group_by.
+
+    This tests that the two-stage aggregation (groupBy + join) correctly handles
+    Column expressions (not just string column names) in group_by.
+    """
+    test_df = spark.createDataFrame(
+        [
+            ["group1", "val1"],
+            ["group1", "val2"],  # 2 distinct values in group1
+            ["group2", "val3"],
+            ["group2", "val3"],  # 1 distinct value in group2
+        ],
+        "a: string, b: string",
+    )
+
+    # Use Column expression (F.col) in group_by instead of string
+    checks = [
+        is_aggr_not_greater_than(
+            "b",
+            limit=1,
+            aggr_type="count_distinct",
+            group_by=[F.col("a")],  # Column expression without alias
+        ),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    # group1 has 2 distinct values > 1, should fail
+    # group2 has 1 distinct value <= 1, should pass
+    expected = spark.createDataFrame(
+        [
+            [
+                "group1",
+                "val1",
+                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+            ],
+            [
+                "group1",
+                "val2",
+                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+            ],
             ["group2", "val3", None],
             ["group2", "val3", None],
         ],

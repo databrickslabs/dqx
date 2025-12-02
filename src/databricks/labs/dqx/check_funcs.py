@@ -2407,7 +2407,7 @@ def _is_aggr_compare(
             f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
             f"Non-curated aggregates must return a single numeric value per group.",
             UserWarning,
-            stacklevel=2,
+            stacklevel=3,
         )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
@@ -2470,7 +2470,8 @@ def _is_aggr_compare(
                     _validate_aggregate_return_type(agg_df, aggr_type, metric_col)
 
                 # Join aggregated metrics back to original DataFrame to maintain row-level granularity
-                # Use column names for join (extract names from Column objects if present)
+                # Note: Aliased Column expressions in group_by are not supported for window-incompatible
+                # aggregates (e.g., count_distinct). Use string column names or simple F.col() expressions.
                 join_cols = [col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by]
                 df = df.join(agg_df, on=join_cols, how="left")
             else:
@@ -2501,7 +2502,7 @@ def _is_aggr_compare(
 
     # Get human-readable display name for aggregate function
     aggr_display_name = _get_aggregate_display_name(aggr_type)
-    
+
     condition = make_condition(
         condition=F.col(condition_col),
         message=F.concat_ws(
