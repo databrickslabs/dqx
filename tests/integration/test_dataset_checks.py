@@ -865,6 +865,27 @@ def test_is_aggr_percentile_missing_params(spark: SparkSession):
         apply_fn(test_df)
 
 
+def test_is_aggr_percentile_invalid_params_caught_by_spark(spark: SparkSession):
+    """Test that invalid aggr_params are caught by Spark at runtime.
+
+    This verifies our permissive strategy: we don't validate extra parameters,
+    but Spark will raise an error for truly invalid ones.
+    """
+    test_df = spark.createDataFrame([(1, 10.0), (2, 20.0)], "id: int, value: double")
+
+    # Pass an invalid parameter type (string instead of float for percentile)
+    # Spark should raise an error when the DataFrame is evaluated
+    with pytest.raises(Exception):  # Spark will raise AnalysisException or similar
+        _, apply_fn = is_aggr_not_greater_than(
+            "value",
+            limit=100.0,
+            aggr_type="approx_percentile",
+            aggr_params={"percentile": "invalid_string"},  # Invalid: should be float
+        )
+        result_df = apply_fn(test_df)
+        result_df.collect()  # Force evaluation to trigger Spark error
+
+
 def test_is_aggr_with_invalid_aggregate_function(spark: SparkSession):
     """Test that invalid aggregate function names raise clear errors."""
     test_df = spark.createDataFrame([(1, 10)], "id: int, value: int")

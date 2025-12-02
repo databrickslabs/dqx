@@ -2309,12 +2309,12 @@ def _build_aggregate_expression(
                 f"'{aggr_type}' requires aggr_params with 'percentile' key (e.g., {{'percentile': 0.95}})"
             )
         pct = aggr_params["percentile"]
+        # Pass through any additional parameters to Spark (e.g., accuracy, frequency)
+        # Spark will validate parameter names and types at runtime
+        other_params = {k: v for k, v in aggr_params.items() if k != "percentile"}
 
-        if aggr_type == "percentile":
-            return F.percentile(filtered_expr, pct)
-        if "accuracy" in aggr_params:
-            return F.approx_percentile(filtered_expr, pct, aggr_params["accuracy"])
-        return F.approx_percentile(filtered_expr, pct)
+        aggr_func = getattr(F, aggr_type)
+        return aggr_func(filtered_expr, pct, **other_params)
 
     try:
         aggr_func = getattr(F, aggr_type)
@@ -2462,12 +2462,6 @@ def _is_aggr_compare(
                 # This is required for aggregates like count_distinct that don't support window DISTINCT operations
                 group_cols = [F.col(col) if isinstance(col, str) else col for col in group_by]
                 agg_df = df.groupBy(*group_cols).agg(aggr_expr.alias(metric_col))
-
-                # Validate non-curated aggregates (type check on aggregated result before join)
-                # This ensures consistent validation regardless of whether window functions or two-stage
-                # aggregation is used (e.g., if a non-curated function is added to WINDOW_INCOMPATIBLE_AGGREGATES)
-                if not is_curated:
-                    _validate_aggregate_return_type(agg_df, aggr_type, metric_col)
 
                 # Join aggregated metrics back to original DataFrame to maintain row-level granularity
                 # Note: Aliased Column expressions in group_by are not supported for window-incompatible
