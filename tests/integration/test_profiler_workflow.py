@@ -4,7 +4,6 @@ from datetime import timedelta
 import pytest
 from databricks.labs.blueprint.parallel import ManyError
 from databricks.sdk.errors import NotFound
-
 from databricks.labs.dqx.config import (
     InstallationChecksStorageConfig,
     WorkspaceFileChecksStorageConfig,
@@ -12,6 +11,7 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration.conftest import setup_custom_check_func
+from tests.conftest import TEST_CATALOG
 
 
 def test_profiler_workflow_when_missing_input_location_in_config(ws, setup_serverless_workflows):
@@ -432,7 +432,7 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark,
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
-    print(checks)
+
     actual_ai_generated_check = None
     for check in checks:
         if check["check"]["function"] == "not_ends_with_suffix":
@@ -445,6 +445,51 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark,
     }
 
     assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
+
+
+def test_profiler_workflow_with_llm_pk_detection(ws, spark, make_schema, make_table, setup_serverless_workflows):
+    installation_ctx, run_config = setup_serverless_workflows()
+
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    input_table = make_table(
+        catalog_name=TEST_CATALOG,
+        schema_name=schema.name,
+        ctas="SELECT * FROM VALUES " "(1, 'a'), (2, 'b'), (3, NULL)" "AS data(id, name)",
+    )
+
+    config = installation_ctx.config
+    run_config = config.get_run_config()
+    run_config.profiler_config.llm_primary_key_detection = True
+    run_config.input_config.location = input_table.full_name
+    installation_ctx.installation.save(installation_ctx.config)
+
+    installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
+
+    config = InstallationChecksStorageConfig(
+        run_config_name=run_config.name,
+        assume_user=True,
+        product_name=installation_ctx.installation.product(),
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(config=config)
+    assert checks, "Checks were not loaded correctly"
+
+    actual_is_unique_check = None
+    for check in checks:
+        if check["check"]["function"] == "is_unique":
+            check["user_metadata"] = {}  # remove user metadata for comparison
+            actual_is_unique_check = check
+            break
+
+    expected_is_unique_check = {
+        "check": {"function": "is_unique", "arguments": {"columns": ["id"], "nulls_distinct": False}},
+        "name": "primary_key_id_validation",
+        "criticality": "error",
+        "user_metadata": {},
+    }
+
+    assert expected_is_unique_check == actual_is_unique_check, "Uniqueness check not found in the loaded checks"
 
 
 def _make_second_input_table(spark, catalog_name, schema_name, source_table, make_random, suffix=""):

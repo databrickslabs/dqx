@@ -1310,7 +1310,7 @@ def is_aggr_not_greater_than(
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
@@ -1355,7 +1355,7 @@ def is_aggr_not_less_than(
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
@@ -1400,7 +1400,7 @@ def is_aggr_equal(
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
@@ -1445,7 +1445,7 @@ def is_aggr_not_equal(
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
         aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
             count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
@@ -2377,7 +2377,7 @@ def _is_aggr_compare(
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
         aggr_type: Aggregation type. Curated functions include 'count', 'sum', 'avg', 'min', 'max',
             'count_distinct', 'stddev', 'percentile', and more. Any Databricks built-in aggregate
             function is supported (will trigger a warning for non-curated functions).

@@ -82,7 +82,7 @@ Here's a simple example of generating quality rules from a data contract file:
 
     # Initialize the generator
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Generate rules from contract file
     rules = generator.generate_rules_from_contract(
@@ -108,7 +108,7 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
     from datacontract.data_contract import DataContract
 
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Load contract using datacontract-cli
     contract = DataContract(data_contract_file="/path/to/contract.yaml")
@@ -194,7 +194,7 @@ Predefined rules are automatically derived from schema field constraints defined
     from databricks.sdk import WorkspaceClient
 
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     rules = generator.generate_rules_from_contract(
         contract_file="orders_contract.yaml"
@@ -448,7 +448,7 @@ Text-based expectations are defined using `type: text` in the quality section:
     from databricks.sdk import WorkspaceClient
 
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Generate rules including text-based expectations (requires LLM)
     rules = generator.generate_rules_from_contract(
@@ -567,7 +567,7 @@ Here's a complete example showing contract-based rule generation with all three 
 
     # Initialize
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Generate all rule types from contract
     rules = generator.generate_rules_from_contract(
@@ -661,11 +661,11 @@ Data contract-based rules can be combined with rules from other sources for comp
     ws = WorkspaceClient()
 
     # Step 1: Profile the data to discover statistical patterns
-    profiler = DQProfiler(ws)
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
     df = spark.read.table("production.sales_data")
     summary_stats, profiles = profiler.profile(df)
 
-    generator = DQGenerator(ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Step 2: Generate profiler-based rules (technical/statistical)
     profiler_rules = generator.generate_dq_rules(profiles)
@@ -754,7 +754,7 @@ schema:
 """
 
 # Central platform team generates and applies rules
-generator = DQGenerator(workspace_client=ws)
+generator = DQGenerator(workspace_client=ws, spark=spark)
 rules = generator.generate_rules_from_contract(contract_file="customer_360_contract.yaml")
 
 # Rules are automatically tracked back to the owning team's contract
@@ -811,7 +811,7 @@ Implement data mesh principles with contracts as interfaces:
 producer_contract = "/Volumes/catalog/schemas/contracts/sales_transactions_v2.yaml"
 
 # Consumer team generates rules from producer's contract
-generator = DQGenerator(workspace_client=ws)
+generator = DQGenerator(workspace_client=ws, spark=spark)
 rules = generator.generate_rules_from_contract(contract_file=producer_contract)
 
 # Apply rules on consumer side to validate producer data
