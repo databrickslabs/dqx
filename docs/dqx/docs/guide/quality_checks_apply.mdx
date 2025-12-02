@@ -418,6 +418,55 @@ You can define checks using DQX classes or as metadata (list of dictionaries) or
   </TabItem>
 </Tabs>
 
+### Applying checks using foreachBatch  
+  
+Spark's `foreachBatch` allows users to define an arbitrary processing function run for each streaming batch. DQX requires authentication with a Databricks SDK `WorkspaceClient` which is not supported inside `foreachBatch`. To use DQX in a `foreachBatch` function, create a `DQEngine` instance with a mock `WorkspaceClient`.  
+  
+<Admonition type="warning" title="Engine functionality with mocked WorkspaceClient">  
+Some DQX engine methods require a valid Databricks `WorkspaceClient`. Methods must support local execution to be run in a `foreachBatch` function with a mocked `WorkspaceClient`. Check the **Supports local execution** column [here](/docs/reference/engine/#dqx-engine-methods) to verify that DQX engine methods can be executed with a mocked client.  
+</Admonition>  
+  
+```python  
+from unittest.mock import MagicMock
+from pyspark.sql import DataFrame
+from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.sdk import WorkspaceClient
+  
+# Define DQX checks
+checks = [
+  DQRowRule(
+    name="col_timestamp_is_null",
+    criticality="error",
+    check_func=check_funcs.is_not_null,
+    column="timestamp"
+  ),
+  DQRowRule(
+    name="col_value_is_null",
+    criticality="error",
+    check_func=check_funcs.is_not_null,
+    column="value"
+  )
+]
+
+# Define a `foreachBatch` function to check and write the data
+def validate_and_write_micro_batch_data(batch_df: DataFrame, _: int) -> None:
+  # Create a mock `WorkspaceClient`
+  mock_ws = MagicMock(spec=WorkspaceClient)
+  
+  # Create the `DQEngine`
+  dq_engine = DQEngine(mock_ws)
+  
+  # Apply the DQX checks and write the data
+  valid_and_invalid_df = dq_engine.apply_checks(batch_df, checks)
+  valid_and_invalid_df.write.format("delta").saveAsTable("catalog.schema.output")  
+
+# Read the data and apply the `foreachBatch` function
+input_data = spark.readStream.format("rate-micro-batch").option("rowsPerBatch", 100).load()
+input_data.writeStream.foreachBatch(validate_and_write_micro_batch_data).start()
+```
+
 ### Saving quality results
 
 The quality check results (DataFrames) can be saved by the user to arbitrary tables using Spark APIs.
@@ -786,6 +835,7 @@ Example of the configuration file (relevant fields only):
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
+      llm_primary_key_detection: false
     checks_user_requirements: "business rules description" # optional user input for the llm-assisted features
     custom_check_functions:  # optional
       my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
@@ -892,7 +942,7 @@ Below is a sample output of a check stored in a result column (error or warning)
 ```
 
 The structure of the result columns is an array of struct containing the following fields
-(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.10.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.11.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
 - `columns`: name of the column(s) where the quality issue was found (string type).

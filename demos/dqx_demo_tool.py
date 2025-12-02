@@ -44,6 +44,7 @@
 # MAGIC     limit: 1000
 # MAGIC     sample_fraction: 0.3
 # MAGIC     summary_stats_file: profile_summary_stats.yml
+# MAGIC     llm_primary_key_detection: false
 # MAGIC   warehouse_id: your-warehouse-id
 # MAGIC ```
 # MAGIC

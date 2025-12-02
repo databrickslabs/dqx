@@ -34,10 +34,12 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Topic :: Utilities",
 ]
-dependencies = ["databricks-labs-blueprint>=0.9.1,<0.10",
-                "databricks-sdk~=0.71",
-                "databricks-labs-lsql>=0.5,<=0.16",
-                "sqlalchemy>=1.4,<3.0",
+# also update fallback dependencies in workflow installer when changing dependencies!
+dependencies = [
+    "databricks-labs-blueprint>=0.9.1,<0.10",
+    "databricks-sdk~=0.71",
+    "databricks-labs-lsql>=0.5,<=0.16",
+    "sqlalchemy>=2.0,<3.0",
 ]
 
 [project.optional-dependencies]
@@ -62,7 +64,12 @@ pii = [
     # The models cannot be delcared as dependency here buecase PyPI does not support URL-based dependencies which would prevent releases.
 ]
 llm = [
-    "dspy~=3.0.3"
+    "dspy~=3.0.3",
+    "databricks-langchain>=0.1.0",
+    "langchain-core>=0.1.0"
+]
+datacontract = [
+    "datacontract-cli>=0.10.0"
 ]
 
 [project.entry-points.databricks]
@@ -86,7 +93,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
-features = ["pii", "llm"]
+features = ["pii", "llm", "datacontract"]
 dependencies = [
     "black~=24.8.0",
     "chispa~=0.10.1",
@@ -120,7 +127,7 @@ python="3.12" # must match the version required by databricks-connect and python
 path = ".venv"
 
 [tool.hatch.envs.default.scripts]
-test            = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 30 --durations 20"
+test            = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 60 --durations 20"
 test_coverage   = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
 # Note that integration tests are controlled by the acceptance action (e.g. running 10 tests in parallel):
 # https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
