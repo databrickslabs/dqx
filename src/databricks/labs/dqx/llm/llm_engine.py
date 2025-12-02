@@ -77,6 +77,25 @@ class DQLLMEngine:
             available_functions=self._available_check_functions,
         )
 
+    def detect_business_rules_with_data_stats_with_llm(
+        self, data_summary_stats: str
+    ) -> dspy.primitives.prediction.Prediction:
+        """
+        Detect DQX rules based on data summary statistics.
+
+        Args:
+            data_summary_stats: JSON string containing summary statistics of the data.
+
+        Returns:
+             A Prediction object containing:
+                - quality_rules: The generated DQ rules
+                - reasoning: Explanation of the rules
+        """
+        return self._llm_rule_compiler.model_using_data_stats(
+            data_summary_stats=data_summary_stats,
+            available_functions=self._available_check_functions,
+        )
+
     def detect_primary_keys_with_llm(self, table: str) -> dict[str, Any]:
         """
         Detects primary keys using LLM-based analysis.

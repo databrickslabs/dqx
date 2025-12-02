@@ -23,6 +23,7 @@ __all__ = [
     "get_check_function_definitions",
     "get_required_check_functions_definitions",
     "create_optimizer_training_set",
+    "create_optimizer_training_set_with_stats",
     "get_column_metadata",
 ]
 
@@ -114,6 +115,37 @@ def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | 
     return examples
 
 
+def create_optimizer_training_set_with_stats(
+    custom_check_functions: dict[str, Callable] | None = None,
+) -> list[dspy.Example]:
+    """
+    Get quality check training examples using data summary statistics for the dspy optimizer.
+
+    Args:
+        custom_check_functions: A dictionary of custom check functions.
+
+    Returns:
+        list[dspy.Example]: A list of dspy.Example objects created from training examples with stats.
+    """
+    training_examples = _load_training_examples_with_stats()
+
+    examples = []
+    for example_data in training_examples:
+        # Convert data_summary_stats to JSON string format expected by dspy.Example
+        data_summary_stats_json = json.dumps(example_data["data_summary_stats"])
+
+        example = dspy.Example(
+            data_summary_stats=data_summary_stats_json,
+            available_functions=json.dumps(get_required_check_functions_definitions(custom_check_functions)),
+            quality_rules=example_data["quality_rules"],
+            reasoning=example_data["reasoning"],
+        ).with_inputs("data_summary_stats", "available_functions")
+
+        examples.append(example)
+
+    return examples
+
+
 def get_column_metadata(spark: SparkSession, input_config: InputConfig) -> str:
     """
     Get the column metadata for a given table.
@@ -138,6 +170,23 @@ def _load_training_examples() -> list[dict[str, Any]]:
         list[dict[str, Any]]: Training examples as a list of dictionaries.
     """
     resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
+
+    training_examples_as_text = resource.read_text(encoding="utf-8")
+    training_examples = yaml.safe_load(training_examples_as_text)
+
+    if not isinstance(training_examples, list):
+        raise DQXError("YAML file must contain a list at the root level.")
+
+    return training_examples
+
+
+def _load_training_examples_with_stats() -> list[dict[str, Any]]:
+    """A function to load the training examples with data stats from the llm/resources/training_examples_with_stats.yml file.
+
+    Returns:
+        list[dict[str, Any]]: Training examples with data summary statistics as a list of dictionaries.
+    """
+    resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples_with_stats.yml"))
 
     training_examples_as_text = resource.read_text(encoding="utf-8")
     training_examples = yaml.safe_load(training_examples_as_text)
