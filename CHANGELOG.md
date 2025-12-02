@@ -1,5 +1,9 @@
 # Version changelog
 
+## 0.11.1
+
+* Updated log level for spark connect to supress telemetry warnings in serverless.
+
 ## 0.11.0
 
 * Generationg of DQX rules from ODCS Data Contracts ([#932](https://github.com/databrickslabs/dqx/issues/932)). The Data Contract Quality Rules Generation feature has been introduced, enabling users to generate data quality rules directly from data contracts following the Open Data Contract Standard (ODCS). This feature supports three types of rule generation: predefined rules derived from schema properties and constraints, explicit DQX rules embedded in the contract, and text-based rules defined in natural language and processed by a Large Language Model (LLM) to generate appropriate checks. The feature provides rich metadata tracing generated rules back to the source contract for lineage and governance, and it can be used to implement federated data governance, standardize data contracts, and maintain version-controlled quality rules alongside schema definitions.
