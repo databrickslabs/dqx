@@ -80,7 +80,7 @@ def test_build_quality_rules_from_dataframe(spark):
             },
         },
         {
-            "name": "column_has_no_outliers",
+            "name": "column_has_outliers",
             "criticality": "error",
             "filter": "test_col > 0",
             "check": {

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from enum import Enum
 from itertools import zip_longest
 import operator as py_operator
+from typing import Any
 import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -941,12 +942,12 @@ def is_data_fresh(
 @register_rule("dataset")
 def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tuple[Column, Callable]:
     """
-    Build a outlier check condition and closure for dataset-level validation.
+    Build an outlier check condition and closure for dataset-level validation.
 
     This function uses a statistical method called MAD (Median Absolute Deviation) to checks whether
-    the specified columns values are between the calculated limits. The upper limits is calculated from the median + 3 * MAD
-    and the lower limit is calculated from the median - 3 * MAD. Values outside these limits are considered outliers.
-    The formula for calculating MAD is defined in the method _calculate_median_absolute_deviation.
+    the specified column's values are between the calculated limits. The upper limit is calculated from
+    the median + 3.5 * MAD. Values outside these limits are considered outliers.
+
 
     Args:
         column: column to check; can be a string column name or a column expression
@@ -955,7 +956,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
 
     Returns:
         A tuple of:
-            - A Spark Column representing the condition for ouliers violations.
+            - A Spark Column representing the condition for outliers violations.
             - A closure that applies the outliers check and adds the necessary condition/count columns.
     """
     column = F.col(column) if isinstance(column, str) else column
@@ -983,24 +984,24 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
                 f"Column '{col_expr_str}' must be of numeric type to perform outlier detection using MAD method, "
                 f"but got type '{column_type.simpleString()}' instead."
             )
-        filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
-        filtered_df = df.filter(filter_expr)
-        mad, median = _calculate_median_absolute_deviation(filtered_df, col_expr_str)
+        filter_condition = F.expr(row_filter) if row_filter else F.lit(True)
+        median, mad = _calculate_median_absolute_deviation(df, col_expr_str, row_filter)
+        if median is not None and mad is not None:
+            median = float(median)
+            mad = float(mad)
+            # Create outlier condition
+            lower_bound = median - (3.5 * mad)
+            upper_bound = median + (3.5 * mad)
+            lower_bound_expr = _get_limit_expr(lower_bound)
+            upper_bound_expr = _get_limit_expr(upper_bound)
 
-        # criar condição de outlier
-        lower_bound = median - (3.5 * mad)
-        upper_bound = median + (3.5 * mad)
-        lower_bound_expr = _get_limit_expr(lower_bound)
-        upper_bound_expr = _get_limit_expr(upper_bound)
+            condition = (col_expr < (lower_bound_expr)) | (col_expr > (upper_bound_expr))
 
-        condition = (col_expr < (lower_bound_expr)) | (col_expr > (upper_bound_expr))
-
-        # Add outlier detection columns
-        result_df = (
-            filtered_df.withColumn('median_value', F.lit(median))
-            .withColumn('mad_value', F.lit(mad))
-            .withColumn(condition_col, F.when(condition, True).otherwise(False))
-        )
+            # Add outlier detection columns
+            result_df = df.withColumn(condition_col, F.when(filter_condition & condition, True).otherwise(False))
+        else:
+            # If median or mad could not be calculated, no outliers can be detected
+            result_df = df.withColumn(condition_col, F.lit(False))
 
         return result_df
 
@@ -1010,7 +1011,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
             "",
             F.lit("Value '"),
             col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is considered an outlier, according to the MAD statistical method."),
+            F.lit(f"' in Column '{col_expr_str}' is an outlier as per MAD."),
         ),
         alias=f"{col_str_norm}_has_outliers",
     )
@@ -2786,7 +2787,7 @@ def _validate_sql_query_params(query: str, merge_columns: list[str]) -> None:
         )
 
 
-def _calculate_median_absolute_deviation(df: DataFrame, column: str) -> tuple[float, float]:
+def _calculate_median_absolute_deviation(df: DataFrame, column: str, filter_condition: str | None) -> tuple[Any, Any]:
     """
     Calculate the Median Absolute Deviation (MAD) for a numeric column.
 
@@ -2799,38 +2800,27 @@ def _calculate_median_absolute_deviation(df: DataFrame, column: str) -> tuple[fl
     Args:
         df: PySpark DataFrame
         column: Name of the numeric column to calculate MAD for
+        filter_condition: Filter to apply before calculation (optional)
 
     Returns:
-        float: The Median Absolute Deviation value
+        The Median and Absolute Deviation values
 
-    Raises:
-        ValueError: If column doesn't exist or contains no numeric values
 
     Example:
         >>> df = spark.createDataFrame([(1.0,), (2.0,), (3.0,), (4.0,), (5.0,)], ["values"])
-        >>> mad = calculate_median_absolute_deviation(df, "values")
+        >>> mad = _calculate_median_absolute_deviation(df, "values")
         >>> print(f"MAD: {mad}")
     """
-    # Validate column exists
-    if column not in df.columns:
-        raise ValueError(f"Column '{column}' does not exist in DataFrame")
-
-    # Remove null values
-    df_clean = df.filter(F.col(column).isNotNull())
-
-    if df_clean.count() == 0:
-        raise ValueError(f"Column '{column}' contains no numeric values")
+    if filter_condition is not None:
+        df = df.filter(filter_condition)
 
     # Step 1: Calculate the median of the column
-    median_value = df_clean.agg(F.percentile_approx(column, 0.5)).collect()[0][0]
-
-    if median_value is None:
-        raise ValueError(f"Could not calculate median for column '{column}'")
+    median_value = df.agg(F.percentile_approx(column, 0.5)).collect()[0][0]
 
     # Step 2: Calculate absolute deviations from the median
-    df_with_deviations = df_clean.select(F.abs(F.col(column) - F.lit(median_value)).alias("absolute_deviation"))
+    df_with_deviations = df.select(F.abs(F.col(column) - F.lit(median_value)).alias("absolute_deviation"))
 
     # Step 3: Calculate the median of absolute deviations
     mad = df_with_deviations.agg(F.percentile_approx("absolute_deviation", 0.5)).collect()[0][0]
 
-    return float(mad) if mad is not None else 0.0, float(median_value) if median_value is not None else 0.0
+    return median_value, mad
