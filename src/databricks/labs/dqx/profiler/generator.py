@@ -102,12 +102,15 @@ class DQGenerator(DQEngineBase):
         return dq_rules
 
     @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
-    def generate_dq_rules_ai_assisted(self, user_input: str, input_config: InputConfig | None = None) -> list[dict]:
+    def generate_dq_rules_ai_assisted(
+        self, user_input: str = "", summary_stats: dict = "", input_config: InputConfig | None = None
+    ) -> list[dict]:
         """
         Generates data quality rules using LLM based on natural language input.
 
         Args:
-            user_input: Natural language description of data quality requirements.
+            user_input: Optional Natural language description of data quality requirements.
+            summary_stats: Optional summary statistics of the input data.
             input_config: Optional input config providing input data location as a path or fully qualified table name
                 to infer schema. If not provided, LLM will be used to guess the table schema.
 
@@ -122,39 +125,17 @@ class DQGenerator(DQEngineBase):
                 "LLM engine not available. Make sure LLM dependencies are installed: "
                 "pip install 'databricks-labs-dqx[llm]'"
             )
+        if not summary_stats and not user_input:
+            raise MissingParameterError(
+                "If summary statistics are not provided, user input is required to generate rules using LLM."
+            )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
         schema_info = get_column_metadata(self.spark, input_config) if input_config else ""
 
         # Generate rules using pre-initialized LLM compiler
-        prediction = self.llm_engine.detect_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
-
-        # Validate the generated rules
-        dq_rules = json.loads(prediction.quality_rules)
-        status = DQEngine.validate_checks(checks=dq_rules, custom_check_functions=self.custom_check_functions)
-        if status.has_errors:
-            logger.warning(f"Generated rules have validation errors: {status.errors}")
-        else:
-            logger.info(f"Generated {len(dq_rules)} rules with LLM: {dq_rules}")
-            logger.info(f"LLM reasoning: {prediction.reasoning}")
-
-        logger.info(f"✅ AI-Assisted quality rules generation completed. Generated {len(dq_rules)} rules.")
-        return dq_rules
-
-    @telemetry_logger("generator", "generate_dq_rules_ai_assisted_using_data_stats")
-    def generate_dq_rules_ai_assisted_using_data_stats(self, data_summary_stats: str) -> list[dict]:
-        """
-        Generates data quality rules using LLM based on data summary statistics.
-        """
-        if self.llm_engine is None:
-            raise MissingParameterError(
-                "LLM engine not available. Make sure LLM dependencies are installed: "
-                "pip install 'databricks-labs-dqx[llm]'"
-            )
-
-        logger.info(f"Generating DQ rules with LLM for data summary statistics: '{data_summary_stats}'")
-        prediction = self.llm_engine.detect_business_rules_with_data_stats_with_llm(
-            data_summary_stats=data_summary_stats
+        prediction = self.llm_engine.detect_business_rules_with_llm(
+            user_input=user_input, schema_info=schema_info, summary_stats=summary_stats
         )
 
         # Validate the generated rules

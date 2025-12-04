@@ -64,7 +64,7 @@ def get_check_function_definitions(custom_check_functions: dict[str, Callable] |
 
 
 def get_required_check_functions_definitions(
-    custom_check_functions: dict[str, Callable] | None = None
+    custom_check_functions: dict[str, Callable] | None = None,
 ) -> list[dict[str, str]]:
     """
     Extract only required function information (name and doc).
@@ -135,11 +135,12 @@ def create_optimizer_training_set_with_stats(
         data_summary_stats_json = json.dumps(example_data["data_summary_stats"])
 
         example = dspy.Example(
+            business_description=example_data["business_description"] if example_data["business_description"] else "",
             data_summary_stats=data_summary_stats_json,
             available_functions=json.dumps(get_required_check_functions_definitions(custom_check_functions)),
             quality_rules=example_data["quality_rules"],
             reasoning=example_data["reasoning"],
-        ).with_inputs("data_summary_stats", "available_functions")
+        ).with_inputs("business_description", "data_summary_stats", "available_functions")
 
         examples.append(example)
 

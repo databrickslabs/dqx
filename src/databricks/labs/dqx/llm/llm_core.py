@@ -2,6 +2,7 @@ import json
 import logging
 from collections.abc import Callable
 from functools import cached_property
+from typing import Optional
 
 import dspy  # type: ignore
 
@@ -209,6 +210,9 @@ class DspyRuleGenerationWithSchemaInference(dspy.Module):
 class DspyRuleUsingDataStatsSignature(dspy.Signature):
     """Generate data quality rules using data summary statistics."""
 
+    business_description: Optional[str] = dspy.InputField(
+        desc="Natural language description of data quality requirements"
+    )
     data_summary_stats: str = dspy.InputField(desc="JSON string of summary statistics of the data")
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
     quality_rules: str = dspy.OutputField(
@@ -233,18 +237,25 @@ class DspyRuleUsingDataStats(dspy.Module):
         super().__init__()
         self.generator = generator or dspy.Predict(DspyRuleUsingDataStatsSignature)
 
-    def forward(self, data_summary_stats: str, available_functions: str) -> dspy.primitives.prediction.Prediction:
+    def forward(
+        self, data_summary_stats: str, available_functions: str, business_description: str | None = None
+    ) -> dspy.primitives.prediction.Prediction:
         """
         Generate data quality rules.
 
         Args:
             data_summary_stats: JSON string containing summary statistics of the data.
             available_functions: JSON string of available check functions.
+            business_description: Optional natural language description of data quality requirements.
 
         Returns:
             Prediction containing quality_rules and reasoning.
         """
-        result = self.generator(data_summary_stats=data_summary_stats, available_functions=available_functions)
+        result = self.generator(
+            data_summary_stats=data_summary_stats,
+            available_functions=available_functions,
+            business_description=business_description or "",
+        )
 
         # Validate JSON output
         if result.quality_rules:

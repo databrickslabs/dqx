@@ -50,18 +50,19 @@ class DQLLMEngine:
         self._llm_pk_detector = LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
 
     def detect_business_rules_with_llm(
-        self, user_input: str, schema_info: str = ""
+        self, user_input: str = "", schema_info: str = "", summary_stats: dict | None = None
     ) -> dspy.primitives.prediction.Prediction:
         """
-        Detect DQX rules based on natural language request with optional schema.
+        Detect DQX rules based on natural language request with optional schema or summary statistics.
 
         If schema_info is empty (default), it will automatically infer the schema
         from the user_input before generating rules.
 
         Args:
-            user_input: Natural language description of data quality requirements.
+            user_input: Optional natural language description of data quality requirements.
             schema_info: Optional JSON string containing table schema.
                         If empty (default), triggers schema inference.
+            summary_stats: Optional dictionary containing summary statistics of the input data.
 
         Returns:
             A Prediction object containing:
@@ -71,30 +72,18 @@ class DQLLMEngine:
                 - assumptions_bullets: Assumptions made (if schema was inferred)
                 - schema_info: The final schema used (if schema was inferred)
         """
-        return self._llm_rule_compiler.model(
-            schema_info=schema_info,
-            business_description=user_input,
-            available_functions=self._available_check_functions,
-        )
-
-    def detect_business_rules_with_data_stats_with_llm(
-        self, data_summary_stats: str
-    ) -> dspy.primitives.prediction.Prediction:
-        """
-        Detect DQX rules based on data summary statistics.
-
-        Args:
-            data_summary_stats: JSON string containing summary statistics of the data.
-
-        Returns:
-             A Prediction object containing:
-                - quality_rules: The generated DQ rules
-                - reasoning: Explanation of the rules
-        """
-        return self._llm_rule_compiler.model_using_data_stats(
-            data_summary_stats=data_summary_stats,
-            available_functions=self._available_check_functions,
-        )
+        if summary_stats:
+            return self._llm_rule_compiler.model_using_data_stats(
+                business_description=user_input if user_input else None,
+                data_summary_stats=json.dumps(summary_stats),
+                available_functions=self._available_check_functions,
+            )
+        else:
+            return self._llm_rule_compiler.model(
+                schema_info=schema_info,
+                business_description=user_input,
+                available_functions=self._available_check_functions,
+            )
 
     def detect_primary_keys_with_llm(self, table: str) -> dict[str, Any]:
         """
