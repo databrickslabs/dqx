@@ -74,8 +74,7 @@ def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFr
     """
     Log telemetry information about a Spark DataFrame to the Databricks workspace including:
     - List of tables used as inputs (hashed)
-    - Count of table based inputs
-    - Count of non-table based inputs (e.g. file-based or in-memory DataFrames)
+    - List of file paths used as inputs (hashed, excluding paths from tables)
     - Whether the DataFrame is streaming
     - Whether running in a Delta Live Tables (DLT) pipeline
 
@@ -87,89 +86,22 @@ def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFr
     Returns:
         None
     """
-    input_tables = get_tables_from_spark_plan(df)
-    for table in input_tables:
-        log_telemetry(ws, "input_table", hashlib.sha256(("id:" + table).encode("utf-8")).hexdigest())
-    # assume 1 input if no tables
-    input_table_count = len(input_tables)
-    log_telemetry(ws, "table_input_count", str(input_table_count))
-    log_telemetry(ws, "non_table_input_count", str(0 if input_table_count > 0 else 1))
+    plan_str = get_spark_plan_as_string(df)
+
+    if plan_str:
+        input_tables = get_tables_from_spark_plan(plan_str)
+        for table in input_tables:
+            log_telemetry(ws, "input_table", hashlib.sha256(("id:" + table).encode("utf-8")).hexdigest())
+
+        input_paths = get_paths_from_spark_plan(plan_str, input_tables)
+        for path in input_paths:
+            log_telemetry(ws, "input_path", hashlib.sha256(("id:" + path).encode("utf-8")).hexdigest())
+
     log_telemetry(ws, "streaming", str(df.isStreaming).lower())
     log_telemetry(ws, "dlt", str(is_dlt_pipeline(spark)).lower())
 
 
-def get_tables_from_spark_plan(df: DataFrame) -> set[str]:
-    """
-    Extract tables referenced in a DataFrame's Spark execution plan.
-
-    This function analyzes the Analyzed Logical Plan section of the Spark execution plan
-    to identify table references (via SubqueryAlias nodes). File-based DataFrames and
-    in-memory DataFrames are skipped.
-
-    Args:
-        df: The Spark DataFrame to analyze
-
-    Returns:
-        Distinct tables found in the execution plan. Returns empty set if the plan
-        cannot be retrieved or contains no table references.
-    """
-    try:
-        plan_str = _get_spark_plan_as_string(df)
-        if not plan_str:
-            return set()
-        tables = _get_tables_from_spark_plan(plan_str)
-        return tables
-    except Exception as e:
-        logger.debug(f"Failed to count tables in Spark plan: {e}")
-        return set()
-
-
-def is_dlt_pipeline(spark: SparkSession) -> bool:
-    """
-    Determine if the current Spark session is running within a Databricks Delta Live Tables (DLT) pipeline.
-
-    Args:
-        spark: The SparkSession to check
-
-    Returns:
-        True if running in a DLT pipeline, False otherwise
-    """
-    try:
-        # Attempt to retrieve the DLT pipeline ID from the Spark configuration
-        dlt_pipeline_id = spark.conf.get('pipelines.id', None)
-        return bool(dlt_pipeline_id)  # Return True if the ID exists, otherwise False
-    except Exception:
-        # Return False if an exception occurs (e.g. in non-DLT serverless clusters)
-        return False
-
-
-def _get_spark_plan_as_string(df: DataFrame) -> str:
-    """
-    Retrieve the Spark execution plan as a string by capturing df.explain() output.
-
-    This function temporarily redirects stdout to capture the output of df.explain(True),
-    which prints the detailed execution plan including the Analyzed Logical Plan.
-
-    Args:
-        df: The Spark DataFrame to get the execution plan from
-
-    Returns:
-        The complete execution plan as a string, or empty string if explain() fails
-    """
-    buf = StringIO()
-    old_stdout = sys.stdout
-    sys.stdout = buf
-    try:
-        df.explain(True)
-    except Exception as e:
-        logger.debug(f"Failed to get Spark execution plan: {e}")
-        return ""
-    finally:
-        sys.stdout = old_stdout
-    return buf.getvalue()
-
-
-def _get_tables_from_spark_plan(plan_str: str) -> set[str]:
+def get_tables_from_spark_plan(plan_str: str) -> set[str]:
     """
     Extract table names from the Analyzed Logical Plan section of a Spark execution plan.
 
@@ -199,3 +131,96 @@ def _get_tables_from_spark_plan(plan_str: str) -> set[str]:
     tables.update(alias.replace("`", "") for alias in subquery_aliases)
 
     return tables
+
+
+def get_paths_from_spark_plan(plan_str: str, table_names: set[str] | None = None) -> set[str]:
+    """
+    Extract file paths from the Physical Plan section of a Spark execution plan.
+
+    This function parses the Physical Plan section and identifies file path references
+    by finding any *FileIndex patterns in the Location field (e.g., PreparedDeltaFileIndex,
+    ParquetFileIndex, etc.). These paths represent direct file-based data sources
+    (e.g., files from volumes, DBFS, S3, etc.) that are not registered as tables.
+
+    Args:
+        plan_str: The complete Spark execution plan string (from df.explain(True))
+        table_names: Optional set of table names to exclude (paths associated with tables are skipped)
+
+    Returns:
+        A set of distinct file paths found in the plan. Returns empty set if no
+        Physical Plan section is found or no paths are referenced.
+    """
+    paths: set[str] = set()
+
+    # Extract Physical Plan section (stop at next "==")
+    match = re.search(r"== Physical Plan ==\s*(.*?)(?:\n==|$)", plan_str, re.DOTALL)
+    if not match:
+        return paths
+
+    physical_text = match.group(1)
+    if table_names is None:
+        table_names = set()
+
+    # Process line by line to check for table associations
+    for line in physical_text.split('\n'):
+        # Check if this line contains a Location pattern
+        location_match = re.search(r"Location:\s+\w+FileIndex\([^)]+\)\[([^\]]+)\]", line)
+        if not location_match:
+            continue
+
+        # Skip if this line contains any table name (indicating it's a table-based path)
+        is_table_path = any(table_name in line for table_name in table_names)
+        if is_table_path:
+            continue
+
+        # Extract and add non-empty paths
+        paths_str = location_match.group(1)
+        path_list = [p.strip() for p in paths_str.split(',') if p.strip()]
+        paths.update(path_list)
+
+    return paths
+
+
+def is_dlt_pipeline(spark: SparkSession) -> bool:
+    """
+    Determine if the current Spark session is running within a Databricks Delta Live Tables (DLT) pipeline.
+
+    Args:
+        spark: The SparkSession to check
+
+    Returns:
+        True if running in a DLT pipeline, False otherwise
+    """
+    try:
+        # Attempt to retrieve the DLT pipeline ID from the Spark configuration
+        dlt_pipeline_id = spark.conf.get('pipelines.id', None)
+        return bool(dlt_pipeline_id)  # Return True if the ID exists, otherwise False
+    except Exception:
+        # Return False if an exception occurs (e.g. in non-DLT serverless clusters)
+        return False
+
+
+def get_spark_plan_as_string(df: DataFrame) -> str:
+    """
+    Retrieve the Spark execution plan as a string by capturing df.explain() output.
+
+    This function temporarily redirects stdout to capture the output of df.explain(True),
+    which prints the detailed execution plan including the Analyzed Logical Plan.
+
+    Args:
+        df: The Spark DataFrame to get the execution plan from
+
+    Returns:
+        The complete execution plan as a string, or empty string if explain() fails
+    """
+    buf = StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = buf
+    try:
+        df.explain(True)
+    except Exception as e:
+        logger.debug(f"Failed to get Spark execution plan: {e}")
+        return ""
+    finally:
+        sys.stdout = old_stdout
+    return buf.getvalue()
