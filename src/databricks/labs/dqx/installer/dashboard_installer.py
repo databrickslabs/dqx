@@ -265,7 +265,7 @@ class DashboardInstaller:
         logger.debug(f"Dashboard Metadata retrieved: {metadata.display_name}")
         stem = file.stem.title()
         if stem.endswith(".Lvdash"):
-            stem = stem[:-len(".Lvdash")]
+            stem = stem[: -len(".Lvdash")]
         metadata.display_name = f"DQX_{stem}"
         return metadata
 
