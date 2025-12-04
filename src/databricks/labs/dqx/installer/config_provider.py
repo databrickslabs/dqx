@@ -2,6 +2,8 @@ import os
 import json
 import logging
 from databricks.labs.blueprint.tui import Prompts
+
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig, InputConfig, OutputConfig, ProfilerConfig
 
@@ -396,7 +398,7 @@ class ConfigProvider:
         if custom_metrics_input.strip():
             custom_metrics = json.loads(custom_metrics_input)
             if not isinstance(custom_metrics, list):
-                raise ValueError(
+                raise InvalidParameterError(
                     "Custom metrics must be provided as a list of Spark SQL expressions (e.g. ['count(case when age > 65 then 1 end) as senior_count']"
                 )
             return custom_metrics

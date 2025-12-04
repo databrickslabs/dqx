@@ -50,7 +50,7 @@ class WorkspaceInstaller(WorkspaceContext, InstallationMixin):
     """
 
     def __init__(self, ws: WorkspaceClient, environ: dict[str, str] | None = None, install_folder: str | None = None):
-        super().__init__(ws)
+        super().__init__(ws, install_folder=install_folder)
         if not environ:
             environ = dict(os.environ.items())
 

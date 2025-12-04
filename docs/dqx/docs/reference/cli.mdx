@@ -26,7 +26,9 @@ databricks labs uninstall dqx
 <Admonition type="info" title="Where is DQX installed?">
 By default, DQX is installed under the user's home folder (for example `/Users/<user>/.dqx`).
 Use the `DQX_FORCE_INSTALL` env var to force a global or user install. Provide a custom installation
-folder during installation to override the default location. See the installation guide for details.
+folder during installation to override the default location. See the installation guide for details. 
+Set the `--install-folder` argument When running commands for a DQX installation with a custom 
+installation folder.
 </Admonition>
 
 ## Configuration helpers
@@ -35,8 +37,14 @@ folder during installation to override the default location. See the installatio
 # Open the installation config in the workspace
 databricks labs dqx open-remote-config
 
+# Open the installation config in the workspace with a custom installation folder
+databricks labs dqx open-remote-config --install-folder "/Workspace/my_dqx_folder"
+
 # Open dashboards folder for the installation
 databricks labs dqx open-dashboards
+
+# Open dashboards folder for an installation with a custom installation folder
+databricks labs dqx open-dashboards --install-folder "/Workspace/my_dqx_folder"
 ```
 
 ## Workflows and logs
@@ -45,8 +53,14 @@ databricks labs dqx open-dashboards
 # List installed workflows with their latest run state
 databricks labs dqx workflows
 
+# List installed workflows with their latest run state with a custom installation folder
+databricks labs dqx workflows --install-folder "/Workspace/my_dqx_folder"
+
 # Show logs for the latest run of a workflow (profiler, quality-checker, e2e)
 databricks labs dqx logs --workflow quality-checker
+
+# Show logs for the latest run of a workflow (profiler, quality-checker, e2e) with a custom installation folder
+databricks labs dqx logs --workflow quality-checker --install-folder "/Workspace/my_dqx_folder"
 ```
 
 ## Running workflows
@@ -54,6 +68,9 @@ databricks labs dqx logs --workflow quality-checker
 ```bash
 # Run profiler for all run configs in the configuration file: profile data and generate quality check candidates
 databricks labs dqx profile --timeout-minutes 20
+
+# Run profiler for all run configs in the configuration file with a custom installation folder: profile data and generate quality check candidates
+databricks labs dqx profile --timeout-minutes 20 --install-folder "/Workspace/my_dqx_folder"
 
 # Run profiler for a single run config in the configuration file: profile data and generate quality check candidates
 databricks labs dqx profile --run-config default --timeout-minutes 20
@@ -72,6 +89,9 @@ databricks labs dqx profile --run-config "default" --patterns "main.product001.*
 # Run quality checker for all run configs in the configuration file: apply quality checks and write results and optionally quarantine
 databricks labs dqx apply-checks --timeout-minutes 20
 
+# Run quality checker for all run configs in the configuration file with a custom installation folder: apply quality checks and write results and optionally quarantine
+databricks labs dqx apply-checks --timeout-minutes 20 --install-folder "/Workspace/my_dqx_folder"
+
 # Run quality checker for a single run config in the configuration file: apply quality checks and write results and optionally quarantine
 databricks labs dqx apply-checks --run-config default --timeout-minutes 20
 
@@ -80,6 +100,9 @@ databricks labs dqx apply-checks --run-config "default" --patterns "main.product
 
 # Run e2e (end-to-end) workflows for all run configs in the configuration file: profile data > generate quality checks > apply checks > write results and optionally quarantine
 databricks labs dqx e2e --timeout-minutes 20
+
+# Run e2e (end-to-end) workflows for all run configs in the configuration file with a custom installation folder: profile data > generate quality checks > apply checks > write results and optionally quarantine
+databricks labs dqx e2e --timeout-minutes 20 --install-folder "/Workspace/my_dqx_folder"
 
 # Run e2e (end-to-end) workflows for a single run config in the configuration file: profile data > generate quality checks > apply checks > write results and optionally quarantine
 databricks labs dqx e2e --run-config default --timeout-minutes 20
@@ -93,6 +116,9 @@ databricks labs dqx e2e --run-config "default" --patterns "main.product001.*;mai
 ```bash
 # Validate checks stored in the installation (defined in `checks_location`) for a single run config in the configuration file:
 databricks labs dqx validate-checks
+
+# Validate checks stored in a custom installation folder (defined in `checks_location`) for a single run config in the configuration file:
+databricks labs dqx validate-checks --install-folder "/Workspace/my_dqx_folder"
 
 # Validate checks stored in the installation (defined in `checks_location`) for all run configs in the configuration file:
 databricks labs dqx validate-checks --run-config default
