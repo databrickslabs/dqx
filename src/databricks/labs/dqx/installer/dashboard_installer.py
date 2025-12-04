@@ -35,38 +35,26 @@ class DashboardMetadata:
         self.dashboard_def = dashboard_def
 
     @classmethod
-    def from_path(cls, folder: Path) -> "DashboardMetadata":
-        """Load dashboard metadata from exported Lakeview dashboard.
+    def from_path(cls, file: Path) -> "DashboardMetadata":
+        """Load dashboard metadata from exported Lakeview dashboard file.
 
         Expected structure:
         dashboard_folder/
         └── dashboard_name.lvdash.json
 
         Args:
-            folder: The path to the dashboard folder containing .lvdash.json file.
+            file: The path to the .lvdash.json file.
 
         Returns:
             A DashboardMetadata instance populated with the display name and
             dashboard definition from the exported Lakeview dashboard.
-
-        Raises:
-            FileNotFoundError: If no .lvdash.json file is found.
         """
-        # Find .lvdash.json file
-        lvdash_files = list(folder.glob("*.lvdash.json"))
-        if not lvdash_files:
-            raise FileNotFoundError(f"No .lvdash.json file found in {folder}")
+        logger.info(f"Loading exported Lakeview dashboard: {file.name}")
 
-        if len(lvdash_files) > 1:
-            logger.warning(f"Multiple .lvdash.json files found in {folder}, using {lvdash_files[0].name}")
-
-        lvdash_file = lvdash_files[0]
-        logger.info(f"Loading exported Lakeview dashboard: {lvdash_file.name}")
-
-        with open(lvdash_file, 'r', encoding="utf8") as f:
+        with open(file, 'r', encoding="utf8") as f:
             dashboard_data = json.load(f)
 
-        display_name = dashboard_data.get("displayName", lvdash_file.stem)
+        display_name = dashboard_data.get("displayName", file.stem)
 
         return cls(
             display_name=display_name,
@@ -98,7 +86,7 @@ class DashboardInstaller:
         Returns a generator of tasks to create dashboards from exported Lakeview dashboards.
 
         Each task is a callable that, when executed, will create a dashboard in the workspace.
-        The tasks are created based on the .lvdash.json files found in the queries directory.
+        The tasks are created based on the .lvdash.json files found in the dashboard directory.
         """
         logger.info("Creating dashboards...")
         dashboard_folder_remote = f"{self._installation.install_folder()}/dashboards"
@@ -107,21 +95,18 @@ class DashboardInstaller:
         except ResourceAlreadyExists:
             pass
 
-        queries_folder = find_project_root(__file__) / "src/databricks/labs/dqx/queries"
-        logger.debug(f"Dashboard Query Folder is {queries_folder}")
-        for step_folder in queries_folder.iterdir():
-            if not step_folder.is_dir():
+        dashboard_folder = find_project_root(__file__) / "src/databricks/labs/dqx/dashboards"
+        logger.debug(f"Dashboard Query Folder is {dashboard_folder}")
+        for step_file in dashboard_folder.iterdir():
+            if not step_file.is_file():
                 continue
-            logger.debug(f"Reading step install folder {step_folder}...")
-            for dashboard_folder in step_folder.iterdir():
-                if not dashboard_folder.is_dir():
-                    continue
-                task = functools.partial(
-                    self._create_dashboard,
-                    dashboard_folder,
-                    parent_path=dashboard_folder_remote,
-                )
-                yield task
+            logger.debug(f"Reading dashboard definition from {step_file}...")
+            task = functools.partial(
+                self._create_dashboard,
+                step_file,
+                parent_path=dashboard_folder_remote,
+            )
+            yield task
 
     def _handle_existing_dashboard(self, dashboard_id: str, display_name: str, parent_path: str) -> str | None:
         """Handle an existing dashboard
@@ -197,15 +182,15 @@ class DashboardInstaller:
         return updated_def
 
     @retried(on=[InternalError, DeadlineExceeded], timeout=timedelta(minutes=4))
-    def _create_dashboard(self, folder: Path, *, parent_path: str) -> None:
+    def _create_dashboard(self, file: Path, *, parent_path: str) -> None:
         """
         Create a lakeview dashboard from the exported .lvdash.json file.
 
         Args:
-            folder: Path to the folder containing .lvdash.json file
+            file: Path to the .lvdash.json file
             parent_path: Parent path where the dashboard will be created
         """
-        logger.info(f"Reading dashboard from {folder}...")
+        logger.info(f"Reading dashboard from {file}...")
 
         run_config = self._config.get_run_config()
         if run_config.quarantine_config:
@@ -217,33 +202,33 @@ class DashboardInstaller:
             logger.info(f"Using '{dq_table}' output table as the source table for the dashboard...")
 
         try:
-            self._create_dashboard_from_metadata(folder, parent_path, run_config, dq_table)
+            self._create_dashboard_from_metadata(file, parent_path, run_config, dq_table)
         except Exception as e:
-            logger.error(f"Failed to create dashboard from {folder}: {e}", exc_info=True)
+            logger.error(f"Failed to create dashboard from {file}: {e}", exc_info=True)
             raise
 
     def _create_dashboard_from_metadata(
-        self, folder: Path, parent_path: str, run_config: RunConfig, dq_table: str
+        self, file: Path, parent_path: str, run_config: RunConfig, dq_table: str
     ) -> None:
         """
         Create dashboard using exported Lakeview metadata.
 
         Args:
-            folder: Path to the folder containing .lvdash.json file
+            file: Path to the .lvdash.json file
             parent_path: Parent path where the dashboard will be created
             run_config: Run configuration containing warehouse settings
             dq_table: The actual table name to use in queries
         """
         # Load metadata
-        metadata = self._prepare_dashboard_metadata(folder)
-        reference = f"{folder.parent.stem}_{folder.stem}".lower()
+        metadata = self._prepare_dashboard_metadata(file)
+        reference = file.stem.lower()
         dashboard_id = self._install_state.dashboards.get(reference)
 
         # Handle existing dashboard if needed
         if dashboard_id is not None:
             dashboard_id = self._handle_existing_dashboard(dashboard_id, metadata.display_name, parent_path)
 
-        # Replace table names in dashboard definition
+        # Replace source table name in dashboard definition
         src_table_name = "$catalog.schema.table"
         updated_dashboard_def = self._resolve_table_name_in_dashboard(
             src_tbl_name=src_table_name, replaced_tbl_name=dq_table, dashboard_def=metadata.dashboard_def
@@ -266,19 +251,22 @@ class DashboardInstaller:
         self._install_state.dashboards[reference] = dashboard.dashboard_id
         logger.info(f"Successfully installed dashboard: {metadata.display_name} ({dashboard.dashboard_id})")
 
-    def _prepare_dashboard_metadata(self, folder: Path) -> DashboardMetadata:
+    def _prepare_dashboard_metadata(self, file: Path) -> DashboardMetadata:
         """
-        Load and prepare dashboard metadata from folder.
+        Load and prepare dashboard metadata from dashboard file.
 
         Args:
-            folder: Path to the folder containing .lvdash.json file
+            file: Path to the.lvdash.json file
 
         Returns:
             Prepared dashboard metadata with formatted display name
         """
-        metadata = DashboardMetadata.from_path(folder)
+        metadata = DashboardMetadata.from_path(file)
         logger.debug(f"Dashboard Metadata retrieved: {metadata.display_name}")
-        metadata.display_name = f"DQX_{folder.parent.stem.title()}_{folder.stem.title()}"
+        stem = file.stem.title()
+        if stem.endswith(".Lvdash"):
+            stem = stem[:-len(".Lvdash")]
+        metadata.display_name = f"DQX_{stem}"
         return metadata
 
     def _create_or_update_dashboard(
