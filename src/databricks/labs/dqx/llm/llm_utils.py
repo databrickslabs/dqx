@@ -135,7 +135,7 @@ def create_optimizer_training_set_with_stats(
         data_summary_stats_json = json.dumps(example_data["data_summary_stats"])
 
         example = dspy.Example(
-            business_description=example_data["business_description"] if example_data["business_description"] else "",
+            business_description=example_data.get("business_description", ""),
             data_summary_stats=data_summary_stats_json,
             available_functions=json.dumps(get_required_check_functions_definitions(custom_check_functions)),
             quality_rules=example_data["quality_rules"],
