@@ -51,7 +51,7 @@ class DashboardMetadata:
         """
         logger.info(f"Loading exported Lakeview dashboard: {file.name}")
 
-        with open(file, 'r', encoding="utf8") as f:
+        with open(file, 'r', encoding="utf-8") as f:
             dashboard_data = json.load(f)
 
         display_name = dashboard_data.get("displayName", file.stem)
@@ -264,8 +264,8 @@ class DashboardInstaller:
         metadata = DashboardMetadata.from_path(file)
         logger.debug(f"Dashboard Metadata retrieved: {metadata.display_name}")
         stem = file.stem.title()
-        if stem.endswith(".Lvdash"):
-            stem = stem[: -len(".Lvdash")]
+        if stem.lower().endswith(".lvdash"):
+            stem = stem[: -len(".lvdash")]
         metadata.display_name = f"DQX_{stem}"
         return metadata
 
