@@ -35,7 +35,7 @@ def test_get_tables_and_paths_from_file_parquet_dataframe(ws, spark, make_schema
 
     input_schema = T.StructType([T.StructField("id", T.IntegerType())])
     df = spark.createDataFrame([[1]], schema=input_schema)
-    df.write.mode('overwrite').format("parquet").save(volume_path)
+    df.write.mode("overwrite").format("parquet").save(volume_path)
     test_df = spark.read.format("parquet").load(volume_path)
 
     plan = get_spark_plan_as_string(test_df)
@@ -185,6 +185,6 @@ def test_get_tables_and_paths_from_streaming_table_based_dataframe(ws, spark, ma
     tables = get_tables_from_spark_plan(plan)
     paths = get_paths_from_spark_plan(plan, tables)
 
-    assert len(tables) == 1, f"Expected 1 table, but found {len(tables) == 1}"
+    assert len(tables) == 1, f"Expected 1 table, but found {len(tables)}"
     assert table_name in tables, f"Expected table with name {table_name}"
     assert len(paths) == 0, f"Expected 0 paths, but found {len(paths)}"

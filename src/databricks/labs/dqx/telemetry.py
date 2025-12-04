@@ -78,6 +78,9 @@ def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFr
     - Whether the DataFrame is streaming
     - Whether running in a Delta Live Tables (DLT) pipeline
 
+    This function is designed to never throw exceptions - it will log errors but continue execution
+    to ensure telemetry failures don't break the main application flow.
+
     Args:
         ws: WorkspaceClient
         spark: SparkSession
@@ -86,8 +89,10 @@ def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFr
     Returns:
         None
     """
-    plan_str = get_spark_plan_as_string(df)
+    log_telemetry(ws, "streaming", str(df.isStreaming).lower())
+    log_telemetry(ws, "dlt", str(is_dlt_pipeline(spark)).lower())
 
+    plan_str = get_spark_plan_as_string(df)
     if plan_str:
         input_tables = get_tables_from_spark_plan(plan_str)
         for table in input_tables:
@@ -96,9 +101,6 @@ def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFr
         input_paths = get_paths_from_spark_plan(plan_str, input_tables)
         for path in input_paths:
             log_telemetry(ws, "input_path", hashlib.sha256(("id:" + path).encode("utf-8")).hexdigest())
-
-    log_telemetry(ws, "streaming", str(df.isStreaming).lower())
-    log_telemetry(ws, "dlt", str(is_dlt_pipeline(spark)).lower())
 
 
 def get_tables_from_spark_plan(plan_str: str) -> set[str]:
@@ -117,10 +119,21 @@ def get_tables_from_spark_plan(plan_str: str) -> set[str]:
         A set of distinct table names found in the plan. Returns empty set if no
         Analyzed Logical Plan section is found or no tables are referenced.
     """
+    try:
+        if not plan_str:
+            return set()
+        return _extract_tables_from_analyzed_plan(plan_str)
+    except Exception as e:
+        logger.debug(f"Failed to extract tables from Spark plan: {e}")
+        return set()
+
+
+def _extract_tables_from_analyzed_plan(plan_str: str) -> set[str]:
+    """Helper function to extract tables from the Analyzed Logical Plan section."""
     tables: set[str] = set()
 
     # Extract Analyzed Logical Plan section (stop at next "==")
-    match = re.search(r"== Analyzed Logical Plan ==\s*(.*?)\n==", plan_str, re.DOTALL)  # non-greedy until next section
+    match = re.search(r"== Analyzed Logical Plan ==\s*(.*?)\n==", plan_str, re.DOTALL)
     if not match:
         return tables
 
@@ -150,6 +163,17 @@ def get_paths_from_spark_plan(plan_str: str, table_names: set[str] | None = None
         A set of distinct file paths found in the plan. Returns empty set if no
         Physical Plan section is found or no paths are referenced.
     """
+    try:
+        if not plan_str:
+            return set()
+        return _extract_paths_from_physical_plan(plan_str, table_names)
+    except Exception as e:
+        logger.debug(f"Failed to extract paths from Spark plan: {e}")
+        return set()
+
+
+def _extract_paths_from_physical_plan(plan_str: str, table_names: set[str] | None = None) -> set[str]:
+    """Helper function to extract paths from the Physical Plan section."""
     paths: set[str] = set()
 
     # Extract Physical Plan section (stop at next "==")
@@ -163,14 +187,12 @@ def get_paths_from_spark_plan(plan_str: str, table_names: set[str] | None = None
 
     # Process line by line to check for table associations
     for line in physical_text.split('\n'):
-        # Check if this line contains a Location pattern
         location_match = re.search(r"Location:\s+\w+FileIndex\([^)]+\)\[([^\]]+)\]", line)
         if not location_match:
             continue
 
         # Skip if this line contains any table name (indicating it's a table-based path)
-        is_table_path = any(table_name in line for table_name in table_names)
-        if is_table_path:
+        if any(table_name in line for table_name in table_names):
             continue
 
         # Extract and add non-empty paths

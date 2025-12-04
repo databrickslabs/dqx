@@ -256,7 +256,7 @@ class DashboardInstaller:
         Load and prepare dashboard metadata from dashboard file.
 
         Args:
-            file: Path to the.lvdash.json file
+            file: Path to the .lvdash.json file
 
         Returns:
             Prepared dashboard metadata with formatted display name

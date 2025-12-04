@@ -204,3 +204,84 @@ AdaptiveSparkPlan isFinalPlan=false
     assert (
         "s3://databricks-e2demofieldengwest/b169b504-4c54-49f2-bc3a-adf4b1" not in paths_filtered
     ), "Table path should be excluded"
+
+
+def test_get_tables_handles_none_input():
+    """Test that get_tables_from_spark_plan handles None input gracefully."""
+    tables = get_tables_from_spark_plan(None)
+    assert len(tables) == 0, "Expected empty set for None input"
+
+
+def test_get_tables_handles_empty_string():
+    """Test that get_tables_from_spark_plan handles empty string gracefully."""
+    tables = get_tables_from_spark_plan("")
+    assert len(tables) == 0, "Expected empty set for empty string"
+
+
+def test_get_paths_handles_none_input():
+    """Test that get_paths_from_spark_plan handles None input gracefully."""
+    paths = get_paths_from_spark_plan(None)
+    assert len(paths) == 0, "Expected empty set for None input"
+
+
+def test_get_paths_handles_empty_string():
+    """Test that get_paths_from_spark_plan handles empty string gracefully."""
+    paths = get_paths_from_spark_plan("")
+    assert len(paths) == 0, "Expected empty set for empty string"
+
+
+def test_get_tables_handles_regex_exception():
+    """Test that get_tables_from_spark_plan handles exceptions during regex processing."""
+    # Create a pathological string that could cause regex issues
+    # Use a very large string to potentially trigger catastrophic backtracking
+    large_plan = "== Analyzed Logical Plan ==\n" + "SubqueryAlias " + "a" * 100000 + "\n=="
+
+    # Should not raise exception, just return empty or partial results
+    tables = get_tables_from_spark_plan(large_plan)
+    assert isinstance(tables, set), "Expected set return type even with problematic input"
+
+
+def test_get_paths_handles_malformed_location_pattern():
+    """Test that get_paths_from_spark_plan handles malformed Location patterns gracefully."""
+    # Malformed pattern with unbalanced brackets and special characters
+    malformed_plan = """== Physical Plan ==
++- PhotonScan Location: PreparedDeltaFileIndex(1 paths)[[[unclosed
++- PhotonScan Location: FileIndex(broken)[path1, path2
++- Normal line without location
+"""
+
+    # Should not raise exception
+    paths = get_paths_from_spark_plan(malformed_plan)
+    assert isinstance(paths, set), "Expected set return type even with malformed input"
+
+
+def test_get_tables_with_unicode_and_special_chars():
+    """Test that get_tables_from_spark_plan handles unicode and special characters gracefully."""
+    plan_with_unicode = """== Analyzed Logical Plan ==
+SubqueryAlias 表名_with_中文
+SubqueryAlias table.with.dots
+SubqueryAlias table-with-dashes
+SubqueryAlias table$with$dollars
+SubqueryAlias table@with@symbols
++- Other content 🚀 with emojis
+== Next Section ==
+"""
+
+    # Should handle gracefully and extract what it can
+    tables = get_tables_from_spark_plan(plan_with_unicode)
+    assert isinstance(tables, set), "Expected set return type with unicode input"
+    # At least some tables should be extracted
+    assert len(tables) >= 1, "Should extract at least some table names"
+
+
+def test_get_paths_with_unicode_paths():
+    """Test that get_paths_from_spark_plan handles unicode in paths gracefully."""
+    plan_with_unicode_paths = """== Physical Plan ==
++- PhotonScan Location: PreparedDeltaFileIndex(1 paths)[/Volumes/目录/schema/卷/数据]
++- PhotonScan Location: ParquetFileIndex(1 paths)[s3://bucket/path/🚀data]
+== Photon Explanation ==
+"""
+
+    # Should handle gracefully
+    paths = get_paths_from_spark_plan(plan_with_unicode_paths)
+    assert isinstance(paths, set), "Expected set return type with unicode paths"
