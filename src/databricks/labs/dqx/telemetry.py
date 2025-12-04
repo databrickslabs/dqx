@@ -2,6 +2,7 @@ import re
 import sys
 import functools
 import logging
+import hashlib
 from io import StringIO
 from collections.abc import Callable
 from pyspark.sql import DataFrame, SparkSession
@@ -72,7 +73,9 @@ def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") ->
 def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFrame):
     """
     Log telemetry information about a Spark DataFrame to the Databricks workspace including:
-    - Number of input tables and non-table inputs
+    - List of tables used as inputs (hashed)
+    - Count of table based inputs
+    - Count of non-table based inputs (e.g. file-based or in-memory DataFrames)
     - Whether the DataFrame is streaming
     - Whether running in a Delta Live Tables (DLT) pipeline
 
@@ -84,38 +87,41 @@ def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFr
     Returns:
         None
     """
-    input_table_count = count_tables_in_spark_plan(df)
-    log_telemetry(ws, "table_input_count", str(input_table_count))
+    input_tables = get_tables_from_spark_plan(df)
+    for table in input_tables:
+        log_telemetry(ws, "input_table", hashlib.sha256(("id:" + table).encode("utf-8")).hexdigest())
     # assume 1 input if no tables
+    input_table_count = len(input_tables)
+    log_telemetry(ws, "table_input_count", str(input_table_count))
     log_telemetry(ws, "non_table_input_count", str(0 if input_table_count > 0 else 1))
     log_telemetry(ws, "streaming", str(df.isStreaming).lower())
     log_telemetry(ws, "dlt", str(is_dlt_pipeline(spark)).lower())
 
 
-def count_tables_in_spark_plan(df: DataFrame) -> int:
+def get_tables_from_spark_plan(df: DataFrame) -> set[str]:
     """
-    Count the number of tables referenced in a DataFrame's Spark execution plan.
+    Extract tables referenced in a DataFrame's Spark execution plan.
 
     This function analyzes the Analyzed Logical Plan section of the Spark execution plan
     to identify table references (via SubqueryAlias nodes). File-based DataFrames and
-    in-memory DataFrames will return 0.
+    in-memory DataFrames are skipped.
 
     Args:
         df: The Spark DataFrame to analyze
 
     Returns:
-        The number of distinct tables found in the execution plan. Returns 0 if the plan
+        Distinct tables found in the execution plan. Returns empty set if the plan
         cannot be retrieved or contains no table references.
     """
     try:
         plan_str = _get_spark_plan_as_string(df)
         if not plan_str:
-            return 0
-        tables = _extract_tables_from_spark_plan(plan_str)
-        return len(tables)
+            return set()
+        tables = _get_tables_from_spark_plan(plan_str)
+        return tables
     except Exception as e:
         logger.debug(f"Failed to count tables in Spark plan: {e}")
-        return 0
+        return set()
 
 
 def is_dlt_pipeline(spark: SparkSession) -> bool:
@@ -163,7 +169,7 @@ def _get_spark_plan_as_string(df: DataFrame) -> str:
     return buf.getvalue()
 
 
-def _extract_tables_from_spark_plan(plan_str: str) -> set[str]:
+def _get_tables_from_spark_plan(plan_str: str) -> set[str]:
     """
     Extract table names from the Analyzed Logical Plan section of a Spark execution plan.
 
@@ -190,6 +196,6 @@ def _extract_tables_from_spark_plan(plan_str: str) -> set[str]:
 
     # Extract SubqueryAlias names (only present if table is used)
     subquery_aliases = re.findall(r"SubqueryAlias\s+([^\s]+)", analyzed_text)
-    tables.update(subquery_aliases)
+    tables.update(alias.replace("`", "") for alias in subquery_aliases)
 
     return tables

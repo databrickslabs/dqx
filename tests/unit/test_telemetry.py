@@ -1,4 +1,4 @@
-from databricks.labs.dqx.telemetry import is_dlt_pipeline, count_tables_in_spark_plan
+from databricks.labs.dqx.telemetry import is_dlt_pipeline, get_tables_from_spark_plan
 
 
 class DummySparkConf:
@@ -54,8 +54,8 @@ def test_is_dlt_pipeline_false_exception():
     assert is_dlt_pipeline(dummy_spark) is False
 
 
-def test_count_tables_with_missing_analyzed_plan_section():
-    """Test that count_tables_in_spark_plan returns 0 when plan has no Analyzed Logical Plan section."""
+def test_get_tables_with_missing_analyzed_plan_section():
+    """Test that get_tables_from_spark_plan returns 0 when plan has no Analyzed Logical Plan section."""
     # Create a plan string without the "== Analyzed Logical Plan ==" section
     plan_without_analyzed_section = """== Physical Plan ==
 Some physical plan details here
@@ -64,24 +64,24 @@ Some optimized plan details here
 """
 
     mock_df = MockDataFrameWithPlan(plan_without_analyzed_section)
-    count = count_tables_in_spark_plan(mock_df)
+    tables = get_tables_from_spark_plan(mock_df)
 
-    assert count == 0, f"Expected 0 tables when Analyzed Logical Plan section is missing, but found {count}"
+    assert len(tables) == 0, f"Expected 0 tables when Analyzed Logical Plan section is missing, but found {len(tables)}"
 
 
-def test_count_tables_with_explain_exception():
-    """Test that count_tables_in_spark_plan returns 0 when df.explain() raises an exception."""
+def test_get_tables_with_explain_exception():
+    """Test that get_tables_from_spark_plan returns 0 when df.explain() raises an exception."""
     mock_df = MockDataFrameWithException(RuntimeError("Failed to explain plan"))
 
-    count = count_tables_in_spark_plan(mock_df)
+    tables = get_tables_from_spark_plan(mock_df)
 
-    assert count == 0, f"Expected 0 tables when explain() raises exception, but found {count}"
+    assert len(tables) == 0, f"Expected 0 tables when explain() raises exception, but found {len(tables)}"
 
 
-def test_count_tables_with_general_exception():
-    """Test that count_tables_in_spark_plan returns 0 when an unexpected exception occurs."""
+def test_get_tables_with_general_exception():
+    """Test that get_tables_from_spark_plan returns 0 when an unexpected exception occurs."""
     mock_df = MockDataFrameWithException(ValueError("Unexpected error"))
 
-    count = count_tables_in_spark_plan(mock_df)
+    tables = get_tables_from_spark_plan(mock_df)
 
-    assert count == 0, f"Expected 0 tables when exception occurs, but found {count}"
+    assert len(tables) == 0, f"Expected 0 tables when exception occurs, but found {len(tables)}"
