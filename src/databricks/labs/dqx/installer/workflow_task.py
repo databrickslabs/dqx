@@ -3,7 +3,6 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.lsql.backends import SqlBackend
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.config import WorkspaceConfig
@@ -18,7 +17,7 @@ class Task:
     workflow: str
     name: str
     doc: str
-    fn: Callable[[WorkspaceConfig, WorkspaceClient, SqlBackend, Installation], None]
+    fn: Callable[[WorkspaceConfig, WorkspaceClient, Installation], None]
     depends_on: list[str] | None = None
     job_cluster: str | None = None  # cluster key for job clusters; if None, uses serverless environment
     override_clusters: dict[str, str] | None = None

@@ -1,7 +1,5 @@
 import functools
 import logging
-import os
-import glob
 import json
 from typing import Any
 from collections.abc import Callable, Iterable
@@ -22,82 +20,63 @@ from databricks.sdk.errors import (
 from databricks.sdk.retries import retried
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 
-
 logger = logging.getLogger(__name__)
 
 
 class DashboardMetadata:
-    """Creates Dashboard Metadata from dashboard.json and SQL queries"""
+    """Creates Dashboard Metadata from exported Lakeview dashboard (.lvdash.json)"""
 
     def __init__(
         self,
         display_name: str,
-        queries: dict[str, str],
-        layout: list[dict[str, Any]],
+        dashboard_def: dict[str, Any],
     ):
         self.display_name = display_name
-        self.queries = queries
-        self.layout = layout
+        self.dashboard_def = dashboard_def
 
     @classmethod
     def from_path(cls, folder: Path) -> "DashboardMetadata":
-        """Load dashboard metadata from a folder structure.
-
-        This method processes the dashboard directory and extracts all information
-        required to construct a DashboardMetadata object. It performs the following:
-        - loads dashboard configuration from `dashboard.json`
-        - reads all `.sql` files as dashboard queries
-        - skips empty SQL files and logs a warning
+        """Load dashboard metadata from exported Lakeview dashboard.
 
         Expected structure:
         dashboard_folder/
-        ├── dashboard.json  (layout and configuration)
-        ├── query1.sql
-        ├── query2.sql
-        └── ...
+        └── dashboard_name.lvdash.json
 
         Args:
-            folder: The path to the dashboard folder containing configuration
-                and SQL query files.
+            folder: The path to the dashboard folder containing .lvdash.json file.
 
         Returns:
-            A DashboardMetadata instance populated with the display name, layout,
-            and SQL queries defined in the folder.
+            A DashboardMetadata instance populated with the display name and
+            dashboard definition from the exported Lakeview dashboard.
 
         Raises:
-            FileNotFoundError: If no valid dashboard.json file is found.
+            FileNotFoundError: If no .lvdash.json file is found.
         """
+        # Find .lvdash.json file
+        lvdash_files = list(folder.glob("*.lvdash.json"))
+        if not lvdash_files:
+            raise FileNotFoundError(f"No .lvdash.json file found in {folder}")
 
-        # Load dashboard configuration
-        config_file = folder / "dashboard.json"
-        if not config_file.exists():
-            raise FileNotFoundError(f"dashboard.json not found in {folder}")
+        if len(lvdash_files) > 1:
+            logger.warning(f"Multiple .lvdash.json files found in {folder}, using {lvdash_files[0].name}")
 
-        with open(config_file, 'r', encoding="utf8") as f:
-            config = json.load(f)
+        lvdash_file = lvdash_files[0]
+        logger.info(f"Loading exported Lakeview dashboard: {lvdash_file.name}")
 
-        # Load SQL queries
-        queries = {}
-        for sql_file in folder.glob("*.sql"):
-            query_name = sql_file.stem
-            query_text = sql_file.read_text(encoding="utf-8")
+        with open(lvdash_file, 'r', encoding="utf8") as f:
+            dashboard_data = json.load(f)
 
-            # Skip empty queries
-            if query_text.strip():
-                queries[query_name] = query_text
-            else:
-                logger.warning(f"Skipping empty SQL file: {sql_file}")
+        display_name = dashboard_data.get("displayName", lvdash_file.stem)
 
         return cls(
-            display_name=config.get("display_name", folder.name),
-            queries=queries,
-            layout=config.get("layout", []),
+            display_name=display_name,
+            dashboard_def=dashboard_data,
         )
 
 
 class DashboardInstaller:
     """
-    Creates or updates Lakeview dashboards from bundled SQL queries.
+    Creates or updates Lakeview dashboards from exported .lvdash.json files.
     """
 
     def __init__(
@@ -116,11 +95,10 @@ class DashboardInstaller:
 
     def get_create_dashboard_tasks(self) -> Iterable[Callable[[], None]]:
         """
-        Returns a generator of tasks to create dashboards from bundled SQL queries.
+        Returns a generator of tasks to create dashboards from exported Lakeview dashboards.
 
         Each task is a callable that, when executed, will create a dashboard in the workspace.
-        The tasks are created based on the SQL files found in the bundled queries directory.
-        The tasks will handle the creation of the dashboard, including resolving table names.
+        The tasks are created based on the .lvdash.json files found in the queries directory.
         """
         logger.info("Creating dashboards...")
         dashboard_folder_remote = f"{self._installation.install_folder()}/dashboards"
@@ -184,44 +162,50 @@ class DashboardInstaller:
         return dashboard_id  # Update the existing dashboard
 
     @staticmethod
-    def _resolve_table_name_in_queries(src_tbl_name: str, replaced_tbl_name: str, folder: Path) -> bool:
-        """Replaces table name variable in all .sql files
-        This method iterates through the dashboard install_folder, and replaces fully qualified tables in *.sql files
+    def _resolve_table_name_in_dashboard(
+        src_tbl_name: str, replaced_tbl_name: str, dashboard_def: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Replaces table name variable in dashboard definition
+
+        This method replaces the placeholder table name with the actual table name
+        in all queries within the dashboard definition.
 
         Args:
-            src_tbl_name: The source table name to be replaced
+            src_tbl_name: The source table name to be replaced (placeholder)
             replaced_tbl_name: The table name to replace the source table name with
-            folder: The install_folder containing the SQL files
+            dashboard_def: The dashboard definition containing datasets with queries
 
         Returns:
-            True if the operation was successful, False otherwise
+            Updated dashboard definition with replaced table names
         """
-        logger.debug("Preparing .sql files for DQX Dashboard")
-        dyn_sql_files = glob.glob(os.path.join(folder, "*.sql"))
-        try:
-            for sql_file in dyn_sql_files:
-                sql_file_path = Path(sql_file)
-                dq_sql_query = sql_file_path.read_text(encoding="utf-8")
-                dq_sql_query_ref = dq_sql_query.replace(src_tbl_name, replaced_tbl_name)
-                logger.debug(dq_sql_query_ref)
-                sql_file_path.write_text(dq_sql_query_ref, encoding="utf-8")
-            return True
-        except Exception as e:
-            err_msg = f"Error during parsing input table name into .sql files: {e}"
-            logger.error(err_msg)
-            # Review this - Gracefully handling this internal variable replace operation
-            return False
+        logger.debug(f"Replacing '{src_tbl_name}' with '{replaced_tbl_name}' in dashboard queries")
+
+        # Deep copy to avoid modifying original
+        updated_def = json.loads(json.dumps(dashboard_def))
+
+        # Replace table names in all datasets
+        for dataset in updated_def.get("datasets", []):
+            # Handle queryLines array (exported Lakeview format)
+            if "queryLines" in dataset and isinstance(dataset["queryLines"], list):
+                dataset["queryLines"] = [
+                    line.replace(src_tbl_name, replaced_tbl_name) for line in dataset["queryLines"]
+                ]
+            # Handle query string (alternative format)
+            elif "query" in dataset and isinstance(dataset["query"], str):
+                dataset["query"] = dataset["query"].replace(src_tbl_name, replaced_tbl_name)
+
+        return updated_def
 
     @retried(on=[InternalError, DeadlineExceeded], timeout=timedelta(minutes=4))
     def _create_dashboard(self, folder: Path, *, parent_path: str) -> None:
         """
-        Create a lakeview dashboard from the SQL queries in the folder.
+        Create a lakeview dashboard from the exported .lvdash.json file.
 
         Args:
-            folder: Path to the folder containing dashboard assets
+            folder: Path to the folder containing .lvdash.json file
             parent_path: Parent path where the dashboard will be created
         """
-        logger.info(f"Reading dashboard assets from {folder}...")
+        logger.info(f"Reading dashboard from {folder}...")
 
         run_config = self._config.get_run_config()
         if run_config.quarantine_config:
@@ -232,32 +216,25 @@ class DashboardInstaller:
             dq_table = run_config.output_config.location.lower()
             logger.info(f"Using '{dq_table}' output table as the source table for the dashboard...")
 
-        src_table_name = "$catalog.schema.table"
-        if not self._resolve_table_name_in_queries(
-            src_tbl_name=src_table_name, replaced_tbl_name=dq_table, folder=folder
-        ):
-            logger.error(f"Failed to resolve table names in {folder}")
-            return
-
         try:
-            self._create_dashboard_from_metadata(folder, parent_path, run_config)
+            self._create_dashboard_from_metadata(folder, parent_path, run_config, dq_table)
         except Exception as e:
             logger.error(f"Failed to create dashboard from {folder}: {e}", exc_info=True)
             raise
-        finally:
-            # Revert back SQL queries to placeholder format regardless of success
-            self._resolve_table_name_in_queries(src_tbl_name=dq_table, replaced_tbl_name=src_table_name, folder=folder)
 
-    def _create_dashboard_from_metadata(self, folder: Path, parent_path: str, run_config: RunConfig) -> None:
+    def _create_dashboard_from_metadata(
+        self, folder: Path, parent_path: str, run_config: RunConfig, dq_table: str
+    ) -> None:
         """
-        Create dashboard using prepared metadata.
+        Create dashboard using exported Lakeview metadata.
 
         Args:
-            folder: Path to the folder containing dashboard assets
+            folder: Path to the folder containing .lvdash.json file
             parent_path: Parent path where the dashboard will be created
             run_config: Run configuration containing warehouse settings
+            dq_table: The actual table name to use in queries
         """
-        # Load and prepare metadata
+        # Load metadata
         metadata = self._prepare_dashboard_metadata(folder)
         reference = f"{folder.parent.stem}_{folder.stem}".lower()
         dashboard_id = self._install_state.dashboards.get(reference)
@@ -266,12 +243,19 @@ class DashboardInstaller:
         if dashboard_id is not None:
             dashboard_id = self._handle_existing_dashboard(dashboard_id, metadata.display_name, parent_path)
 
+        # Replace table names in dashboard definition
+        src_table_name = "$catalog.schema.table"
+        updated_dashboard_def = self._resolve_table_name_in_dashboard(
+            src_tbl_name=src_table_name, replaced_tbl_name=dq_table, dashboard_def=metadata.dashboard_def
+        )
+
         # Create or update the dashboard
         dashboard = self._create_or_update_dashboard(
             dashboard_id=dashboard_id,
             metadata=metadata,
             parent_path=parent_path,
             run_config=run_config,
+            dashboard_def=updated_dashboard_def,
         )
 
         # Publish the dashboard
@@ -287,7 +271,7 @@ class DashboardInstaller:
         Load and prepare dashboard metadata from folder.
 
         Args:
-            folder: Path to the folder containing dashboard assets
+            folder: Path to the folder containing .lvdash.json file
 
         Returns:
             Prepared dashboard metadata with formatted display name
@@ -298,7 +282,12 @@ class DashboardInstaller:
         return metadata
 
     def _create_or_update_dashboard(
-        self, dashboard_id: str | None, metadata: DashboardMetadata, parent_path: str, run_config: RunConfig
+        self,
+        dashboard_id: str | None,
+        metadata: DashboardMetadata,
+        parent_path: str,
+        run_config: RunConfig,
+        dashboard_def: dict[str, Any],
     ) -> Dashboard:
         """
         Create a new dashboard or update an existing one.
@@ -308,12 +297,11 @@ class DashboardInstaller:
             metadata: Dashboard metadata configuration
             parent_path: Parent path where the dashboard will be created
             run_config: Run configuration containing warehouse settings
+            dashboard_def: The dashboard definition with resolved table names
 
         Returns:
             Created or updated Dashboard object
         """
-        dashboard_def = self._build_dashboard_definition(metadata=metadata)
-
         if dashboard_id is None:
             logger.info(f"Creating new dashboard: {metadata.display_name}")
             return self._ws.lakeview.create(
@@ -347,101 +335,3 @@ class DashboardInstaller:
                 logger.info(f"Published dashboard: {display_name}")
             except Exception as e:
                 logger.warning(f"Failed to publish dashboard: {e}")
-
-    def _build_dashboard_definition(self, metadata: DashboardMetadata) -> dict[str, Any]:
-        """
-        Build a native Lakeview dashboard definition from metadata.
-
-        Args:
-            metadata: Dashboard metadata containing queries and layout
-
-        Returns:
-            Dictionary representing the dashboard definition
-        """
-        # Build datasets from queries
-        datasets = []
-        for query_name, query_text in metadata.queries.items():
-            # Skip empty queries
-            if not query_text.strip():
-                logger.warning(f"Skipping empty query: {query_name}")
-                continue
-
-            datasets.append(
-                {"name": query_name, "displayName": query_name.replace("_", " ").title(), "query": query_text}
-            )
-
-        # Build page layout
-        page_layout = []
-        for idx, layout_item in enumerate(metadata.layout):
-            widget_name = layout_item.get("name", f"widget_{idx}")
-            query_name = layout_item.get("query", "")
-
-            # Skip widgets with empty or missing queries
-            if not query_name or query_name not in metadata.queries:
-                logger.warning(f"Skipping widget {widget_name}: query '{query_name}' not found")
-                continue
-
-            # Build widget with dataset reference
-            position = layout_item.get("position", {})
-
-            widget = {
-                "name": widget_name,
-                "queries": [
-                    {"name": query_name, "query": {"datasetName": query_name, "fields": [], "disaggregated": False}}
-                ],
-                "spec": self._build_widget_spec(layout_item),
-            }
-
-            page_layout.append(
-                {
-                    "widget": widget,
-                    "position": {
-                        "x": position.get("x", (idx % 4) * 3),
-                        "y": position.get("y", (idx // 4) * 2),
-                        "width": position.get("width", 6),
-                        "height": position.get("height", 4),
-                    },
-                }
-            )
-
-        # Build complete dashboard definition
-        dashboard_def = {
-            "pages": [
-                {
-                    "name": "main_page",
-                    "displayName": "Main",
-                    "layout": page_layout,
-                }
-            ],
-            "datasets": datasets,
-        }
-
-        return dashboard_def
-
-    def _build_widget_spec(self, layout_item: dict[str, Any]) -> dict[str, Any]:
-        """
-        Build widget specification from layout item.
-
-        Args:
-            layout_item: Layout item configuration
-
-        Returns:
-            Widget specification dictionary
-        """
-        widget_type = layout_item.get("type", "table")
-
-        spec = {
-            "version": 3,
-            "widgetType": widget_type,
-            "frame": {
-                "showTitle": True,
-                "title": layout_item.get("title", ""),
-            },
-        }
-
-        # Add encodings based on widget type
-        encodings = layout_item.get("encodings", {})
-        if encodings:
-            spec["encodings"] = encodings
-
-        return spec
