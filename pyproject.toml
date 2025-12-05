@@ -37,9 +37,9 @@ classifiers = [
 # also update fallback dependencies in workflow installer when changing dependencies!
 dependencies = [
     "databricks-labs-blueprint>=0.9.1,<0.10",
-    "databricks-sdk~=0.71",
-    "databricks-labs-lsql>=0.5,<=0.16",
+    "databricks-sdk~=0.73",
     "sqlalchemy>=2.0,<3.0",
+    "PyYAML~=6.0.3",
 ]
 
 [project.optional-dependencies]
@@ -111,7 +111,7 @@ dependencies = [
     "pytest-xdist~=3.5.0",
     "pytest-benchmark~=5.1.0",
     "ruff~=0.3.4",
-    "types-PyYAML~=6.0.12",
+    "types-PyYAML~=6.0.3",
     "types-requests~=2.31.0",
     "databricks-connect~=15.4",
     "pyspark~=3.5.0",
