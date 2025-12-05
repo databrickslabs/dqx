@@ -1702,7 +1702,8 @@ def is_data_fresh_per_time_window(
 
 @register_rule("dataset")
 def has_valid_schema(
-    expected_schema: str | types.StructType,
+    expected_schema: str | types.StructType | None = None,
+    ref_table: str | None = None,
     columns: list[str | Column] | None = None,
     strict: bool = False,
 ) -> tuple[Column, Callable]:
@@ -1716,6 +1717,7 @@ def has_valid_schema(
 
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
+        ref_table: Name of the reference table to load the schema from (e.g. "catalog.schema.table")
         columns: Optional list of columns to validate (default: all columns are considered)
         strict: Whether to perform strict schema validation (default: False).
             - False: Validates that all expected columns exist with compatible types (allows extra columns)
@@ -1727,20 +1729,33 @@ def has_valid_schema(
             - A closure that applies the schema check and adds the necessary condition columns.
 
     Raises:
-        InvalidParameterError: If the schema string is invalid or cannot be parsed, or if
-             the input schema is neither a string nor a StructType.
+        InvalidParameterError:
+            - If the *expected_schema* string is invalid or cannot be parsed
+            - If *expected_schema* is neither a string nor a StructType
+            - If both *expected_schema* and *ref_table* are specified
+            - If neither *expected_schema* nor *ref_table* are specified
+
+    Note:
+        Exactly one of *expected_schema* or *ref_table* must be specified.
     """
+    if expected_schema and ref_table:
+        raise InvalidParameterError(
+            "Cannot specify both 'expected_schema' and 'ref_table' when using 'has_valid_schema'"
+        )
+
+    if not expected_schema and not ref_table:
+        raise InvalidParameterError(
+            "Must specify one of 'expected_schema' or 'ref_table' when using 'has_valid_schema'"
+        )
 
     column_names: list[str] | None = None
     if columns:
         column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
-
-    _expected_schema = _get_schema(expected_schema, column_names)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__schema_condition_{unique_str}"
     message_col = f"__schema_message_{unique_str}"
 
-    def apply(df: DataFrame) -> DataFrame:
+    def apply(df: DataFrame, spark: SparkSession) -> DataFrame:
         """
         Apply the schema compatibility check logic to the DataFrame.
 
@@ -1748,10 +1763,22 @@ def has_valid_schema(
 
         Args:
             df: The input DataFrame to validate for schema compatibility.
+            spark: SparkSession used to get the reference table schema
 
         Returns:
             The DataFrame with additional condition and message columns for schema validation.
         """
+
+        if ref_table:
+            ref_df = _get_ref_df(None, ref_table, None, spark)
+            _expected_schema = _get_schema(ref_df.schema, column_names)
+
+        elif expected_schema:
+            _expected_schema = _get_schema(expected_schema, column_names)
+
+        else:
+            raise ValueError("Must specify one of 'expected_schema' or 'ref_table' when using 'has_valid_schema'")
+
         actual_schema = df.select(*columns).schema if columns else df.schema
 
         if strict:

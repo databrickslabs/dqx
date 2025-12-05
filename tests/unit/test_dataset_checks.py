@@ -187,3 +187,32 @@ def test_is_data_fresh_per_time_window_exceptions(
             min_records_per_window=min_records_per_window,
             lookback_windows=lookback_windows,
         )
+
+
+@pytest.mark.parametrize(
+    "expected_schema, ref_table, expected_exception, expected_message",
+    [
+        (
+            "a: string, b: int",
+            "catalog.schema.table",
+            InvalidParameterError,
+            "Cannot specify both 'expected_schema' and 'ref_table' when using 'has_valid_schema'",
+        ),
+        (
+            None,
+            None,
+            InvalidParameterError,
+            "Must specify one of 'expected_schema' or 'ref_table' when using 'has_valid_schema'",
+        ),
+    ],
+)
+def test_has_valid_schema_exceptions(expected_schema, ref_table, expected_exception, expected_message):
+    with pytest.raises(expected_exception, match=expected_message):
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": expected_schema,
+                "ref_table": ref_table,
+            },
+        )
