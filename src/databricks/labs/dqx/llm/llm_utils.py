@@ -22,6 +22,7 @@ __all__ = [
     "TableManager",
     "get_check_function_definitions",
     "get_required_check_functions_definitions",
+    "get_required_summary_stats",
     "create_optimizer_training_set",
     "create_optimizer_training_set_with_stats",
     "get_column_metadata",
@@ -83,6 +84,54 @@ def get_required_check_functions_definitions(
         }
         required_function_docs.append(required_func_info)
     return required_function_docs
+
+
+def get_required_summary_stats(
+    summary_stats: dict | None = None,
+) -> dict:
+    """
+    Extract only required summary stats information (mean, min, max).
+    Converts Decimal values to strings for JSON serialization.
+
+    Args:
+        summary_stats: Dictionary containing summary statistics for each column.
+
+    Returns:
+        dict: A dictionary containing the required fields for each summary stats with JSON-serializable values.
+    """
+    from decimal import Decimal
+
+    required_summary_stats: dict = {}
+    for key, value in summary_stats.items():
+        required_summary_stats[key] = {
+            "mean": _convert_to_json_serializable(value.get("mean", None)),
+            "min": _convert_to_json_serializable(value.get("min", None)),
+            "max": _convert_to_json_serializable(value.get("max", None)),
+        }
+    return required_summary_stats
+
+
+def _convert_to_json_serializable(value: any) -> str | None:
+    """
+    Convert a value to JSON-serializable format.
+    Handles Decimal, float, int, and other numeric types.
+
+    Args:
+        value: The value to convert.
+
+    Returns:
+        String representation of the value, or None if value is None.
+    """
+    from decimal import Decimal
+
+    if value is None:
+        return None
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (int, float)):
+        return str(value)
+    # Already a string or other type
+    return value
 
 
 def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | None = None) -> list[dspy.Example]:

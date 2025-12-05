@@ -8,7 +8,11 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.llm.llm_core import LLMModelConfigurator, LLMRuleCompiler
 from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector
-from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions, TableManager
+from databricks.labs.dqx.llm.llm_utils import (
+    get_required_check_functions_definitions,
+    get_required_summary_stats,
+    TableManager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +79,7 @@ class DQLLMEngine:
         if summary_stats:
             return self._llm_rule_compiler.model_using_data_stats(
                 business_description=user_input if user_input else None,
-                data_summary_stats=json.dumps(summary_stats),
+                data_summary_stats=json.dumps(get_required_summary_stats(summary_stats=summary_stats)),
                 available_functions=self._available_check_functions,
             )
         else:
