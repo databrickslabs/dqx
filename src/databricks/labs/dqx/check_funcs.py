@@ -1777,7 +1777,9 @@ def has_valid_schema(
             _expected_schema = _get_schema(expected_schema, column_names)
 
         else:
-            raise ValueError("Must specify one of 'expected_schema' or 'ref_table' when using 'has_valid_schema'")
+            raise InvalidParameterError(
+                "Must specify one of 'expected_schema' or 'ref_table' when using 'has_valid_schema'"
+            )
 
         actual_schema = df.select(*columns).schema if columns else df.schema
 
