@@ -578,8 +578,8 @@ def is_not_greater_than(
 @register_rule("row")
 def is_in_range(
     column: str | Column,
-    min_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
-    max_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
+    min_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are in the provided limits (inclusive of both boundaries).
 
@@ -616,8 +616,8 @@ def is_in_range(
 @register_rule("row")
 def is_not_in_range(
     column: str | Column,
-    min_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
-    max_limit: int | datetime.date | datetime.datetime | str | Column | None = None,
+    min_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are outside the provided limits (inclusive of both boundaries).
 

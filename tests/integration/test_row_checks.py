@@ -804,15 +804,15 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
 
 
 def test_col_is_in_range(spark, set_utc_timezone):
-    schema_num = "a: int, b: date, c: timestamp, d: int, e: int, f: int, g: decimal(10,2), h: map<string, int>"
+    schema_num = "a: int, b: date, c: timestamp, d: int, e: int, f: int, g: decimal(10,2), h: map<string, int>, i:float"
     test_df = spark.createDataFrame(
         [
-            [0, datetime(2024, 12, 1).date(), datetime(2024, 12, 1), -1, 5, 6, Decimal("2.00"), {"val": 0}],
-            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), 2, 6, 3, Decimal("1.00"), {"val": 1}],
-            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), 2, 7, 3, Decimal("3.00"), {"val": 2}],
-            [3, datetime(2025, 3, 1).date(), datetime(2025, 3, 1), 3, 8, 3, Decimal("1.01"), {"val": 3}],
-            [4, datetime(2025, 4, 1).date(), datetime(2025, 4, 1), 2, 9, 3, Decimal("3.01"), {"val": 4}],
-            [None, None, None, None, None, None, None, {"val": None}],
+            [0, datetime(2024, 12, 1).date(), datetime(2024, 12, 1), -1, 5, 6, Decimal("2.00"), {"val": 0}, 0.0],
+            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), 2, 6, 3, Decimal("1.00"), {"val": 1}, 0.2],
+            [2, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), 2, 7, 3, Decimal("3.00"), {"val": 2}, 0.4],
+            [3, datetime(2025, 3, 1).date(), datetime(2025, 3, 1), 3, 8, 3, Decimal("1.01"), {"val": 3}, 0.6],
+            [4, datetime(2025, 4, 1).date(), datetime(2025, 4, 1), 2, 9, 3, Decimal("3.01"), {"val": 4}, 0.8],
+            [None, None, None, None, None, None, None, {"val": None}, None],
         ],
         schema_num,
     )
@@ -827,12 +827,13 @@ def test_col_is_in_range(spark, set_utc_timezone):
         is_in_range("f", "a", 5),
         is_in_range("g", 1, 3),
         is_in_range(F.col("h").getItem("val"), 1, 3),
+        is_in_range("i", 0.1, 0.7),
     )
 
     checked_schema = (
         "a_not_in_range: string, b_not_in_range: string, c_not_in_range: string, "
         "d_not_in_range: string, f_not_in_range: string, g_not_in_range: string, "
-        "unresolvedextractvalue_h_val_not_in_range: string"
+        "unresolvedextractvalue_h_val_not_in_range: string, i_not_in_range: string"
     )
     expected = spark.createDataFrame(
         [
@@ -844,10 +845,11 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '6' in Column 'f' not in range: [0, 5]",
                 None,
                 "Value '0' in Column 'UnresolvedExtractValue(h, val)' not in range: [1, 3]",
+                "Value '0.0' in Column 'i' not in range: [0.1, 0.7]",
             ],
-            [None, None, None, None, None, None, None],
-            [None, None, None, None, None, None, None],
-            [None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
             [
                 "Value '4' in Column 'a' not in range: [1, 3]",
                 "Value '2025-04-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
@@ -856,8 +858,9 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '3' in Column 'f' not in range: [4, 5]",
                 "Value '3.01' in Column 'g' not in range: [1, 3]",
                 "Value '4' in Column 'UnresolvedExtractValue(h, val)' not in range: [1, 3]",
+                "Value '0.8' in Column 'i' not in range: [0.1, 0.7]",
             ],
-            [None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -866,13 +869,21 @@ def test_col_is_in_range(spark, set_utc_timezone):
 
 
 def test_col_is_not_in_range(spark, set_utc_timezone):
-    schema_num = "a: int, b: date, c: timestamp, d: timestamp, e: decimal(10,2), f: array<int>"
+    schema_num = "a: int, b: date, c: timestamp, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
     test_df = spark.createDataFrame(
         [
-            [0, datetime(2024, 12, 31).date(), datetime(2025, 1, 4), datetime(2025, 1, 7), Decimal("0.99"), [0, 1]],
-            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 3), datetime(2025, 1, 1), Decimal("1.00"), [1, 2]],
-            [3, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), datetime(2025, 2, 3), Decimal("3.00"), [3, 4]],
-            [None, None, None, None, None, [None, 1]],
+            [
+                0,
+                datetime(2024, 12, 31).date(),
+                datetime(2025, 1, 4),
+                datetime(2025, 1, 7),
+                Decimal("0.99"),
+                [0, 1],
+                0.0,
+            ],
+            [1, datetime(2025, 1, 1).date(), datetime(2025, 1, 3), datetime(2025, 1, 1), Decimal("1.00"), [1, 2], 0.3],
+            [3, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), datetime(2025, 2, 3), Decimal("3.00"), [3, 4], 0.6],
+            [None, None, None, None, None, [None, 1], None],
         ],
         schema_num,
     )
@@ -886,15 +897,16 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
         is_not_in_range("d", "c", F.expr("cast(b as timestamp) + INTERVAL 2 DAY")),
         is_not_in_range("e", 1, 3),
         is_not_in_range(F.try_element_at("f", F.lit(1)), 1, 3),
+        is_not_in_range("g", 0.2, 0.5),
     )
 
     checked_schema = (
         "a_in_range: string, b_in_range: string, c_in_range: string, d_in_range: string, e_in_range: string, "
-        "try_element_at_f_1_in_range: string"
+        "try_element_at_f_1_in_range: string, g_in_range: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None],
             [
                 "Value '1' in Column 'a' in range: [1, 3]",
                 "Value '2025-01-01' in Column 'b' in range: [2025-01-01, 2025-01-03]",
@@ -902,6 +914,7 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 None,
                 "Value '1.00' in Column 'e' in range: [1, 3]",
                 "Value '1' in Column 'try_element_at(f, 1)' in range: [1, 3]",
+                "Value '0.3' in Column 'g' in range: [0.2, 0.5]",
             ],
             [
                 "Value '3' in Column 'a' in range: [1, 3]",
@@ -910,8 +923,9 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
                 "Value '3.00' in Column 'e' in range: [1, 3]",
                 "Value '3' in Column 'try_element_at(f, 1)' in range: [1, 3]",
+                None,
             ],
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
