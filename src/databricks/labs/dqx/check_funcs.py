@@ -35,10 +35,10 @@ CURATED_AGGR_FUNCTIONS = {
     "count": "Count",
     "sum": "Sum",
     "avg": "Average",
-    "min": "Min value",
-    "max": "Max value",
-    "count_distinct": "Distinct value count",
-    "approx_count_distinct": "Approximate distinct value count",
+    "min": "Min",
+    "max": "Max",
+    "count_distinct": "Distinct count",
+    "approx_count_distinct": "Approximate distinct count",
     "count_if": "Conditional count",
     "stddev": "Standard deviation",
     "stddev_pop": "Population standard deviation",
@@ -2298,7 +2298,7 @@ def _build_aggregate_expression(
 
     Raises:
         MissingParameterError: If required parameters are missing for specific aggregates.
-        InvalidParameterError: If the aggregate function is not found.
+        InvalidParameterError: If the aggregate function is not found or parameters are invalid.
     """
     if aggr_type == "count_distinct":
         return F.countDistinct(filtered_expr)
@@ -2313,8 +2313,11 @@ def _build_aggregate_expression(
         # Spark will validate parameter names and types at runtime
         other_params = {k: v for k, v in aggr_params.items() if k != "percentile"}
 
-        aggr_func = getattr(F, aggr_type)
-        return aggr_func(filtered_expr, pct, **other_params)
+        try:
+            aggr_func = getattr(F, aggr_type)
+            return aggr_func(filtered_expr, pct, **other_params)
+        except Exception as exc:
+            raise InvalidParameterError(f"Failed to build '{aggr_type}' expression: {exc}") from exc
 
     try:
         aggr_func = getattr(F, aggr_type)
@@ -2328,6 +2331,8 @@ def _build_aggregate_expression(
             f"Some newer aggregate functions (e.g., mode, median) require DBR 15.4+ (Spark 3.5+). "
             f"See: https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha"
         ) from exc
+    except Exception as exc:
+        raise InvalidParameterError(f"Failed to build '{aggr_type}' expression: {exc}") from exc
 
 
 def _validate_aggregate_return_type(
@@ -2456,11 +2461,13 @@ def _is_aggr_compare(
         aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         if group_by:
+            # Convert group_by to Column expressions (reused for both window and groupBy approaches)
+            group_cols = [F.col(col) if isinstance(col, str) else col for col in group_by]
+
             # Check if aggregate is incompatible with window functions (e.g., count_distinct with DISTINCT)
             if aggr_type in WINDOW_INCOMPATIBLE_AGGREGATES:
                 # Use two-stage aggregation: groupBy + join (instead of window functions)
                 # This is required for aggregates like count_distinct that don't support window DISTINCT operations
-                group_cols = [F.col(col) if isinstance(col, str) else col for col in group_by]
                 agg_df = df.groupBy(*group_cols).agg(aggr_expr.alias(metric_col))
 
                 # Join aggregated metrics back to original DataFrame to maintain row-level granularity
@@ -2470,7 +2477,7 @@ def _is_aggr_compare(
                 df = df.join(agg_df, on=join_cols, how="left")
             else:
                 # Use standard window function approach for window-compatible aggregates
-                window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
+                window_spec = Window.partitionBy(*group_cols)
                 df = df.withColumn(metric_col, aggr_expr.over(window_spec))
 
                 # Validate non-curated aggregates (type check only - window functions return same row count)
@@ -2494,14 +2501,14 @@ def _is_aggr_compare(
 
         return df
 
-    # Get human-readable display name for aggregate function
-    aggr_display_name = _get_aggregate_display_name(aggr_type)
+    # Get human-readable display name for aggregate function (including params if present)
+    aggr_display_name = _get_aggregate_display_name(aggr_type, aggr_params)
 
     condition = make_condition(
         condition=F.col(condition_col),
         message=F.concat_ws(
             "",
-            F.lit(f"{aggr_display_name} "),
+            F.lit(f"{aggr_display_name} value "),
             F.col(metric_col).cast("string"),
             F.lit(f" in column '{aggr_col_str}'"),
             F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
@@ -2630,7 +2637,7 @@ def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Col
     return col_str_norm, column_str, col_expr
 
 
-def _get_aggregate_display_name(aggr_type: str) -> str:
+def _get_aggregate_display_name(aggr_type: str, aggr_params: dict[str, Any] | None = None) -> str:
     """
     Get a human-readable display name for an aggregate function.
 
@@ -2640,12 +2647,23 @@ def _get_aggregate_display_name(aggr_type: str) -> str:
 
     Args:
         aggr_type: The aggregate function name (e.g., 'count_distinct', 'max', 'avg').
+        aggr_params: Optional parameters passed to the aggregate function.
 
     Returns:
-        A human-readable display name for the aggregate function. If no mapping exists,
-        returns the capitalized function name.
+        A human-readable display name for the aggregate function, including parameters
+        if provided. For non-curated functions, returns the function name in quotes
+        with 'value' suffix.
     """
-    return CURATED_AGGR_FUNCTIONS.get(aggr_type, aggr_type.capitalize())
+    # Get base display name (curated functions have friendly names, others show function name in quotes)
+    base_name = CURATED_AGGR_FUNCTIONS.get(aggr_type, f"'{aggr_type}'")
+
+    # Add parameters if present
+    if aggr_params:
+        # Format parameters as key=value pairs
+        param_str = ", ".join(f"{k}={v}" for k, v in aggr_params.items())
+        return f"{base_name} ({param_str})"
+
+    return base_name
 
 
 def _get_column_expr(column: Column | str) -> Column:

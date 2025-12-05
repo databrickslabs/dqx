@@ -221,37 +221,37 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
             [
                 "c",
                 None,
-                "Count 3 in column 'a' is greater than limit: 1",
+                "Count value 3 in column 'a' is greater than limit: 1",
                 # displayed since filtering is done after, filter only applied for calculation inside the check
-                "Count 2 in column 'a' is greater than limit: 0",
+                "Count value 2 in column 'a' is greater than limit: 0",
                 None,
                 None,
-                "Average 2.0 in column 'b' is greater than limit: 0.0",
-                "Sum 4 in column 'b' is greater than limit: 0.0",
+                "Average value 2.0 in column 'b' is greater than limit: 0.0",
+                "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
             ],
             [
                 "a",
                 1,
-                "Count 3 in column 'a' is greater than limit: 1",
-                "Count 2 in column 'a' is greater than limit: 0",
-                "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
-                "Count 1 in column 'b' per group of columns 'b' is greater than limit: 0",
-                "Average 2.0 in column 'b' is greater than limit: 0.0",
-                "Sum 4 in column 'b' is greater than limit: 0.0",
+                "Count value 3 in column 'a' is greater than limit: 1",
+                "Count value 2 in column 'a' is greater than limit: 0",
+                "Count value 1 in column 'a' per group of columns 'a' is greater than limit: 0",
+                "Count value 1 in column 'b' per group of columns 'b' is greater than limit: 0",
+                "Average value 2.0 in column 'b' is greater than limit: 0.0",
+                "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
             ],
             [
                 "b",
                 3,
-                "Count 3 in column 'a' is greater than limit: 1",
-                "Count 2 in column 'a' is greater than limit: 0",
-                "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
-                "Count 1 in column 'b' per group of columns 'b' is greater than limit: 0",
-                "Average 2.0 in column 'b' is greater than limit: 0.0",
-                "Sum 4 in column 'b' is greater than limit: 0.0",
+                "Count value 3 in column 'a' is greater than limit: 1",
+                "Count value 2 in column 'a' is greater than limit: 0",
+                "Count value 1 in column 'a' per group of columns 'a' is greater than limit: 0",
+                "Count value 1 in column 'b' per group of columns 'b' is greater than limit: 0",
+                "Average value 2.0 in column 'b' is greater than limit: 0.0",
+                "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
             ],
@@ -302,36 +302,36 @@ def test_is_aggr_not_less_than(spark: SparkSession):
             [
                 "c",
                 None,
-                "Count 3 in column 'a' is less than limit: 4",
-                "Count 2 in column 'a' is less than limit: 3",
-                "Count 0 in column 'a' per group of columns 'a' is less than limit: 2",
-                "Count 0 in column 'b' per group of columns 'b' is less than limit: 2",
-                "Average 2.0 in column 'b' is less than limit: 3.0",
-                "Sum 4 in column 'b' is less than limit: 5.0",
+                "Count value 3 in column 'a' is less than limit: 4",
+                "Count value 2 in column 'a' is less than limit: 3",
+                "Count value 0 in column 'a' per group of columns 'a' is less than limit: 2",
+                "Count value 0 in column 'b' per group of columns 'b' is less than limit: 2",
+                "Average value 2.0 in column 'b' is less than limit: 3.0",
+                "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
             ],
             [
                 "a",
                 1,
-                "Count 3 in column 'a' is less than limit: 4",
-                "Count 2 in column 'a' is less than limit: 3",
-                "Count 1 in column 'a' per group of columns 'a' is less than limit: 2",
-                "Count 1 in column 'b' per group of columns 'b' is less than limit: 2",
-                "Average 2.0 in column 'b' is less than limit: 3.0",
-                "Sum 4 in column 'b' is less than limit: 5.0",
+                "Count value 3 in column 'a' is less than limit: 4",
+                "Count value 2 in column 'a' is less than limit: 3",
+                "Count value 1 in column 'a' per group of columns 'a' is less than limit: 2",
+                "Count value 1 in column 'b' per group of columns 'b' is less than limit: 2",
+                "Average value 2.0 in column 'b' is less than limit: 3.0",
+                "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
             ],
             [
                 "b",
                 3,
-                "Count 3 in column 'a' is less than limit: 4",
-                "Count 2 in column 'a' is less than limit: 3",
-                "Count 1 in column 'a' per group of columns 'a' is less than limit: 2",
-                "Count 1 in column 'b' per group of columns 'b' is less than limit: 2",
-                "Average 2.0 in column 'b' is less than limit: 3.0",
-                "Sum 4 in column 'b' is less than limit: 5.0",
+                "Count value 3 in column 'a' is less than limit: 4",
+                "Count value 2 in column 'a' is less than limit: 3",
+                "Count value 1 in column 'a' per group of columns 'a' is less than limit: 2",
+                "Count value 1 in column 'b' per group of columns 'b' is less than limit: 2",
+                "Average value 2.0 in column 'b' is less than limit: 3.0",
+                "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
             ],
@@ -405,11 +405,11 @@ def test_is_aggr_equal(spark: SparkSession):
                 "c",
                 None,
                 None,
-                "Count 2 in column 'a' is not equal to limit: 1",
-                "Count 0 in column 'a' per group of columns 'a' is not equal to limit: 1",
-                "Count 0 in column 'b' per group of columns 'b' is not equal to limit: 2",
+                "Count value 2 in column 'a' is not equal to limit: 1",
+                "Count value 0 in column 'a' per group of columns 'a' is not equal to limit: 1",
+                "Count value 0 in column 'b' per group of columns 'b' is not equal to limit: 2",
                 None,
-                "Sum 4 in column 'b' is not equal to limit: 10.0",
+                "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
             ],
@@ -417,11 +417,11 @@ def test_is_aggr_equal(spark: SparkSession):
                 "a",
                 1,
                 None,
-                "Count 2 in column 'a' is not equal to limit: 1",
+                "Count value 2 in column 'a' is not equal to limit: 1",
                 None,
-                "Count 1 in column 'b' per group of columns 'b' is not equal to limit: 2",
+                "Count value 1 in column 'b' per group of columns 'b' is not equal to limit: 2",
                 None,
-                "Sum 4 in column 'b' is not equal to limit: 10.0",
+                "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
             ],
@@ -429,11 +429,11 @@ def test_is_aggr_equal(spark: SparkSession):
                 "b",
                 3,
                 None,
-                "Count 2 in column 'a' is not equal to limit: 1",
+                "Count value 2 in column 'a' is not equal to limit: 1",
                 None,
-                "Count 1 in column 'b' per group of columns 'b' is not equal to limit: 2",
+                "Count value 1 in column 'b' per group of columns 'b' is not equal to limit: 2",
                 None,
-                "Sum 4 in column 'b' is not equal to limit: 10.0",
+                "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
             ],
@@ -483,11 +483,11 @@ def test_is_aggr_not_equal(spark: SparkSession):
             [
                 "c",
                 None,
-                "Count 3 in column 'a' is equal to limit: 3",
+                "Count value 3 in column 'a' is equal to limit: 3",
                 None,
                 None,
                 None,
-                "Average 2.0 in column 'b' is equal to limit: 2.0",
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
@@ -495,11 +495,11 @@ def test_is_aggr_not_equal(spark: SparkSession):
             [
                 "a",
                 1,
-                "Count 3 in column 'a' is equal to limit: 3",
+                "Count value 3 in column 'a' is equal to limit: 3",
                 None,
-                "Count 1 in column 'a' per group of columns 'a' is equal to limit: 1",
+                "Count value 1 in column 'a' per group of columns 'a' is equal to limit: 1",
                 None,
-                "Average 2.0 in column 'b' is equal to limit: 2.0",
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
@@ -507,11 +507,11 @@ def test_is_aggr_not_equal(spark: SparkSession):
             [
                 "b",
                 3,
-                "Count 3 in column 'a' is equal to limit: 3",
+                "Count value 3 in column 'a' is equal to limit: 3",
                 None,
-                "Count 1 in column 'a' per group of columns 'a' is equal to limit: 1",
+                "Count value 1 in column 'a' per group of columns 'a' is equal to limit: 1",
                 None,
-                "Average 2.0 in column 'b' is equal to limit: 2.0",
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
@@ -580,17 +580,17 @@ def test_is_aggr_with_count_distinct_and_group_by(spark: SparkSession):
             [
                 "group1",
                 "val1",
-                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+                "Distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1",
             ],
             [
                 "group1",
                 "val1",
-                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+                "Distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1",
             ],
             [
                 "group1",
                 "val2",
-                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+                "Distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1",
             ],
             ["group2", "val3", None],
             ["group2", "val3", None],
@@ -636,12 +636,12 @@ def test_is_aggr_with_count_distinct_and_column_expression_in_group_by(spark: Sp
             [
                 "group1",
                 "val1",
-                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+                "Distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1",
             ],
             [
                 "group1",
                 "val2",
-                "Distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+                "Distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1",
             ],
             ["group2", "val3", None],
             ["group2", "val3", None],
@@ -677,17 +677,17 @@ def test_is_aggr_with_approx_count_distinct(spark: SparkSession):
             [
                 "group1",
                 "val1",
-                "Approximate distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+                "Approximate distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1",
             ],
             [
                 "group1",
                 "val1",
-                "Approximate distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+                "Approximate distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1",
             ],
             [
                 "group1",
                 "val2",
-                "Approximate distinct value count 2 in column 'b' per group of columns 'a' is greater than limit: 1",
+                "Approximate distinct count value 2 in column 'b' per group of columns 'a' is greater than limit: 1",
             ],
             ["group2", "val3", None],
             ["group2", "val3", None],
@@ -811,10 +811,10 @@ def test_is_aggr_with_mode_function(spark: SparkSession):
     # groupA should fail (mode=401 > limit=400), groupB should pass (mode=200 <= limit=400)
     expected = spark.createDataFrame(
         [
-            ["groupA", 401, "Mode 401 in column 'b' per group of columns 'a' is greater than limit: 400"],
-            ["groupA", 401, "Mode 401 in column 'b' per group of columns 'a' is greater than limit: 400"],
-            ["groupA", 401, "Mode 401 in column 'b' per group of columns 'a' is greater than limit: 400"],
-            ["groupA", 500, "Mode 401 in column 'b' per group of columns 'a' is greater than limit: 400"],
+            ["groupA", 401, "Mode value 401 in column 'b' per group of columns 'a' is greater than limit: 400"],
+            ["groupA", 401, "Mode value 401 in column 'b' per group of columns 'a' is greater than limit: 400"],
+            ["groupA", 401, "Mode value 401 in column 'b' per group of columns 'a' is greater than limit: 400"],
+            ["groupA", 500, "Mode value 401 in column 'b' per group of columns 'a' is greater than limit: 400"],
             ["groupB", 200, None],
             ["groupB", 200, None],
             ["groupB", 404, None],
@@ -855,6 +855,30 @@ def test_is_aggr_with_percentile_functions(spark: SparkSession):
     assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
 
 
+def test_is_aggr_message_includes_params(spark: SparkSession):
+    """Test that violation messages include aggr_params for differentiation."""
+    test_df = spark.createDataFrame(
+        [("group1", 100.0), ("group1", 200.0), ("group1", 300.0)],
+        "a: string, b: double",
+    )
+
+    # Create a check that will fail - P50 is 200, limit is 100
+    checks = [
+        is_aggr_not_greater_than(
+            "b", limit=100.0, aggr_type="percentile", aggr_params={"percentile": 0.5}, group_by=["a"]
+        ),
+    ]
+
+    actual = _apply_checks(test_df, checks)
+
+    # Verify message includes the percentile parameter
+    # Column name includes group_by info: b_percentile_group_by_a_greater_than_limit
+    messages = [row.b_percentile_group_by_a_greater_than_limit for row in actual.collect()]
+    assert all(msg is not None for msg in messages), "All rows should have violation messages"
+    assert all("percentile=0.5" in msg for msg in messages), "Message should include percentile parameter"
+    assert all("Percentile (percentile=0.5) value" in msg for msg in messages), "Message should have correct format"
+
+
 def test_is_aggr_percentile_missing_params(spark: SparkSession):
     """Test that percentile functions require percentile parameter."""
     test_df = spark.createDataFrame([(1, 10.0)], "id: int, value: double")
@@ -884,6 +908,21 @@ def test_is_aggr_percentile_invalid_params_caught_by_spark(spark: SparkSession):
         )
         result_df = apply_fn(test_df)
         result_df.collect()  # Force evaluation to trigger Spark error
+
+
+def test_is_aggr_with_invalid_parameter_name(spark: SparkSession):
+    """Test that invalid parameter names in aggr_params raise clear errors."""
+    test_df = spark.createDataFrame([(1, 10.0), (2, 20.0)], "id: int, value: double")
+
+    # Pass an invalid parameter name - should raise InvalidParameterError with context
+    with pytest.raises(InvalidParameterError, match="Failed to build 'approx_percentile' expression"):
+        _, apply_fn = is_aggr_not_greater_than(
+            "value",
+            limit=100.0,
+            aggr_type="approx_percentile",
+            aggr_params={"percentile": 0.95, "invalid_param": 1},  # Invalid param name
+        )
+        apply_fn(test_df)
 
 
 def test_is_aggr_with_invalid_aggregate_function(spark: SparkSession):
