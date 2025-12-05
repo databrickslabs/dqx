@@ -178,7 +178,7 @@ class TaskLogger(contextlib.AbstractContextManager):
         lockfile = cls._create_lock(lockfile_name)
 
         try:
-            with open(filename, encoding="utf8", **kwargs) as f:
+            with open(filename, encoding="utf-8", **kwargs) as f:
                 yield f
         finally:
             try:
