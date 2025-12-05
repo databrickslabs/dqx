@@ -1753,7 +1753,7 @@ def has_valid_schema(
         column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
     if expected_schema:
-        expected_schema = _get_schema(expected_schema, column_names)
+        expected_schema_struct = _get_schema(expected_schema, column_names)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__schema_condition_{unique_str}"
@@ -1778,7 +1778,7 @@ def has_valid_schema(
             _expected_schema = _get_schema(ref_df.schema, column_names)
 
         elif expected_schema:
-            _expected_schema = expected_schema
+            _expected_schema = expected_schema_struct
 
         else:
             raise InvalidParameterError(
