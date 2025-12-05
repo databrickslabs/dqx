@@ -120,30 +120,10 @@ def get_tables_from_spark_plan(plan_str: str) -> set[str]:
         Analyzed Logical Plan section is found or no tables are referenced.
     """
     try:
-        if not plan_str:
-            return set()
         return _extract_tables_from_analyzed_plan(plan_str)
     except Exception as e:
         logger.debug(f"Failed to extract tables from Spark plan: {e}")
         return set()
-
-
-def _extract_tables_from_analyzed_plan(plan_str: str) -> set[str]:
-    """Helper function to extract tables from the Analyzed Logical Plan section."""
-    tables: set[str] = set()
-
-    # Extract Analyzed Logical Plan section (stop at next "==")
-    match = re.search(r"== Analyzed Logical Plan ==\s*(.*?)\n==", plan_str, re.DOTALL)
-    if not match:
-        return tables
-
-    analyzed_text = match.group(1)
-
-    # Extract SubqueryAlias names (only present if table is used)
-    subquery_aliases = re.findall(r"SubqueryAlias\s+([^\s]+)", analyzed_text)
-    tables.update(alias.replace("`", "") for alias in subquery_aliases)
-
-    return tables
 
 
 def get_paths_from_spark_plan(plan_str: str, table_names: set[str] | None = None) -> set[str]:
@@ -164,12 +144,28 @@ def get_paths_from_spark_plan(plan_str: str, table_names: set[str] | None = None
         Physical Plan section is found or no paths are referenced.
     """
     try:
-        if not plan_str:
-            return set()
         return _extract_paths_from_physical_plan(plan_str, table_names)
     except Exception as e:
         logger.debug(f"Failed to extract paths from Spark plan: {e}")
         return set()
+
+
+def _extract_tables_from_analyzed_plan(plan_str: str) -> set[str]:
+    """Helper function to extract tables from the Analyzed Logical Plan section."""
+    tables: set[str] = set()
+
+    # Extract Analyzed Logical Plan section (stop at next "==")
+    match = re.search(r"== Analyzed Logical Plan ==\s*(.*?)\n==", plan_str, re.DOTALL)
+    if not match:
+        return tables
+
+    analyzed_text = match.group(1)
+
+    # Extract SubqueryAlias names (only present if table is used)
+    subquery_aliases = re.findall(r"SubqueryAlias\s+([^\s]+)", analyzed_text)
+    tables.update(alias.replace("`", "") for alias in subquery_aliases)
+
+    return tables
 
 
 def _extract_paths_from_physical_plan(plan_str: str, table_names: set[str] | None = None) -> set[str]:
