@@ -1,0 +1,312 @@
+# Comprehensive Data Contract for DQX Testing (ODCS v3.x)
+# This contract demonstrates ALL supported DQX rule generation patterns:
+# 1. Predefined rules from property constraints (logicalTypeOptions)
+# 2. Explicit DQX rules (via implementation)
+# 3. Text-based expectations (for LLM processing)
+# 4. Dataset-level quality checks
+
+kind: DataContract
+apiVersion: v3.0.2
+id: urn:datacontract:sensors:iot_sensor_data
+name: IoT Sensor Data Quality Contract
+version: 2.1.0
+status: active
+domain: iot
+dataProduct: sensor_readings_data_product
+tenant: IoT Platform Team
+
+description:
+  purpose: |
+    Comprehensive data contract for IoT sensor readings demonstrating
+    all DQX rule generation capabilities including predefined constraints,
+    explicit quality checks, and dataset-level validations.
+  usage: |
+    This data contract is used for testing DQX rule generation.
+    It covers all supported constraint types and quality check patterns.
+  limitations: |
+    - Sensor data is collected at 1-minute intervals
+    - Historical data is retained for 90 days
+    - Anomaly detection requires manual review
+
+tags:
+  - iot
+  - sensors
+  - real-time
+
+support:
+  - channel: email
+    url: mailto:data-engineering@example.com
+
+schema:
+  - name: sensor_readings
+    physicalName: sensor_readings_table
+    physicalType: table
+    description: Real-time sensor readings from IoT devices
+    
+    properties:
+      # ===== PRIMARY KEY WITH MULTIPLE CONSTRAINTS =====
+      - name: sensor_id
+        logicalType: string
+        physicalType: varchar(15)
+        description: Unique identifier for the IoT sensor device
+        required: true
+        unique: true
+        primaryKey: true
+        logicalTypeOptions:
+          pattern: '^SENSOR-[A-Z]{2}-[0-9]{4}$'
+          minLength: 15
+          maxLength: 15
+        quality:
+          # Explicit check with error criticality
+          - type: custom
+            engine: dqx
+            description: Sensor ID must not be empty
+            implementation:
+              criticality: error
+              name: sensor_id_not_empty
+              check:
+                function: is_not_null_and_not_empty
+                arguments:
+                  column: sensor_id
+                  trim_strings: true
+      
+      # ===== FOREIGN KEY WITH CONSTRAINTS =====
+      - name: machine_id
+        logicalType: string
+        physicalType: varchar(13)
+        description: Identifier of the machine being monitored
+        required: true
+        logicalTypeOptions:
+          pattern: '^MACHINE-[A-Z0-9]{6}$'
+        quality:
+          # Text-based expectation
+          - type: text
+            description: |
+              Machine ID should correspond to an active machine in the 
+              machine_registry table and must not reference decommissioned equipment.
+      
+      # ===== TIMESTAMP FIELDS =====
+      - name: reading_timestamp
+        logicalType: date
+        physicalType: timestamp
+        description: When the sensor reading was recorded
+        required: true
+        logicalTypeOptions:
+          format: 'yyyy-MM-dd HH:mm:ss'
+        quality:
+          # Explicit timestamp validation
+          - type: custom
+            engine: dqx
+            description: Validate reading timestamp format
+            implementation:
+              criticality: error
+              name: valid_reading_timestamp
+              check:
+                function: is_valid_timestamp
+                arguments:
+                  column: reading_timestamp
+                  timestamp_format: '%Y-%m-%d %H:%M:%S'
+      
+      - name: calibration_date
+        logicalType: date
+        physicalType: date
+        description: Last sensor calibration date
+        required: true
+        logicalTypeOptions:
+          format: 'yyyy-MM-dd'
+        quality:
+          # Custom SQL expression check
+          - type: custom
+            engine: dqx
+            description: Calibration date must be before or equal to reading timestamp
+            implementation:
+              criticality: error
+              name: calibration_date_logical
+              check:
+                function: sql_expression
+                arguments:
+                  expression: calibration_date <= date(reading_timestamp)
+      
+      # ===== NUMERIC FIELDS WITH RANGES =====
+      - name: temperature_celsius
+        logicalType: number
+        physicalType: decimal(5,2)
+        description: Temperature reading in Celsius
+        required: true
+        logicalTypeOptions:
+          minimum: -273.15  # Absolute zero (float)
+          maximum: 200.0
+        quality:
+          # Text-based business rule
+          - type: text
+            description: |
+              Temperature readings above 100°C should be flagged as anomalies
+              and require manual review by the operations team.
+      
+      - name: humidity_percentage
+        logicalType: number
+        physicalType: decimal(5,2)
+        description: Relative humidity percentage
+        required: true
+        logicalTypeOptions:
+          minimum: 0.0
+          maximum: 100.0
+      
+      - name: pressure_bar
+        logicalType: number
+        physicalType: decimal(4,2)
+        description: Pressure reading in bar
+        required: false
+        logicalTypeOptions:
+          minimum: 0.1
+          maximum: 10.0
+      
+      - name: vibration_level
+        logicalType: integer
+        physicalType: int
+        description: Vibration intensity level (0-10 scale)
+        required: true
+        logicalTypeOptions:
+          minimum: 0
+          maximum: 10
+      
+      # ===== CATEGORICAL FIELDS =====
+      - name: sensor_status
+        logicalType: string
+        physicalType: varchar(20)
+        description: Current operational status of the sensor
+        required: true
+        logicalTypeOptions:
+          # Use pattern instead of enum for ODCS v3.x
+          pattern: '^(active|inactive|maintenance|faulty)$'
+        quality:
+          # Explicit check with warn criticality
+          - type: custom
+            engine: dqx
+            description: Validate sensor status values
+            implementation:
+              criticality: warn
+              name: sensor_status_valid_values
+              check:
+                function: is_in_list
+                arguments:
+                  column: sensor_status
+                  allowed:
+                    - active
+                    - inactive
+                    - maintenance
+                    - faulty
+      
+      - name: alert_level
+        logicalType: string
+        physicalType: varchar(10)
+        description: Alert severity level
+        required: false
+        logicalTypeOptions:
+          pattern: '^(none|low|medium|high|critical)$'
+      
+      # ===== STRING FIELDS WITH PATTERNS =====
+      - name: location
+        logicalType: string
+        physicalType: varchar(10)
+        description: Physical location of the sensor
+        required: true
+        logicalTypeOptions:
+          pattern: '^[A-Z]{3}-[A-Z]{2}-[0-9]{3}$'  # e.g., NYC-FL-001
+          minLength: 10
+          maxLength: 10
+        quality:
+          - type: text
+            description: |
+              Location codes should correspond to valid facility locations in 
+              the company's asset management system.
+      
+      - name: device_model
+        logicalType: string
+        physicalType: varchar(8)
+        description: Sensor device model number
+        required: true
+        logicalTypeOptions:
+          pattern: '^[A-Z]{2}[0-9]{4}-[A-Z]{1}$'
+      
+      # ===== OPTIONAL FIELDS =====
+      - name: notes
+        logicalType: string
+        physicalType: varchar(500)
+        description: Optional notes or comments about the reading
+        required: false
+        logicalTypeOptions:
+          maxLength: 500
+      
+      - name: technician_id
+        logicalType: string
+        physicalType: varchar(10)
+        description: ID of technician who serviced the sensor (if applicable)
+        required: false
+        logicalTypeOptions:
+          pattern: '^TECH-[0-9]{5}$'
+      
+      # ===== BOOLEAN FIELD =====
+      - name: is_anomaly
+        logicalType: boolean
+        physicalType: boolean
+        description: Flag indicating if this reading is an anomaly
+        required: false
+      
+      # ===== EMAIL FIELD =====
+      - name: alert_email
+        logicalType: string
+        physicalType: varchar(100)
+        description: Email to notify for this sensor's alerts
+        required: false
+        logicalTypeOptions:
+          pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        quality:
+          - type: custom
+            engine: dqx
+            description: Validate email format
+            implementation:
+              criticality: warn
+              name: valid_alert_email
+              check:
+                function: regex_match
+                arguments:
+                  column: alert_email
+                  regex: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    
+    # Dataset-level quality checks (explicit DQX rules)
+    quality:
+      # Check data freshness - readings should be recent
+      - type: custom
+        engine: dqx
+        description: Ensure sensor data is fresh and recent
+        implementation:
+          criticality: error
+          name: sensor_data_freshness
+          check:
+            function: is_data_fresh_per_time_window
+            arguments:
+              column: reading_timestamp
+              window_minutes: 60
+              min_records_per_window: 1
+              lookback_windows: 24
+      
+      # Check dataset is not empty
+      - type: custom
+        engine: dqx
+        description: Ensure dataset contains data
+        implementation:
+          criticality: warn
+          name: dataset_not_empty
+          check:
+            function: is_aggr_not_less_than
+            arguments:
+              column: sensor_id
+              limit: 1
+              aggr_type: count
+      
+      # Text-based expectation for LLM processing
+      - type: text
+        description: |
+          The dataset should not contain duplicate sensor readings for the same 
+          sensor_id and reading_timestamp combination within a 1-second window.

@@ -15,10 +15,11 @@ class GlobalContext(abc.ABC):
     GlobalContext class that provides a global context, including workspace client,
     """
 
-    def __init__(self, named_parameters: dict[str, str] | None = None):
+    def __init__(self, named_parameters: dict[str, str] | None = None, install_folder: str | None = None):
         if not named_parameters:
             named_parameters = {}
         self._named_parameters = named_parameters
+        self._install_folder = install_folder
 
     def replace(self, **kwargs):
         """
@@ -48,6 +49,10 @@ class GlobalContext(abc.ABC):
 
     @cached_property
     def installation(self) -> Installation:
+        if self._install_folder:
+            return Installation(
+                self.workspace_client, self.product_info.product_name(), install_folder=self._install_folder
+            )
         return Installation.current(self.workspace_client, self.product_info.product_name())
 
     @cached_property

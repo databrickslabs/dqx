@@ -14,7 +14,7 @@ DQX provides the capability to generate data quality rule candidates using AI/LL
 
 The AI-assisted quality checks generation is available via the `DQGenerator` class and supports:
 - Analyzing natural language descriptions of data quality requirements.
-- Optionally inspecting table schemas to understand data structure.
+- Optionally inspecting input data schemas to understand data structure.
 - Generating appropriate data quality rules that match the requirements using built-in and custom check functions.
 - Validating the generated rules to ensure they are syntactically correct.
 
@@ -65,7 +65,7 @@ Here's a simple example of generating quality rules from a natural language desc
 
     # Initialize the generator
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Generate rules from natural language description
     user_input = """
@@ -81,21 +81,22 @@ Here's a simple example of generating quality rules from a natural language desc
   </TabItem>
 </Tabs>
 
-### Using with Table Schema
+### Using with Input Data Schema
 
-For better results, you can provide a fully qualified table name of the input data.
-The LLM will analyze the table schema to generate more accurate rules:
+For better results, you can provide a fully qualified table name or path of the input data.
+The LLM will analyze the schema of the input data to generate more accurate rules:
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.config import InputConfig
     from databricks.sdk import WorkspaceClient
 
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
-    # Generate rules with table schema awareness
+    # Generate rules with input data schema awareness
     user_input = """
     All customer records must have complete contact information.
     Email addresses must be valid.
@@ -105,7 +106,7 @@ The LLM will analyze the table schema to generate more accurate rules:
 
     checks = generator.generate_dq_rules_ai_assisted(
       user_input=user_input,
-      table_name="catalog1.schema1.customers"
+      input_config=InputConfig(location="catalog1.schema1.customers")
     )
 
     print(checks)
@@ -141,6 +142,7 @@ Custom Python check functions can be passed to the generator, allowing the LLM t
     ws = WorkspaceClient()
     generator = DQGenerator(
       workspace_client=ws,
+      spark=spark,
       custom_check_functions=custom_check_functions
     )
 
@@ -176,7 +178,7 @@ You can configure the generator to use custom models or API endpoints:
     model_config = LLMModelConfig(
       model_name="databricks/databricks-claude-sonnet-4-5"  # default
     )
-    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
+    generator = DQGenerator(workspace_client=ws, spark=spark, llm_model_config=model_config)
 
     # Option 2: Using Databricks Foundation Model API with explicit credentials
     model_config = LLMModelConfig(
@@ -184,7 +186,7 @@ You can configure the generator to use custom models or API endpoints:
       api_key="your-api-key",
       api_base="https://your-workspace.azuredatabricks.net/serving-endpoints"
     )
-    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
+    generator = DQGenerator(workspace_client=ws, spark=spark, llm_model_config=model_config)
 
     # Option 3: Using an arbitrary LLM model
     model_config = LLMModelConfig(
@@ -192,7 +194,7 @@ You can configure the generator to use custom models or API endpoints:
       api_key="your-api-key",
       api_base="https://your-workspace.azuredatabricks.net/serving-endpoints"
     )
-    generator = DQGenerator(workspace_client=ws, llm_model_config=model_config)
+    generator = DQGenerator(workspace_client=ws, spark=spark, llm_model_config=model_config)
 
     user_input = "All fields should contain data and have no empty values"
     checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
@@ -209,13 +211,14 @@ Here's a complete workflow showing how to generate, review, and save AI-assisted
     ```python
     from databricks.labs.dqx.profiler.generator import DQGenerator
     from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.config import InputConfig
     from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
     from databricks.sdk import WorkspaceClient
     import yaml
 
     # Initialize workspace client and generator
     ws = WorkspaceClient()
-    generator = DQGenerator(workspace_client=ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Define business requirements in natural language
     business_requirements = """
@@ -233,7 +236,8 @@ Here's a complete workflow showing how to generate, review, and save AI-assisted
     # Generate quality rules using AI
     checks = generator.generate_dq_rules_ai_assisted(
       user_input=business_requirements,
-      table_name="production.users.registrations"
+      # input location could be a table or path
+      input_config=InputConfig(location="production.users.registrations")
     )
 
     # Review the generated checks
@@ -265,17 +269,18 @@ You can combine AI-assisted rules with profiler-generated rules for comprehensiv
     ```python
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.config import InputConfig
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
     ws = WorkspaceClient()
 
     # Step 1: Profile the data to generate statistics-based (technical) rules
-    profiler = DQProfiler(ws)
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
     input_df = spark.read.table("catalog1.schema1.sales_data")
     summary_stats, profiles = profiler.profile(input_df)
 
-    generator = DQGenerator(ws)
+    generator = DQGenerator(workspace_client=ws, spark=spark)
 
     # Generate profiler-based rules
     profiler_checks = generator.generate_dq_rules(profiles)
@@ -291,7 +296,7 @@ You can combine AI-assisted rules with profiler-generated rules for comprehensiv
 
     ai_checks = generator.generate_dq_rules_ai_assisted(
         user_input=business_requirements,
-        table_name="catalog1.schema1.sales_data"
+        input_config=InputConfig(location="catalog1.schema1.sales_data")
     )
 
     # Step 3: Combine both sets of rules
@@ -329,7 +334,7 @@ GDPR Compliance Requirements:
 
 checks = generator.generate_dq_rules_ai_assisted(
   user_input=compliance_requirements,
-  table_name="gdpr.users.personal_data"
+  input_config=InputConfig(location="gdpr.users.personal_data")
 )
 ```
 
@@ -349,7 +354,7 @@ Financial Transaction Rules:
 
 checks = generator.generate_dq_rules_ai_assisted(
   user_input=financial_requirements,
-  table_name="finance.transactions.daily"
+  input_config=InputConfig(location="finance.transactions.daily")
 )
 ```
 
@@ -369,7 +374,7 @@ IoT Sensor Data Quality Rules:
 
 checks = generator.generate_dq_rules_ai_assisted(
   user_input=iot_requirements,
-  table_name="iot.sensors.readings"
+  input_config=InputConfig(location="iot.sensors.readings")
 )
 ```
 
@@ -410,16 +415,16 @@ Use a slash-separated format for specifying the scope and key, such as `api_key:
 ## Best Practices
 
 1. **Be Specific**: Provide clear and specific business requirements in your input. The more detailed your description, the better the generated rules. However, be aware that the model endpoint that you use have token limitations [see Databricks Model APIs limits and quotas](https://docs.databricks.com/aws/en/machine-learning/foundation-model-apis/limits).
-2. **Include Table Name**: When possible, provide the fully qualified table name to help the LLM understand the actual data structure.
+2. **Include Input Config**: When possible, provide input config specifying location of input data as a fully qualified table name or path to help the LLM understand the actual data structure.
 3. **Review Generated Rules**: Always review the generated rules before applying them to production data. The AI may not perfectly understand all nuances of your requirements so treat the generated rules as candidates and review them.
 4. **Combine Approaches**: Use AI-assisted generation for business logic rules and profiler-based generation for statistical (technical) rules.
 5. **Iterate**: If the generated rules don't match your expectations, refine your input description and regenerate, or update manually.
 
 ## Troubleshooting
 
-### Error: DSPy compiler not available
+### Error: LLM dependencies not installed
 
-**Problem**: You receive an error saying "DSPy compiler not available".
+**Problem**: You receive an error saying "LLM engine not available. Make sure LLM dependencies are installed".
 
 **Solution**: Install the LLM dependencies:
 ```bash
@@ -432,7 +437,7 @@ pip install 'databricks-labs-dqx[llm]'
 
 **Solution**:
 - Make your input description more specific and detailed.
-- Provide the table name so the LLM can analyze the actual schema.
+- Provide the input data location so the LLM can analyze the actual schema.
 - Break complex requirements into simpler, more focused descriptions.
 - Include examples in your description.
 
@@ -452,7 +457,7 @@ pip install 'databricks-labs-dqx[llm]'
 
 **Solution**:
 - Check the validation error messages for specific issues.
-- Verify that the column names mentioned in your requirements exist in the table.
+- Verify that the column names mentioned in your requirements exist in the input data.
 - Ensure the rule types requested are supported by DQX (see [Quality Checks Reference](/docs/reference/quality_checks)).
 - Simplify your requirements and regenerate.
 
