@@ -1600,223 +1600,6 @@ Complex data types are supported as well.
       group_by:
       - col3
       limit: 200
-```
-</details>
-
-## Aggregate Function Types {#aggregate-function-types}
-
-DQX provides four aggregate check functions for validating metrics across your entire dataset or within groups:
-
-- **`is_aggr_not_greater_than`** - Validates that aggregated values do not exceed a limit
-- **`is_aggr_not_less_than`** - Validates that aggregated values meet a minimum threshold  
-- **`is_aggr_equal`** - Validates that aggregated values equal an expected value
-- **`is_aggr_not_equal`** - Validates that aggregated values differ from a specific value
-
-Use these functions for scenarios like "each country has ≤ 1 country code" or "P95 latency < 1s per region".
-
-**When to use aggregate checks:**
-- Validate cardinality and uniqueness constraints
-- Monitor statistical properties (variance, outliers)
-- Enforce SLAs and performance thresholds
-- Detect data quality issues within groups
-
-DQX supports 20 **curated** aggregate functions (recommended for data quality) plus any other [Databricks built-in aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha).
-
-### Curated Aggregate Functions {#curated-aggregate-functions}
-
-Validated and optimized for data quality use cases:
-
-#### Basic Aggregations
-- `count` - Count records (nulls excluded)
-- `sum` - Sum of values
-- `avg` - Average of values  
-- `min` - Minimum value
-- `max` - Maximum value
-
-#### Cardinality & Uniqueness
-- `count_distinct` - Exact distinct count (use for uniqueness validation)
-- `approx_count_distinct` - Fast approximate count (±5% accuracy, ideal for very large datasets)
-- `count_if` - Conditional counting
-
-#### Statistical Analysis
-- `stddev` / `stddev_samp` - Sample standard deviation (anomaly detection)
-- `stddev_pop` - Population standard deviation
-- `variance` / `var_samp` - Sample variance (stability checks)
-- `var_pop` - Population variance
-- `median` - 50th percentile baseline
-- `mode` - Most frequent value (categorical data quality)
-- `skewness` - Distribution skewness (detect asymmetry)
-- `kurtosis` - Distribution kurtosis (detect heavy tails)
-
-#### SLA & Performance Monitoring
-- `percentile` - Exact percentile (requires `aggr_params`)
-- `approx_percentile` - Approximate percentile (faster, requires `aggr_params`)
-
-<Admonition type="warning" title="Performance: count_distinct with group_by">
-Using `count_distinct` with `group_by` performs multiple expensive operations. **For large-scale datasets, use `approx_count_distinct` instead**—it processes efficiently and scales well with high-cardinality groups.
-
-**Performance benchmarks**: See [benchmarks](/docs/reference/benchmarks) for detailed comparison.
-</Admonition>
-
-### Using `aggr_params` for Function Parameters {#using-aggr_params-for-function-parameters}
-
-Some aggregate functions require additional parameters beyond the column. Pass these as a dictionary:
-
-**Python:**
-```python
-check_func_kwargs={
-    "aggr_type": "percentile",
-    "aggr_params": {"percentile": 0.95},  # Single parameter
-    "limit": 1000
-}
-
-# Multiple parameters:
-check_func_kwargs={
-    "aggr_type": "approx_percentile",
-    "aggr_params": {
-        "percentile": 0.99,
-        "accuracy": 10000  # Multiple parameters as dict
-    }
-}
-```
-
-**YAML:**
-```yaml
-aggr_params:
-  percentile: 0.95
-  accuracy: 10000  # Multiple parameters as nested YAML
-```
-
-The `aggr_params` dictionary is unpacked as keyword arguments to the Spark aggregate function. See [Databricks function documentation](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) for available parameters for each function.
-
-### Non-Curated Aggregate Functions {#non-curated-aggregates}
-
-Any [Databricks built-in aggregate function](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) can be used beyond the curated list. DQX will:
-- Issue a warning (recommending curated functions when possible)
-- Validate the function returns numeric values
-
-**Limitations:**
-- Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`) will fail with a clear error message explaining they cannot be compared to numeric limits
-- **User-Defined Aggregate Functions (UDAFs) are not currently supported** - only Databricks built-in functions in `pyspark.sql.functions`
-
-<Admonition type="warning" title="Runtime Compatibility">
-Some aggregate functions require newer Spark versions. If a function is unavailable, the error message will indicate the minimum required Spark version. **Use the latest Databricks Runtime for best compatibility.**
-</Admonition>
-
-### Extended Examples {#aggregate-extended-examples}
-
-```yaml
-# Uniqueness: Each country has exactly one country code
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: country_code
-      aggr_type: count_distinct
-      group_by:
-      - country
-      limit: 1
-
-# Cardinality: Total unique users across entire dataset
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: user_id
-      aggr_type: count_distinct
-      limit: 1000000
-
-# Fast approximate count for very large datasets
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: user_id
-      aggr_type: approx_count_distinct
-      group_by:
-      - session_date
-      limit: 100000
-
-# Standard deviation: Detect unusual variance in sensor readings per machine
-- criticality: warn
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: temperature
-      aggr_type: stddev
-      group_by:
-      - machine_id
-      limit: 5.0
-
-# Percentile: Monitor P95 latency for SLA compliance
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: latency_ms
-      aggr_type: percentile
-      aggr_params:
-        percentile: 0.95
-      limit: 1000
-
-# Approximate percentile: Fast P99 check with accuracy control
-- criticality: warn
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: response_time
-      aggr_type: approx_percentile
-      aggr_params:
-        percentile: 0.99
-        accuracy: 10000
-      limit: 5000
-
-# Median: Baseline check for central tendency
-- criticality: warn
-  check:
-    function: is_aggr_not_less_than
-    arguments:
-      column: order_value
-      aggr_type: median
-      group_by:
-      - product_category
-      limit: 50.0
-
-# Variance: Stability check for financial data
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: daily_revenue
-      aggr_type: variance
-      limit: 1000000.0
-
-# Mode: Alert if any single error code dominates
-- criticality: warn
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: error_code
-      aggr_type: mode
-      group_by:
-      - service_name
-      limit: 100
-
-# count_if: Monitor error rate per service
-- criticality: error
-  check:
-    function: is_aggr_not_greater_than
-    arguments:
-      column: status_code >= 500
-      aggr_type: count_if
-      group_by:
-      - service_name
-      limit: 10
-```
-
-<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
-<summary>**Checks defined in YAML (continued)**</summary>
-```yaml
 # foreign_key check using reference DataFrame
 - criticality: error
   check:
@@ -2387,9 +2170,129 @@ The reference DataFrames are used in selected Dataset-level checks:
     ```
 </details>
 
+### Usage examples for aggregate checks
+
+DQX supports several curated aggregate functions for use with aggregate value checks. Use `aggr_params` when defining aggregate checks to pass additional keyword arguments to aggregate functions. To use other aggregate functions, see [using non-curated aggregate functions](#using-non-curated-aggregate-functions).
+
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Curated aggregate functions**</summary>
+| Function                           | Description                                                                                              | Parameters                                                                                                                                                                                                                                    |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `count`                            | Count of values                                                                                          |                                                                                                                                                                                                                                               |
+| `sum`                              | Sum of values                                                                                            |                                                                                                                                                                                                                                               |
+| `avg`                              | Arithmetic mean of values                                                                                |                                                                                                                                                                                                                                               |
+| `min`                              | Minimum value                                                                                            |                                                                                                                                                                                                                                               |
+| `max`                              | Maximum value                                                                                            |                                                                                                                                                                                                                                               |
+| `count_distinct`                   | Distinct count of values                                                                                 |                                                                                                                                                                                                                                               |
+| `approx_count_distinct`            | Approximate distinct count of values; Efficient for large datasets                                       |                                                                                                                                                                                                                                               |
+| `stddev`                           | Sample standard deviation of values                                                                      |                                                                                                                                                                                                                                               |
+| `stddev_pop`                       | Population standard deviation of values                                                                  |                                                                                                                                                                                                                                               |
+| `variance`                         | Sample variance of values                                                                                |                                                                                                                                                                                                                                               |
+| `var_pop`                          | Population variance of values                                                                            |                                                                                                                                                                                                                                               |
+| `median`                           | Median or 50th percentile value                                                                          |                                                                                                                                                                                                                                               |
+| `mode`                             | Most frequent value                                                                                      |                                                                                                                                                                                                                                               |
+| `skewness`                         | Degree of asymmetry in the distribution of values                                                        |                                                                                                                                                                                                                                               |
+| `kurtosis`                         | Degree of tailedness in the distribution of values                                                       |                                                                                                                                                                                                                                               |
+| `percentile`                       | Percentile value                                                                                         | `percentile`: Percentage of values which are less than or equal to the result value                                                                                                                                                           |
+| `approx_percentile`                | Approximate percentile value; Efficient for large datasets                                               | `percentile`: Percentage of values which are less than or equal to the result value; `accuracy`: Optional positive numeric value which controls the approximation accuracy (default 1000). The relative estimation error is *1.0 / accuracy*. |
+</details>
+
+#### Counting Distinct Values
+
+Distinct value counts can be used to guarantee uniqueness and consistency of values. This could be to guarantee referential integrity between datasets or to enforce consistency of column values.
+
+<Admonition type="warning" title="Scalable Calculation of Unique Value Counts">
+Using `count_distinct` with `group_by` performs multiple expensive operations. For large-scale datasets where uniqueness is not required, use `approx_count_distinct` for best performance.
+</Admonition>
+
+```yaml
+# Ensure only 1 country code exists per country
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: country_code
+      aggr_type: count_distinct
+      group_by:
+      - country
+      limit: 1
+```
+
+#### Detecting Statistical Anomalies
+
+Descriptive statistics are often used for process control, forecasting, and regression analysis. Variation from expected values could signal that a process has changed or that a model's features have drifted. Monitor dataset statistics (e.g. `avg`, `stddev`) to detect significant variations. 
+
+```yaml
+# Detect unusually high temperature variance per machine
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: temperature
+      aggr_type: stddev
+      group_by:
+      - machine_id
+      limit: 5.0
+
+# Detect revenue variation across product lines
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: daily_revenue
+      aggr_type: variance
+      group_by:
+      - product_line
+      limit: 1000000.0
+```
+
+#### Monitoring for Service Level Agreements
+
+Percentiles are useful for monitoring service-level agreements (SLAs). Monitor percentiles to detect when SLAs (e.g. API response time) differ from required values.
+
+<Admonition type="warning" title="Scalable Calculation of Percentiles">
+`percentile` calculates an exact percentile using all values in the input data. Use `approx_percentile` for scalable percentile computation when exact values are not required.
+</Admonition>
+
+```yaml
+# Detect when the P95 API latency is slower than 1 second
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: latency_ms
+      aggr_type: percentile
+      aggr_params:
+        percentile: 0.95
+      limit: 1000
+
+# Detect when the P95 API latency is slower than 1 second using approximate percentiles
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: latency_ms
+      aggr_type: approx_percentile
+      aggr_params:
+        percentile: 0.99
+        accuracy: 10000
+      limit: 1000
+```
+
+#### Using Non-Curated Aggregate Functions
+
+Other [Databricks built-in aggregate functions](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) may be used to check aggregate values.
+
+<Admonition type="warning" title="Limitations">
+Using non-curated aggregate functions is supported with the following limitations:
+- Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`) are not supported
+- User-Defined Aggregate Functions (UDAFs) are not supported
+- Some aggregate functions are only available in newer versions of the Databricks Runtime. If a function is unavailable in your environment, DQX will raise an error indicating the minimum required runtime version. Use the latest Databricks Runtime version for best compatibility.
+</Admonition>
+
 ## Creating Custom Row-level Checks
 
-### Using SQL Expression
+### Using SQL ExpressionS
 
 You can define custom checks using SQL Expression rule (`sql_expression`).
 
