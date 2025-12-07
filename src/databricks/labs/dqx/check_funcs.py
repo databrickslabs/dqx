@@ -3075,7 +3075,7 @@ def _validate_sql_query_params(query: str, merge_columns: list[str] | None) -> N
     if merge_columns is None:
         return
 
-    if isinstance(merge_columns, str) or not isinstance(merge_columns, Sequence):
+    if not isinstance(merge_columns, Sequence) or isinstance(merge_columns, str):
         raise InvalidParameterError(
             "'merge_columns' must be a sequence of column names (e.g., list or tuple) when provided."
         )
