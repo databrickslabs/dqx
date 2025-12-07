@@ -3018,12 +3018,6 @@ def _calculate_median_absolute_deviation(df: DataFrame, column: str, filter_cond
 
     Returns:
         The Median and Absolute Deviation values
-
-
-    Example:
-        >>> df = spark.createDataFrame([(1.0,), (2.0,), (3.0,), (4.0,), (5.0,)], ["values"])
-        >>> mad = _calculate_median_absolute_deviation(df, "values")
-        >>> print(f"MAD: {mad}")
     """
     if filter_condition is not None:
         df = df.filter(filter_condition)

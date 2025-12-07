@@ -40,7 +40,7 @@ def test_has_no_outliers_int_numeric_types(spark: SparkSession):
             [4, 13],
             [5, 11],
             [6, 20],  # outlier
-            [7, 9],
+            [7, 9],  # outlier
             [8, 15],
             [9, 14],
             [10, 13],
@@ -79,7 +79,7 @@ def test_has_no_outliers_float_numeric_types(spark: SparkSession):
             [4, 13.0],
             [5, 11.0],
             [6, 20.0],  # outlier
-            [7, 9.0],
+            [7, 9.0],  # outlier
             [8, 15.0],
             [9, 14.0],
             [10, 13.0],
@@ -118,7 +118,7 @@ def test_has_no_outliers_long_numeric_types(spark: SparkSession):
             [4, 13],
             [5, 11],
             [6, 20],  # outlier
-            [7, 9],
+            [7, 9],  # outlier
             [8, 15],
             [9, 14],
             [10, 13],
@@ -157,7 +157,7 @@ def test_has_no_outliers_decimal_numeric_types(spark: SparkSession):
             [4, Decimal("13.00")],
             [5, Decimal("11.00")],
             [6, Decimal("20.00")],  # outlier
-            [7, Decimal("9.00")],
+            [7, Decimal("9.00")],  # outlier
             [8, Decimal("15.00")],
             [9, Decimal("14.00")],
             [10, Decimal("13.00")],
@@ -209,7 +209,7 @@ def test_has_no_outliers_with_row_filter(spark: SparkSession):
         [
             [1, 10],
             [2, 12],
-            [3, 5],
+            [3, 5],  # outlier
             [3, 13],
             [3, 11],
             [3, 22],  # outlier
@@ -251,7 +251,7 @@ def test_has_no_outliers_with_none_median(spark: SparkSession):
             [3, None],
             [3, None],
             [3, None],
-            [3, None],  # outlier
+            [3, None],
             [7, None],
             [3, None],
             [4, None],
@@ -271,7 +271,7 @@ def test_has_no_outliers_with_none_median(spark: SparkSession):
             [3, None, None],
             [3, None, None],
             [3, None, None],
-            [3, None, None],  # outlier
+            [3, None, None],
             [7, None, None],
             [3, None, None],
             [4, None, None],
@@ -290,7 +290,7 @@ def test_has_no_outliers_in_string_columns(spark: SparkSession):
             ["str3", 14],
             ["str4", 13],
             ["str5", 11],
-            ["str6", 20],  # outlier
+            ["str6", 20],
         ],
         "a: string, b: int",
     )
