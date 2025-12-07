@@ -974,6 +974,85 @@ def is_data_fresh(
 
 
 @register_rule("dataset")
+def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tuple[Column, Callable]:
+    """
+    Build an outlier check condition and closure for dataset-level validation.
+
+    This function uses a statistical method called MAD (Median Absolute Deviation) to check whether
+    the specified column's values are within the calculated limits. The lower limit is calculated as
+    median - 3.5 * MAD and the upper limit as median + 3.5 * MAD. Values outside these limits are considered outliers.
+
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        row_filter: Optional SQL expression for filtering rows before checking for outliers.
+
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for outliers violations.
+            - A closure that applies the outliers check and adds the necessary condition/count columns.
+    """
+    column = F.col(column) if isinstance(column, str) else column
+
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+
+    unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
+    condition_col = f"__condition_{col_str_norm}_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """
+        Apply the outlier detection logic to the DataFrame.
+
+        Adds columns indicating the median and MAD for the column.
+
+        Args:
+            df: The input DataFrame to validate for outliers.
+
+        Returns:
+            The DataFrame with additional median and MAD columns for outlier detection.
+        """
+        column_type = df.schema[col_expr_str].dataType
+        if not isinstance(column_type, (types.NumericType)):
+            raise InvalidParameterError(
+                f"Column '{col_expr_str}' must be of numeric type to perform outlier detection using MAD method, "
+                f"but got type '{column_type.simpleString()}' instead."
+            )
+        filter_condition = F.expr(row_filter) if row_filter else F.lit(True)
+        median, mad = _calculate_median_absolute_deviation(df, col_expr_str, row_filter)
+        if median is not None and mad is not None:
+            median = float(median)
+            mad = float(mad)
+            # Create outlier condition
+            lower_bound = median - (3.5 * mad)
+            upper_bound = median + (3.5 * mad)
+            lower_bound_expr = _get_limit_expr(lower_bound)
+            upper_bound_expr = _get_limit_expr(upper_bound)
+
+            condition = (col_expr < (lower_bound_expr)) | (col_expr > (upper_bound_expr))
+
+            # Add outlier detection columns
+            result_df = df.withColumn(condition_col, F.when(filter_condition & condition, True).otherwise(False))
+        else:
+            # If median or mad could not be calculated, no outliers can be detected
+            result_df = df.withColumn(condition_col, F.lit(False))
+
+        return result_df
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is an outlier as per MAD."),
+        ),
+        alias=f"{col_str_norm}_has_outliers",
+    )
+    return condition, apply
+
+
+@register_rule("dataset")
 def is_unique(
     columns: list[str | Column],
     nulls_distinct: bool = True,
@@ -2953,3 +3032,36 @@ def _validate_sql_query_params(query: str, merge_columns: list[str]) -> None:
         raise UnsafeSqlQueryError(
             "Provided SQL query is not safe for execution. Please ensure it does not contain any unsafe operations."
         )
+
+
+def _calculate_median_absolute_deviation(df: DataFrame, column: str, filter_condition: str | None) -> tuple[Any, Any]:
+    """
+    Calculate the Median Absolute Deviation (MAD) for a numeric column.
+
+    The MAD is a robust measure of variability based on the median, calculated as:
+    MAD = median(|X_i - median(X)|)
+
+    This is useful for outlier detection as it is more robust to outliers than
+    standard deviation.
+
+    Args:
+        df: PySpark DataFrame
+        column: Name of the numeric column to calculate MAD for
+        filter_condition: Filter to apply before calculation (optional)
+
+    Returns:
+        The Median and Absolute Deviation values
+    """
+    if filter_condition is not None:
+        df = df.filter(filter_condition)
+
+    # Step 1: Calculate the median of the column
+    median_value = df.agg(F.percentile_approx(column, 0.5)).collect()[0][0]
+
+    # Step 2: Calculate absolute deviations from the median
+    df_with_deviations = df.select(F.abs(F.col(column) - F.lit(median_value)).alias("absolute_deviation"))
+
+    # Step 3: Calculate the median of absolute deviations
+    mad = df_with_deviations.agg(F.percentile_approx("absolute_deviation", 0.5)).collect()[0][0]
+
+    return median_value, mad

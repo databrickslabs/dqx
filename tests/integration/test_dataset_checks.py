@@ -3,8 +3,8 @@ from datetime import date, datetime, timedelta
 from typing import Any
 import json
 import itertools
+from decimal import Decimal
 import pytest
-
 import pyspark.sql.functions as F
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from pyspark.sql import Column, DataFrame, SparkSession
@@ -16,6 +16,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_less_than,
     is_aggr_equal,
     is_aggr_not_equal,
+    has_no_outliers,
     foreign_key,
     compare_datasets,
     is_data_fresh_per_time_window,
@@ -28,6 +29,279 @@ from tests.conftest import TEST_CATALOG
 
 
 SCHEMA = "a: string, b: int"
+
+
+def test_has_no_outliers_int_numeric_types(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            [1, 10],
+            [2, 12],
+            [3, 14],
+            [4, 13],
+            [5, 11],
+            [6, 20],  # outlier
+            [7, 9],  # outlier
+            [8, 15],
+            [9, 14],
+            [10, 13],
+        ],
+        "a: int, b: int",
+    )
+
+    condition, apply_method = has_no_outliers("b")
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [1, 10, None],
+            [2, 12, None],
+            [3, 14, None],
+            [4, 13, None],
+            [5, 11, None],
+            [6, 20, "Value '20' in Column 'b' is an outlier as per MAD."],
+            [7, 9, "Value '9' in Column 'b' is an outlier as per MAD."],
+            [8, 15, None],
+            [9, 14, None],
+            [10, 13, None],
+        ],
+        "a: int, b: int, b_has_outliers: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_no_outliers_float_numeric_types(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            [1, 10.0],
+            [2, 12.0],
+            [3, 14.0],
+            [4, 13.0],
+            [5, 11.0],
+            [6, 20.0],  # outlier
+            [7, 9.0],  # outlier
+            [8, 15.0],
+            [9, 14.0],
+            [10, 13.0],
+        ],
+        "a: int, b: float",
+    )
+
+    condition, apply_method = has_no_outliers("b")
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [1, 10.0, None],
+            [2, 12.0, None],
+            [3, 14.0, None],
+            [4, 13.0, None],
+            [5, 11.0, None],
+            [6, 20.0, "Value '20.0' in Column 'b' is an outlier as per MAD."],
+            [7, 9.0, "Value '9.0' in Column 'b' is an outlier as per MAD."],
+            [8, 15.0, None],
+            [9, 14.0, None],
+            [10, 13.0, None],
+        ],
+        "a: int, b: float, b_has_outliers: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_no_outliers_long_numeric_types(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            [1, 10],
+            [2, 12],
+            [3, 14],
+            [4, 13],
+            [5, 11],
+            [6, 20],  # outlier
+            [7, 9],  # outlier
+            [8, 15],
+            [9, 14],
+            [10, 13],
+        ],
+        "a: int, b: long",
+    )
+
+    condition, apply_method = has_no_outliers("b")
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [1, 10, None],
+            [2, 12, None],
+            [3, 14, None],
+            [4, 13, None],
+            [5, 11, None],
+            [6, 20, "Value '20' in Column 'b' is an outlier as per MAD."],
+            [7, 9, "Value '9' in Column 'b' is an outlier as per MAD."],
+            [8, 15, None],
+            [9, 14, None],
+            [10, 13, None],
+        ],
+        "a: int, b: long, b_has_outliers: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_no_outliers_decimal_numeric_types(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            [1, Decimal("10.00")],
+            [2, Decimal("12.00")],
+            [3, Decimal("14.00")],
+            [4, Decimal("13.00")],
+            [5, Decimal("11.00")],
+            [6, Decimal("20.00")],  # outlier
+            [7, Decimal("9.00")],  # outlier
+            [8, Decimal("15.00")],
+            [9, Decimal("14.00")],
+            [10, Decimal("13.00")],
+        ],
+        "a: int, b: decimal(10,2)",
+    )
+
+    condition, apply_method = has_no_outliers("b")
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [1, Decimal("10.00"), None],
+            [2, Decimal("12.00"), None],
+            [3, Decimal("14.00"), None],
+            [4, Decimal("13.00"), None],
+            [5, Decimal("11.00"), None],
+            [6, Decimal("20.00"), "Value '20.00' in Column 'b' is an outlier as per MAD."],
+            [7, Decimal("9.00"), "Value '9.00' in Column 'b' is an outlier as per MAD."],
+            [8, Decimal("15.00"), None],
+            [9, Decimal("14.00"), None],
+            [10, Decimal("13.00"), None],
+        ],
+        "a: int, b: decimal(10,2), b_has_outliers: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_no_outliers_empty_dataframe(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [],
+        "a: int, b: decimal(10,2)",
+    )
+
+    condition, apply_method = has_no_outliers("b")
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [],
+        "a: int, b: decimal(10,2), b_has_outliers: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_no_outliers_with_row_filter(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            [1, 10],
+            [2, 12],
+            [3, 5],  # outlier
+            [3, 13],
+            [3, 11],
+            [3, 22],  # outlier
+            [7, 9],
+            [3, 15],
+            [4, 16],
+            [10, 25],
+        ],
+        "a: int, b: int",
+    )
+
+    condition, apply_method = has_no_outliers("b", row_filter="a = 3")
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [1, 10, None],
+            [2, 12, None],
+            [3, 5, "Value '5' in Column 'b' is an outlier as per MAD."],
+            [3, 13, None],
+            [3, 11, None],
+            [3, 22, "Value '22' in Column 'b' is an outlier as per MAD."],  # outlier
+            [7, 9, None],
+            [3, 15, None],
+            [4, 16, None],
+            [10, 25, None],
+        ],
+        "a: int, b: int, b_has_outliers: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_no_outliers_with_none_median(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            [1, None],
+            [2, None],
+            [3, None],
+            [3, None],
+            [3, None],
+            [3, None],
+            [7, None],
+            [3, None],
+            [4, None],
+            [10, None],
+        ],
+        "a: int, b: int",
+    )
+
+    condition, apply_method = has_no_outliers("b")
+    actual_apply_df = apply_method(test_df)
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [1, None, None],
+            [2, None, None],
+            [3, None, None],
+            [3, None, None],
+            [3, None, None],
+            [3, None, None],
+            [7, None, None],
+            [3, None, None],
+            [4, None, None],
+            [10, None, None],
+        ],
+        "a: int, b: int, b_has_outliers: string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_has_no_outliers_in_string_columns(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 10],
+            ["str2", 12],
+            ["str3", 14],
+            ["str4", 13],
+            ["str5", 11],
+            ["str6", 20],
+        ],
+        "a: string, b: int",
+    )
+    apply_method = has_no_outliers("a")[1]
+
+    with pytest.raises(
+        InvalidParameterError,
+        match="Column 'a' must be of numeric type to perform outlier detection using MAD method, "
+        "but got type 'string' instead.",
+    ):
+        apply_method(test_df)
 
 
 def test_is_unique(spark: SparkSession):
