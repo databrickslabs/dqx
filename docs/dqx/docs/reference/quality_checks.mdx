@@ -2024,7 +2024,7 @@ checks = [
         "negate": True
     },
 
-    # sql_query check
+    # sql_query check with merge_columns (row-level validation)
     DQDatasetRule(
       criticality="error",
       check_func=sql_query,
