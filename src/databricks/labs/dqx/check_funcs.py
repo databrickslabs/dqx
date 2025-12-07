@@ -1958,7 +1958,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
     json_keys_array = F.json_object_keys(col_expr)
     required_keys = F.array_distinct(F.array(*[F.lit(k) for k in keys]))
 
-    json_validation_error = is_valid_json(col_str_norm)
+    json_validation_error = is_valid_json(col_expr_str)
     is_invalid_json = json_validation_error.isNotNull()
 
     has_json_keys_msg = F.concat_ws(
