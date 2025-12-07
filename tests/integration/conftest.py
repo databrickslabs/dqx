@@ -36,7 +36,7 @@ EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overw
 def build_quality_violation(
     name: str,
     message: str,
-    columns: list[str],
+    columns: list[str] | None,
     *,
     function: str = "is_not_null_and_not_empty",
 ) -> dict[str, Any]:
