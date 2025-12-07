@@ -222,4 +222,4 @@
   check:
     function: has_no_outliers
     arguments:
-      column: col6
+      column: col2

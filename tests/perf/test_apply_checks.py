@@ -1246,7 +1246,6 @@ def test_benchmark_foreach_has_no_outliers(benchmark, ws, generated_integer_df):
             criticality="error",
             check_func=check_funcs.has_no_outliers,
             columns=columns,
-            check_func_kwargs={"limit": 1000},
         ).get_rules()
     ]
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
