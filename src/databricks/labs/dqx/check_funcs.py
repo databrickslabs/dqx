@@ -1289,7 +1289,7 @@ def sql_query(
             automatically joined back to the input DataFrame. When merge_columns are not provided, the check
             applies to all rows (either all pass or all fail), making it useful for dataset-level validation
             with custom_metrics. Reference DataFrames when provided in the ref_dfs parameter are registered as temp view.
-        merge_columns: OPTIONAL (can be None or omitted). List of columns to join results back to input DataFrame.
+        merge_columns: Optional (can be None or omitted). List of columns to join results back to input DataFrame.
             - If provided: Row-level validation - different rows can have different results
             - If None/omitted: Dataset-level validation - all rows get same result
             When provided, columns must form a unique key to avoid duplicate records.
@@ -3075,7 +3075,7 @@ def _validate_sql_query_params(query: str, merge_columns: list[str] | None) -> N
     if merge_columns is None:
         return
 
-    if isinstance(merge_columns, str) or not isinstance(merge_columns, Sequence):
+    if not isinstance(merge_columns, Sequence) or isinstance(merge_columns, str):
         raise InvalidParameterError(
             "'merge_columns' must be a sequence of column names (e.g., list or tuple) when provided."
         )
