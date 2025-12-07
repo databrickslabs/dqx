@@ -102,7 +102,7 @@ def generated_df(spark, rows=DEFAULT_ROWS):
         .withColumnSpec("col10")
         .withColumnSpec("col_ipv4", template=r"\n.\n.\n.\n")
         .withColumnSpec("col_ipv6", template="XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX:XXXX")
-        .withColumnSpec("col_json_str", template=r"{'\key1': '\w', '\key2': 'd\w'}")
+        .withColumnSpec("col_json_str", template=r"{'key1': '\w', 'key2': 'd\w'}")
     )
     return spec.build()
 
