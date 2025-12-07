@@ -8,7 +8,7 @@ from databricks.labs.dqx.__about__ import __version__
 install_logger()
 
 logging.getLogger("databricks").setLevel(logging.INFO)
-logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.ERROR)
+logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
 logging.getLogger("mlflow").setLevel(logging.ERROR)
 
 # Disable MLflow Trace UI in notebooks

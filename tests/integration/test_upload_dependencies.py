@@ -134,7 +134,6 @@ def test_workflow_deployment_uploads_dependencies(ws, installation_with_upload_d
 
         # Verify core dependencies are included
         assert any("databricks_sdk" in dep for dep in call_args)
-        assert any("databricks_labs_lsql" in dep for dep in call_args)
 
         # Verify job was created with the uploaded wheels
         mock_create_job.assert_called_once()

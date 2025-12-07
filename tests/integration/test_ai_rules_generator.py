@@ -109,3 +109,41 @@ def test_generate_dq_rules_ai_assisted_with_custom_functions(ws, spark):
         }
     ]
     assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_is_not_equal_to_str(ws, spark):
+    user_input = "Device name must not be equal 'test'"
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
+
+    expected_checks = [
+        {
+            "check": {
+                "arguments": {"column": "device_name", "value": "'test'"},
+                "function": "is_not_equal_to",
+            },
+            "criticality": "error",
+        },
+    ]
+
+    assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_sql_expression(ws, spark):
+    user_input = "Users email must not end with @gmail.com checked using sql expression, skip msg."
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
+
+    expected_checks = [
+        {
+            "check": {
+                "arguments": {"columns": ["email"], "expression": "email NOT LIKE '%@gmail.com'"},
+                "function": "sql_expression",
+            },
+            "criticality": "error",
+        },
+    ]
+
+    assert actual_checks == expected_checks
