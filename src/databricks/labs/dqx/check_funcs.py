@@ -7,6 +7,7 @@ from collections.abc import Callable
 from enum import Enum
 from itertools import zip_longest
 import operator as py_operator
+from typing import Any
 import pandas as pd  # type: ignore[import-untyped]
 import pyspark.sql.functions as F
 from pyspark.sql import types
@@ -26,6 +27,40 @@ _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
 _IPV4_CIDR_SUFFIX = r"(3[0-2]|[12]?\d)"
 IPV4_MAX_OCTET_COUNT = 4
 IPV4_BIT_LENGTH = 32
+
+# Curated aggregate functions for data quality checks
+# These are univariate (single-column) aggregate functions suitable for DQ monitoring
+# Maps function names to human-readable display names for error messages
+CURATED_AGGR_FUNCTIONS = {
+    "count": "Count",
+    "sum": "Sum",
+    "avg": "Average",
+    "min": "Min",
+    "max": "Max",
+    "count_distinct": "Distinct count",
+    "approx_count_distinct": "Approximate distinct count",
+    "count_if": "Conditional count",
+    "stddev": "Standard deviation",
+    "stddev_pop": "Population standard deviation",
+    "stddev_samp": "Sample standard deviation",
+    "variance": "Variance",
+    "var_pop": "Population variance",
+    "var_samp": "Sample variance",
+    "median": "Median",
+    "mode": "Mode",
+    "skewness": "Skewness",
+    "kurtosis": "Kurtosis",
+    "percentile": "Percentile",
+    "approx_percentile": "Approximate percentile",
+}
+
+# Aggregate functions incompatible with Spark window functions
+# These require two-stage aggregation (groupBy + join) instead of window functions when used with group_by
+# Spark limitation: DISTINCT operations are not supported in window functions
+WINDOW_INCOMPATIBLE_AGGREGATES = {
+    "count_distinct",  # DISTINCT_WINDOW_FUNCTION_UNSUPPORTED error
+    # Future: Add other aggregates that don't work with windows (e.g., collect_set with DISTINCT)
+}
 
 
 class DQPattern(Enum):
@@ -461,7 +496,6 @@ def is_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
             The value to compare with. Can be a literal or a Spark Column. Defaults to None.
-            String literals must be single quoted, e.g. 'string_value'.
 
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
@@ -493,7 +527,6 @@ def is_not_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
             The value to compare with. Can be a literal or a Spark Column. Defaults to None.
-            String literals must be single quoted, e.g. 'string_value'.
 
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
@@ -1267,20 +1300,25 @@ def is_aggr_not_greater_than(
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
 
-    This function verifies that an aggregation (count, sum, avg, min, max) on a column
-    or group of columns does not exceed a specified limit. Rows where the aggregation
-    result exceeds the limit are flagged.
+    This function verifies that an aggregation on a column or group of columns does not exceed
+    a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
+    and any Databricks built-in aggregate. Rows where the aggregation result exceeds the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
 
     Returns:
         A tuple of:
@@ -1291,6 +1329,7 @@ def is_aggr_not_greater_than(
         column,
         limit,
         aggr_type,
+        aggr_params,
         group_by,
         row_filter,
         compare_op=py_operator.gt,
@@ -1306,20 +1345,25 @@ def is_aggr_not_less_than(
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
 
-    This function verifies that an aggregation (count, sum, avg, min, max) on a column
-    or group of columns is not below a specified limit. Rows where the aggregation
-    result is below the limit are flagged.
+    This function verifies that an aggregation on a column or group of columns is not below
+    a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
+    and any Databricks built-in aggregate. Rows where the aggregation result is below the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
 
     Returns:
         A tuple of:
@@ -1330,6 +1374,7 @@ def is_aggr_not_less_than(
         column,
         limit,
         aggr_type,
+        aggr_params,
         group_by,
         row_filter,
         compare_op=py_operator.lt,
@@ -1345,20 +1390,25 @@ def is_aggr_equal(
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
 
-    This function verifies that an aggregation (count, sum, avg, min, max) on a column
-    or group of columns is equal to a specified limit. Rows where the aggregation
-    result is not equal to the limit are flagged.
+    This function verifies that an aggregation on a column or group of columns is equal to
+    a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
+    and any Databricks built-in aggregate. Rows where the aggregation result is not equal to the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
 
     Returns:
         A tuple of:
@@ -1369,6 +1419,7 @@ def is_aggr_equal(
         column,
         limit,
         aggr_type,
+        aggr_params,
         group_by,
         row_filter,
         compare_op=py_operator.ne,
@@ -1384,20 +1435,25 @@ def is_aggr_not_equal(
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
+    aggr_params: dict[str, Any] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
 
-    This function verifies that an aggregation (count, sum, avg, min, max) on a column
-    or group of columns is not equal to a specified limit. Rows where the aggregation
-    result is equal to the limit are flagged.
+    This function verifies that an aggregation on a column or group of columns is not equal to
+    a specified limit. Supports curated aggregate functions (count, sum, avg, stddev, percentile, etc.)
+    and any Databricks built-in aggregate. Rows where the aggregation result is equal to the limit are flagged.
 
     Args:
         column: Column name (str) or Column expression to aggregate.
         limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max' (default: 'count').
+        aggr_type: Aggregation type (default: 'count'). Curated types include count, sum, avg, min, max,
+            count_distinct, stddev, percentile, and more. Any Databricks built-in aggregate is supported.
         group_by: Optional list of column names or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
+            percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
+            arguments to the Spark function.
 
     Returns:
         A tuple of:
@@ -1408,6 +1464,7 @@ def is_aggr_not_equal(
         column,
         limit,
         aggr_type,
+        aggr_params,
         group_by,
         row_filter,
         compare_op=py_operator.eq,
@@ -2387,10 +2444,95 @@ def _add_compare_condition(
     )
 
 
+def _build_aggregate_expression(
+    aggr_type: str,
+    filtered_expr: Column,
+    aggr_params: dict[str, Any] | None,
+) -> Column:
+    """
+    Build the appropriate Spark aggregate expression based on function type and parameters.
+
+    Args:
+        aggr_type: Name of the aggregate function.
+        filtered_expr: Column expression with filters applied.
+        aggr_params: Optional parameters for the aggregate function.
+
+    Returns:
+        Spark Column expression for the aggregate.
+
+    Raises:
+        MissingParameterError: If required parameters are missing for specific aggregates.
+        InvalidParameterError: If the aggregate function is not found or parameters are invalid.
+    """
+    if aggr_type == "count_distinct":
+        return F.countDistinct(filtered_expr)
+
+    if aggr_type in {"percentile", "approx_percentile"}:
+        if not aggr_params or "percentile" not in aggr_params:
+            raise MissingParameterError(
+                f"'{aggr_type}' requires aggr_params with 'percentile' key (e.g., {{'percentile': 0.95}})"
+            )
+        pct = aggr_params["percentile"]
+        # Pass through any additional parameters to Spark (e.g., accuracy, frequency)
+        # Spark will validate parameter names and types at runtime
+        other_params = {k: v for k, v in aggr_params.items() if k != "percentile"}
+
+        try:
+            aggr_func = getattr(F, aggr_type)
+            return aggr_func(filtered_expr, pct, **other_params)
+        except Exception as exc:
+            raise InvalidParameterError(f"Failed to build '{aggr_type}' expression: {exc}") from exc
+
+    try:
+        aggr_func = getattr(F, aggr_type)
+        if aggr_params:
+            return aggr_func(filtered_expr, **aggr_params)
+        return aggr_func(filtered_expr)
+    except AttributeError as exc:
+        raise InvalidParameterError(
+            f"Aggregate function '{aggr_type}' not found in pyspark.sql.functions. "
+            f"Verify the function name is correct, or check if your Databricks Runtime version supports this function. "
+            f"Some newer aggregate functions (e.g., mode, median) require DBR 15.4+ (Spark 3.5+). "
+            f"See: https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha"
+        ) from exc
+    except Exception as exc:
+        raise InvalidParameterError(f"Failed to build '{aggr_type}' expression: {exc}") from exc
+
+
+def _validate_aggregate_return_type(
+    df: DataFrame,
+    aggr_type: str,
+    metric_col: str,
+) -> None:
+    """
+    Validate aggregate returns a numeric type that can be compared to limits.
+
+    This is a schema-only validation (no data scanning) that checks whether the aggregate
+    function returns a type compatible with numeric comparisons.
+
+    Args:
+        df: DataFrame containing the aggregate result column.
+        aggr_type: Name of the aggregate function being validated.
+        metric_col: Column name containing the aggregate result.
+
+    Raises:
+        InvalidParameterError: If the aggregate returns a non-numeric type (Array, Map, Struct)
+            that cannot be compared to limits.
+    """
+    result_type = df.schema[metric_col].dataType
+    if isinstance(result_type, (types.ArrayType, types.MapType, types.StructType)):
+        raise InvalidParameterError(
+            f"Aggregate function '{aggr_type}' returned {result_type.typeName()} "
+            f"which cannot be compared to numeric limits. "
+            f"Use aggregate functions that return numeric values (e.g., count, sum, avg)."
+        )
+
+
 def _is_aggr_compare(
     column: str | Column,
     limit: int | float | str | Column,
     aggr_type: str,
+    aggr_params: dict[str, Any] | None,
     group_by: list[str | Column] | None,
     row_filter: str | None,
     compare_op: Callable[[Column, Column], Column],
@@ -2405,8 +2547,12 @@ def _is_aggr_compare(
 
     Args:
         column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit.
-        aggr_type: Aggregation type: 'count', 'sum', 'avg', 'min', or 'max'.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
+        aggr_type: Aggregation type. Curated functions include 'count', 'sum', 'avg', 'min', 'max',
+            'count_distinct', 'stddev', 'percentile', and more. Any Databricks built-in aggregate
+            function is supported (will trigger a warning for non-curated functions).
+        aggr_params: Optional dictionary of parameters for aggregate functions that require them
+            (e.g., percentile functions need {"percentile": 0.95}).
         group_by: Optional list of columns or Column expressions to group by.
         row_filter: Optional SQL expression to filter rows before aggregation.
         compare_op: Comparison operator (e.g., operator.gt, operator.lt).
@@ -2419,11 +2565,19 @@ def _is_aggr_compare(
             - A closure that applies the aggregation check logic.
 
     Raises:
-        InvalidParameterError: If an unsupported aggregation type is provided.
+        InvalidParameterError: If an aggregate returns non-numeric types or is not found.
+        MissingParameterError: If required parameters for specific aggregates are not provided.
     """
-    supported_aggr_types = {"count", "sum", "avg", "min", "max"}
-    if aggr_type not in supported_aggr_types:
-        raise InvalidParameterError(f"Unsupported aggregation type: {aggr_type}. Supported: {supported_aggr_types}")
+    # Warn if using non-curated aggregate function
+    is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
+    if not is_curated:
+        warnings.warn(
+            f"Using non-curated aggregate function '{aggr_type}'. "
+            f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
+            f"Non-curated aggregates must return a single numeric value per group.",
+            UserWarning,
+            stacklevel=3,
+        )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
 
@@ -2466,11 +2620,33 @@ def _is_aggr_compare(
         """
         filter_col = F.expr(row_filter) if row_filter else F.lit(True)
         filtered_expr = F.when(filter_col, aggr_col_expr) if row_filter else aggr_col_expr
-        aggr_expr = getattr(F, aggr_type)(filtered_expr)
+
+        # Build aggregation expression
+        aggr_expr = _build_aggregate_expression(aggr_type, filtered_expr, aggr_params)
 
         if group_by:
-            window_spec = Window.partitionBy(*[F.col(col) if isinstance(col, str) else col for col in group_by])
-            df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+            # Convert group_by to Column expressions (reused for both window and groupBy approaches)
+            group_cols = [F.col(col) if isinstance(col, str) else col for col in group_by]
+
+            # Check if aggregate is incompatible with window functions (e.g., count_distinct with DISTINCT)
+            if aggr_type in WINDOW_INCOMPATIBLE_AGGREGATES:
+                # Use two-stage aggregation: groupBy + join (instead of window functions)
+                # This is required for aggregates like count_distinct that don't support window DISTINCT operations
+                agg_df = df.groupBy(*group_cols).agg(aggr_expr.alias(metric_col))
+
+                # Join aggregated metrics back to original DataFrame to maintain row-level granularity
+                # Note: Aliased Column expressions in group_by are not supported for window-incompatible
+                # aggregates (e.g., count_distinct). Use string column names or simple F.col() expressions.
+                join_cols = [col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by]
+                df = df.join(agg_df, on=join_cols, how="left")
+            else:
+                # Use standard window function approach for window-compatible aggregates
+                window_spec = Window.partitionBy(*group_cols)
+                df = df.withColumn(metric_col, aggr_expr.over(window_spec))
+
+                # Validate non-curated aggregates (type check only - window functions return same row count)
+                if not is_curated:
+                    _validate_aggregate_return_type(df, aggr_type, metric_col)
         else:
             # When no group-by columns are provided, using partitionBy would move all rows into a single partition,
             # forcing the window function to process the entire dataset in one task.
@@ -2478,17 +2654,25 @@ def _is_aggr_compare(
             # Note: The aggregation naturally returns a single row without a groupBy clause,
             # so no explicit limit is required (informational only).
             agg_df = df.select(aggr_expr.alias(metric_col)).limit(1)
+
+            # Validate non-curated aggregates (type check only - we already limited to 1 row)
+            if not is_curated:
+                _validate_aggregate_return_type(agg_df, aggr_type, metric_col)
+
             df = df.crossJoin(agg_df)  # bring the metric across all rows
 
         df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 
         return df
 
+    # Get human-readable display name for aggregate function (including params if present)
+    aggr_display_name = _get_aggregate_display_name(aggr_type, aggr_params)
+
     condition = make_condition(
         condition=F.col(condition_col),
         message=F.concat_ws(
             "",
-            F.lit(f"{aggr_type.capitalize()} "),
+            F.lit(f"{aggr_display_name} value "),
             F.col(metric_col).cast("string"),
             F.lit(f" in column '{aggr_col_str}'"),
             F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
@@ -2615,6 +2799,35 @@ def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Col
     col_str_norm = get_column_name_or_alias(col_expr, normalize=True)
 
     return col_str_norm, column_str, col_expr
+
+
+def _get_aggregate_display_name(aggr_type: str, aggr_params: dict[str, Any] | None = None) -> str:
+    """
+    Get a human-readable display name for an aggregate function.
+
+    This helper provides user-friendly names for aggregate functions in error messages,
+    transforming technical function names (e.g., 'count_distinct') into readable text
+    (e.g., 'Distinct value count').
+
+    Args:
+        aggr_type: The aggregate function name (e.g., 'count_distinct', 'max', 'avg').
+        aggr_params: Optional parameters passed to the aggregate function.
+
+    Returns:
+        A human-readable display name for the aggregate function, including parameters
+        if provided. For non-curated functions, returns the function name in quotes
+        with 'value' suffix.
+    """
+    # Get base display name (curated functions have friendly names, others show function name in quotes)
+    base_name = CURATED_AGGR_FUNCTIONS.get(aggr_type, f"'{aggr_type}'")
+
+    # Add parameters if present
+    if aggr_params:
+        # Format parameters as key=value pairs
+        param_str = ", ".join(f"{k}={v}" for k, v in aggr_params.items())
+        return f"{base_name} ({param_str})"
+
+    return base_name
 
 
 def _get_column_expr(column: Column | str) -> Column:
