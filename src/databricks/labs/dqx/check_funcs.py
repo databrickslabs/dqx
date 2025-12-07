@@ -1836,7 +1836,7 @@ def has_valid_schema(
 @register_rule("row")
 def is_valid_json(column: str | Column) -> Column:
     """
-    Checks whether the values in the input column is a valid JSON string.
+    Checks whether the values in the input column are valid JSON strings.
 
     Args:
         column: Column name (str) or Column expression to check for valid JSON.
