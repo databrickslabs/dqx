@@ -2040,6 +2040,20 @@ checks = [
         },
     ),
 
+    # sql_query check without merge_columns (dataset-level validation)
+    DQDatasetRule(
+      criticality="error",
+      check_func=sql_query,
+      check_func_kwargs={
+        # sql query for dataset-level check
+        "query": "SELECT COUNT(*) = 0 AS condition FROM {{ input_view }}",
+        "input_placeholder": "input_view",  # name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame
+        "condition_column": "condition",  # the check fails if this column evaluates to True
+        "msg": "dataset has no records",  # optional
+        "name": "dataset_is_empty",  # optional
+        },
+    ),
+
     # compare_datasets check
     DQDatasetRule(
       criticality="error",
