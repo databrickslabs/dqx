@@ -1289,7 +1289,7 @@ def sql_query(
             automatically joined back to the input DataFrame. When merge_columns are not provided, the check
             applies to all rows (either all pass or all fail), making it useful for dataset-level validation
             with custom_metrics. Reference DataFrames when provided in the ref_dfs parameter are registered as temp view.
-        merge_columns: OPTIONAL (can be None or omitted). List of columns to join results back to input DataFrame.
+        merge_columns: Optional (can be None or omitted). List of columns to join results back to input DataFrame.
             - If provided: Row-level validation - different rows can have different results
             - If None/omitted: Dataset-level validation - all rows get same result
             When provided, columns must form a unique key to avoid duplicate records.
