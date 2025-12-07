@@ -946,9 +946,9 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
     """
     Build an outlier check condition and closure for dataset-level validation.
 
-    This function uses a statistical method called MAD (Median Absolute Deviation) to checks whether
-    the specified column's values are between the calculated limits. The upper limit is calculated from
-    the median + 3.5 * MAD. Values outside these limits are considered outliers.
+    This function uses a statistical method called MAD (Median Absolute Deviation) to check whether
+    the specified column's values are within the calculated limits. The lower limit is calculated as
+    median - 3.5 * MAD and the upper limit as median + 3.5 * MAD. Values outside these limits are considered outliers.
 
 
     Args:
