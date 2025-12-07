@@ -223,4 +223,3 @@
     function: has_no_outliers
     arguments:
       column: col6
-      
