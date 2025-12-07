@@ -1217,6 +1217,42 @@ def test_benchmark_foreach_is_data_fresh_per_time_window(benchmark, ws, generate
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_has_no_outliers(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.has_no_outliers,
+            column="col2",
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_integer_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_not_greater_than")
+def test_benchmark_foreach_has_no_outliers(benchmark, ws, generated_integer_df):
+    columns, df, n_rows = generated_integer_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            criticality="error",
+            check_func=check_funcs.has_no_outliers,
+            columns=columns,
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize(
     "column",
     [
