@@ -34,6 +34,10 @@ You can define quality checks programmatically using a list of DQX classes (list
 Checks can be defined using DQX classes such as `DQRowRule`, `DQDatasetRule`, and `DQForEachColRule`.
 This approach provides static type checking and autocompletion in IDEs, making it potentially easier to work with.
 
+<Admonition type="info" title="Note">
+The validation of arguments and keyword arguments for the check function is automatically performed upon creating a `DQRowRule`.
+</Admonition>
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -123,26 +127,57 @@ This approach provides static type checking and autocompletion in IDEs, making i
         column="col1",
         check_func_kwargs={"aggr_type": "avg", "group_by": ["col2"], "limit": 1.2},
       ),
+
       DQDatasetRule(  # dataset check working across group of rows
         criticality="error",
         check_func=check_funcs.is_aggr_equal,
         column="col1",
         check_func_kwargs={"aggr_type": "count", "group_by": ["col2"], "limit": 5},
       ),
+
       DQDatasetRule(  # dataset check working across group of rows
         criticality="error",
         check_func=check_funcs.is_aggr_not_equal,
         column="col1",
         check_func_kwargs={"aggr_type": "avg", "group_by": ["col2"], "limit": 10.5},
       ),
+
+      DQDatasetRule(  # dataset check for distinct value count for groups (each group should have 1 value)
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="country_code",
+        check_func_kwargs={
+            "aggr_type": "count_distinct",  # Exact distinct count
+            "group_by": ["country"],
+            "limit": 1
+        },
+      ),
+
+      DQDatasetRule(  # dataset check for standard deviation for groups
+        criticality="warn",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="temperature",
+        check_func_kwargs={
+            "aggr_type": "stddev",
+            "group_by": ["machine_id"],
+            "limit": 5.0
+        },
+      ),
+
+      DQDatasetRule(  # dataset check for percentile with the percentile value passed using aggr_params
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="latency_ms",
+        check_func_kwargs={
+            "aggr_type": "percentile",
+            "aggr_params": {"percentile": 0.95},
+            "limit": 1000
+        },
+      ),
     ]
     ```
   </TabItem>
 </Tabs>
-
-<Admonition type="info" title="Note">
-The validation of arguments and keyword arguments for the check function is automatically performed upon creating a `DQRowRule`.
-</Admonition>
 
 ### Checks defined using metadata (list of dictionaries)
 
@@ -246,6 +281,7 @@ but you can also define a list of dictionaries directly in python.
           group_by:
           - col2
           limit: 1.2
+          
     - criticality: error
       check:
         function: is_aggr_equal
@@ -255,6 +291,7 @@ but you can also define a list of dictionaries directly in python.
           group_by:
           - col2
           limit: 5
+          
     - criticality: error
       check:
         function: is_aggr_not_equal
@@ -264,6 +301,36 @@ but you can also define a list of dictionaries directly in python.
           group_by:
           - col2
           limit: 10.5
+
+    - criticality: error
+      check:
+        function: is_aggr_not_greater_than
+        arguments:
+          column: country_code
+          aggr_type: count_distinct
+          group_by:
+          - country
+          limit: 1
+    
+    - criticality: warn
+      check:
+        function: is_aggr_not_greater_than
+        arguments:
+          column: temperature
+          aggr_type: stddev
+          group_by:
+          - machine_id
+          limit: 5.0
+    
+    - criticality: error
+      check:
+        function: is_aggr_not_greater_than
+        arguments:
+          column: latency_ms
+          aggr_type: percentile
+          aggr_params:
+            percentile: 0.95
+          limit: 1000
     """)
 ```
 
@@ -379,6 +446,7 @@ Example `yaml` file defining several checks:
       group_by:
       - col2
       limit: 1.2
+      
 - criticality: error
   check:
     function: is_aggr_equal
@@ -388,6 +456,7 @@ Example `yaml` file defining several checks:
       group_by:
       - col2
       limit: 5
+      
 - criticality: error
   check:
     function: is_aggr_not_equal
@@ -397,6 +466,36 @@ Example `yaml` file defining several checks:
       group_by:
       - col2
       limit: 10.5
+
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: country_code
+      aggr_type: count_distinct
+      group_by: 
+      - country
+      limit: 1
+
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: temperature
+      aggr_type: stddev
+      group_by: 
+      - machine_id
+      limit: 5.0
+
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: latency_ms
+      aggr_type: percentile
+      aggr_params:
+        percentile: 0.95
+      limit: 1000
 ```
 
 ## JSON format (declarative approach)
@@ -540,6 +639,44 @@ Checks defined in JSON files are supported by the DQX workflows.
         "limit": 10.5
       }
     }
+  },
+  {
+    "criticality": "error",
+    "check": {
+      "function": "is_aggr_not_greater_than",
+      "arguments": {
+        "column": "country_code",
+        "aggr_type": "count_distinct",
+        "group_by": ["country"],
+        "limit": 1
+      }
+    }
+  },
+  {
+    "criticality": "warn",
+    "check": {
+      "function": "is_aggr_not_greater_than",
+      "arguments": {
+        "column": "temperature",
+        "aggr_type": "stddev",
+        "group_by": ["machine_id"],
+        "limit": 5.0
+      }
+    }
+  },
+  {
+    "criticality": "error",
+    "check": {
+      "function": "is_aggr_not_greater_than",
+      "arguments": {
+        "column": "latency_ms",
+        "aggr_type": "percentile",
+        "aggr_params": {
+          "percentile": 0.95
+        },
+        "limit": 1000
+      }
+    }
   }
 ]
 ```
@@ -586,6 +723,10 @@ This validation ensures that the checks are correctly defined and can be interpr
 The validation cannot be used for checks defined programmatically using DQX classes.
 When checks are defined programmatically with DQX classes, syntax validation is unnecessary because the application will fail to interpret them if the DQX objects are constructed incorrectly.
 
+<Admonition type="tip" title="Usage tips">
+Validating quality rules are typically done as part of the CI/CD process to ensure checks are ready to use in the application.
+</Admonition>
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -622,7 +763,3 @@ When checks are defined programmatically with DQX classes, syntax validation is 
     - 'checks_location': file or table location of the quality checks
   </TabItem>
 </Tabs>
-
-<Admonition type="tip" title="Usage tips">
-Validating quality rules are typically done as part of the CI/CD process to ensure checks are ready to use in the application.
-</Admonition>
