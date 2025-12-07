@@ -2,6 +2,7 @@ import re
 import sys
 import functools
 import logging
+import hashlib
 from io import StringIO
 from collections.abc import Callable
 from pyspark.sql import DataFrame, SparkSession
@@ -72,9 +73,13 @@ def telemetry_logger(key: str, value: str, workspace_client_attr: str = "ws") ->
 def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFrame):
     """
     Log telemetry information about a Spark DataFrame to the Databricks workspace including:
-    - Number of input tables and non-table inputs
+    - List of tables used as inputs (hashed)
+    - List of file paths used as inputs (hashed, excluding paths from tables)
     - Whether the DataFrame is streaming
     - Whether running in a Delta Live Tables (DLT) pipeline
+
+    This function is designed to never throw exceptions - it will log errors but continue execution
+    to ensure telemetry failures don't break the main application flow.
 
     Args:
         ws: WorkspaceClient
@@ -84,38 +89,114 @@ def log_dataframe_telemetry(ws: WorkspaceClient, spark: SparkSession, df: DataFr
     Returns:
         None
     """
-    input_table_count = count_tables_in_spark_plan(df)
-    log_telemetry(ws, "table_input_count", str(input_table_count))
-    # assume 1 input if no tables
-    log_telemetry(ws, "non_table_input_count", str(0 if input_table_count > 0 else 1))
     log_telemetry(ws, "streaming", str(df.isStreaming).lower())
     log_telemetry(ws, "dlt", str(is_dlt_pipeline(spark)).lower())
 
+    plan_str = get_spark_plan_as_string(df)
+    if plan_str:
+        input_tables = get_tables_from_spark_plan(plan_str)
+        for table in input_tables:
+            log_telemetry(ws, "input_table", hashlib.sha256(("id:" + table).encode("utf-8")).hexdigest())
 
-def count_tables_in_spark_plan(df: DataFrame) -> int:
+        input_paths = get_paths_from_spark_plan(plan_str, input_tables)
+        for path in input_paths:
+            log_telemetry(ws, "input_path", hashlib.sha256(("id:" + path).encode("utf-8")).hexdigest())
+
+
+def get_tables_from_spark_plan(plan_str: str) -> set[str]:
     """
-    Count the number of tables referenced in a DataFrame's Spark execution plan.
+    Extract table names from the Analyzed Logical Plan section of a Spark execution plan.
 
-    This function analyzes the Analyzed Logical Plan section of the Spark execution plan
-    to identify table references (via SubqueryAlias nodes). File-based DataFrames and
-    in-memory DataFrames will return 0.
+    This function parses the Analyzed Logical Plan section and identifies table references
+    by finding SubqueryAlias nodes, which Spark uses to represent table references in the
+    logical plan. File-based sources (e.g., Delta files from volumes) and in-memory DataFrames
+    do not create SubqueryAlias nodes and therefore won't be counted as tables.
 
     Args:
-        df: The Spark DataFrame to analyze
+        plan_str: The complete Spark execution plan string (from df.explain(True))
 
     Returns:
-        The number of distinct tables found in the execution plan. Returns 0 if the plan
-        cannot be retrieved or contains no table references.
+        A set of distinct table names found in the plan. Returns empty set if no
+        Analyzed Logical Plan section is found or no tables are referenced.
     """
     try:
-        plan_str = _get_spark_plan_as_string(df)
-        if not plan_str:
-            return 0
-        tables = _extract_tables_from_spark_plan(plan_str)
-        return len(tables)
+        return _extract_tables_from_analyzed_plan(plan_str)
     except Exception as e:
-        logger.debug(f"Failed to count tables in Spark plan: {e}")
-        return 0
+        logger.debug(f"Failed to extract tables from Spark plan: {e}")
+        return set()
+
+
+def get_paths_from_spark_plan(plan_str: str, table_names: set[str] | None = None) -> set[str]:
+    """
+    Extract file paths from the Physical Plan section of a Spark execution plan.
+
+    This function parses the Physical Plan section and identifies file path references
+    by finding any *FileIndex patterns in the Location field (e.g., PreparedDeltaFileIndex,
+    ParquetFileIndex, etc.). These paths represent direct file-based data sources
+    (e.g., files from volumes, DBFS, S3, etc.) that are not registered as tables.
+
+    Args:
+        plan_str: The complete Spark execution plan string (from df.explain(True))
+        table_names: Optional set of table names to exclude (paths associated with tables are skipped)
+
+    Returns:
+        A set of distinct file paths found in the plan. Returns empty set if no
+        Physical Plan section is found or no paths are referenced.
+    """
+    try:
+        return _extract_paths_from_physical_plan(plan_str, table_names)
+    except Exception as e:
+        logger.debug(f"Failed to extract paths from Spark plan: {e}")
+        return set()
+
+
+def _extract_tables_from_analyzed_plan(plan_str: str) -> set[str]:
+    """Helper function to extract tables from the Analyzed Logical Plan section."""
+    tables: set[str] = set()
+
+    # Extract Analyzed Logical Plan section (stop at next "==")
+    match = re.search(r"== Analyzed Logical Plan ==\s*(.*?)\n==", plan_str, re.DOTALL)
+    if not match:
+        return tables
+
+    analyzed_text = match.group(1)
+
+    # Extract SubqueryAlias names (only present if table is used)
+    subquery_aliases = re.findall(r"SubqueryAlias\s+([^\s]+)", analyzed_text)
+    tables.update(alias.replace("`", "") for alias in subquery_aliases)
+
+    return tables
+
+
+def _extract_paths_from_physical_plan(plan_str: str, table_names: set[str] | None = None) -> set[str]:
+    """Helper function to extract paths from the Physical Plan section."""
+    paths: set[str] = set()
+
+    # Extract Physical Plan section (stop at next "==")
+    match = re.search(r"== Physical Plan ==\s*(.*?)(?:\n==|$)", plan_str, re.DOTALL)
+    if not match:
+        return paths
+
+    physical_text = match.group(1)
+    if table_names is None:
+        table_names = set()
+
+    # Process line by line to check for table associations
+    for line in physical_text.split('\n'):
+        location_match = re.search(r"Location:\s+\w+FileIndex\([^)]+\)\[([^\]]+)\]", line)
+        if not location_match:
+            continue
+
+        # Skip if this line contains any table name (indicating it's a table-based path)
+        if any(table_name in line for table_name in table_names):
+            continue
+
+        # Extract and add non-empty paths
+        paths_str = location_match.group(1)
+        path_list = [p.strip() for p in paths_str.split(',') if p.strip()]
+        paths.update(path_list)
+
+    return paths
 
 
 def is_dlt_pipeline(spark: SparkSession) -> bool:
@@ -137,7 +218,7 @@ def is_dlt_pipeline(spark: SparkSession) -> bool:
         return False
 
 
-def _get_spark_plan_as_string(df: DataFrame) -> str:
+def get_spark_plan_as_string(df: DataFrame) -> str:
     """
     Retrieve the Spark execution plan as a string by capturing df.explain() output.
 
@@ -161,35 +242,3 @@ def _get_spark_plan_as_string(df: DataFrame) -> str:
     finally:
         sys.stdout = old_stdout
     return buf.getvalue()
-
-
-def _extract_tables_from_spark_plan(plan_str: str) -> set[str]:
-    """
-    Extract table names from the Analyzed Logical Plan section of a Spark execution plan.
-
-    This function parses the Analyzed Logical Plan section and identifies table references
-    by finding SubqueryAlias nodes, which Spark uses to represent table references in the
-    logical plan. File-based sources (e.g., Delta files from volumes) and in-memory DataFrames
-    do not create SubqueryAlias nodes and therefore won't be counted as tables.
-
-    Args:
-        plan_str: The complete Spark execution plan string (from df.explain(True))
-
-    Returns:
-        A set of distinct table names found in the plan. Returns empty set if no
-        Analyzed Logical Plan section is found or no tables are referenced.
-    """
-    tables: set[str] = set()
-
-    # Extract Analyzed Logical Plan section (stop at next "==")
-    match = re.search(r"== Analyzed Logical Plan ==\s*(.*?)\n==", plan_str, re.DOTALL)  # non-greedy until next section
-    if not match:
-        return tables
-
-    analyzed_text = match.group(1)
-
-    # Extract SubqueryAlias names (only present if table is used)
-    subquery_aliases = re.findall(r"SubqueryAlias\s+([^\s]+)", analyzed_text)
-    tables.update(subquery_aliases)
-
-    return tables
