@@ -9,6 +9,14 @@ from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from databricks.labs.dqx.errors import InvalidCheckError
 
+# Optional anomaly detection support
+try:
+    from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
+
+    ANOMALY_ENABLED = True
+except ImportError:
+    ANOMALY_ENABLED = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +42,9 @@ def resolve_check_function(
     if not func:
         # resolve using predefined geo checks, requires Databricks serverless or DBR >= 17.1
         func = getattr(geo_check_funcs, function_name, None)
+    if not func and ANOMALY_ENABLED:
+        # resolve using anomaly checks, requires anomaly extras (mlflow, scikit-learn)
+        func = getattr(anomaly_check_funcs, function_name, None)
     if not func and custom_check_functions:
         func = custom_check_functions.get(function_name)  # returns None if not found
     if fail_on_missing and not func:

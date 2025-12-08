@@ -1,0 +1,363 @@
+---
+sidebar_position: 15
+---
+
+# Anomaly Detection (ML-based)
+
+Detect multivariate anomalies by training a model on "normal" data, then flagging rows that deviate. Current implementation uses Spark ML IsolationForest (Spark ≥ 3.5 / DBR ≥ 15.4); future releases can add more algorithms behind the same interface.
+
+## Complements Databricks native monitoring
+
+DQX's anomaly detection **works alongside** [Databricks native anomaly detection](https://learn.microsoft.com/en-gb/azure/databricks/data-quality-monitoring/anomaly-detection/) for comprehensive monitoring:
+
+| **Feature** | **Databricks Native** | **DQX Anomaly Detection** |
+|-------------|----------------------|---------------------------|
+| **What it monitors** | Table freshness + row count completeness | Row-level data quality patterns |
+| **Granularity** | Schema-level (all tables) | Table-specific (per-column groups) |
+| **Questions answered** | "Did my data arrive on time?" | "Are these rows valid?" |
+| **Setup** | Enable once per schema | Train model per table + columns |
+
+**Together, they provide**:
+- **Pipeline health** (Databricks native): Catch late updates, missing batches
+- **Content quality** (DQX): Catch suspicious individual records, multivariate anomalies
+
+**Recommended workflow**:
+1. Enable Databricks native monitoring on your schema (automatic)
+2. Add DQX anomaly checks for critical tables (model-based)
+3. Use both signals: late data alerts + row-level anomalies
+
+## When to use DQX anomaly detection
+
+- You need to catch rows that look plausible per-column but are unlikely together (e.g., high amount + large discount + low quantity).
+- You want the model to adapt to recent "normal" patterns instead of fixed thresholds.
+- You need a row-level anomaly score for quarantine/reporting/dashboards.
+- Your validation logic requires multivariate patterns that simple rules can't capture.
+
+When NOT to use
+- If a simple rule covers it (e.g., `amount > 10000`), prefer rules for clarity.
+- If data is extremely small or highly noisy, results may be unstable; consider simpler checks.
+- For table-level monitoring (freshness/completeness), use Databricks native instead.
+
+## How it works
+
+1. Train on recent “good” data to learn typical ranges and combinations.
+2. Score new rows; higher scores = more anomalous.
+3. `has_no_anomalies` flags rows whose score exceeds your threshold (default 0.5).
+
+## Quick start (Python)
+
+```python
+from databricks.labs.dqx.anomaly import train, has_no_anomalies
+
+# Train (defaults: auto names, auto registry table, sampling caps)
+train(
+    df=spark.table("catalog.schema.orders"),
+    columns=["amount", "quantity", "shipping_cost"],
+)
+
+# Use in checks
+checks = [
+    has_no_anomalies(
+        columns=["amount", "quantity", "shipping_cost"],
+        score_threshold=0.5,  # higher = more anomalous
+    )
+]
+```
+
+## YAML example
+
+```yaml
+# config.yml
+run_configs:
+  - name: orders
+    input_config:
+      location: catalog.schema.orders
+    anomaly_config:
+      columns: [amount, quantity, shipping_cost]
+      # optional overrides:
+      # params:
+      #   sample_fraction: 0.3
+      #   max_rows: 1000000
+      #   train_ratio: 0.8
+      #   algorithm_config:
+      #     contamination: 0.1
+      #     num_trees: 200
+
+# checks.yml
+- criticality: warn
+  check:
+    function: has_no_anomalies
+    arguments:
+      columns: [amount, quantity, shipping_cost]
+      score_threshold: 0.5
+```
+
+## Threshold guidance
+| Threshold | Use case |
+|-----------|----------|
+| 0.3 | Aggressive: catch more, risk higher false positives |
+| 0.5 | Balanced (default) |
+| 0.7 | Conservative |
+| 0.9 | Very conservative |
+
+## Practical scenarios
+
+- Transactions: unusual amount + discount + quantity combinations.
+- Logistics: weight and dimensions that don’t align with historical norms.
+- KPIs: correlated metrics diverging (e.g., requests vs. errors) even if each is in-range.
+- Sensor data: multivariate drift (e.g., temp + pressure + flow) even if each is within a threshold.
+
+## Data prep and performance
+
+- Numeric columns only; ensure types are numeric before training/scoring.
+- Sampling defaults: 30% up to 1M rows; auto warnings if capped. Override via `params` only if needed.
+- Train/validation split: default 80/20; basic score distribution metrics are logged to the registry.
+- Large datasets: training uses Spark ML; scoring runs via the saved Spark pipeline; for exploratory scoring, limit rows.
+
+## Model lifecycle
+
+- Registry table auto-created; active model is stored there with metrics and hyperparameters.
+- Auto-derive names if not provided: model name from input table + columns hash; registry table from catalog.schema (`dqx_anomaly_models`).
+- Retrain periodically (workflow provided) to adapt to drift; warning if model is >30 days old.
+
+## Model performance and metrics
+
+After training, comprehensive validation metrics are stored in the registry:
+
+**View metrics**:
+```sql
+SELECT 
+    model_name, 
+    metrics['recommended_threshold'] as recommended_threshold,
+    metrics['threshold_50_precision'] as precision_at_50,
+    metrics['threshold_50_recall'] as recall_at_50,
+    metrics['threshold_50_f1'] as f1_at_50,
+    metrics['estimated_contamination'] as est_contamination,
+    feature_importance,
+    training_time
+FROM catalog.schema.dqx_anomaly_models
+WHERE status = 'active'
+ORDER BY training_time DESC
+```
+
+**Metrics included**:
+- Precision, recall, F1 at thresholds 0.3, 0.5, 0.7, 0.9
+- **Recommended threshold**: F1-optimal balance point
+- Distribution statistics: mean, std, skewness, percentiles
+- Estimated contamination rate in validation data
+
+**Feature importance**: Global importance scores show which columns matter most for anomaly detection across all rows.
+
+## Threshold selection
+
+Use the `recommended_threshold` from registry metrics as a starting point:
+
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+# Query recommended threshold from registry
+recommended = spark.sql("""
+    SELECT metrics['recommended_threshold'] as threshold
+    FROM catalog.schema.dqx_anomaly_models
+    WHERE model_name = 'orders__abc123__anomaly' AND status = 'active'
+""").first()['threshold']
+
+# Use in checks
+checks = [
+    has_no_anomalies(
+        columns=["amount", "quantity", "shipping_cost"],
+        score_threshold=recommended,
+    )
+]
+```
+
+The recommended threshold balances precision and recall based on validation data. Adjust up (more conservative) or down (more aggressive) based on business impact of false positives vs. false negatives.
+
+## Explainability (feature contributions)
+
+Understand which columns drove each anomaly score using `include_contributions`:
+
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        columns=["amount", "quantity", "discount"],
+        score_threshold=0.5,
+        include_contributions=True,  # adds 'anomaly_contributions' map column
+    )
+]
+```
+
+**Output example**:
+```
+| amount | quantity | discount | anomaly_score | anomaly_contributions                        |
+|--------|----------|----------|---------------|----------------------------------------------|
+| 9999   | 1        | 0.95     | 0.87          | {discount: 0.60, amount: 0.25, quantity: 0.15} |
+```
+
+Top contributors are shown as percentages summing to 1.0. Use this to:
+- Investigate why specific rows were flagged
+- Validate the model learned correct patterns
+- Enrich quarantine data for downstream review
+
+## Drift detection and retraining
+
+Drift detection warns when current data distribution significantly differs from training data:
+
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        columns=["amount", "quantity"],
+        drift_threshold=3.0,  # Z-score threshold (default)
+    )
+]
+```
+
+**When drift detected**, you'll see a warning like:
+```
+UserWarning: Data drift detected in columns: amount, quantity (drift score: 4.2).
+Model may be stale. Retrain using:
+
+from databricks.labs.dqx.anomaly import train
+train(df=spark.table('catalog.schema.orders'),
+      columns=['amount', 'quantity'],
+      model_name='orders__abc123__anomaly')
+```
+
+**Workflow for handling drift**:
+1. Enable drift detection in production checks
+2. Monitor warnings in check results or logs
+3. When drift exceeds threshold, retrain the model using the provided command
+4. New model automatically replaces old one in registry (old archived)
+
+**Drift metrics**:
+- Z-score for mean shift
+- Relative change in standard deviation
+- Overall drift score = max across all columns
+
+Set `drift_threshold=None` to disable drift detection.
+
+## Temporal data (seasonal patterns)
+
+For time-series data with seasonal patterns, extract temporal features before training:
+
+```python
+from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
+
+# Extract time-based features
+df_with_temporal = extract_temporal_features(
+    df,
+    timestamp_column="event_time",
+    features=["hour", "day_of_week", "month"]
+)
+
+# Train on original + temporal features
+train(
+    df=df_with_temporal,
+    columns=[
+        "amount", "quantity", "shipping_cost",
+        "temporal_hour", "temporal_day_of_week", "temporal_month"
+    ],
+)
+```
+
+**Use cases**:
+- Detect anomalies that depend on time-of-day (e.g., unusual traffic at 3am)
+- Capture day-of-week patterns (weekday vs. weekend behavior)
+- Account for seasonal variations (monthly/quarterly cycles)
+
+**Available temporal features**:
+- `hour`: Hour of day (0-23)
+- `day_of_week`: Day of week (1=Monday, 7=Sunday)
+- `day_of_month`: Day of month (1-31)
+- `month`: Month (1-12)
+- `quarter`: Quarter (1-4)
+- `week_of_year`: Week of year (1-53)
+- `is_weekend`: Boolean for Saturday/Sunday (0.0 or 1.0)
+
+## Quarantine workflow
+
+Anomaly detection integrates seamlessly with DQX's quarantine workflow:
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import OutputConfig
+from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
+
+checks = [
+    has_no_anomalies(
+        columns=["amount", "quantity", "discount"],
+        score_threshold=0.5,
+        include_contributions=True,
+    )
+]
+
+# Split valid and invalid rows
+valid_df, invalid_df = dq_engine.apply_checks_by_metadata_and_split(
+    spark.table("catalog.schema.orders"), checks
+)
+
+# Save to separate tables
+dq_engine.save_results_in_table(
+    output_df=valid_df,
+    quarantine_df=invalid_df,
+    output_config=OutputConfig(location="catalog.schema.valid_orders"),
+    quarantine_config=OutputConfig(location="catalog.schema.quarantine_orders"),
+)
+```
+
+**Quarantine DataFrame includes**:
+- Original columns
+- `anomaly_score`
+- `anomaly_contributions` (if `include_contributions=True`)
+- DQX metadata columns (`dqx_check_name`, `dqx_error_message`, etc.)
+
+**Using with Delta Live Tables**:
+```python
+import dlt
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
+checks = [
+    has_no_anomalies(
+        columns=["amount", "quantity", "discount"],
+        score_threshold=0.5,
+    )
+]
+
+@dlt.view
+def bronze_with_anomaly_checks():
+    df = dlt.read_stream("bronze")
+    return dq_engine.apply_checks_by_metadata(df, checks)
+
+@dlt.table
+def silver():
+    df = dlt.read_stream("bronze_with_anomaly_checks")
+    return dq_engine.get_valid(df)
+
+@dlt.table
+def quarantine():
+    df = dlt.read_stream("bronze_with_anomaly_checks")
+    return dq_engine.get_invalid(df)
+```
+
+## Requirements and notes
+
+- Spark ≥ 3.5 / DBR ≥ 15.4 (Spark ML IsolationForest).
+- Install extra: `pip install 'databricks-labs-dqx[anomaly]'`.
+- Rows with nulls in anomaly columns are skipped (not flagged).
+- Fails fast on unsupported Spark/DBR.
+
+## Looking ahead
+
+The API is designed to support additional algorithms in the future (e.g., alternative anomaly detectors, ensemble methods) without changing how you define checks.
+

@@ -15,6 +15,14 @@ from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Task, Workflow
 from databricks.labs.dqx.installer.logs import TaskLogger
 
+# Optional anomaly detection support
+try:
+    from databricks.labs.dqx.anomaly.anomaly_workflow import AnomalyTrainerWorkflow
+
+    ANOMALY_ENABLED = True
+except ImportError:
+    ANOMALY_ENABLED = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,13 +54,24 @@ class WorkflowsRunner:
             spark_conf=config.quality_checker_spark_conf,
             override_clusters=config.quality_checker_override_clusters,
         )
+        
+        # Conditionally add anomaly trainer if dependencies are installed
+        workflows = [profiler, quality_checker]
+        if ANOMALY_ENABLED:
+            anomaly_trainer = AnomalyTrainerWorkflow(
+                spark_conf=config.quality_checker_spark_conf,
+                override_clusters=config.quality_checker_override_clusters,
+            )
+            workflows.append(anomaly_trainer)
+        
         e2e = EndToEndWorkflow(
             profiler,
             quality_checker,
             spark_conf=config.e2e_spark_conf,
             override_clusters=config.e2e_override_clusters,
         )
-        return cls([profiler, quality_checker, e2e])
+        workflows.append(e2e)
+        return cls(workflows)
 
     def tasks(self) -> list[Task]:
         """Return all tasks."""
