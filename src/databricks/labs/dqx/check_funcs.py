@@ -2019,6 +2019,7 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
     Validates that JSON strings in the specified column conform to an expected schema.
 
     This check is not strict. Extra fields in the JSON that are not defined in the schema are ignored.
+    Please note that the depth of nested structures is limited to 15.
 
     Args:
         column: Column name or Column expression containing JSON strings.
@@ -2026,6 +2027,10 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
 
     Returns:
         Column: A Spark Column representing whether the column conforms to the expected JSON schema.
+
+    Raises:
+        InvalidParameterError: If the schema string is invalid or cannot be parsed, or if
+            the input schema is neither a string nor a StructType.
     """
 
     _expected_schema = _get_schema(schema)
@@ -2305,7 +2310,9 @@ def _is_compatible_atomic_type(actual_type: types.AtomicType, expected_type: typ
     return False
 
 
-def _generate_field_presence_checks(expected_schema: types.StructType, parsed_struct_col: Column) -> list[Column]:
+def _generate_field_presence_checks(
+    expected_schema: types.StructType, parsed_struct_col: Column, max_depth: int = 15, current_depth: int = 0
+) -> list[Column]:
     """
     Recursively generate Spark Column expressions that verify each field defined in the expected
     schema is present and non-null within a parsed struct column.
@@ -2313,16 +2320,23 @@ def _generate_field_presence_checks(expected_schema: types.StructType, parsed_st
     Args:
         expected_schema: The StructType defining the expected JSON schema.
         parsed_struct_col: The parsed struct column (e.g., from from_json) to validate.
+        max_depth: Maximum recursion depth to prevent excessive nesting. Default is 10.
+        current_depth: Current recursion depth.
 
     Returns:
         A list of Column expressions, one per field in the expected schema, that evaluate to True
         if the corresponding field is non-null.
     """
+    if current_depth > max_depth:
+        return []
+
     validations = []
     for field in expected_schema.fields:
         field_ref = parsed_struct_col[field.name]
         if isinstance(field.dataType, types.StructType):
-            validations += _generate_field_presence_checks(field.dataType, field_ref)
+            validations += _generate_field_presence_checks(
+                field.dataType, field_ref, max_depth=max_depth, current_depth=current_depth + 1
+            )
         else:
             validations.append(field_ref.isNotNull())
     return validations
