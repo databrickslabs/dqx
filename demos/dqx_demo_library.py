@@ -943,11 +943,15 @@ dq_engine = DQEngine(WorkspaceClient())
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### Using `sql_query` check
+# MAGIC #### Using `sql_query` check - Row-level validation
+# MAGIC 
+# MAGIC The `sql_query` check supports two modes:
+# MAGIC - **Row-level validation** (with `merge_columns`): Query results are joined back to mark specific rows
+# MAGIC - **Dataset-level validation** (without `merge_columns`): Check result applies to all rows
 
 # COMMAND ----------
 
-# using DQX classes
+# Row-level validation example: Check each sensor against its threshold
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.check_funcs import sql_query
 
@@ -973,7 +977,7 @@ checks = [
         check_func=sql_query,
         check_func_kwargs={
             "query": query,
-            "merge_columns": ["sensor_id"],
+            "merge_columns": ["sensor_id"],  # Results joined back by sensor_id
             "condition_column": "condition",  # the check fails if this column evaluates to True
             "msg": "one of the sensor reading is greater than limit",
             "name": "sensor_reading_check",
@@ -985,6 +989,41 @@ checks = [
 # Pass reference DataFrame with sensor specifications
 ref_dfs = {"sensor_specs": sensor_specs_df}
 
+valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Using `sql_query` check - Dataset-level validation
+# MAGIC 
+# MAGIC When `merge_columns` is not provided, the check applies to all rows (all pass or all fail together).
+# MAGIC This is useful for dataset-level aggregate validations.
+
+# COMMAND ----------
+
+# Dataset-level validation example: Check total sensor count
+dataset_query = """
+    SELECT COUNT(DISTINCT sensor_id) < 1 AS condition
+    FROM {{ sensor }}
+"""
+
+checks = [
+    DQDatasetRule(
+        criticality="warn",
+        check_func=sql_query,
+        check_func_kwargs={
+            "query": dataset_query,
+            # No merge_columns = dataset-level check (all rows get same result)
+            "condition_column": "condition",
+            "msg": "Dataset has no sensors",
+            "name": "dataset_has_sensors",
+            "input_placeholder": "sensor",
+        },
+    ),
+]
+
+ref_dfs = {"sensor_specs": sensor_specs_df}
 valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
 display(valid_and_quarantine_df)
 
@@ -1024,6 +1063,30 @@ checks = yaml.safe_load(
 ref_dfs = {"sensor_specs": sensor_specs_df}
 
 valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# YAML example for dataset-level validation (without merge_columns)
+checks_dataset_level = yaml.safe_load(
+    """
+    - criticality: warn
+      check:
+        function: sql_query
+        arguments:
+          # No merge_columns = dataset-level validation
+          condition_column: condition
+          msg: Dataset has no sensors
+          name: dataset_has_sensors
+          input_placeholder: sensor
+          query: |
+            SELECT COUNT(DISTINCT sensor_id) < 1 AS condition
+            FROM {{ sensor }}
+    """
+)
+
+ref_dfs = {"sensor_specs": sensor_specs_df}
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks_dataset_level, ref_dfs=ref_dfs)
 display(valid_and_quarantine_df)
 
 # COMMAND ----------
