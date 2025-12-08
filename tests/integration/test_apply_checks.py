@@ -26,7 +26,7 @@ from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
 
 from tests.conftest import TEST_CATALOG
-from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID
+from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID, build_quality_violation
 
 
 SCHEMA = "a: int, b: int, c: int"
@@ -3065,6 +3065,584 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
+    """Test sql_query check without merge_columns - dataset-level validation."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [1, None, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check without merge_columns
+    # Query returns a single row with a condition column
+    # The check will fail because COUNT(*) > 2 is True (we have 4 rows)
+    query_fail = "SELECT COUNT(*) > 2 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_fail,
+                "condition_column": "condition",
+                "msg": "Dataset has more than 2 rows",
+                "name": "dataset_check_fail",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # All rows should have the same error result since it's a dataset-level check
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                None,
+                3,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                1,
+                None,
+                4,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_filter(ws, spark):
+    """Test sql_query check without merge_columns with row_filter - should only apply to filtered rows."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, 10, 3], [1, 20, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check without merge_columns but WITH a filter
+    # The query checks if SUM(a) > 2, but only for rows where b >= 10
+    # Only 2 rows match the filter: [2, 10, 3] and [1, 20, 4], and SUM(a) = 3 > 2, so condition is True
+    query_with_filter = "SELECT SUM(a) > 2 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            filter="b >= 10",  # Only apply to rows where b >= 10
+            check_func_kwargs={
+                "query": query_with_filter,
+                "condition_column": "condition",
+                "msg": "Filtered sum check failed",
+                "name": "dataset_filtered_check",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # Only rows matching the filter (b >= 10) should have the error
+    # Rows not matching the filter should have None for both _errors and _warnings
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                None,  # b=3 doesn't match filter (b >= 10), so no error
+                None,
+            ],
+            [
+                2,
+                10,
+                3,
+                [
+                    {
+                        "name": "dataset_filtered_check",
+                        "message": "Filtered sum check failed",
+                        "columns": None,
+                        "filter": "b >= 10",
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                1,
+                20,
+                4,
+                [
+                    {
+                        "name": "dataset_filtered_check",
+                        "message": "Filtered sum check failed",
+                        "columns": None,
+                        "filter": "b >= 10",
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+                None,  # b=None doesn't match filter, so no error
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_passes(ws, spark):
+    """Test sql_query without merge_columns where condition evaluates to False (no violations)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Dataset-level check that passes: COUNT(*) > 100 is False (we only have 2 rows)
+    query_pass = "SELECT COUNT(*) > 100 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_pass,
+                "condition_column": "condition",
+                "msg": "Dataset has too many rows",
+                "name": "dataset_size_check",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # All rows should have None for errors since condition is False
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 3, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_empty_result(ws, spark):
+    """Test sql_query without merge_columns where query returns no rows (treated as False)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Query with WHERE 1=0 returns no rows
+    query_no_rows = "SELECT TRUE AS condition FROM {{input_view}} WHERE 1=0"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_no_rows,
+                "condition_column": "condition",
+                "msg": "Empty query result",
+                "name": "empty_query_check",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # No rows from query means condition is False, so no violations
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 3, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_negate(ws, spark):
+    """Test sql_query without merge_columns with negate=True."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Query that returns False, but with negate=True should fail
+    query_false = "SELECT COUNT(*) > 100 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_false,
+                "condition_column": "condition",
+                "msg": "Dataset does not have enough rows",
+                "name": "dataset_min_size_check",
+                "negate": True,  # Fail when condition is False
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # With negate=True, False becomes violation
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [
+                    {
+                        "name": "dataset_min_size_check",
+                        "message": "Dataset does not have enough rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                None,
+                3,
+                [
+                    {
+                        "name": "dataset_min_size_check",
+                        "message": "Dataset does not have enough rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
+    """Test sql_query without merge_columns with warning criticality."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [3, 4, 5]], SCHEMA)
+
+    # Dataset-level warning: COUNT(*) > 2 is True
+    query_warn = "SELECT COUNT(*) > 2 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",  # Warning instead of error
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_warn,
+                "condition_column": "condition",
+                "msg": "Dataset has more than 2 rows (warning)",
+                "name": "dataset_warn_check",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # All rows should have warning (not error)
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                2,
+                None,
+                3,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                3,
+                4,
+                5,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df(ws, spark):
+    """Test sql_query without merge_columns (dataset-level) with reference DataFrame."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    # Main dataset
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200], [3, 30, 300]], SCHEMA)
+
+    # Reference dataset with expected totals
+    ref_df = spark.createDataFrame([[600]], "expected_total: int")
+
+    # Dataset-level check: violation occurs when totals do NOT match the reference table
+    query = """
+        SELECT (SELECT SUM(c) FROM {{input_view}}) != (SELECT expected_total FROM {{expected_totals}}) AS condition
+    """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query,
+                "condition_column": "condition",
+                "msg": "Total amount matches expected",
+                "name": "multi_dataset_check",
+            },
+        ),
+    ]
+
+    ref_dfs = {"expected_totals": ref_df}
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
+
+    # All rows should pass (SUM(100,200,300) = 600)
+    expected = spark.createDataFrame(
+        [
+            [1, 10, 100, None, None],
+            [2, 20, 200, None, None],
+            [3, 30, 300, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, spark):
+    """Test sql_query without merge_columns (dataset-level) with reference DataFrame that fails."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    # Main dataset
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200], [3, 30, 300]], SCHEMA)
+
+    # Reference dataset with expected totals (wrong value)
+    ref_df = spark.createDataFrame([[999]], "expected_total: int")
+
+    # Dataset-level check: violation occurs when totals do NOT match the reference table
+    query = """
+        SELECT (SELECT SUM(c) FROM {{input_view}}) != (SELECT expected_total FROM {{expected_totals}}) AS condition
+    """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query,
+                "condition_column": "condition",
+                "msg": "Total amount does not match expected",
+                "name": "multi_dataset_check",
+            },
+        ),
+    ]
+
+    ref_dfs = {"expected_totals": ref_df}
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
+
+    # All rows should fail (SUM(100,200,300) = 600 != 999)
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                10,
+                100,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                20,
+                200,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                3,
+                30,
+                300,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_multiple_rows_error(ws, spark):
+    """Ensure dataset-level sql_query errors when the query returns more than one row."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200]], SCHEMA)
+
+    query_multi_rows = "SELECT a > 0 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_multi_rows,
+                "condition_column": "condition",
+                "msg": "Should never reach application",
+                "name": "dataset_multi_row_error",
+            },
+        ),
+    ]
+
+    with pytest.raises(
+        InvalidParameterError, match="Dataset-level sql_query without merge_columns must return exactly one row"
+    ):
+        dq_engine.apply_checks(test_df, checks)
+
+
 def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
@@ -3881,18 +4459,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     2,
                     None,
                     4,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
                     None,
                 ],
                 [
@@ -3900,47 +4467,14 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     4,
                     None,
                     None,
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
                 [
                     None,
                     None,
                     None,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
             ],
             EXPECTED_SCHEMA_WITH_CUSTOM_NAMES,
@@ -3975,18 +4509,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     2,
                     None,
                     4,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
                     None,
                 ],
                 [
@@ -3994,47 +4517,14 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     4,
                     None,
                     None,
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
                 [
                     None,
                     None,
                     None,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "run_id": RUN_ID,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
             ],
             EXPECTED_SCHEMA,
@@ -7355,7 +7845,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7375,7 +7865,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
@@ -7385,7 +7875,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "count_equal_to_limit",
-                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "message": "Count value 3 in column '*' is equal to limit: 3",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
@@ -7464,7 +7954,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7484,7 +7974,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
@@ -7494,7 +7984,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "count_equal_to_limit",
-                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "message": "Count value 3 in column '*' is equal to limit: 3",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
@@ -7603,7 +8093,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7633,7 +8123,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
@@ -7643,7 +8133,7 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                     },
                     {
                         "name": "count_equal_to_limit",
-                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "message": "Count value 3 in column '*' is equal to limit: 3",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
