@@ -192,13 +192,22 @@ def _validate_columns(df: DataFrame, columns: Iterable[str]) -> None:
 
 def _derive_model_name(df: DataFrame, columns: list[str]) -> str:
     input_table = _get_input_table(df)
-    base = input_table.split(".")[-1]
+    if input_table:
+        base = input_table.split(".")[-1]
+    else:
+        # Fallback when input table name cannot be inferred
+        base = "unknown_table"
     col_hash = hashlib.md5(",".join(sorted(columns)).encode("utf-8")).hexdigest()[:8]
     return f"{base}__{col_hash}__anomaly"
 
 
 def _derive_registry_table(df: DataFrame) -> str:
     input_table = _get_input_table(df)
+    if not input_table:
+        raise InvalidParameterError(
+            "Cannot infer registry table name from DataFrame. "
+            "Provide registry_table explicitly or use df=spark.table('catalog.schema.table')."
+        )
     parts = input_table.split(".")
     if len(parts) == 3:
         catalog, schema, _ = parts
@@ -213,11 +222,16 @@ def _derive_registry_table(df: DataFrame) -> str:
     return f"{catalog}.{schema}.dqx_anomaly_models"
 
 
-def _get_input_table(df: DataFrame) -> str:
+def _get_input_table(df: DataFrame) -> str | None:
+    """
+    Attempt to get the input table name from DataFrame.
+    
+    Returns None if table name cannot be inferred (e.g., temporary DataFrames, Spark Connect).
+    """
     if df.isStreaming:
         raise InvalidParameterError("Streaming DataFrames are not supported for training.")
     # Note: Spark Connect doesn't support sql_ctx, so we can't reliably get table name
-    # Just return None and rely on auto-derivation
+    # Return None for DataFrames created programmatically
     return None
 
 

@@ -162,10 +162,14 @@ def has_no_anomalies(
                     stacklevel=3,
                 )
 
+        # Filter rows if row_filter is provided
+        # Add stable row ID to original DataFrame before any filtering
+        df_with_id = df.withColumn("__anomaly_row_id", F.monotonically_increasing_id())
+        
         if row_filter:
-            df_filtered = df.filter(F.expr(row_filter))
+            df_filtered = df_with_id.filter(F.expr(row_filter))
         else:
-            df_filtered = df
+            df_filtered = df_with_id
 
         # Check if ensemble model (multiple URIs separated by comma)
         model_uris = record.model_uri.split(",")
@@ -181,7 +185,7 @@ def has_no_anomalies(
             # Merge all scored DataFrames
             scored_df = scored_dfs[0]
             for i in range(1, len(scored_dfs)):
-                # Join on all original columns
+                # Join on all original columns plus row ID
                 join_cols = [c for c in df_filtered.columns]
                 scored_df = scored_df.join(
                     scored_dfs[i].select(join_cols + [f"_score_{i}"]),
@@ -219,6 +223,29 @@ def has_no_anomalies(
         if not include_confidence:
             scored_df = scored_df.drop("anomaly_score_std")
 
+        # If row_filter was used, join back to original DataFrame to preserve all rows
+        # Non-filtered rows will have null anomaly_score
+        if row_filter:
+            # Get score columns to join
+            score_cols_to_join = ["anomaly_score"]
+            if include_confidence:
+                score_cols_to_join.append("anomaly_score_std")
+            if include_contributions:
+                score_cols_to_join.append("anomaly_contributions")
+            
+            # Extract only the row ID and score columns from scored_df
+            scored_subset = scored_df.select(["__anomaly_row_id"] + score_cols_to_join)
+            
+            # Left join back to original DataFrame (preserves all rows)
+            scored_df = df_with_id.join(
+                scored_subset,
+                on="__anomaly_row_id",
+                how="left"
+            )
+        
+        # Drop the temporary row ID column
+        scored_df = scored_df.drop("__anomaly_row_id")
+        
         # Note: Anomaly rate can be computed from the output DataFrame:
         # anomaly_rate = scored_df.filter(F.col("anomaly_score") > threshold).count() / scored_df.count()
         # For tracking over time, use DQX metrics observer with dataset-level aggregations
