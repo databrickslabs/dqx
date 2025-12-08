@@ -1217,6 +1217,42 @@ def test_benchmark_foreach_is_data_fresh_per_time_window(benchmark, ws, generate
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_has_no_outliers(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.has_no_outliers,
+            column="col2",
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_integer_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_not_greater_than")
+def test_benchmark_foreach_has_no_outliers(benchmark, ws, generated_integer_df):
+    columns, df, n_rows = generated_integer_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            criticality="error",
+            check_func=check_funcs.has_no_outliers,
+            columns=columns,
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize(
     "column",
     [
@@ -1603,4 +1639,63 @@ def test_benchmark_foreach_has_valid_schema(benchmark, ws, generated_string_df):
     ]
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_count_distinct_with_group_by(benchmark, ws, generated_df):
+    """Benchmark count_distinct with group_by (uses two-stage aggregation: groupBy + join)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "group_by": ["col3"],
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_approx_count_distinct_with_group_by(benchmark, ws, generated_df):
+    """Benchmark approx_count_distinct with group_by (uses window functions - should be faster)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "approx_count_distinct",
+                "group_by": ["col3"],
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_count_distinct_no_group_by(benchmark, ws, generated_df):
+    """Benchmark count_distinct without group_by (baseline - uses standard aggregation)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
