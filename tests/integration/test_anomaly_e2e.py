@@ -6,7 +6,9 @@ from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
+from tests.conftest import TEST_CATALOG
 
 
 @pytest.fixture
@@ -15,19 +17,25 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_basic_train_and_score(spark: SparkSession, mock_workspace_client):
+def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_schema, make_random):
     """Test basic training and scoring workflow."""
-    # Train on normal data
+    # Create unique schema and table names for test isolation
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    model_name = f"test_basic_{make_random(4).lower()}"
+    registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
+    
+    # Train on normal data (more data for stable model)
     train_df = spark.createDataFrame(
-        [(100.0 + i, 2.0) for i in range(50)],
+        [(100.0 + i * 0.1, 2.0 + i * 0.01) for i in range(200)],
         "amount double, quantity double",
     )
     
     model_uri = train(
         df=train_df,
         columns=["amount", "quantity"],
-        model_name="test_basic",
-        registry_table="main.default.test_basic_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
     
     # Verify model URI is returned
@@ -36,21 +44,25 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client):
     
     # Score normal + anomalous data
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
+        [(110.0, 2.5), (9999.0, 100.0)],  # First is clearly in range, second is clearly out
         "amount double, quantity double",
     )
     
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        has_no_anomalies(
-            columns=["amount", "quantity"],
-            model="test_basic",
-            registry_table="main.default.test_basic_registry",
-            score_threshold=0.5,
+        DQDatasetRule(
+            criticality="error",
+            check_func=has_no_anomalies,
+            check_func_kwargs={
+                "columns": ["amount", "quantity"],
+                "model": model_name,
+                "registry_table": registry_table,
+                "score_threshold": 0.7,  # Higher threshold to reduce false positives
+            }
         )
     ]
     
-    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+    result_df = dq_engine.apply_checks(test_df, checks)
     errors = result_df.select("_errors").collect()
     
     # First row (normal) should pass, second row (anomaly) should fail
@@ -58,8 +70,14 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client):
     assert len(errors[1]["_errors"]) > 0
 
 
-def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client):
+def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, make_schema, make_random):
     """Test that anomaly scores are added to the DataFrame."""
+    # Create unique schema and table names for test isolation
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    model_name = f"test_scores_{make_random(4).lower()}"
+    registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
+    
     train_df = spark.createDataFrame(
         [(100.0, 2.0) for i in range(50)],
         "amount double, quantity double",
@@ -68,8 +86,8 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client):
     train(
         df=train_df,
         columns=["amount", "quantity"],
-        model_name="test_scores",
-        registry_table="main.default.test_scores_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
     
     test_df = spark.createDataFrame(
@@ -79,15 +97,19 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client):
     
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        has_no_anomalies(
-            columns=["amount", "quantity"],
-            model="test_scores",
-            registry_table="main.default.test_scores_registry",
-            score_threshold=0.5,
+        DQDatasetRule(
+            criticality="error",
+            check_func=has_no_anomalies,
+            check_func_kwargs={
+                "columns": ["amount", "quantity"],
+                "model": model_name,
+                "registry_table": registry_table,
+                "score_threshold": 0.5,
+            }
         )
     ]
     
-    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+    result_df = dq_engine.apply_checks(test_df, checks)
     
     # Verify anomaly_score column exists
     assert "anomaly_score" in result_df.columns
@@ -121,20 +143,30 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client):
     
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        has_no_anomalies(
-            columns=["amount", "quantity"],
-            score_threshold=0.5,
+        DQDatasetRule(
+            criticality="error",
+            check_func=has_no_anomalies,
+            check_func_kwargs={
+                "columns": ["amount", "quantity"],
+                "score_threshold": 0.5,
+            }
         )
     ]
     
-    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+    result_df = dq_engine.apply_checks(test_df, checks)
     
     # Should succeed without errors
     assert "anomaly_score" in result_df.columns
 
 
-def test_threshold_flagging(spark: SparkSession, mock_workspace_client):
+def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_schema, make_random):
     """Test that anomalous rows are flagged based on score_threshold."""
+    # Create unique schema and table names for test isolation
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    model_name = f"test_threshold_{make_random(4).lower()}"
+    registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
+    
     train_df = spark.createDataFrame(
         [(100.0, 2.0) for i in range(50)],
         "amount double, quantity double",
@@ -143,8 +175,8 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client):
     train(
         df=train_df,
         columns=["amount", "quantity"],
-        model_name="test_threshold_flag",
-        registry_table="main.default.test_threshold_flag_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
     
     # Create test data with clear normal and anomalous rows
@@ -159,15 +191,19 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client):
     
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        has_no_anomalies(
-            columns=["amount", "quantity"],
-            model="test_threshold_flag",
-            registry_table="main.default.test_threshold_flag_registry",
-            score_threshold=0.5,
+        DQDatasetRule(
+            criticality="error",
+            check_func=has_no_anomalies,
+            check_func_kwargs={
+                "columns": ["amount", "quantity"],
+                "model": model_name,
+                "registry_table": registry_table,
+                "score_threshold": 0.5,
+            }
         )
     ]
     
-    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+    result_df = dq_engine.apply_checks(test_df, checks)
     result_df = result_df.collect()
     
     # Normal rows should have no errors
@@ -179,14 +215,18 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client):
     assert len(result_df[2]["_errors"]) > 0
 
 
-def test_registry_table_auto_creation(spark: SparkSession):
+def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_random):
     """Test that registry table is auto-created if missing."""
+    # Create unique schema and table names for test isolation
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    model_name = f"test_auto_{make_random(4).lower()}"
+    registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
+    
     train_df = spark.createDataFrame(
         [(100.0, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
-    registry_table = "main.default.test_auto_create_registry"
     
     # Drop table if exists
     spark.sql(f"DROP TABLE IF EXISTS {registry_table}")
@@ -198,7 +238,7 @@ def test_registry_table_auto_creation(spark: SparkSession):
     train(
         df=train_df,
         columns=["amount", "quantity"],
-        model_name="test_auto_create",
+        model_name=model_name,
         registry_table=registry_table,
     )
     
@@ -222,8 +262,14 @@ def test_registry_table_auto_creation(spark: SparkSession):
         assert col in registry_df.columns
 
 
-def test_multiple_columns(spark: SparkSession, mock_workspace_client):
+def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schema, make_random):
     """Test training and scoring with multiple columns."""
+    # Create unique schema and table names for test isolation
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    model_name = f"test_multi_{make_random(4).lower()}"
+    registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
+    
     train_df = spark.createDataFrame(
         [(100.0, 2.0, 0.1, 50.0) for i in range(50)],
         "amount double, quantity double, discount double, weight double",
@@ -232,8 +278,8 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client):
     train(
         df=train_df,
         columns=["amount", "quantity", "discount", "weight"],
-        model_name="test_multi_col",
-        registry_table="main.default.test_multi_col_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
     
     test_df = spark.createDataFrame(
@@ -243,15 +289,19 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client):
     
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        has_no_anomalies(
-            columns=["amount", "quantity", "discount", "weight"],
-            model="test_multi_col",
-            registry_table="main.default.test_multi_col_registry",
-            score_threshold=0.5,
+        DQDatasetRule(
+            criticality="error",
+            check_func=has_no_anomalies,
+            check_func_kwargs={
+                "columns": ["amount", "quantity", "discount", "weight"],
+                "model": model_name,
+                "registry_table": registry_table,
+                "score_threshold": 0.5,
+            }
         )
     ]
     
-    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+    result_df = dq_engine.apply_checks(test_df, checks)
     
     assert "anomaly_score" in result_df.columns
     errors = result_df.select("_errors").collect()

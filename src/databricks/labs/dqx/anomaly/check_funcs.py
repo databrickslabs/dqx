@@ -142,7 +142,7 @@ def has_no_anomalies(
                 )
 
         # Check for data drift
-        if drift_threshold is not False and record.baseline_stats:
+        if drift_threshold is not None and record.baseline_stats:
             drift_result = compute_drift_score(
                 df.select(normalized_columns),
                 normalized_columns,

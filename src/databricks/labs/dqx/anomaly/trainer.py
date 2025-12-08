@@ -13,7 +13,7 @@ import hashlib
 import warnings
 from dataclasses import asdict
 from datetime import datetime
-from typing import Iterable
+from typing import Any, Iterable
 
 import mlflow
 from pyspark.sql import DataFrame, SparkSession
@@ -72,12 +72,15 @@ def train(
     # Check if ensemble training is requested
     ensemble_size = cfg.params.ensemble_size if cfg.params and cfg.params.ensemble_size else 1
     
+    run_id = None  # Initialize to avoid NameError
+    
     if ensemble_size > 1:
         # Train ensemble
         model_uris, hyperparams, validation_metrics = _train_ensemble(
             train_df, val_df, cfg, ensemble_size, derived_model_name
         )
         model_uri = ",".join(model_uris)  # Store as comma-separated string
+        run_id = "ensemble"  # Placeholder for ensemble runs (multiple MLflow runs)
     else:
         # Train single model (sklearn IsolationForest on driver)
         model, hyperparams = _fit_isolation_forest(train_df, cfg.params)
@@ -85,6 +88,10 @@ def train(
         contamination = cfg.params.algorithm_config.contamination if cfg.params and cfg.params.algorithm_config else 0.1
         validation_metrics = _compute_validation_metrics(model, val_df, cfg.columns, contamination)
         
+        # Register model to Unity Catalog
+        # Note: When running outside Databricks (e.g., local Spark Connect), you may see a warning:
+        # "Unable to get model version source run's workspace ID from request headers"
+        # This is expected and informational only - the model will register successfully
         mlflow.set_registry_uri("databricks-uc")
         with mlflow.start_run() as run:
             # Infer model signature for Unity Catalog (required)
@@ -95,9 +102,10 @@ def train(
             signature = infer_signature(train_pandas, predictions)
             
             # Log scikit-learn model with signature
+            # Note: Using 'path' instead of deprecated 'artifact_path'
             model_info = mlflow.sklearn.log_model(
                 sk_model=model,
-                artifact_path="model",
+                path="model",
                 registered_model_name=derived_model_name,
                 signature=signature,
             )
@@ -398,9 +406,9 @@ def _compute_validation_metrics(
     
     metrics = {
         "validation_rows": val_count,
-        "score_mean": stats["mean"],
-        "score_std": stats["std"],
-        "score_skewness": stats["skewness"],
+        "score_mean": stats["mean"] or 0.0,
+        "score_std": stats["std"] or 0.0,
+        "score_skewness": stats["skewness"] or 0.0,
         "score_p10": quantiles[0],
         "score_p25": quantiles[1],
         "score_p50": quantiles[2],
@@ -413,6 +421,9 @@ def _compute_validation_metrics(
     
     # Add threshold-specific metrics
     metrics.update(threshold_metrics)
+    
+    # Filter out None values (MLflow doesn't accept them)
+    metrics = {k: v for k, v in metrics.items() if v is not None}
     
     return metrics
 
@@ -504,6 +515,9 @@ def _train_ensemble(
     model_uris = []
     all_metrics = []
     
+    # Register models to Unity Catalog
+    # Note: When running outside Databricks, you may see warnings about workspace ID headers
+    # This is expected and informational only - models will register successfully
     mlflow.set_registry_uri("databricks-uc")
     
     for i in range(ensemble_size):
@@ -529,9 +543,10 @@ def _train_ensemble(
             predictions = model.predict(train_pandas.values)
             signature = infer_signature(train_pandas, predictions)
             
+            # Note: Using 'path' instead of deprecated 'artifact_path'
             model_info = mlflow.sklearn.log_model(
                 sk_model=model,
-                artifact_path="model",
+                path="model",
                 registered_model_name=f"{model_name}_ensemble_{i}",
                 signature=signature,
             )

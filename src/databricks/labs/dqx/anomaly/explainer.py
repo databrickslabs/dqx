@@ -47,7 +47,7 @@ def compute_feature_contributions(
     # For exact contributions, consider using SHAP with the sklearn model
     contributions_expr = F.create_map()
     
-    for i, col in columns:
+    for col in columns:
         # Heuristic: contribution proportional to normalized deviation
         deviation = F.abs(F.col(col) - F.lit(means[col]))
         contribution = deviation / (F.lit(len(columns)) + F.lit(1.0))
