@@ -2331,7 +2331,7 @@ def test_has_valid_schema_permissive_mode_extra_column(spark):
 
     expected_schema = "a string, b int"  # Expected schema without extra column
     condition, apply_method = has_valid_schema(expected_schema)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", "c", condition)
 
     expected_condition_df = spark.createDataFrame(
@@ -2400,7 +2400,7 @@ def test_has_valid_schema_permissive_mode_type_widening(spark):
 
     expected_schema = "a varchar(10), b long, c decimal(5, 1), d float, e timestamp, f timestamp, g boolean, h binary, i array<char(1)>, j map<varchar(10), int>, k struct<field1: varchar(5), field2: byte, field3: timestamp>, l map<string, string>, invalid_col int"
     condition, apply_method = has_valid_schema(expected_schema)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select(
         "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "invalid_col", condition
     )
@@ -2484,7 +2484,7 @@ def test_has_valid_schema_permissive_mode_missing_column(spark):
         ]
     )
     condition, apply_method = has_valid_schema(expected_schema)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", condition)
 
     expected_condition_df = spark.createDataFrame(
@@ -2516,7 +2516,7 @@ def test_has_valid_schema_permissive_mode_incompatible_column_type(spark):
 
     expected_schema = "a string, b int"
     condition, apply_method = has_valid_schema(expected_schema)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", condition)
 
     expected_condition_df = spark.createDataFrame(
@@ -2548,7 +2548,7 @@ def test_has_valid_schema_strict_mode_missing_column(spark):
 
     expected_schema = "a string, b int, c double"
     condition, apply_method = has_valid_schema(expected_schema, strict=True)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", condition)
 
     expected_condition_df = spark.createDataFrame(
@@ -2580,7 +2580,7 @@ def test_has_valid_schema_strict_mode_extra_column(spark):
 
     expected_schema = "a string, b int"
     condition, apply_method = has_valid_schema(expected_schema, strict=True)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", "c", condition)
 
     expected_condition_df = spark.createDataFrame(
@@ -2614,7 +2614,7 @@ def test_has_valid_schema_strict_mode_wrong_column_order(spark):
 
     expected_schema = "a string, b int"
     condition, apply_method = has_valid_schema(expected_schema, strict=True)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("b", "a", condition)
 
     expected_condition_df = spark.createDataFrame(
@@ -2646,7 +2646,7 @@ def test_has_valid_schema_with_specified_columns(spark):
 
     expected_schema = "a string, b int, c string, e int"
     condition, apply_method = has_valid_schema(expected_schema, columns=["a", "b"], strict=False)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
 
     expected_condition_df = spark.createDataFrame(
@@ -2670,7 +2670,7 @@ def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
 
     expected_schema = "a string, b int, c string"
     condition, apply_method = has_valid_schema(expected_schema, columns=["a", "b"], strict=True)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", "c", condition)
 
     expected_condition_df = spark.createDataFrame(
@@ -2716,7 +2716,46 @@ def test_has_valid_schema_with_ref_table(spark, make_schema, make_random):
     )
 
     condition, apply_method = has_valid_schema(ref_table=ref_table_name)
-    actual_apply_df = apply_method(test_df, spark)
+    actual_apply_df = apply_method(test_df, spark, {})
+    actual_condition_df = actual_apply_df.select("a", "b", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            [
+                "str1",
+                "not_an_int",
+                "Schema validation failed: Column 'b' has incompatible type, expected 'integer', got 'string'",
+            ],
+            [
+                "str2",
+                "also_not_int",
+                "Schema validation failed: Column 'b' has incompatible type, expected 'integer', got 'string'",
+            ],
+        ],
+        "a string, b string, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_with_ref_df_name(spark: SparkSession):
+    ref_df = spark.createDataFrame(
+        [
+            ["ref1", 100],
+            ["ref2", 200],
+        ],
+        "a string, b int",
+    )
+
+    test_df = spark.createDataFrame(
+        [
+            ["str1", "not_an_int"],
+            ["str2", "also_not_int"],
+        ],
+        "a string, b string",
+    )
+
+    condition, apply_method = has_valid_schema(ref_df_name="my_ref_df")
+    actual_apply_df = apply_method(test_df, spark, {"my_ref_df": ref_df})
     actual_condition_df = actual_apply_df.select("a", "b", condition)
 
     expected_condition_df = spark.createDataFrame(
