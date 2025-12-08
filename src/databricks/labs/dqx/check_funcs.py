@@ -1897,8 +1897,8 @@ def has_valid_schema(
         InvalidParameterError:
             - If the *expected_schema* string is invalid or cannot be parsed
             - If *expected_schema* is neither a string nor a StructType
-            - If both *expected_schema* and *ref_table* are specified
-            - If neither *expected_schema* nor *ref_table* are specified
+            - If more than one of *expected_schema*, *ref_df_name*, or *ref_table* are specified
+            - If none of *expected_schema*, *ref_df_name*, or *ref_table* are specified
 
     Note:
         Exactly one of *expected_schema*, *ref_df_name*, or *ref_table* must be specified.

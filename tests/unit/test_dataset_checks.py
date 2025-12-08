@@ -242,7 +242,7 @@ def test_is_data_fresh_per_time_window_exceptions(
         (None, None, None),
     ],
 )
-def test_has_valid_schema_exceptions(expected_schema, ref_df_name, ref_table):
+def test_has_valid_schema_parameter_validation(expected_schema, ref_df_name, ref_table):
     with pytest.raises(
         InvalidParameterError,
         match="Must specify one of 'expected_schema', 'ref_df_name', or 'ref_table' when using 'has_valid_schema'",
