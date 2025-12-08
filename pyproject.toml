@@ -71,6 +71,10 @@ llm = [
 datacontract = [
     "datacontract-cli>=0.11.1"
 ]
+anomaly = [
+    "mlflow>=2.0",
+    "scikit-learn>=1.0",
+]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.workflows_runner:main"

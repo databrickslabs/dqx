@@ -17,6 +17,14 @@ except ImportError:
 
 from databricks.labs.dqx.errors import InvalidCheckError
 
+# Optional anomaly detection support
+try:
+    from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
+
+    ANOMALY_ENABLED = True
+except ImportError:
+    ANOMALY_ENABLED = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -45,6 +53,9 @@ def resolve_check_function(
     if not func and PII_ENABLED:
         # try to resolve using predefined pii detection checks
         func = getattr(pii_check_funcs, function_name, None)
+    if not func and ANOMALY_ENABLED:
+        # resolve using anomaly checks, requires anomaly extras (mlflow, scikit-learn)
+        func = getattr(anomaly_check_funcs, function_name, None)
     if not func and custom_check_functions:
         func = custom_check_functions.get(function_name)  # returns None if not found
     if fail_on_missing and not func:
