@@ -1,5 +1,10 @@
 """
-Training pipeline for anomaly detection (Spark ML IsolationForest).
+Training pipeline for anomaly detection using scikit-learn IsolationForest.
+
+Architecture:
+- Training: scikit-learn on driver (efficient for sampled data ≤1M rows)
+- Scoring: Distributed across Spark cluster via pandas UDFs
+- Everything else: Distributed on Spark (sampling, splits, metrics, drift detection)
 """
 
 from __future__ import annotations
@@ -11,11 +16,8 @@ from datetime import datetime
 from typing import Iterable
 
 import mlflow
-from pyspark.ml import Pipeline
-from pyspark.ml.classification import IsolationForest
-from pyspark.ml.pipeline import PipelineModel
-from pyspark.ml.feature import VectorAssembler
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.functions import pandas_udf, PandasUDFType
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx.config import AnomalyConfig, AnomalyParams, IsolationForestConfig
@@ -37,7 +39,10 @@ def train(
     params: AnomalyParams | None = None,
 ) -> str:
     """
-    Train an anomaly detection model using Spark ML IsolationForest.
+    Train an anomaly detection model using SynapseML IsolationForest.
+
+    Requires Spark >= 3.4 and the 'anomaly' extras installed:
+        pip install 'databricks-labs-dqx[anomaly]'
 
     Args:
         df: Input DataFrame containing historical \"normal\" data.
@@ -74,29 +79,40 @@ def train(
         )
         model_uri = ",".join(model_uris)  # Store as comma-separated string
     else:
-        # Train single model
+        # Train single model (sklearn IsolationForest on driver)
         model, hyperparams = _fit_isolation_forest(train_df, cfg.params)
         
         contamination = cfg.params.algorithm_config.contamination if cfg.params and cfg.params.algorithm_config else 0.1
-        validation_metrics = _compute_validation_metrics(model, val_df, contamination)
+        validation_metrics = _compute_validation_metrics(model, val_df, cfg.columns, contamination)
         
         mlflow.set_registry_uri("databricks-uc")
         with mlflow.start_run() as run:
-            model_info = mlflow.spark.log_model(
-                spark_model=model,
+            # Infer model signature for Unity Catalog (required)
+            import pandas as pd
+            from mlflow.models import infer_signature
+            train_pandas = train_df.toPandas()
+            predictions = model.predict(train_pandas.values)
+            signature = infer_signature(train_pandas, predictions)
+            
+            # Log scikit-learn model with signature
+            model_info = mlflow.sklearn.log_model(
+                sk_model=model,
                 artifact_path="model",
                 registered_model_name=derived_model_name,
+                signature=signature,
             )
             mlflow.log_params(_flatten_hyperparams(hyperparams))
             mlflow.log_metrics(validation_metrics)
+            
             model_uri = model_info.model_uri
+            run_id = run.info.run_id
     
-    # Compute baseline statistics for drift detection
+    # Compute baseline statistics for drift detection (distributed on Spark)
     baseline_stats = _compute_baseline_statistics(train_df)
     
-    # Compute feature importance for explainability (use first model if ensemble)
+    # Compute feature importance for explainability (distributed on Spark, use first model if ensemble)
     if ensemble_size > 1:
-        first_model = mlflow.spark.load_model(model_uris[0])
+        first_model = mlflow.sklearn.load_model(model_uris[0])
         feature_importance = _compute_feature_importance(first_model, val_df, cfg.columns)
     else:
         feature_importance = _compute_feature_importance(model, val_df, cfg.columns)
@@ -108,20 +124,9 @@ def train(
             stacklevel=2,
         )
 
-    # Log feature importance to MLflow if single model
-    if ensemble_size == 1:
-        mlflow.set_registry_uri("databricks-uc")
-        with mlflow.start_run(run_id=mlflow.active_run().info.run_id):
-            for col, importance in feature_importance.items():
-                mlflow.log_param(f"feature_importance_{col}", importance)
-
     registry = AnomalyModelRegistry(spark)
     
-    # Get MLflow run ID (from active run or last run in ensemble)
-    if ensemble_size == 1:
-        run_id = run.info.run_id
-    else:
-        run_id = mlflow.active_run().info.run_id if mlflow.active_run() else "ensemble"
+    # run_id was already saved during model logging
     
     record = AnomalyModelRecord(
         model_name=derived_model_name,
@@ -146,8 +151,11 @@ def train(
 
 def _validate_spark_version(spark: SparkSession) -> None:
     major, minor, *_ = spark.version.split(".")
-    if int(major) < 3 or (int(major) == 3 and int(minor) < 5):
-        raise InvalidParameterError("Anomaly detection requires Spark >= 3.5 / DBR >= 15.4")
+    if int(major) < 3 or (int(major) == 3 and int(minor) < 4):
+        raise InvalidParameterError(
+            "Anomaly detection requires Spark >= 3.4 for SynapseML compatibility. "
+            "Found Spark {}.{}.".format(major, minor)
+        )
 
 
 def _build_config(
@@ -200,11 +208,9 @@ def _derive_registry_table(df: DataFrame) -> str:
 def _get_input_table(df: DataFrame) -> str:
     if df.isStreaming:
         raise InvalidParameterError("Streaming DataFrames are not supported for training.")
-    source = df.sql_ctx.conf.get("spark.sql.sources.tableName", "")
-    if source:
-        return source
-    # Fall back to table identifier if available via lineage
-    raise InvalidParameterError("Input table name could not be inferred; please provide registry_table explicitly.")
+    # Note: Spark Connect doesn't support sql_ctx, so we can't reliably get table name
+    # Just return None and rely on auto-derivation
+    return None
 
 
 def _sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple[DataFrame, int, bool]:
@@ -223,45 +229,118 @@ def _train_validation_split(df: DataFrame, params: AnomalyParams) -> tuple[DataF
     return train_df, val_df
 
 
-def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[PipelineModel, dict[str, Any]]:
+def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[Any, dict[str, Any]]:
+    """
+    Train scikit-learn IsolationForest on driver, returning a model and hyperparameters.
+    
+    Training happens on the driver node with collected data (already sampled to <=1M rows).
+    Scoring will be distributed via pandas UDF.
+    """
+    try:
+        from sklearn.ensemble import IsolationForest
+        import pandas as pd
+        import numpy as np
+    except ImportError as e:
+        raise InvalidParameterError(
+            "IsolationForest requires scikit-learn. Install with: pip install 'databricks-labs-dqx[anomaly]'"
+        ) from e
+    
     algo_cfg = params.algorithm_config or IsolationForestConfig()
+    
+    # Collect training data to driver (distributed sampling already done)
+    # This is efficient because we've already capped at DEFAULT_MAX_ROWS (1M)
+    train_pandas = train_df.toPandas()
+    
+    # Scikit-learn IsolationForest configuration
     iso_forest = IsolationForest(
-        featuresCol="features",
-        predictionCol="prediction",
-        anomalyScoreCol="anomaly_score",
         contamination=algo_cfg.contamination,
-        numEstimators=algo_cfg.num_trees,
-        randomSeed=algo_cfg.random_seed,
+        n_estimators=algo_cfg.num_trees,
+        max_samples=algo_cfg.subsampling_rate if algo_cfg.subsampling_rate else 'auto',
+        max_features=1.0,  # Use all features by default
+        bootstrap=False,  # Consistent with typical anomaly detection settings
+        random_state=algo_cfg.random_seed,
+        n_jobs=-1,  # Use all CPU cores on driver for parallel tree training
     )
-    if algo_cfg.max_depth is not None:
-        iso_forest = iso_forest.setMaxDepth(algo_cfg.max_depth)
-    if algo_cfg.subsampling_rate is not None:
-        iso_forest = iso_forest.setMaxSamples(algo_cfg.subsampling_rate)
-
-    pipeline = Pipeline(stages=[VectorAssembler(inputCols=train_df.columns, outputCol="features"), iso_forest])
-    model = pipeline.fit(train_df)
-
+    
+    # Fit on training data
+    iso_forest.fit(train_pandas.values)
+    
     hyperparams: dict[str, Any] = {
         "contamination": algo_cfg.contamination,
         "num_trees": algo_cfg.num_trees,
-        "max_depth": algo_cfg.max_depth,
-        "subsampling_rate": algo_cfg.subsampling_rate,
+        "max_samples": algo_cfg.subsampling_rate,
         "random_seed": algo_cfg.random_seed,
     }
-    return model, hyperparams
+    
+    return iso_forest, hyperparams
+
+
+def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str]) -> DataFrame:
+    """
+    Score DataFrame using scikit-learn model with distributed pandas UDF.
+    
+    This enables distributed inference across the Spark cluster.
+    Works with both regular Spark and Spark Connect.
+    """
+    import pandas as pd
+    import cloudpickle
+    from pyspark.sql.functions import pandas_udf, struct, col
+    from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
+    
+    # Serialize model (will be captured in UDF closure)
+    model_bytes = cloudpickle.dumps(model)
+    
+    # Define schema for UDF output (nullable=True to match pandas behavior)
+    schema = StructType([
+        StructField("anomaly_score", DoubleType(), True),
+        StructField("prediction", IntegerType(), True),
+    ])
+    
+    @pandas_udf(schema, PandasUDFType.SCALAR)
+    def predict_udf(*cols):
+        """Pandas UDF for distributed scoring (Spark Connect compatible)."""
+        import cloudpickle
+        import pandas as pd
+        import numpy as np
+        
+        # Deserialize model from closure (works with Spark Connect)
+        model_local = cloudpickle.loads(model_bytes)
+        
+        # Convert input columns to numpy array
+        X = pd.concat(cols, axis=1).values
+        
+        # Score samples (negative scores, higher = more anomalous)
+        scores = -model_local.score_samples(X)  # Negate to make higher = more anomalous
+        
+        # Predict labels (1 = anomaly, 0 = normal)
+        predictions = model_local.predict(X)
+        predictions = np.where(predictions == -1, 1, 0)  # Convert sklearn -1/1 to 0/1
+        
+        return pd.DataFrame({
+            "anomaly_score": scores,
+            "prediction": predictions
+        })
+    
+    # Apply UDF to all feature columns
+    result = df.withColumn("_scores", predict_udf(*[col(c) for c in feature_cols]))
+    result = result.select("*", "_scores.anomaly_score", "_scores.prediction").drop("_scores")
+    
+    return result
 
 
 def _compute_validation_metrics(
-    model: PipelineModel, val_df: DataFrame, contamination: float
+    model: Any, val_df: DataFrame, feature_cols: list[str], contamination: float
 ) -> dict[str, float]:
     """
     Compute comprehensive validation metrics including precision, recall, F1,
     threshold recommendations, and distribution statistics.
+    
+    Uses distributed scoring via pandas UDF.
     """
-    if val_df.rdd.isEmpty():
+    if val_df.count() == 0:
         return {"validation_rows": 0}
 
-    scored = model.transform(val_df)
+    scored = _score_with_model(model, val_df, feature_cols)
     scores_df = scored.select(F.col("anomaly_score").alias("score"))
     
     # Basic stats
@@ -369,30 +448,33 @@ def _compute_baseline_statistics(train_df: DataFrame) -> dict[str, dict[str, flo
 
 
 def _compute_feature_importance(
-    model: PipelineModel, val_df: DataFrame, columns: list[str]
+    model: Any, val_df: DataFrame, columns: list[str]
 ) -> dict[str, float]:
     """
     Compute global feature importance using permutation importance.
     Measures how much each feature contributes to anomaly detection.
+    
+    Uses distributed scoring via pandas UDF for efficient computation across cluster.
     """
-    if val_df.rdd.isEmpty():
+    if val_df.count() == 0:
         return {}
     
-    # Baseline scores
-    baseline_scored = model.transform(val_df)
+    # Baseline scores (distributed scoring)
+    baseline_scored = _score_with_model(model, val_df, columns)
     baseline_avg_score = baseline_scored.select(F.mean("anomaly_score")).first()[0]
     
     importance = {}
     
+    # Permutation importance: shuffle each column and measure impact (distributed on Spark)
     for col in columns:
-        # Shuffle this column's values
+        # Shuffle this column's values across rows
         shuffled_df = val_df.withColumn(
             col,
             F.expr(f"array_sort(collect_list({col}) over ())[cast(rand() * count(*) over () as int)]")
         )
         
-        # Compute scores with shuffled column
-        shuffled_scored = model.transform(shuffled_df)
+        # Compute scores with shuffled column (distributed scoring)
+        shuffled_scored = _score_with_model(model, shuffled_df, columns)
         shuffled_avg_score = shuffled_scored.select(F.mean("anomaly_score")).first()[0]
         
         # Importance = increase in average score when feature is random
@@ -430,20 +512,28 @@ def _train_ensemble(
         algo_cfg = modified_params.algorithm_config or IsolationForestConfig()
         algo_cfg.random_seed = algo_cfg.random_seed + i
         
-        # Train model
+        # Train model (sklearn IsolationForest on driver)
         model, hyperparams = _fit_isolation_forest(train_df, modified_params)
         
-        # Compute metrics
+        # Compute metrics (distributed scoring on Spark)
         contamination = algo_cfg.contamination
-        metrics = _compute_validation_metrics(model, val_df, contamination)
+        metrics = _compute_validation_metrics(model, val_df, cfg.columns, contamination)
         all_metrics.append(metrics)
         
         # Log to MLflow
         with mlflow.start_run(run_name=f"{model_name}_ensemble_{i}"):
-            model_info = mlflow.spark.log_model(
-                spark_model=model,
+            # Infer model signature for Unity Catalog (required)
+            import pandas as pd
+            from mlflow.models import infer_signature
+            train_pandas = train_df.toPandas()
+            predictions = model.predict(train_pandas.values)
+            signature = infer_signature(train_pandas, predictions)
+            
+            model_info = mlflow.sklearn.log_model(
+                sk_model=model,
                 artifact_path="model",
                 registered_model_name=f"{model_name}_ensemble_{i}",
+                signature=signature,
             )
             mlflow.log_params(_flatten_hyperparams(hyperparams))
             mlflow.log_metrics(metrics)

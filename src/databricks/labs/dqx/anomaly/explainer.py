@@ -7,14 +7,14 @@ contribute most to anomaly scores for individual records.
 
 from __future__ import annotations
 
-from pyspark.ml.pipeline import PipelineModel
+from typing import Any
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 from pyspark.sql.types import MapType, StringType, DoubleType
 
 
 def compute_feature_contributions(
-    model: PipelineModel,
+    model: Any,
     df: DataFrame,
     columns: list[str],
 ) -> DataFrame:
@@ -22,37 +22,33 @@ def compute_feature_contributions(
     Compute per-row feature contributions showing which columns
     contributed most to each anomaly score.
 
-    Uses a drop-column approach: compute score with and without each feature,
-    contribution = delta in score.
+    Uses a heuristic approach based on feature deviations from mean.
+    For exact contributions, use SHAP or other model-agnostic methods.
 
     Args:
-        model: Trained IsolationForest pipeline model.
-        df: DataFrame to score.
+        model: Trained scikit-learn IsolationForest model (not used in current heuristic).
+        df: DataFrame with anomaly_score already computed.
         columns: Feature columns.
 
     Returns:
         DataFrame with additional 'anomaly_contributions' map column.
     """
-    # Baseline scores with all features
-    baseline_scored = model.transform(df)
-    baseline_scores = baseline_scored.select("*", F.col("anomaly_score").alias("_baseline_score"))
+    # Note: DataFrame already has anomaly_score from distributed scoring
+    # We compute contributions using a heuristic approach
 
-    # For each column, compute contribution
-    # This is expensive, so we use a simpler approximation:
-    # Contribution ≈ abs(feature_value - feature_mean) * feature_importance
-    
-    # Compute column means
+    # Compute column means (distributed on Spark)
     means = {}
     for col in columns:
         col_mean = df.select(F.mean(col)).first()[0]
         means[col] = col_mean if col_mean is not None else 0.0
 
     # Compute contributions as deviation from mean weighted by position
-    # This is an approximation; true contribution would require re-scoring
+    # This is a heuristic approximation for performance
+    # For exact contributions, consider using SHAP with the sklearn model
     contributions_expr = F.create_map()
     
-    for i, col in enumerate(columns):
-        # Simple heuristic: contribution proportional to normalized deviation
+    for i, col in columns:
+        # Heuristic: contribution proportional to normalized deviation
         deviation = F.abs(F.col(col) - F.lit(means[col]))
         contribution = deviation / (F.lit(len(columns)) + F.lit(1.0))
         contributions_expr = F.expr(
@@ -61,16 +57,16 @@ def compute_feature_contributions(
         )
 
     # Add contributions to DataFrame
-    result = baseline_scores.withColumn("_raw_contributions", contributions_expr)
+    result = df.withColumn("_raw_contributions", contributions_expr)
 
-    # Normalize contributions to sum to 1.0 per row
+    # Normalize contributions to sum to 1.0 per row (distributed on Spark)
     result = result.withColumn(
         "anomaly_contributions",
         F.expr(
             "transform_values(_raw_contributions, "
             "(k, v) -> v / aggregate(map_values(_raw_contributions), 0.0, (acc, x) -> acc + x))"
         ),
-    ).drop("_raw_contributions", "_baseline_score")
+    ).drop("_raw_contributions")
 
     return result
 

@@ -74,6 +74,7 @@ datacontract = [
 anomaly = [
     "mlflow>=2.0",
     "scikit-learn>=1.0",
+    "cloudpickle>=2.0",  # For serializing sklearn models in pandas UDFs
 ]
 
 [project.entry-points.databricks]

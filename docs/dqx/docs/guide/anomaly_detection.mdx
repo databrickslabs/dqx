@@ -4,7 +4,7 @@ sidebar_position: 15
 
 # Anomaly Detection (ML-based)
 
-Detect multivariate anomalies by training a model on "normal" data, then flagging rows that deviate. Current implementation uses Spark ML IsolationForest (Spark ≥ 3.5 / DBR ≥ 15.4); future releases can add more algorithms behind the same interface.
+Detect multivariate anomalies by training a model on "normal" data, then flagging rows that deviate. Current implementation uses [scikit-learn](https://scikit-learn.org/) IsolationForest (BSD license) with distributed Spark scoring via pandas UDFs; future releases can add more algorithms behind the same interface.
 
 ## Complements Databricks native monitoring
 
@@ -352,10 +352,12 @@ def quarantine():
 
 ## Requirements and notes
 
-- Spark ≥ 3.5 / DBR ≥ 15.4 (Spark ML IsolationForest).
-- Install extra: `pip install 'databricks-labs-dqx[anomaly]'`.
+- Spark ≥ 3.4 for pandas UDF support (distributed scoring).
+- Install extra: `pip install 'databricks-labs-dqx[anomaly]'` (includes MLflow, scikit-learn, cloudpickle).
+- Works on Databricks, local Spark clusters, and any Spark 3.4+ environment.
+- **Training** runs on driver node (efficient for sampled data ≤1M rows).
+- **Scoring** is fully distributed across Spark cluster via pandas UDFs.
 - Rows with nulls in anomaly columns are skipped (not flagged).
-- Fails fast on unsupported Spark/DBR.
 
 ## Looking ahead
 
