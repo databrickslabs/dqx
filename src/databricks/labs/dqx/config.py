@@ -79,6 +79,47 @@ class ProfilerConfig:
 
 
 @dataclass
+class IsolationForestConfig:
+    """Algorithm parameters for Spark ML IsolationForest."""
+
+    contamination: float = 0.1
+    num_trees: int = 200
+    max_depth: int | None = None
+    subsampling_rate: float | None = None
+    random_seed: int = 42
+
+
+@dataclass
+class TemporalAnomalyConfig:
+    """Configuration for temporal feature extraction."""
+
+    timestamp_column: str
+    temporal_features: list[str] = field(default_factory=lambda: ["hour", "day_of_week", "month"])
+
+
+@dataclass
+class AnomalyParams:
+    """Optional tuning parameters for anomaly detection."""
+
+    sample_fraction: float = 0.3
+    max_rows: int = 1_000_000
+    train_ratio: float = 0.8
+    ensemble_size: int | None = None  # None = single model, >1 = ensemble
+    algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
+
+
+@dataclass
+class AnomalyConfig:
+    """Configuration for anomaly detection."""
+
+    columns: list[str]
+    model_name: str | None = None
+    registry_table: str | None = None
+    params: AnomalyParams | None = None
+    temporal_config: TemporalAnomalyConfig | None = None
+
+
+@dataclass
 class RunConfig:
     """Configuration class for the data quality checks"""
 
@@ -126,47 +167,6 @@ class LLMConfig:
     """Configuration for LLM usage"""
 
     model: LLMModelConfig = field(default_factory=LLMModelConfig)
-
-
-@dataclass
-class IsolationForestConfig:
-    """Algorithm parameters for Spark ML IsolationForest."""
-
-    contamination: float = 0.1
-    num_trees: int = 200
-    max_depth: int | None = None
-    subsampling_rate: float | None = None
-    random_seed: int = 42
-
-
-@dataclass
-class TemporalAnomalyConfig:
-    """Configuration for temporal feature extraction."""
-
-    timestamp_column: str
-    temporal_features: list[str] = field(default_factory=lambda: ["hour", "day_of_week", "month"])
-
-
-@dataclass
-class AnomalyParams:
-    """Optional tuning parameters for anomaly detection."""
-
-    sample_fraction: float = 0.3
-    max_rows: int = 1_000_000
-    train_ratio: float = 0.8
-    ensemble_size: int | None = None  # None = single model, >1 = ensemble
-    algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
-
-
-@dataclass
-class AnomalyConfig:
-    """Configuration for anomaly detection."""
-
-    columns: list[str]
-    model_name: str | None = None
-    registry_table: str | None = None
-    params: AnomalyParams | None = None
-    temporal_config: TemporalAnomalyConfig | None = None
 
 
 @dataclass(frozen=True)

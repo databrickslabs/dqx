@@ -9,9 +9,11 @@ from uuid import uuid4
 from datetime import datetime
 from typing import Any
 
-import mlflow.spark
+import mlflow.sklearn
 from pyspark.sql import Column, DataFrame
+from pyspark.sql.functions import pandas_udf, PandasUDFType, struct, col
 import pyspark.sql.functions as F
+from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
 
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.anomaly.trainer import _derive_model_name, _derive_registry_table
@@ -21,6 +23,64 @@ from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.utils import get_column_name_or_alias
+
+
+def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[str]) -> DataFrame:
+    """
+    Score DataFrame using scikit-learn model with distributed pandas UDF.
+    
+    Args:
+        model_uri: MLflow model URI
+        df: DataFrame to score
+        feature_cols: List of feature column names
+    
+    Returns:
+        DataFrame with anomaly_score and prediction columns added
+    """
+    import cloudpickle
+    import pandas as pd
+    import numpy as np
+    
+    # Load and serialize model (will be captured in UDF closure - Spark Connect compatible)
+    sklearn_model = mlflow.sklearn.load_model(model_uri)
+    model_bytes = cloudpickle.dumps(sklearn_model)
+    
+    # Define schema for UDF output (nullable=True to match pandas behavior)
+    schema = StructType([
+        StructField("anomaly_score", DoubleType(), True),
+        StructField("prediction", IntegerType(), True),
+    ])
+    
+    @pandas_udf(schema, PandasUDFType.SCALAR)
+    def predict_udf(*cols):
+        """Pandas UDF for distributed scoring (Spark Connect compatible)."""
+        import cloudpickle
+        import pandas as pd
+        import numpy as np
+        
+        # Deserialize model from closure (works with Spark Connect)
+        model_local = cloudpickle.loads(model_bytes)
+        
+        # Convert input columns to numpy array
+        X = pd.concat(cols, axis=1).values
+        
+        # Score samples (negative scores, higher = more anomalous)
+        scores = -model_local.score_samples(X)  # Negate to make higher = more anomalous
+        
+        # Predict labels (1 = anomaly, 0 = normal)
+        predictions = model_local.predict(X)
+        predictions = np.where(predictions == -1, 1, 0)  # Convert sklearn -1/1 to 0/1
+        
+        return pd.DataFrame({
+            "anomaly_score": scores,
+            "prediction": predictions
+        })
+    
+    # Apply UDF to all feature columns
+    result = df.withColumn("_scores", predict_udf(*[col(c) for c in feature_cols]))
+    result = result.select("*", "_scores.anomaly_score", "_scores.prediction").drop("_scores")
+    
+    return result
 
 
 @register_rule("dataset")
@@ -111,11 +171,10 @@ def has_no_anomalies(
         model_uris = record.model_uri.split(",")
         
         if len(model_uris) > 1:
-            # Ensemble: load all models and average scores
+            # Ensemble: score with all models (distributed) and average scores
             scored_dfs = []
             for i, uri in enumerate(model_uris):
-                model = mlflow.spark.load_model(uri.strip())
-                temp_scored = model.transform(df_filtered)
+                temp_scored = _score_with_sklearn_model(uri.strip(), df_filtered, normalized_columns)
                 temp_scored = temp_scored.withColumn(f"_score_{i}", F.col("anomaly_score"))
                 scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score", "prediction"))
             
@@ -130,7 +189,7 @@ def has_no_anomalies(
                     how="inner"
                 )
             
-            # Compute mean and std
+            # Compute mean and std (distributed on Spark)
             score_cols = [f"_score_{i}" for i in range(len(model_uris))]
             scored_df = scored_df.withColumn(
                 "anomaly_score",
@@ -146,19 +205,15 @@ def has_no_anomalies(
             for col in score_cols:
                 scored_df = scored_df.drop(col)
         else:
-            # Single model
-            loaded_model = mlflow.spark.load_model(record.model_uri)
-            scored_df = loaded_model.transform(df_filtered)
+            # Single model (distributed scoring via pandas UDF)
+            scored_df = _score_with_sklearn_model(record.model_uri, df_filtered, normalized_columns)
             scored_df = scored_df.withColumn("anomaly_score_std", F.lit(0.0))
 
-        # Add feature contributions if requested
+        # Add feature contributions if requested (distributed computation)
         if include_contributions:
-            if len(model_uris) > 1:
-                # Use first model for contributions
-                first_model = mlflow.spark.load_model(model_uris[0].strip())
-                scored_df = compute_feature_contributions(first_model, scored_df, normalized_columns)
-            else:
-                scored_df = compute_feature_contributions(loaded_model, scored_df, normalized_columns)
+            sklearn_model_uri = model_uris[0].strip() if len(model_uris) > 1 else record.model_uri
+            sklearn_model = mlflow.sklearn.load_model(sklearn_model_uri)
+            scored_df = compute_feature_contributions(sklearn_model, scored_df, normalized_columns)
 
         # Drop confidence column if not requested
         if not include_confidence:

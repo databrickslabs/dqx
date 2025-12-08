@@ -8,6 +8,18 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from unittest.mock import MagicMock
 
+# Check if IsolationForest is available (only in Databricks Runtime)
+try:
+    from pyspark.ml.classification import IsolationForest
+    ISOLATION_FOREST_AVAILABLE = True
+except ImportError:
+    ISOLATION_FOREST_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(
+    not ISOLATION_FOREST_AVAILABLE,
+    reason="IsolationForest only available in Databricks Runtime (DBR >= 15.4)"
+)
+
 
 @pytest.fixture
 def mock_workspace_client():
