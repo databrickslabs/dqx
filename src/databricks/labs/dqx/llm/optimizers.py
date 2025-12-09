@@ -8,7 +8,7 @@ import dspy  # type: ignore
 class DspyOptimizerConfig:
     """Configuration for DSPy optimizer."""
 
-    max_bootstrapped_demos: int = 3
+    max_bootstrapped_demos: int = 2
     max_labeled_demos: int = 5
     teacher_settings: dict = field(default_factory=dict)
 
