@@ -93,6 +93,7 @@ def has_no_anomalies(
     drift_threshold: float | None = None,
     include_contributions: bool = False,
     include_confidence: bool = False,
+    merge_columns: list[str] | None = None,
 ) -> tuple[Column, Any]:
     """
     Check that records are not anomalous according to a trained model.
@@ -102,10 +103,13 @@ def has_no_anomalies(
         model: Model name (auto-derived if omitted).
         registry_table: Registry table (auto-derived if omitted).
         score_threshold: Anomaly score threshold (default 0.5).
-        row_filter: Optional SQL expression to filter rows.
+        row_filter: Optional SQL expression to filter rows before scoring.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
         include_contributions: Include anomaly_contributions column (default False).
         include_confidence: Include anomaly_score_std column for ensembles (default False).
+        merge_columns: Columns to use for joining scored results back to original DataFrame.
+            If None, uses all original columns (can be slow for wide DataFrames).
+            Recommend providing primary key columns for better performance.
 
     Returns:
         Tuple of condition expression and apply function.
@@ -152,24 +156,26 @@ def has_no_anomalies(
 
             if drift_result.drift_detected:
                 drifted_cols_str = ", ".join(drift_result.drifted_columns)
+                retrain_cmd = (
+                    f"anomaly.train(df=your_dataframe, "
+                    f"columns={normalized_columns}, model_name='{model_name}')"
+                )
                 warnings.warn(
                     f"Data drift detected in columns: {drifted_cols_str} "
                     f"(drift score: {drift_result.drift_score:.2f}). "
-                    f"Model may be stale. Retrain using: "
-                    f"anomaly.train(df=spark.table('{record.input_table}'), "
-                    f"columns={normalized_columns}, model_name='{model_name}')",
+                    f"Model may be stale. Consider retraining: {retrain_cmd}",
                     UserWarning,
                     stacklevel=3,
                 )
 
         # Filter rows if row_filter is provided
-        # Add stable row ID to original DataFrame before any filtering
-        df_with_id = df.withColumn("__anomaly_row_id", F.monotonically_increasing_id())
-        
+        # Determine join columns for merging results back
+        # If merge_columns is None, use all original DataFrame columns (default behavior)
+        # If row_filter is used, we need to join scored results back to preserve all rows
         if row_filter:
-            df_filtered = df_with_id.filter(F.expr(row_filter))
+            df_filtered = df.filter(F.expr(row_filter))
         else:
-            df_filtered = df_with_id
+            df_filtered = df
 
         # Check if ensemble model (multiple URIs separated by comma)
         model_uris = record.model_uri.split(",")
@@ -185,7 +191,7 @@ def has_no_anomalies(
             # Merge all scored DataFrames
             scored_df = scored_dfs[0]
             for i in range(1, len(scored_dfs)):
-                # Join on all original columns plus row ID
+                # Join on all original columns
                 join_cols = [c for c in df_filtered.columns]
                 scored_df = scored_df.join(
                     scored_dfs[i].select(join_cols + [f"_score_{i}"]),
@@ -223,9 +229,13 @@ def has_no_anomalies(
         if not include_confidence:
             scored_df = scored_df.drop("anomaly_score_std")
 
-        # If row_filter was used, join back to original DataFrame to preserve all rows
-        # Non-filtered rows will have null anomaly_score
+        # If row_filter was used, join scored results back to original DataFrame
+        # This preserves all rows (non-filtered rows will have null anomaly_score)
         if row_filter:
+            # Determine which columns to use for joining
+            # Default to merge_columns if provided, otherwise use all original columns
+            join_cols = merge_columns if merge_columns else df.columns
+            
             # Get score columns to join
             score_cols_to_join = ["anomaly_score"]
             if include_confidence:
@@ -233,18 +243,23 @@ def has_no_anomalies(
             if include_contributions:
                 score_cols_to_join.append("anomaly_contributions")
             
-            # Extract only the row ID and score columns from scored_df
-            scored_subset = scored_df.select(["__anomaly_row_id"] + score_cols_to_join)
+            # Select only join columns + score columns from scored DataFrame
+            scored_subset = scored_df.select(*join_cols, *score_cols_to_join)
+            
+            # Take distinct rows to avoid duplicates (similar to sql_query pattern)
+            # In case of duplicates, take max anomaly_score (most conservative)
+            agg_exprs = []
+            for col in score_cols_to_join:
+                if col == "anomaly_contributions":
+                    # For map columns, use first() instead of max()
+                    agg_exprs.append(F.first(col).alias(col))
+                else:
+                    # For numeric columns, use max() (most conservative for anomaly scores)
+                    agg_exprs.append(F.max(col).alias(col))
+            scored_subset_unique = scored_subset.groupBy(*join_cols).agg(*agg_exprs)
             
             # Left join back to original DataFrame (preserves all rows)
-            scored_df = df_with_id.join(
-                scored_subset,
-                on="__anomaly_row_id",
-                how="left"
-            )
-        
-        # Drop the temporary row ID column
-        scored_df = scored_df.drop("__anomaly_row_id")
+            scored_df = df.join(scored_subset_unique, on=join_cols, how="left")
         
         # Note: Anomaly rate can be computed from the output DataFrame:
         # anomaly_rate = scored_df.filter(F.col("anomaly_score") > threshold).count() / scored_df.count()

@@ -2850,10 +2850,24 @@ run_configs:
 **Score thresholds**
 - 0.3 aggressive, 0.5 balanced (default), 0.7 conservative, 0.9 very conservative.
 
+**Parameters**
+- `columns`: Columns to check for anomalies.
+- `model`: Model name (auto-derived if omitted).
+- `registry_table`: Registry table (auto-derived if omitted).
+- `score_threshold`: Anomaly score threshold (default 0.5).
+- `row_filter`: Optional SQL expression to filter rows before scoring.
+- `merge_columns`: Columns for joining scored results back (default: all columns).
+  - **Performance tip**: Provide primary key columns when using `row_filter` for faster joins.
+  - Example: `merge_columns=["order_id"]` instead of joining on all 50 columns.
+- `drift_threshold`: Drift detection threshold (default 3.0, `None` to disable).
+- `include_contributions`: Include `anomaly_contributions` column (default `False`).
+- `include_confidence`: Include `anomaly_score_std` for ensembles (default `False`).
+
 **Notes**
 - Auto-derives `model_name` and `registry_table` when omitted.
 - Registry table auto-created if missing.
 - Rows with nulls in anomaly columns are skipped (not flagged).
+- When `row_filter` is used, all original rows are preserved; non-filtered rows have `null` scores.
 - Fails fast if Spark < 3.5 / DBR < 15.4.
 
 ### Advanced Features
