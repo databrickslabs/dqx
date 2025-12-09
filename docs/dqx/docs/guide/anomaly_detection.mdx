@@ -26,6 +26,72 @@ DQX's anomaly detection **works alongside** [Databricks native anomaly detection
 2. Add DQX anomaly checks for critical tables (model-based)
 3. Use both signals: late data alerts + row-level anomalies
 
+## Auto-Discovery (Recommended)
+
+DQX can automatically identify which columns and segments benefit from anomaly detection:
+
+**Python** (zero configuration):
+```python
+from databricks.labs.dqx.anomaly import train
+
+# One-liner: auto-discovers everything
+train(df=spark.table("catalog.schema.orders"))
+
+# Prints:
+# "Auto-selected 3 columns: [amount, quantity, discount]"
+# "Auto-detected 1 segment column: [region] (3 total segments)"
+# "Training segment 1/3: region=US"
+# "Training segment 2/3: region=EU"
+# "Training segment 3/3: region=APAC"
+```
+
+**YAML** (workflow integration):
+```yaml
+run_configs:
+  - name: orders
+    input_config:
+      location: catalog.schema.orders
+    anomaly_config: {}  # Empty = auto-discovery
+```
+
+**What gets auto-discovered**:
+- Numeric columns with variance (excludes IDs, timestamps, constants)
+- Categorical columns with 2-50 distinct values as segments
+- Automatic model naming based on table and selected columns
+
+**Manual overrides available** for advanced users (see examples below).
+
+## Segment-Based Monitoring
+
+Detect anomalies specific to regions, categories, or other groupings:
+
+**Automatic** (discovers segments from data):
+```python
+from databricks.labs.dqx.anomaly import train
+
+# Auto-detects region, product_category as segments
+train(df=spark.table("orders"))
+```
+
+**Explicit** (specify segments):
+```python
+train(
+    df=spark.table("orders"),
+    columns=["amount", "quantity"],
+    segment_by=["region"]  # Train separate model per region
+)
+
+# Scoring automatically uses correct regional model
+checks = [
+    has_no_anomalies(columns=["amount", "quantity"])  # Infers segment_by from model
+]
+```
+
+**Use cases**:
+- Multi-regional data with different baselines
+- Product categories with distinct patterns
+- Multi-tenant monitoring without cross-contamination
+
 ## When to use DQX anomaly detection
 
 - You need to catch rows that look plausible per-column but are unlikely together (e.g., high amount + large discount + low quantity).

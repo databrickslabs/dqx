@@ -19,7 +19,10 @@ ANOMALY_MODEL_TABLE_SCHEMA = (
     "status string, metrics map<string,double>, mode string, "
     "baseline_stats map<string,map<string,double>>, "
     "feature_importance map<string,double>, "
-    "temporal_config map<string,string>"
+    "temporal_config map<string,string>, "
+    "segment_by array<string>, "
+    "segment_values map<string,string>, "
+    "is_global_model boolean"
 )
 
 
@@ -42,6 +45,9 @@ class AnomalyModelRecord:
     baseline_stats: dict[str, dict[str, float]] | None = None
     feature_importance: dict[str, float] | None = None
     temporal_config: dict[str, str] | None = None
+    segment_by: list[str] | None = None
+    segment_values: dict[str, str] | None = None
+    is_global_model: bool = True
 
 
 class AnomalyModelRegistry:
@@ -81,6 +87,39 @@ class AnomalyModelRegistry:
             return None
         values = row.asDict(recursive=True)
         return AnomalyModelRecord(**values)  # type: ignore[arg-type]
+
+    def get_segment_model(
+        self, table: str, base_model_name: str, segment_values: dict[str, str]
+    ) -> AnomalyModelRecord | None:
+        """Fetch model for specific segment combination."""
+        if not self._table_exists(table):
+            return None
+
+        # Build segment name matching the training logic
+        segment_name = "_".join(f"{k}={v}" for k, v in segment_values.items())
+        segment_model_name = f"{base_model_name}__seg_{segment_name}"
+
+        return self.get_active_model(table, segment_model_name)
+
+    def get_all_segment_models(
+        self, table: str, base_model_name: str
+    ) -> list[AnomalyModelRecord]:
+        """Fetch all segment models for a base name."""
+        if not self._table_exists(table):
+            return []
+
+        # Get all active models that start with base_model_name__seg_
+        rows = (
+            self.spark.table(table)
+            .filter(
+                (F.col("model_name").startswith(f"{base_model_name}__seg_"))
+                & (F.col("status") == "active")
+            )
+            .orderBy(F.col("training_time").desc())
+            .collect()
+        )
+
+        return [AnomalyModelRecord(**row.asDict(recursive=True)) for row in rows]  # type: ignore[arg-type]
 
     def _table_exists(self, table: str) -> bool:
         return self.spark.catalog.tableExists(table)
