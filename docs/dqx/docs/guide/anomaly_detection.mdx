@@ -201,6 +201,29 @@ Top contributors are shown as percentages summing to 1.0. Use this to:
 - Validate the model learned correct patterns
 - Enrich quarantine data for downstream review
 
+## Performance optimization
+
+When using `row_filter` to score only a subset of rows, DQX joins the scored results back to preserve all original rows. For better performance with wide DataFrames, specify `merge_columns`:
+
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        columns=["amount", "quantity", "discount"],
+        score_threshold=0.5,
+        row_filter="is_high_value = true",  # Score only high-value transactions
+        merge_columns=["order_id"],  # Use PK for fast join instead of all 50 columns
+    )
+]
+```
+
+**Performance tips**:
+- Provide primary key columns in `merge_columns` when using `row_filter`
+- Without `merge_columns`: joins on all DataFrame columns (safe but slower for wide tables)
+- With `merge_columns`: faster join, but columns must form a unique key to avoid duplicates
+- Similar to `sql_query` function's `merge_columns` pattern
+
 ## Drift detection and retraining
 
 Drift detection warns when current data distribution significantly differs from training data:

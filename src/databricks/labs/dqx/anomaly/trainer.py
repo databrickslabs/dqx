@@ -141,7 +141,7 @@ def train(
         model_uri=model_uri,
         input_table=_get_input_table(df),
         columns=cfg.columns,
-        algorithm=f"isolation_forest_ensemble_{ensemble_size}" if ensemble_size > 1 else "isolation_forest",
+        algorithm=f"IsolationForest_Ensemble_{ensemble_size}" if ensemble_size > 1 else "IsolationForest",
         hyperparameters=_stringify_dict(hyperparams),
         training_rows=train_df.count(),
         training_time=datetime.utcnow(),
@@ -493,9 +493,10 @@ def _compute_feature_importance(
     # Permutation importance: shuffle each column and measure impact (distributed on Spark)
     for col in columns:
         # Shuffle this column's values across rows
+        # Use shuffle() to randomize and element_at() to access a random element
         shuffled_df = val_df.withColumn(
             col,
-            F.expr(f"array_sort(collect_list({col}) over ())[cast(rand() * count(*) over () as int)]")
+            F.expr(f"element_at(shuffle(collect_list({col}) over ()), 1)")
         )
         
         # Compute scores with shuffled column (distributed scoring)
