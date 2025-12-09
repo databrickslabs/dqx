@@ -29,8 +29,10 @@ class AnomalyTrainerWorkflow(Workflow):
         train(
             df=df,
             columns=anomaly_config.columns,
+            segment_by=anomaly_config.segment_by,
             model_name=anomaly_config.model_name,
             registry_table=anomaly_config.registry_table,
             params=anomaly_config.params,
+            profiler_table=anomaly_config.profiler_table,
         )
 

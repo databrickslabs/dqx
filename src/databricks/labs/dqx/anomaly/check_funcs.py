@@ -25,6 +25,145 @@ from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.utils import get_column_name_or_alias
 
 
+def _score_segmented(
+    df: DataFrame,
+    segment_by: list[str],
+    columns: list[str],
+    base_model_name: str,
+    registry_table: str,
+    score_threshold: float,
+    row_filter: str | None,
+    drift_threshold: float | None,
+    drift_threshold_value: float,
+    include_contributions: bool,
+    include_confidence: bool,
+    merge_columns: list[str] | None,
+    condition_col: str,
+    registry_client: AnomalyModelRegistry,
+) -> DataFrame:
+    """Score DataFrame using segment-specific models."""
+    # Get all segment models
+    all_segments = registry_client.get_all_segment_models(registry_table, base_model_name)
+    
+    if not all_segments:
+        raise InvalidParameterError(
+            f"No segment models found for base model '{base_model_name}'. "
+            "Train segmented models first using anomaly.train(...)."
+        )
+    
+    # Filter rows if row_filter is provided
+    if row_filter:
+        df_to_score = df.filter(F.expr(row_filter))
+    else:
+        df_to_score = df
+    
+    scored_dfs = []
+    
+    # Score each segment separately
+    for segment_model in all_segments:
+        # Build filter expression for this segment
+        segment_filter_exprs = []
+        for k, v in segment_model.segment_values.items():
+            segment_filter_exprs.append(F.col(k) == F.lit(v))
+        
+        if not segment_filter_exprs:
+            continue
+        
+        # Combine segment filters
+        segment_filter = segment_filter_exprs[0]
+        for expr in segment_filter_exprs[1:]:
+            segment_filter = segment_filter & expr
+        
+        # Filter to this segment
+        segment_df = df_to_score.filter(segment_filter)
+        
+        # Skip empty segments
+        if segment_df.count() == 0:
+            continue
+        
+        # Check for drift in this segment
+        if drift_threshold is not None and segment_model.baseline_stats:
+            drift_result = compute_drift_score(
+                segment_df.select(columns),
+                columns,
+                segment_model.baseline_stats,
+                drift_threshold_value,
+            )
+            
+            if drift_result.drift_detected:
+                drifted_cols_str = ", ".join(drift_result.drifted_columns)
+                segment_name = "_".join(f"{k}={v}" for k, v in segment_model.segment_values.items())
+                warnings.warn(
+                    f"Data drift detected in segment '{segment_name}', columns: {drifted_cols_str} "
+                    f"(drift score: {drift_result.drift_score:.2f}). "
+                    f"Consider retraining the segmented model.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+        
+        # Score this segment
+        segment_scored = _score_with_sklearn_model(segment_model.model_uri, segment_df, columns)
+        segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
+        
+        # Add feature contributions if requested
+        if include_contributions:
+            sklearn_model = mlflow.sklearn.load_model(segment_model.model_uri)
+            segment_scored = compute_feature_contributions(sklearn_model, segment_scored, columns)
+        
+        scored_dfs.append(segment_scored)
+    
+    # Union all scored segments
+    if not scored_dfs:
+        # No segments had data - return original DataFrame with null scores
+        result = df_to_score.withColumn("anomaly_score", F.lit(None).cast(DoubleType()))
+        result = result.withColumn("anomaly_score_std", F.lit(None).cast(DoubleType()))
+        if include_contributions:
+            from pyspark.sql.types import MapType, StringType
+            result = result.withColumn("anomaly_contributions", F.lit(None).cast(MapType(StringType(), DoubleType())))
+    else:
+        result = scored_dfs[0]
+        for sdf in scored_dfs[1:]:
+            result = result.union(sdf)
+    
+    # Drop confidence column if not requested
+    if not include_confidence:
+        result = result.drop("anomaly_score_std")
+    
+    # If row_filter was used, join scored results back to original DataFrame
+    if row_filter:
+        # Determine which columns to use for joining
+        join_cols = merge_columns if merge_columns else df.columns
+        
+        # Get score columns to join
+        score_cols_to_join = ["anomaly_score"]
+        if include_confidence:
+            score_cols_to_join.append("anomaly_score_std")
+        if include_contributions:
+            score_cols_to_join.append("anomaly_contributions")
+        
+        # Select only join columns + score columns from scored DataFrame
+        scored_subset = result.select(*join_cols, *score_cols_to_join)
+        
+        # Take distinct rows to avoid duplicates
+        agg_exprs = []
+        for col in score_cols_to_join:
+            if col == "anomaly_contributions":
+                agg_exprs.append(F.first(col).alias(col))
+            else:
+                agg_exprs.append(F.max(col).alias(col))
+        scored_subset_unique = scored_subset.groupBy(*join_cols).agg(*agg_exprs)
+        
+        # Left join back to original DataFrame
+        result = df.join(scored_subset_unique, on=join_cols, how="left")
+    
+    # Add condition column
+    condition = F.when(F.col("anomaly_score").isNull(), F.lit(False)).otherwise(
+        F.col("anomaly_score") > F.lit(score_threshold)
+    )
+    
+    return result.withColumn(condition_col, condition)
+
+
 def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[str]) -> DataFrame:
     """
     Score DataFrame using scikit-learn model with distributed pandas UDF.
@@ -85,7 +224,8 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
 
 @register_rule("dataset")
 def has_no_anomalies(
-    columns: list[str | Column],
+    columns: list[str | Column] | None = None,
+    segment_by: list[str] | None = None,
     model: str | None = None,
     registry_table: str | None = None,
     score_threshold: float = 0.5,
@@ -96,10 +236,15 @@ def has_no_anomalies(
     merge_columns: list[str] | None = None,
 ) -> tuple[Column, Any]:
     """
-    Check that records are not anomalous according to a trained model.
+    Check that records are not anomalous according to a trained model(s).
+
+    Auto-discovery:
+    - columns=None: Inferred from model registry
+    - segment_by=None: Inferred from model registry (checks if model is segmented)
 
     Args:
-        columns: Columns to check for anomalies.
+        columns: Columns to check for anomalies (auto-inferred if omitted).
+        segment_by: Segment columns (auto-inferred from model if omitted).
         model: Model name (auto-derived if omitted).
         registry_table: Registry table (auto-derived if omitted).
         score_threshold: Anomaly score threshold (default 0.5).
@@ -115,15 +260,59 @@ def has_no_anomalies(
         Tuple of condition expression and apply function.
     """
 
-    normalized_columns = [get_column_name_or_alias(c) for c in columns]
     condition_col = f"__anomaly_condition_{uuid4().hex}"
     drift_threshold_value = drift_threshold if drift_threshold is not None else 3.0
 
     def apply(df: DataFrame) -> DataFrame:
+        registry_client = AnomalyModelRegistry(df.sparkSession)
+        
+        # Auto-infer columns and segment_by from registry if not provided
+        nonlocal columns, segment_by
+        if columns is None or segment_by is None:
+            # Derive model name from DataFrame (need columns for this, but we might not have them yet)
+            # For auto-discovery, we'll derive model name from table, then lookup columns
+            model_name_local = model
+            registry_local = registry_table or _derive_registry_table(df)
+            
+            # If model name not provided, we cannot auto-discover without columns
+            # So we'll require at least model name OR columns for now
+            if model_name_local is None and columns is None:
+                raise InvalidParameterError(
+                    "Either 'model' or 'columns' must be provided for auto-discovery. "
+                    "Provide at least one to infer the other from the model registry."
+                )
+            
+            # If model name provided, use it to get model record
+            if model_name_local:
+                record_for_discovery = registry_client.get_active_model(registry_local, model_name_local)
+                if not record_for_discovery:
+                    raise InvalidParameterError(
+                        f"Model '{model_name_local}' not found in '{registry_local}'. "
+                        "Train first using anomaly.train(...)."
+                    )
+                
+                if columns is None:
+                    columns = record_for_discovery.columns
+                if segment_by is None:
+                    segment_by = record_for_discovery.segment_by
+        
+        # Now normalize columns (we know columns is not None at this point)
+        normalized_columns = [get_column_name_or_alias(c) for c in columns]
+        
         model_name = model or _derive_model_name(df, normalized_columns)
         registry = registry_table or _derive_registry_table(df)
 
-        registry_client = AnomalyModelRegistry(df.sparkSession)
+        # Check if segmented model
+        if segment_by:
+            # Segment-aware scoring
+            return _score_segmented(
+                df, segment_by, normalized_columns, model_name, registry,
+                score_threshold, row_filter, drift_threshold, drift_threshold_value,
+                include_contributions, include_confidence, merge_columns,
+                condition_col, registry_client
+            )
+        
+        # Global model scoring (existing logic)
         record = registry_client.get_active_model(registry, model_name)
         if not record:
             raise InvalidParameterError(

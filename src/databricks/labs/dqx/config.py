@@ -112,11 +112,13 @@ class AnomalyParams:
 class AnomalyConfig:
     """Configuration for anomaly detection."""
 
-    columns: list[str]
+    columns: list[str] | None = None  # Auto-discovered if omitted
+    segment_by: list[str] | None = None  # Auto-discovered if omitted (when columns also omitted)
     model_name: str | None = None
     registry_table: str | None = None
     params: AnomalyParams | None = None
     temporal_config: TemporalAnomalyConfig | None = None
+    profiler_table: str | None = None  # DQX profiler output for smarter auto-discovery
 
 
 @dataclass
