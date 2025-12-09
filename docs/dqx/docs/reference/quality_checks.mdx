@@ -1410,7 +1410,7 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `sql_query`                        | Checks whether the condition column produced by a SQL query is satisfied. The check supports two modes: **Row-level validation** (when `merge_columns` is provided) - query results are joined back to the input DataFrame to mark specific rows; **Dataset-level validation** (when `merge_columns` is None or empty) - the check result applies to all rows (or filtered rows if `row_filter` is used), making it ideal for aggregate validations with custom metrics. The query must return a boolean condition column (True = fail, False = pass). For row-level checks: if merge columns aren't unique, multiple query rows can attach to a single input row, potentially causing false positives. Performance tip: for complex queries, writing a custom dataset-level rule is usually more performant than `sql_query` check.  | `query`: query string, must return condition column (and merge columns if provided); `input_placeholder`: name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame, optional reference DataFrames are referred by the name provided in the dictionary of reference DataFrames (e.g. `{{ ref_df_key }}`, dictionary of DataFrames can be passed when applying checks); `merge_columns`: (optional) list of columns used for merging with the input DataFrame which must exist in the input DataFrame and be present in output of the sql query; when not provided (None or empty list), the check result applies to all rows in the dataset (dataset-level validation); `condition_column`: name of the column indicating a violation (False = pass, True = fail); `msg`: (optional) message to output; `name`: (optional) name of the resulting check (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated                                                     |
 | `compare_datasets`                 | Compares two DataFrames at both row and column levels, providing detailed information about differences, including new or missing rows and column-level changes. Only columns present in both the source and reference DataFrames are compared. Use with caution if `check_missing_records` is enabled, as this may increase the number of rows in the output beyond the original input DataFrame. The comparison does not support Map types (any column comparison on map type is skipped automatically). Comparing datasets is valuable for validating data during migrations, detecting drift, performing regression testing, or verifying synchronization between source and target systems.    | `columns`: columns to use for row matching with the reference DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'df.columns'; `ref_columns`: list of columns in the reference DataFrame or Table to row match against the source DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'ref_df.columns'; note that `columns` are matched with `ref_columns` by position, so the order of the provided columns in both lists must be exactly aligned; `exclude_columns`: (optional) list of columns to exclude from the value comparison but not from row matching (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'); the `exclude_columns` field does not alter the list of columns used to determine row matches (columns), it only controls which columns are skipped during the value comparison; `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; `check_missing_records`: perform a FULL OUTER JOIN to identify records that are missing from source or reference DataFrames, default is False; use with caution as this may increase the number of rows in the output, as unmatched rows from both sides are included; `null_safe_row_matching`: (optional) treat NULLs as equal when matching rows using `columns` and `ref_columns` (default: True); `null_safe_column_value_matching`: (optional) treat NULLs as equal when comparing column values (default: True) |
 | `is_data_fresh_per_time_window`    | Freshness check that validates whether at least X records arrive within every Y-minute time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `column`: timestamp column (can be a string column name or a column expression); `window_minutes`: time window in minutes to check for data arrival; `min_records_per_window`: minimum number of records expected per time window; `lookback_windows`: (optional) number of time windows to look back from `curr_timestamp`, it filters records to include only those within the specified number of time windows from `curr_timestamp` (if no lookback is provided, the check is applied to the entire dataset); `curr_timestamp`: (optional) current timestamp column (if not provided, current_timestamp() function is used)                                                                                                                                                                                                                                                                              |
-| `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected.                                                                                                                                                                                              | `expected_schema`: expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected.                                                                                                                                                                                              | `expected_schema`: (optional) expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `ref_df_name`: (optional) name of the reference DataFrame to load the schema from (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name to load the schema from (e.g. "catalog.schema.table"); exactly one of `expected_schema`, `ref_df_name`, or `ref_table` must be provided; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match                                                                                                                                                                                                       |
 | `has_no_outliers`                  | Checks whether the values in the input column contain any outliers. This function implements a median absolute deviation (MAD) algorithm to find outliers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column of type numeric to check (can be a string column name or a column expression);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 **Compare datasets check**
@@ -1752,6 +1752,38 @@ Complex data types are supported as well.
     function: has_valid_schema
     arguments:
       expected_schema: "id INT, name STRING, age INT, contact_info STRUCT<email: STRING, phone: STRING, address: STRING>"
+      columns:
+        - id
+        - name
+
+# has_valid_schema check using reference table
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      ref_table: "catalog1.schema1.reference_table"
+
+# has_valid_schema check using reference table with strict mode
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      ref_table: "catalog1.schema1.reference_table"
+      strict: true
+
+# has_valid_schema check using reference DataFrame
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      ref_df_name: "my_ref_df"
+
+# has_valid_schema check using reference DataFrame with specific columns
+- criticality: warn
+  check:
+    function: has_valid_schema
+    arguments:
+      ref_df_name: "my_ref_df"
       columns:
         - id
         - name
@@ -2179,6 +2211,44 @@ checks = [
       },
     ),
 
+    # has_valid_schema check using reference table
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "ref_table": "catalog1.schema1.reference_table",
+      },
+    ),
+
+    # has_valid_schema check using reference table with strict mode
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "ref_table": "catalog1.schema1.reference_table",
+        "strict": True,
+      },
+    ),
+
+    # has_valid_schema check using reference DataFrame
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "ref_df_name": "my_ref_df",
+      },
+    ),
+
+    # has_valid_schema check using reference DataFrame with specific columns
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "ref_df_name": "my_ref_df",
+        "columns": ["id", "name"],
+      },
+    ),
+
     # apply check to multiple columns
     *DQForEachColRule(
       check_func=check_funcs.is_unique,  # 'columns' as first argument
@@ -2211,6 +2281,9 @@ The reference DataFrames are used in selected Dataset-level checks:
 
 * `compare_datasets`: required for this check if `ref_df_name` argument is specified and not `ref_table`, e.g. `ref_df_name="ref_df_key"`.
    The value of `ref_df_name` must match the key in the `ref_dfs` dictionary.
+
+* `has_valid_schema`: required for this check if `ref_df_name` argument is specified and not `ref_table` or `expected_schema`, e.g. `ref_df_name="ref_df_key"`.
+   The value of `ref_df_name` must match the key in the `ref_dfs` dictionary. The schema from the reference DataFrame is used to validate the input DataFrame schema.
 
 * `sql_query`: the reference DataFrames are registered as temporary views and can be used in the sql query.
 
