@@ -2,7 +2,6 @@ import json
 import logging
 from collections.abc import Callable
 from functools import cached_property
-from typing import Optional
 
 import dspy  # type: ignore
 
@@ -210,8 +209,8 @@ class DspyRuleGenerationWithSchemaInference(dspy.Module):
 class DspyRuleUsingDataStatsSignature(dspy.Signature):
     """Generate data quality rules using data summary statistics."""
 
-    business_description: Optional[str] = dspy.InputField(
-        desc="Natural language description of data quality requirements"
+    business_description: str | None = dspy.InputField(
+        desc="Optional natural language description of data quality requirements"
     )
     data_summary_stats: str = dspy.InputField(desc="JSON string of summary statistics of the data")
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")

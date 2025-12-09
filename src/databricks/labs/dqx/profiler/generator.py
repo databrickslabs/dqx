@@ -103,7 +103,7 @@ class DQGenerator(DQEngineBase):
 
     @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
     def generate_dq_rules_ai_assisted(
-        self, user_input: str = "", summary_stats: dict = "", input_config: InputConfig | None = None
+        self, user_input: str = "", summary_stats: dict | None = None, input_config: InputConfig | None = None
     ) -> list[dict]:
         """
         Generates data quality rules using LLM based on natural language input.

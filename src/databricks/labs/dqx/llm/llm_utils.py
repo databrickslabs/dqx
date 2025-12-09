@@ -4,6 +4,7 @@ from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from decimal import Decimal
 import json
 import yaml
 import dspy  # type: ignore
@@ -86,9 +87,7 @@ def get_required_check_functions_definitions(
     return required_function_docs
 
 
-def get_required_summary_stats(
-    summary_stats: dict | None = None,
-) -> dict:
+def get_required_summary_stats(summary_stats: dict) -> dict:
     """
     Extract only required summary stats information (mean, min, max).
     Converts Decimal values to strings for JSON serialization.
@@ -99,7 +98,6 @@ def get_required_summary_stats(
     Returns:
         dict: A dictionary containing the required fields for each summary stats with JSON-serializable values.
     """
-    from decimal import Decimal
 
     required_summary_stats: dict = {}
     for key, value in summary_stats.items():
@@ -111,7 +109,7 @@ def get_required_summary_stats(
     return required_summary_stats
 
 
-def _convert_to_json_serializable(value: any) -> str | None:
+def _convert_to_json_serializable(value: Any) -> str | None:
     """
     Convert a value to JSON-serializable format.
     Handles Decimal, float, int, and other numeric types.
@@ -122,7 +120,6 @@ def _convert_to_json_serializable(value: any) -> str | None:
     Returns:
         String representation of the value, or None if value is None.
     """
-    from decimal import Decimal
 
     if value is None:
         return None
