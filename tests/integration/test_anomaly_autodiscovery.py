@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import train
 from databricks.labs.dqx.anomaly.profiler import auto_discover
-from tests.conftest import make_schema, make_random
+from tests.conftest import TEST_CATALOG
 
 
 @pytest.fixture
@@ -65,15 +65,15 @@ def test_auto_discover_excludes_high_cardinality(
 ):
     """Test that high-cardinality columns are excluded from segmentation."""
     # Create data with too many distinct values
-    data = [(f"user_{i}", 100.0 + i) for i in range(100)]
-    df = spark.createDataFrame(data, "user_id string, amount double")
+    data = [(f"category_{i}", 100.0 + i) for i in range(100)]
+    df = spark.createDataFrame(data, "category string, amount double")
     
     profile = auto_discover(df)
     
-    # Should not recommend user_id for segmentation (high cardinality)
-    assert "user_id" not in profile.recommended_segments
-    # Should warn about high cardinality
-    assert any("user_id" in w for w in profile.warnings)
+    # Should not recommend category for segmentation (high cardinality)
+    assert "category" not in profile.recommended_segments
+    # Should warn about high cardinality (excludes columns with "id" in name)
+    assert any("category" in w for w in profile.warnings)
 
 
 def test_zero_config_training(
