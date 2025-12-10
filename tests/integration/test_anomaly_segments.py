@@ -6,7 +6,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
-from tests.conftest import make_schema, make_random
+from tests.conftest import TEST_CATALOG
 
 
 @pytest.fixture

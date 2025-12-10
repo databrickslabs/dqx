@@ -156,10 +156,9 @@ def _train_global(
             signature = infer_signature(train_pandas, predictions)
             
             # Log scikit-learn model with signature
-            # Note: Using 'path' instead of deprecated 'artifact_path'
             model_info = mlflow.sklearn.log_model(
                 sk_model=model,
-                path="model",
+                artifact_path="model",
                 registered_model_name=model_name,
                 signature=signature,
             )
@@ -316,7 +315,7 @@ def _train_single_segment(
         # Log scikit-learn model with signature
         model_info = mlflow.sklearn.log_model(
             sk_model=model,
-            path="model",
+            artifact_path="model",
             registered_model_name=model_name,
             signature=signature,
         )
@@ -755,10 +754,10 @@ def _train_ensemble(
             predictions = model.predict(train_pandas.values)
             signature = infer_signature(train_pandas, predictions)
             
-            # Note: Using 'path' instead of deprecated 'artifact_path'
+            # Log scikit-learn model for this ensemble member
             model_info = mlflow.sklearn.log_model(
                 sk_model=model,
-                path="model",
+                artifact_path="model",
                 registered_model_name=f"{model_name}_ensemble_{i}",
                 signature=signature,
             )
