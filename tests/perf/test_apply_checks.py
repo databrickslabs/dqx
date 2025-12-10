@@ -1546,6 +1546,7 @@ def test_benchmark_is_non_empty_geometry(skip_if_runtime_not_geo_compatible, ben
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
+
 def test_benchmark_is_not_null_island(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -1558,6 +1559,7 @@ def test_benchmark_is_not_null_island(skip_if_runtime_not_geo_compatible, benchm
     checked = dq_engine.apply_checks(generated_geo_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
+
 
 def test_benchmark_has_dimension(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
