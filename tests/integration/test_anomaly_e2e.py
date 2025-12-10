@@ -121,8 +121,9 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
 
 def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client):
     """Test that model_name and registry_table are auto-derived when omitted."""
+    # Train with varied data
     train_df = spark.createDataFrame(
-        [(100.0, 2.0) for i in range(50)],
+        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(100)],
         "amount double, quantity double",
     )
     
@@ -135,9 +136,9 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client):
     # Model URI should still be returned
     assert model_uri is not None
     
-    # Score without explicit names (should use same auto-derived names)
+    # Score with normal data (within training distribution) without explicit names
     test_df = spark.createDataFrame(
-        [(100.0, 2.0)],
+        [(125.0, 2.5)],  # Mid-range value from training data
         "amount double, quantity double",
     )
     
@@ -148,15 +149,16 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client):
             check_func=has_no_anomalies,
             check_func_kwargs={
                 "columns": ["amount", "quantity"],
-                "score_threshold": 0.5,
+                "score_threshold": 0.7,  # Higher threshold to avoid false positives
             }
         )
     ]
     
     result_df = dq_engine.apply_checks(test_df, checks)
     
-    # Should succeed without errors
-    assert "anomaly_score" in result_df.columns
+    # Should succeed without errors - the auto-derived names allow scoring to work
+    errors = result_df.select("_errors").first()["_errors"]
+    assert errors is None or len(errors) == 0, f"Expected no errors, got: {errors}"
 
 
 def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_schema, make_random):

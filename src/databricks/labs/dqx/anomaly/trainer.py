@@ -241,6 +241,8 @@ def _train_segmented(
     model_uris = []
     
     # Train each segment
+    skipped_segments = []
+    
     for i, segment_vals in enumerate(segments):
         segment_name = "_".join(f"{k}={v}" for k, v in segment_vals.items())
         print(f"Training segment {i+1}/{len(segments)}: {segment_name}")
@@ -263,11 +265,30 @@ def _train_segmented(
         # Derive segment-specific model name
         segment_model_name = f"{base_model_name}__seg_{segment_name}"
         
-        # Train model for this segment (reuse _train_global logic)
+        # Train model for this segment
         model_uri = _train_single_segment(
             segment_df, columns, segment_model_name, segment_vals, segment_by, registry_table, params
         )
-        model_uris.append(model_uri)
+        
+        if model_uri is not None:
+            model_uris.append(model_uri)
+        else:
+            skipped_segments.append(segment_name)
+    
+    # Log summary of skipped segments
+    if skipped_segments:
+        logger.info(
+            f"Skipped {len(skipped_segments)}/{len(segments)} segments due to insufficient data after sampling: "
+            f"{', '.join(skipped_segments[:5])}"
+            + (f" and {len(skipped_segments) - 5} more" if len(skipped_segments) > 5 else "")
+        )
+    
+    # Validate that at least one segment was successfully trained
+    if not model_uris:
+        raise InvalidParameterError(
+            f"All {len(segments)} segments produced 0 rows after sampling. Cannot train any models. "
+            f"Consider increasing sample_fraction (current: {params.sample_fraction}) or checking segment definitions."
+        )
     
     # Return comma-separated model URIs
     return ",".join(model_uris)
@@ -281,18 +302,19 @@ def _train_single_segment(
     segment_by: list[str],
     registry_table: str,
     params: AnomalyParams,
-) -> str:
-    """Train a model for a single segment."""
+) -> str | None:
+    """
+    Train a model for a single segment.
+    
+    Returns:
+        Model URI on success, None if segment has insufficient data after sampling.
+    """
     spark = df.sparkSession
 
     sampled_df, sampled_count, truncated = _sample_df(df, columns, params)
     if sampled_count == 0:
-        warnings.warn(
-            f"Segment {segment_values} produced 0 rows after sampling; skipping.",
-            UserWarning,
-            stacklevel=2,
-        )
-        return ""
+        logger.info(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
+        return None
 
     train_df, val_df = _train_validation_split(sampled_df, params)
 

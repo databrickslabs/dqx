@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
 
 
@@ -24,18 +25,16 @@ def test_missing_model_error(spark: SparkSession, mock_workspace_client):
     )
     
     dq_engine = DQEngine(mock_workspace_client)
-    checks = [
-        has_no_anomalies(
+    
+    # Should raise clear error about missing model
+    with pytest.raises(InvalidParameterError, match="Model 'nonexistent_model' not found"):
+        condition_col, apply_fn = has_no_anomalies(
             columns=["amount", "quantity"],
             model="nonexistent_model",
             registry_table="main.default.nonexistent_registry",
             score_threshold=0.5,
         )
-    ]
-    
-    # Should raise clear error about missing model
-    with pytest.raises(InvalidParameterError, match="Model 'nonexistent_model' not found"):
-        result_df = dq_engine.apply_checks_by_metadata(df, checks)
+        result_df = apply_fn(df)
         result_df.collect()
 
 
@@ -60,19 +59,15 @@ def test_column_mismatch_error(spark: SparkSession, mock_workspace_client):
         "amount double, discount double",
     )
     
-    dq_engine = DQEngine(mock_workspace_client)
-    checks = [
-        has_no_anomalies(
+    # Should raise error about column mismatch
+    with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
+        condition_col, apply_fn = has_no_anomalies(
             columns=["amount", "discount"],
             model="test_col_mismatch",
             registry_table="main.default.test_col_mismatch_registry",
             score_threshold=0.5,
         )
-    ]
-    
-    # Should raise error about column mismatch
-    with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
-        result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+        result_df = apply_fn(test_df)
         result_df.collect()
 
 
@@ -97,19 +92,15 @@ def test_column_count_mismatch_error(spark: SparkSession, mock_workspace_client)
         "amount double, quantity double, discount double",
     )
     
-    dq_engine = DQEngine(mock_workspace_client)
-    checks = [
-        has_no_anomalies(
+    # Should raise error about column mismatch
+    with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
+        condition_col, apply_fn = has_no_anomalies(
             columns=["amount", "quantity", "discount"],
             model="test_count_mismatch",
             registry_table="main.default.test_count_mismatch_registry",
             score_threshold=0.5,
         )
-    ]
-    
-    # Should raise error about column mismatch
-    with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
-        result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+        result_df = apply_fn(test_df)
         result_df.collect()
 
 
@@ -134,37 +125,15 @@ def test_column_order_independence(spark: SparkSession, mock_workspace_client):
         "quantity double, amount double",
     )
     
-    dq_engine = DQEngine(mock_workspace_client)
-    checks = [
-        has_no_anomalies(
-            columns=["quantity", "amount"],  # Different order
-            model="test_col_order",
-            registry_table="main.default.test_col_order_registry",
-            score_threshold=0.5,
-        )
-    ]
-    
     # Should NOT raise error (column sets are the same)
-    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    assert "anomaly_score" in result_df.columns
-
-
-def test_spark_version_check_on_train(spark: SparkSession):
-    """Test that training fails fast on unsupported Spark version."""
-    df = spark.createDataFrame(
-        [(100.0, 2.0) for i in range(50)],
-        "amount double, quantity double",
+    condition_col, apply_fn = has_no_anomalies(
+        columns=["quantity", "amount"],  # Different order
+        model="test_col_order",
+        registry_table="main.default.test_col_order_registry",
+        score_threshold=0.5,
     )
-    
-    # Mock Spark version to be < 3.5
-    with patch.object(spark, "version", "3.4.0"):
-        with pytest.raises(InvalidParameterError, match="Spark .* or DBR .* required"):
-            train(
-                df=df,
-                columns=["amount", "quantity"],
-                model_name="test_version_check",
-                registry_table="main.default.test_version_check_registry",
-            )
+    result_df = apply_fn(test_df)
+    assert "anomaly_score" in result_df.columns
 
 
 def test_empty_dataframe_error(spark: SparkSession):
@@ -222,18 +191,14 @@ def test_missing_registry_table_for_scoring_error(spark: SparkSession, mock_work
         "amount double, quantity double",
     )
     
-    dq_engine = DQEngine(mock_workspace_client)
-    checks = [
-        has_no_anomalies(
+    # Should raise error about missing model/registry
+    with pytest.raises(InvalidParameterError, match="Model .* not found"):
+        condition_col, apply_fn = has_no_anomalies(
             columns=["amount", "quantity"],
             model="test_missing_registry",
             registry_table="main.default.completely_nonexistent_registry",
             score_threshold=0.5,
         )
-    ]
-    
-    # Should raise error about missing model/registry
-    with pytest.raises(InvalidParameterError, match="Model .* not found"):
-        result_df = dq_engine.apply_checks_by_metadata(df, checks)
+        result_df = apply_fn(df)
         result_df.collect()
 

@@ -4,6 +4,7 @@ Model registry utilities for anomaly detection.
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
@@ -57,9 +58,27 @@ class AnomalyModelRegistry:
         self.spark = spark
 
     @staticmethod
+    def _convert_decimals(obj: Any) -> Any:
+        """Recursively convert Decimal values to float for PyArrow compatibility."""
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, dict):
+            return {k: AnomalyModelRegistry._convert_decimals(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [AnomalyModelRegistry._convert_decimals(item) for item in obj]
+        return obj
+
+    @staticmethod
     def build_model_df(spark: SparkSession, record: AnomalyModelRecord) -> DataFrame:
         """Convert a registry record into a DataFrame."""
-        return spark.createDataFrame([record.__dict__], schema=ANOMALY_MODEL_TABLE_SCHEMA)
+        # Convert record to dict and handle Decimal values for PyArrow compatibility
+        record_dict = record.__dict__.copy()
+        
+        # Convert Decimals in nested structures (baseline_stats, metrics, etc.)
+        for key, value in record_dict.items():
+            record_dict[key] = AnomalyModelRegistry._convert_decimals(value)
+        
+        return spark.createDataFrame([record_dict], schema=ANOMALY_MODEL_TABLE_SCHEMA)
 
     def save_model(self, record: AnomalyModelRecord, table: str) -> None:
         """Archive previous active model with the same name and insert the new record."""

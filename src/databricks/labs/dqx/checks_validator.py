@@ -250,7 +250,18 @@ class ChecksValidator:
 
         if origin:
             return isinstance(value, origin)
-        return isinstance(value, expected_type)
+        
+        # Handle special typing constructs that cannot be used with isinstance()
+        if expected_type is Any:
+            return True  # Any type is always valid
+        
+        try:
+            return isinstance(value, expected_type)
+        except TypeError:
+            # For complex typing constructs (e.g., Callable, Protocol) that can't be validated at runtime,
+            # assume valid rather than failing
+            logger.debug(f"Cannot validate type {expected_type} at runtime, assuming valid")
+            return True
 
     @staticmethod
     def _check_union_type(args, value):

@@ -6,6 +6,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx import anomaly
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
 from unittest.mock import MagicMock
 
@@ -39,19 +40,23 @@ def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_w
     
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        anomaly.has_no_anomalies(
-            columns=["amount", "quantity"],
-            model="test_drift",
-            registry_table="main.default.test_drift_registry",
-            score_threshold=0.5,
-            drift_threshold=3.0,
+        DQDatasetRule(
+            criticality="error",
+            check_func=anomaly.has_no_anomalies,
+            check_func_kwargs={
+                "columns": ["amount", "quantity"],
+                "model": "test_drift",
+                "registry_table": "main.default.test_drift_registry",
+                "score_threshold": 0.5,
+                "drift_threshold": 3.0,
+            }
         )
     ]
     
     # Capture warnings
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+        result_df = dq_engine.apply_checks(test_df, checks)
         result_df.collect()  # Force evaluation
         
         # Check that drift warning was issued
@@ -87,19 +92,23 @@ def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_work
     
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        anomaly.has_no_anomalies(
-            columns=["amount", "quantity"],
-            model="test_no_drift",
-            registry_table="main.default.test_no_drift_registry",
-            score_threshold=0.5,
-            drift_threshold=3.0,
+        DQDatasetRule(
+            criticality="error",
+            check_func=anomaly.has_no_anomalies,
+            check_func_kwargs={
+                "columns": ["amount", "quantity"],
+                "model": "test_no_drift",
+                "registry_table": "main.default.test_no_drift_registry",
+                "score_threshold": 0.5,
+                "drift_threshold": 3.0,
+            }
         )
     ]
     
     # Capture warnings
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+        result_df = dq_engine.apply_checks(test_df, checks)
         result_df.collect()
         
         # Check that NO drift warning was issued
@@ -129,19 +138,23 @@ def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_
     
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        anomaly.has_no_anomalies(
-            columns=["amount", "quantity"],
-            model="test_drift_disabled",
-            registry_table="main.default.test_drift_disabled_registry",
-            score_threshold=0.5,
-            drift_threshold=None,  # Disable drift detection
+        DQDatasetRule(
+            criticality="error",
+            check_func=anomaly.has_no_anomalies,
+            check_func_kwargs={
+                "columns": ["amount", "quantity"],
+                "model": "test_drift_disabled",
+                "registry_table": "main.default.test_drift_disabled_registry",
+                "score_threshold": 0.5,
+                "drift_threshold": None,  # Disable drift detection
+            }
         )
     ]
     
     # Capture warnings
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+        result_df = dq_engine.apply_checks(test_df, checks)
         result_df.collect()
         
         # Check that NO drift warning was issued
