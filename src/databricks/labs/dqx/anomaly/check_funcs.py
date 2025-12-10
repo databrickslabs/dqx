@@ -373,7 +373,7 @@ def has_no_anomalies(
             # Ensemble: score with all models (distributed) and average scores
             scored_dfs = []
             for i, uri in enumerate(model_uris):
-                temp_scored = _score_with_sklearn_model(uri.strip(), df_filtered, normalized_columns)
+                temp_scored = _score_with_sklearn_model(uri, df_filtered, normalized_columns)
                 temp_scored = temp_scored.withColumn(f"_score_{i}", F.col("anomaly_score"))
                 scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score", "prediction"))
             

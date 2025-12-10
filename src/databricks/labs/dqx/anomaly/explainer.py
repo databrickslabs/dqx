@@ -45,26 +45,33 @@ def compute_feature_contributions(
     # Compute contributions as deviation from mean weighted by position
     # This is a heuristic approximation for performance
     # For exact contributions, consider using SHAP with the sklearn model
-    contributions_expr = F.create_map()
     
+    # Build map dynamically by adding each contribution column
+    result = df
     for col in columns:
         # Heuristic: contribution proportional to normalized deviation
         deviation = F.abs(F.col(col) - F.lit(means[col]))
         contribution = deviation / (F.lit(len(columns)) + F.lit(1.0))
-        contributions_expr = F.expr(
-            f"map_concat({contributions_expr._jc.toString()}, "
-            f"map('{col}', {contribution._jc.toString()}))"
-        )
-
-    # Add contributions to DataFrame
-    result = df.withColumn("_raw_contributions", contributions_expr)
+        result = result.withColumn(f"_contrib_{col}", contribution)
+    
+    # Create map from individual contribution columns
+    contrib_cols = [f"_contrib_{col}" for col in columns]
+    map_pairs = []
+    for col in columns:
+        map_pairs.extend([F.lit(col), F.col(f"_contrib_{col}")])
+    
+    result = result.withColumn("_raw_contributions", F.create_map(*map_pairs))
+    
+    # Drop temporary contribution columns
+    for col in columns:
+        result = result.drop(f"_contrib_{col}")
 
     # Normalize contributions to sum to 1.0 per row (distributed on Spark)
     result = result.withColumn(
         "anomaly_contributions",
         F.expr(
             "transform_values(_raw_contributions, "
-            "(k, v) -> v / aggregate(map_values(_raw_contributions), 0.0, (acc, x) -> acc + x))"
+            "(k, v) -> v / aggregate(map_values(_raw_contributions), CAST(0.0 AS DOUBLE), (acc, x) -> acc + x))"
         ),
     ).drop("_raw_contributions")
 

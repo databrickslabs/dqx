@@ -17,15 +17,24 @@ except ImportError:
 
 from databricks.labs.dqx.errors import InvalidCheckError
 
-# Optional anomaly detection support
-try:
-    from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
-
-    ANOMALY_ENABLED = True
-except ImportError:
-    ANOMALY_ENABLED = False
-
 logger = logging.getLogger(__name__)
+
+# Optional anomaly detection support - use lazy import to avoid circular dependencies
+anomaly_check_funcs = None
+ANOMALY_ENABLED = False
+
+def _load_anomaly_check_funcs():
+    """Lazy-load anomaly check functions to avoid circular import issues."""
+    global anomaly_check_funcs, ANOMALY_ENABLED
+    if anomaly_check_funcs is None and not ANOMALY_ENABLED:
+        try:
+            import databricks.labs.dqx.anomaly.check_funcs as acf
+            anomaly_check_funcs = acf
+            ANOMALY_ENABLED = True
+            logger.debug("Anomaly detection enabled")
+        except ImportError as e:
+            logger.debug(f"Anomaly detection disabled due to import error: {e}")
+            ANOMALY_ENABLED = False
 
 
 def resolve_check_function(
@@ -53,9 +62,11 @@ def resolve_check_function(
     if not func and PII_ENABLED:
         # try to resolve using predefined pii detection checks
         func = getattr(pii_check_funcs, function_name, None)
-    if not func and ANOMALY_ENABLED:
+    if not func:
         # resolve using anomaly checks, requires anomaly extras (mlflow, scikit-learn)
-        func = getattr(anomaly_check_funcs, function_name, None)
+        _load_anomaly_check_funcs()  # Lazy load to avoid circular imports
+        if anomaly_check_funcs is not None:
+            func = getattr(anomaly_check_funcs, function_name, None)
     if not func and custom_check_functions:
         func = custom_check_functions.get(function_name)  # returns None if not found
     if fail_on_missing and not func:

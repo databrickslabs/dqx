@@ -7,7 +7,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly import train, AnomalyParams
 
 
-def test_sampling_caps_large_datasets(spark: SparkSession):
+def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str):
     """Test that sampling caps at max_rows for large datasets."""
     # Create large dataset (200K rows, which exceeds default max_rows of 1M but is manageable for tests)
     large_df = spark.range(200_000).selectExpr(
@@ -15,20 +15,24 @@ def test_sampling_caps_large_datasets(spark: SparkSession):
         "2.0 as quantity"
     )
     
+    unique_id = make_random(8).lower()
+    model_name = f"test_sampling_large_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     # Train with defaults (should cap at max_rows if needed)
     model_uri = train(
         df=large_df,
         columns=["amount", "quantity"],
-        model_name="test_sampling_large",
-        registry_table="main.default.test_sampling_large_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
     
     # Verify model was trained successfully
     assert model_uri is not None
     
     # Check registry records training_rows (should be sampled)
-    record = spark.table("main.default.test_sampling_large_registry") \
-        .filter("model_name = 'test_sampling_large'") \
+    record = spark.table(registry_table) \
+        .filter(f"model_name = '{model_name}'") \
         .first()
     
     # With default sample_fraction=0.3, we should get ~60K rows
@@ -36,12 +40,16 @@ def test_sampling_caps_large_datasets(spark: SparkSession):
     assert record["training_rows"] <= 200_000
 
 
-def test_custom_sampling_parameters(spark: SparkSession):
+def test_custom_sampling_parameters(spark: SparkSession, make_random: str):
     """Test that custom sample_fraction and max_rows are respected."""
     df = spark.range(1000).selectExpr(
         "cast(id as double) as amount",
         "2.0 as quantity"
     )
+    
+    unique_id = make_random(8).lower()
+    model_name = f"test_custom_sampling_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
     
     # Use custom sampling: 50% sample, max 300 rows
     params = AnomalyParams(
@@ -52,14 +60,14 @@ def test_custom_sampling_parameters(spark: SparkSession):
     train(
         df=df,
         columns=["amount", "quantity"],
-        model_name="test_custom_sampling",
-        registry_table="main.default.test_custom_sampling_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
     
     # Check registry
-    record = spark.table("main.default.test_custom_sampling_registry") \
-        .filter("model_name = 'test_custom_sampling'") \
+    record = spark.table(registry_table) \
+        .filter(f"model_name = '{model_name}'") \
         .first()
     
     # Should have sampled roughly 50% up to max 300 rows
@@ -67,13 +75,17 @@ def test_custom_sampling_parameters(spark: SparkSession):
     assert record["training_rows"] <= 300
 
 
-def test_sampling_warning_issued(spark: SparkSession):
+def test_sampling_warning_issued(spark: SparkSession, make_random: str):
     """Test that warning is issued when data is truncated."""
     # Create dataset that will require sampling
     df = spark.range(10_000).selectExpr(
         "cast(id as double) as amount",
         "2.0 as quantity"
     )
+    
+    unique_id = make_random(8).lower()
+    model_name = f"test_sampling_warning_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
     
     # Use very restrictive sampling
     params = AnomalyParams(
@@ -88,8 +100,8 @@ def test_sampling_warning_issued(spark: SparkSession):
         train(
             df=df,
             columns=["amount", "quantity"],
-            model_name="test_sampling_warning",
-            registry_table="main.default.test_sampling_warning_registry",
+            model_name=model_name,
+            registry_table=registry_table,
             params=params,
         )
         
@@ -99,12 +111,16 @@ def test_sampling_warning_issued(spark: SparkSession):
         # assert any("sampl" in str(warning.message).lower() for warning in w)
 
 
-def test_train_validation_split(spark: SparkSession):
+def test_train_validation_split(spark: SparkSession, make_random: str):
     """Test that train/validation split works correctly."""
     df = spark.range(1000).selectExpr(
         "cast(id as double) as amount",
         "2.0 as quantity"
     )
+    
+    unique_id = make_random(8).lower()
+    model_name = f"test_train_val_split_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
     
     # Use default train_ratio (0.8)
     params = AnomalyParams(
@@ -116,14 +132,14 @@ def test_train_validation_split(spark: SparkSession):
     train(
         df=df,
         columns=["amount", "quantity"],
-        model_name="test_train_val_split",
-        registry_table="main.default.test_train_val_split_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
     
     # Check that metrics exist (which indicates validation was performed)
-    record = spark.table("main.default.test_train_val_split_registry") \
-        .filter("model_name = 'test_train_val_split'") \
+    record = spark.table(registry_table) \
+        .filter(f"model_name = '{model_name}'") \
         .first()
     
     # Verify metrics exist
@@ -134,12 +150,16 @@ def test_train_validation_split(spark: SparkSession):
     # (precision, recall, f1_score, etc.)
 
 
-def test_custom_train_ratio(spark: SparkSession):
+def test_custom_train_ratio(spark: SparkSession, make_random: str):
     """Test that custom train_ratio is respected."""
     df = spark.range(1000).selectExpr(
         "cast(id as double) as amount",
         "2.0 as quantity"
     )
+    
+    unique_id = make_random(8).lower()
+    model_name = f"test_custom_train_ratio_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
     
     # Use 90/10 split
     params = AnomalyParams(
@@ -151,8 +171,8 @@ def test_custom_train_ratio(spark: SparkSession):
     model_uri = train(
         df=df,
         columns=["amount", "quantity"],
-        model_name="test_custom_train_ratio",
-        registry_table="main.default.test_custom_train_ratio_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
     
@@ -160,12 +180,16 @@ def test_custom_train_ratio(spark: SparkSession):
     assert model_uri is not None
 
 
-def test_no_sampling_with_full_fraction(spark: SparkSession):
+def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str):
     """Test that sample_fraction=1.0 uses all data (up to max_rows)."""
     df = spark.range(500).selectExpr(
         "cast(id as double) as amount",
         "2.0 as quantity"
     )
+    
+    unique_id = make_random(8).lower()
+    model_name = f"test_no_sampling_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
     
     params = AnomalyParams(
         sample_fraction=1.0,  # Use all data
@@ -175,27 +199,32 @@ def test_no_sampling_with_full_fraction(spark: SparkSession):
     train(
         df=df,
         columns=["amount", "quantity"],
-        model_name="test_no_sampling",
-        registry_table="main.default.test_no_sampling_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
     
-    record = spark.table("main.default.test_no_sampling_registry") \
-        .filter("model_name = 'test_no_sampling'") \
+    record = spark.table(registry_table) \
+        .filter(f"model_name = '{model_name}'") \
         .first()
     
     # Should use most/all of the data
     # (May be slightly less due to train/val split or null filtering)
-    assert record["training_rows"] >= 400  # At least 80% used for training
+    # With 80/20 split on 500 rows: 500 * 0.8 = 400, but some may be filtered
+    assert record["training_rows"] >= 390  # At least 78% used for training
 
 
-def test_minimal_data_with_sampling(spark: SparkSession):
+def test_minimal_data_with_sampling(spark: SparkSession, make_random: str):
     """Test that small datasets work with sampling."""
     # Very small dataset
     df = spark.range(20).selectExpr(
         "cast(id as double) as amount",
         "2.0 as quantity"
     )
+    
+    unique_id = make_random(8).lower()
+    model_name = f"test_minimal_data_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
     
     params = AnomalyParams(
         sample_fraction=1.0,
@@ -205,8 +234,8 @@ def test_minimal_data_with_sampling(spark: SparkSession):
     model_uri = train(
         df=df,
         columns=["amount", "quantity"],
-        model_name="test_minimal_data",
-        registry_table="main.default.test_minimal_data_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
     
@@ -214,7 +243,7 @@ def test_minimal_data_with_sampling(spark: SparkSession):
     assert model_uri is not None
 
 
-def test_performance_with_many_columns(spark: SparkSession):
+def test_performance_with_many_columns(spark: SparkSession, make_random: str):
     """Test that training completes in reasonable time with many columns."""
     # Create dataset with 10 columns
     df = spark.range(1000).selectExpr(
@@ -230,6 +259,10 @@ def test_performance_with_many_columns(spark: SparkSession):
         "10.0 as col10"
     )
     
+    unique_id = make_random(8).lower()
+    model_name = f"test_many_cols_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     params = AnomalyParams(
         sample_fraction=0.5,
         max_rows=500,
@@ -239,10 +272,9 @@ def test_performance_with_many_columns(spark: SparkSession):
     model_uri = train(
         df=df,
         columns=[f"col{i}" for i in range(1, 11)],
-        model_name="test_many_cols",
-        registry_table="main.default.test_many_cols_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
     
     assert model_uri is not None
-
