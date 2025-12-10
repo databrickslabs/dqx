@@ -3022,8 +3022,9 @@ def test_has_json_keys_require_at_least_one(spark):
 
 def test_has_valid_json_schema(spark):
     schema = "a: string, b: string"
-    test_data = spark.createDataFrame(
+    test_df = spark.createDataFrame(
         [
+            ['{"a": 1, "b": 2}', '{"a": 3, "b": 4}'],
             ['{"key": "value", "another_key": 123}', '{"key": "value"}'],
             ['{"number": 123}', '{"number": 123, "extra": true}'],
             ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
@@ -3032,38 +3033,42 @@ def test_has_valid_json_schema(spark):
             ['Not a JSON string', '{"key": "value"}'],
             ['{"key": "value"}', 'Not a JSON string'],
             ['{"key": "value"}', None],
-        ]
+        ],
+        schema,
     )
-    test_df = spark.createDataFrame(test_data, schema)
 
     json_schema = "STRUCT<a: BIGINT, b: BIGINT>"
     expected_schema = "a_has_invalid_json_schema: string, b_has_invalid_json_schema: string"
     expected = spark.createDataFrame(
         [
+            [None, None],
             [
-                "Value '{\"key\": \"value\", \"another_key\": 123}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
-                "Value '{\"key\": \"value\"}' in Column 'b' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value '{\"key\": \"value\", \"another_key\": 123}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value '{\"key\": \"value\"}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
             ],
             [
-                "Value '{\"number\": 123}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
-                "Value '{\"number\": 123, \"extra\": true}' in Column 'b' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value '{\"number\": 123}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value '{\"number\": 123, \"extra\": true}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
             ],
             [
-                "Value '{\"array\": [1, 2, 3]}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
-                "Value '{\"array\": {1, 2, 3}]}' in Column 'b' is not a valid JSON string",
+                "Value '{\"array\": [1, 2, 3]}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value '{\"array\": {1, 2, 3}]' in Column 'b' is not a valid JSON string",
             ],
             [
-                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
-                "Value '{\"missing_key\": \"value\"}' in Column 'b' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value '{\"missing_key\": \"value\"}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
             ],
             [None, None],
-            ["Value 'Not a JSON string' in Column 'a' is not a valid JSON string", None],
             [
-                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value 'Not a JSON string' in Column 'a' is not a valid JSON string",
+                "Value '{\"key\": \"value\"}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+            ],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
                 "Value 'Not a JSON string' in Column 'b' is not a valid JSON string",
             ],
             [
-                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to the expected JSON schema: STRUCT<a: BIGINT, b: BIGINT>",
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
                 None,
             ],
         ],
