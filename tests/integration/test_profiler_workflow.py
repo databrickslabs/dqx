@@ -440,7 +440,7 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark,
             break
 
     expected_ai_generated_check = {
-        'check': {'arguments': {'column': 'name', 'suffix': "'c'"}, 'function': 'not_ends_with_suffix'},
+        'check': {'arguments': {'column': 'name', 'suffix': 'c'}, 'function': 'not_ends_with_suffix'},
         'criticality': 'error',
     }
 

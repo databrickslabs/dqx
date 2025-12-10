@@ -1,7 +1,11 @@
+from collections.abc import Callable
+import operator as py_operator
+
 from pyspark.sql import Column
 import pyspark.sql.functions as F
+
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
+from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr, _get_limit_expr
 
 POINT_TYPE = "ST_Point"
 LINESTRING_TYPE = "ST_LineString"
@@ -10,6 +14,7 @@ MULTIPOINT_TYPE = "ST_MultiPoint"
 MULTILINESTRING_TYPE = "ST_MultiLineString"
 MULTIPOLYGON_TYPE = "ST_MultiPolygon"
 GEOMETRYCOLLECTION_TYPE = "ST_GeometryCollection"
+DEFAULT_SRID = 4326
 
 
 @register_rule("row")
@@ -447,4 +452,336 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
         condition,
         F.concat_ws("", F.lit("value `"), col_expr.cast("string"), F.lit(condition_str)),
         f"{col_str_norm}_has_y_coordinates_outside_range",
+    )
+
+
+@register_rule("row")
+def is_area_equal_to(
+    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+) -> Column:
+    """
+    Checks if the areas of values in a geometry or geography column are equal to a specified value. By default, the 2D
+    Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to
+    transform the input values and compute areas with specific units of measure.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        srid: Optional integer SRID to use for computing the area of the geometry or geography value (default `None`).
+            If an SRID is provided, the input value is translated and area is calculated using the units of measure of
+            the specified coordinate reference system (e.g. meters squared for `srid=3857`).
+        geodesic: Whether to use the 2D geodesic area (default `False`).
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column are equal to the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_sql_function_result(
+        column,
+        value,
+        spatial_function="st_area",
+        spatial_quantity_label="area",
+        spatial_quantity_name="area",
+        compare_op=py_operator.ne,
+        compare_op_label="not equal to",
+        compare_op_name="not_equal_to",
+        srid=srid,
+        geodesic=geodesic,
+    )
+
+
+@register_rule("row")
+def is_area_not_equal_to(
+    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+) -> Column:
+    """
+    Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D
+    Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to
+    transform the input values and compute areas with specific units of measure.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        srid: Optional integer SRID to use for computing the area of the geometry or geography value (default `None`).
+            If an SRID is provided, the input value is translated and area is calculated using the units of measure of
+            the specified coordinate reference system (e.g. meters squared for `srid=3857`).
+        geodesic: Whether to use the 2D geodesic area (default `False`).
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column are not equal to the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_sql_function_result(
+        column,
+        value,
+        spatial_function="st_area",
+        spatial_quantity_label="area",
+        spatial_quantity_name="area",
+        compare_op=py_operator.eq,
+        compare_op_label="equal to",
+        compare_op_name="equal_to",
+        srid=srid,
+        geodesic=geodesic,
+    )
+
+
+@register_rule("row")
+def is_area_not_greater_than(
+    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+) -> Column:
+    """
+    Checks if the areas of values in a geometry column are not greater than a specified limit. By default, the 2D
+    Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to
+    transform the input values and compute areas with specific units of measure.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        srid: Optional integer SRID to use for computing the area of the geometry or geography value (default `None`).
+            If an SRID is provided, the input value is translated and area is calculated using the units of measure of
+            the specified coordinate reference system (e.g. meters squared for `srid=3857`).
+        geodesic: Whether to use the 2D geodesic area (default `False`).
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column is greater than the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_sql_function_result(
+        column,
+        value,
+        spatial_function="st_area",
+        spatial_quantity_label="area",
+        spatial_quantity_name="area",
+        compare_op=py_operator.gt,
+        compare_op_label="greater than",
+        compare_op_name="greater_than",
+        srid=srid,
+        geodesic=geodesic,
+    )
+
+
+@register_rule("row")
+def is_area_not_less_than(
+    column: str | Column, value: int | float | str | Column, srid: int | None = 3857, geodesic: bool = False
+) -> Column:
+    """
+    Checks if the areas of values in a geometry column are not less than a specified limit. By default, the 2D
+    Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to
+    transform the input values and compute areas with specific units of measure.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        srid: Optional integer SRID to use for computing the area of the geometry or geography value (default `None`).
+            If an SRID is provided, the input value is translated and area is calculated using the units of measure of
+            the specified coordinate reference system (e.g. meters squared for `srid=3857`).
+        geodesic: Whether to use the 2D geodesic area (default `False`).
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column is less than the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_sql_function_result(
+        column,
+        value,
+        spatial_function="st_area",
+        spatial_quantity_label="area",
+        spatial_quantity_name="area",
+        compare_op=py_operator.lt,
+        compare_op_label="less than",
+        compare_op_name="less_than",
+        srid=srid,
+        geodesic=geodesic,
+    )
+
+
+@register_rule("row")
+def is_num_points_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
+    """
+    Checks if the number of coordinate pairs in values of a geometry column is equal to a specified value.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+
+    Returns:
+        Column object indicating whether the number of coordinate pairs in the geometries of the input column is
+        equal to the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_sql_function_result(
+        column,
+        value,
+        spatial_function="st_npoints",
+        spatial_quantity_label="number of coordinates",
+        spatial_quantity_name="num_points",
+        compare_op=py_operator.ne,
+        compare_op_label="not equal to",
+        compare_op_name="not_equal_to",
+    )
+
+
+@register_rule("row")
+def is_num_points_not_equal_to(column: str | Column, value: int | float | str | Column) -> Column:
+    """
+    Checks if the number of coordinate pairs in values of a geometry column is not equal to a specified value.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+
+    Returns:
+        Column object indicating whether the number of coordinate pairs in the geometries of the input column is not
+        equal to the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_sql_function_result(
+        column,
+        value,
+        spatial_function="st_npoints",
+        spatial_quantity_label="number of coordinates",
+        spatial_quantity_name="num_points",
+        compare_op=py_operator.eq,
+        compare_op_label="equal to",
+        compare_op_name="equal_to",
+    )
+
+
+@register_rule("row")
+def is_num_points_not_greater_than(column: str | Column, value: int | float | str | Column) -> Column:
+    """
+    Checks if the number of coordinate pairs in the values of a geometry column is not greater than a specified limit.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+
+    Returns:
+        Column object indicating whether the number of coordinate pairs in the geometries of the input column is
+        greater than the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_sql_function_result(
+        column,
+        value,
+        spatial_function="st_npoints",
+        spatial_quantity_label="number of coordinates",
+        spatial_quantity_name="num_points",
+        compare_op=py_operator.gt,
+        compare_op_label="greater than",
+        compare_op_name="greater_than",
+    )
+
+
+@register_rule("row")
+def is_num_points_not_less_than(column: str | Column, value: int | float | str | Column) -> Column:
+    """
+    Checks if the number of coordinate pairs in values of a geometry column is not less than a specified limit.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+
+    Returns:
+        Column object indicating whether the number of coordinate pairs in the geometries of the input column is
+        less than the provided value
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    return _compare_sql_function_result(
+        column,
+        value,
+        spatial_function="st_npoints",
+        spatial_quantity_label="number of coordinates",
+        spatial_quantity_name="num_points",
+        compare_op=py_operator.lt,
+        compare_op_label="less than",
+        compare_op_name="less_than",
+    )
+
+
+def _compare_sql_function_result(
+    column: str | Column,
+    value: int | float | str | Column,
+    spatial_function: str,
+    spatial_quantity_label: str,
+    spatial_quantity_name: str,
+    compare_op: Callable[[Column, Column], Column],
+    compare_op_label: str,
+    compare_op_name: str,
+    srid: int | None = None,
+    geodesic: bool = False,
+) -> Column:
+    """
+    Compares the results from applying a spatial SQL function (e.g. `st_area`) on a geometry column against a limit
+    using the specified comparison operator.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        value: Value to use in the condition as number, column name or sql expression
+        spatial_function: Spatial SQL function as a string (e.g. `st_npoints`)
+        spatial_quantity_label: Spatial quantity label (e.g. `number of coordinates` )
+        spatial_quantity_name: Spatial quantity identifier (e.g. `num_points`)
+        compare_op: Comparison operator (e.g., `operator.gt`, `operator.lt`).
+        compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
+        compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+        srid: Optional integer SRID for computing measurements on the converted geometry or geography value (default `None`).
+        geodesic: Whether to convert the input column to a geography type for computing geodesic distances.
+
+    Returns:
+        Column object indicating whether the area the geometries in the input column is less than the provided limit
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    value_expr = _get_limit_expr(value)
+    # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
+    #   Databricks SQL, due to the use of the `try_to_geometry` and `st_area` functions.
+    if geodesic:
+        spatial_conversion_expr = f"try_to_geography({col_str_norm})"
+        spatial_data_type = "geography"
+    elif srid:
+        spatial_conversion_expr = f"st_transform(st_setsrid(try_to_geometry({col_str_norm}), {DEFAULT_SRID}), {srid})"
+        spatial_data_type = "geometry"
+    else:
+        spatial_conversion_expr = f"try_to_geometry({col_str_norm})"
+        spatial_data_type = "geometry"
+
+    is_valid_cond = F.expr(f"{spatial_conversion_expr} IS NULL")
+    is_valid_message = F.concat_ws(
+        "",
+        F.lit("value `"),
+        col_expr.cast("string"),
+        F.lit(f"` in column `{col_expr_str}` is not a valid {spatial_data_type}"),
+    )
+    compare_cond = compare_op(F.expr(f"{spatial_function}({spatial_conversion_expr})"), value_expr)
+    compare_message = F.concat_ws(
+        "",
+        F.lit("value `"),
+        col_expr.cast("string"),
+        F.lit(f"` in column `{col_expr_str}` has {spatial_quantity_label} {compare_op_label} value: "),
+        value_expr.cast("string"),
+    )
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(is_valid_cond | compare_cond)
+
+    return make_condition(
+        condition,
+        F.when(is_valid_cond, is_valid_message).otherwise(compare_message),
+        f"{col_str_norm}_{spatial_quantity_name}_{compare_op_name}_limit",
     )
