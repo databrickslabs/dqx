@@ -1746,7 +1746,7 @@ def test_benchmark_is_aggr_approx_count_distinct_with_group_by(benchmark, ws, ge
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 
-    
+
 def test_benchmark_is_aggr_count_distinct_no_group_by(benchmark, ws, generated_df):
     """Benchmark count_distinct without group_by (baseline - uses standard aggregation)."""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
