@@ -4,7 +4,6 @@ from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
-from decimal import Decimal
 import json
 import yaml
 import dspy  # type: ignore
@@ -112,7 +111,7 @@ def get_required_summary_stats(summary_stats: dict) -> dict:
 def _convert_to_json_serializable(value: Any) -> str | None:
     """
     Convert a value to JSON-serializable format.
-    Handles Decimal, float, int, and other numeric types.
+    Converts all values to strings for JSON serialization.
 
     Args:
         value: The value to convert.
@@ -120,15 +119,9 @@ def _convert_to_json_serializable(value: Any) -> str | None:
     Returns:
         String representation of the value, or None if value is None.
     """
-
     if value is None:
         return None
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, (int, float)):
-        return str(value)
-    # Already a string or other type
-    return value
+    return str(value)
 
 
 def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | None = None) -> list[dspy.Example]:
