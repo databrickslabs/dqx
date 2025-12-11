@@ -1,7 +1,7 @@
 """
 Explainability utilities for anomaly detection.
 
-Provides feature contribution analysis to understand which columns
+Provides TreeSHAP-based feature contribution analysis to understand which columns
 contribute most to anomaly scores for individual records.
 """
 
@@ -10,71 +10,102 @@ from __future__ import annotations
 from typing import Any
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
-from pyspark.sql.types import MapType, StringType, DoubleType
+from pyspark.sql.types import MapType, StringType, DoubleType, StructType, StructField
+from pyspark.sql.functions import pandas_udf, PandasUDFType
 
 
 def compute_feature_contributions(
-    model: Any,
+    model_uri: str,
     df: DataFrame,
     columns: list[str],
 ) -> DataFrame:
     """
-    Compute per-row feature contributions showing which columns
-    contributed most to each anomaly score.
-
-    Uses a heuristic approach based on feature deviations from mean.
-    For exact contributions, use SHAP or other model-agnostic methods.
-
+    Compute per-row feature contributions using TreeSHAP.
+    
+    TreeSHAP provides exact feature attributions from the IsolationForest model,
+    showing which features contributed most to each anomaly score.
+    
     Args:
-        model: Trained scikit-learn IsolationForest model (not used in current heuristic).
-        df: DataFrame with anomaly_score already computed.
-        columns: Feature columns.
-
+        model_uri: MLflow model URI to load sklearn IsolationForest.
+        df: DataFrame with data to explain.
+        columns: Feature columns used for training.
+    
     Returns:
-        DataFrame with additional 'anomaly_contributions' map column.
+        DataFrame with additional 'anomaly_contributions' map column containing
+        normalized SHAP values (absolute contributions summing to 1.0 per row).
     """
-    # Note: DataFrame already has anomaly_score from distributed scoring
-    # We compute contributions using a heuristic approach
-
-    # Compute column means (distributed on Spark)
-    means = {}
-    for col in columns:
-        col_mean = df.select(F.mean(col)).first()[0]
-        means[col] = col_mean if col_mean is not None else 0.0
-
-    # Compute contributions as deviation from mean weighted by position
-    # This is a heuristic approximation for performance
-    # For exact contributions, consider using SHAP with the sklearn model
+    # Import pandas/numpy for UDF type hints (these are always available)
+    import pandas as pd
+    import numpy as np
     
-    # Build map dynamically by adding each contribution column
-    result = df
-    for col in columns:
-        # Heuristic: contribution proportional to normalized deviation
-        deviation = F.abs(F.col(col) - F.lit(means[col]))
-        contribution = deviation / (F.lit(len(columns)) + F.lit(1.0))
-        result = result.withColumn(f"_contrib_{col}", contribution)
+    # Define pandas UDF for distributed SHAP computation
+    return_schema = StructType([
+        StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)
+    ])
     
-    # Create map from individual contribution columns
-    contrib_cols = [f"_contrib_{col}" for col in columns]
-    map_pairs = []
-    for col in columns:
-        map_pairs.extend([F.lit(col), F.col(f"_contrib_{col}")])
+    @pandas_udf(return_schema, PandasUDFType.SCALAR)
+    def compute_shap_udf(*cols: pd.Series) -> pd.DataFrame:
+        """Compute SHAP values for each row using TreeExplainer."""
+        # Import SHAP inside UDF so it only loads on cluster executors, not locally
+        try:
+            import shap
+            import mlflow.sklearn
+        except ImportError as e:
+            raise ImportError(
+                "To use feature contributions (include_contributions=True), install 'shap' version 0.42.0-0.46 on your cluster.\n"
+                "Go to: Cluster -> Libraries -> Install New -> PyPI -> Enter 'shap>=0.42.0,<0.46'"
+            ) from e
+        
+        # Load model once per executor
+        model_local = mlflow.sklearn.load_model(model_uri)
+        
+        # Create TreeExplainer (fast for tree-based models)
+        explainer = shap.TreeExplainer(model_local)
+        
+        # Prepare input data
+        X = pd.concat(cols, axis=1).values
+        
+        # Handle NaN values (SHAP can't process them)
+        has_nan = pd.isna(X).any(axis=1)
+        
+        # Initialize output
+        contributions_list = []
+        
+        for i in range(len(X)):
+            if has_nan[i]:
+                # Null contributions for rows with NaN
+                contributions_list.append({col: None for col in columns})
+            else:
+                # Compute SHAP values for this row
+                shap_values = explainer.shap_values(X[i:i+1])[0]
+                
+                # Convert to absolute contributions normalized to sum to 1.0
+                abs_shap = np.abs(shap_values)
+                total = abs_shap.sum()
+                
+                if total > 0:
+                    normalized = abs_shap / total
+                    contributions = {col: float(normalized[j]) for j, col in enumerate(columns)}
+                else:
+                    # Equal contributions if all SHAP values are 0
+                    contributions = {col: 1.0 / len(columns) for col in columns}
+                
+                contributions_list.append(contributions)
+        
+        return pd.DataFrame({"anomaly_contributions": contributions_list})
     
-    result = result.withColumn("_raw_contributions", F.create_map(*map_pairs))
+    # Apply pandas UDF to DataFrame
+    result = df.withColumn(
+        "_shap_result",
+        compute_shap_udf(*[F.col(c) for c in columns])
+    )
     
-    # Drop temporary contribution columns
-    for col in columns:
-        result = result.drop(f"_contrib_{col}")
-
-    # Normalize contributions to sum to 1.0 per row (distributed on Spark)
+    # Extract the map column
     result = result.withColumn(
         "anomaly_contributions",
-        F.expr(
-            "transform_values(_raw_contributions, "
-            "(k, v) -> v / aggregate(map_values(_raw_contributions), CAST(0.0 AS DOUBLE), (acc, x) -> acc + x))"
-        ),
-    ).drop("_raw_contributions")
-
+        F.col("_shap_result.anomaly_contributions")
+    ).drop("_shap_result")
+    
     return result
 
 
@@ -82,41 +113,42 @@ def add_top_contributors_to_message(
     df: DataFrame, threshold: float, top_n: int = 3
 ) -> DataFrame:
     """
-    Enhance error messages with top feature contributors.
-
+    Enhance error messages with top feature contributors from SHAP values.
+    
     Args:
         df: DataFrame with anomaly_score and anomaly_contributions.
         threshold: Score threshold for anomalies.
         top_n: Number of top contributors to include in message.
-
+    
     Returns:
-        DataFrame with enhanced messages.
+        DataFrame with enhanced messages including top contributing features.
     """
-
+    
     def format_contributions(contributions_map):
         """Format contributions map as string for top N contributors."""
         if not contributions_map:
             return ""
         
-        # Sort by contribution value descending
-        sorted_items = sorted(contributions_map.items(), key=lambda x: x[1], reverse=True)
-        top_items = sorted_items[:top_n]
+        # Sort by contribution value (descending)
+        sorted_contribs = sorted(
+            contributions_map.items(), 
+            key=lambda x: x[1] if x[1] is not None else 0.0, 
+            reverse=True
+        )
         
-        # Format as "col1=60%, col2=25%, col3=15%"
-        formatted = ", ".join([f"{col}={val*100:.0f}%" for col, val in top_items])
-        return f" (top contributors: {formatted})"
-
-    # Register UDF
+        # Take top N
+        top_contribs = sorted_contribs[:top_n]
+        
+        # Format as string: "amount (85%), quantity (10%), discount (5%)"
+        parts = [f"{col} ({val*100:.0f}%)" for col, val in top_contribs if val is not None]
+        return ", ".join(parts)
+    
     format_udf = F.udf(format_contributions, StringType())
-
-    # Add formatted contributions to anomalies
-    result = df.withColumn(
-        "_contrib_suffix",
+    
+    return df.withColumn(
+        "_top_contributors",
         F.when(
-            F.col("anomaly_score") > F.lit(threshold),
+            F.col("anomaly_score") >= threshold,
             format_udf(F.col("anomaly_contributions"))
         ).otherwise(F.lit(""))
     )
-
-    return result
-

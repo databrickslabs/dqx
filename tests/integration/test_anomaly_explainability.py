@@ -34,7 +34,9 @@ def test_feature_importance_stored(spark: SparkSession, make_random: str):
     )
     
     # Query registry for feature_importance
-    record = spark.table(registry_table).filter(f"model_name = '{model_name}'").first()
+    # Model name is stored with full catalog.schema.model format
+    full_model_name = f"main.default.{model_name}"
+    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
     
     # Verify feature_importance exists and is non-empty
     assert record["feature_importance"] is not None
@@ -104,7 +106,7 @@ def test_feature_contributions_added(spark: SparkSession, mock_workspace_client,
 def test_contribution_percentages_sum_to_one(spark: SparkSession, mock_workspace_client, make_random: str):
     """Test that contribution percentages sum to approximately 1.0."""
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(30)],
+        [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(200)],  # Increase training data for stability
         "amount double, quantity double, discount double",
     )
     
@@ -230,7 +232,7 @@ def test_top_contributor_is_reasonable(spark: SparkSession, mock_workspace_clien
     """Test that the top contributor makes sense for the anomaly."""
     # Train on data where all columns have some variance
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.1, 2.0 + i * 0.01, 0.1 + i * 0.01) for i in range(30)],
+        [(100.0 + i * 0.1, 2.0 + i * 0.01, 0.1 + i * 0.01) for i in range(200)],  # Increase training data for stability
         "amount double, quantity double, discount double",
     )
     
