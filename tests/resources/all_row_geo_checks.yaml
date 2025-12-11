@@ -92,6 +92,13 @@
     arguments:
       column: point_geom
 
+# is_not_null_island check
+- criticality: error
+  check:
+    function: is_not_null_island
+    arguments:
+      column: point_geom
+
 # has_dimension check
 - criticality: error
   check:

@@ -363,6 +363,42 @@ def is_non_empty_geometry(column: str | Column) -> Column:
 
 
 @register_rule("row")
+def is_not_null_island(column: str | Column) -> Column:
+    """Checks whether the values in the input column are NULL island geometries (e.g. POINT(0 0), POINTZ(0 0 0), or
+    POINTZM(0 0 0 0)).
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object indicating whether the values in the input column are NULL island geometries
+
+    Note:
+        This function requires Databricks serverless compute or runtime 17.1 or above.
+    """
+    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
+    #   Databricks SQL, due to the use of the `try_to_geometry`, `st_geometrytype`, `st_x`, and `st_y` functions.
+    try_geom_expr = f"try_to_geometry({col_str_norm})"
+    geom_cond = F.expr(f"{try_geom_expr} IS NULL")
+
+    is_point_cond = F.expr(f"st_geometrytype({try_geom_expr}) = '{POINT_TYPE}'")
+    null_xy_cond = F.expr(f"st_x({try_geom_expr}) = 0.0 AND st_y({try_geom_expr}) = 0.0")
+    null_z_cond = F.expr(f"coalesce(st_z({try_geom_expr}), -1) = 0.0")
+    null_m_cond = F.expr(f"coalesce(st_m({try_geom_expr}), -1) = 0.0")
+
+    is_point_null_island = is_point_cond & null_xy_cond & null_z_cond & null_m_cond
+    condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~geom_cond & is_point_cond & is_point_null_island)
+    condition_str = f"column `{col_expr_str}` contains a null island"
+
+    return make_condition(
+        condition,
+        F.lit(condition_str),
+        f"{col_str_norm}_contains_null_island",
+    )
+
+
+@register_rule("row")
 def has_dimension(column: str | Column, dimension: int) -> Column:
     """Checks whether the geometries/geographies in the input column have a given dimension.
 

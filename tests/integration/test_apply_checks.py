@@ -6584,6 +6584,17 @@ def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compa
             check_func=geo_check_funcs.is_non_empty_geometry,
             column=F.col("point_geom"),
         ),
+        # is_not_null_island check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_not_null_island,
+            column="point_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_not_null_island,
+            column=F.col("point_geom"),
+        ),
         # has_dimension check
         DQRowRule(
             criticality="error",

@@ -21,6 +21,7 @@ from databricks.labs.dqx.geo.check_funcs import (
     is_multilinestring,
     is_multipoint,
     is_multipolygon,
+    is_not_null_island,
     is_point,
     is_polygon,
     is_ogc_valid,
@@ -335,6 +336,41 @@ def test_is_non_empty_geometry(skip_if_runtime_not_geo_compatible, spark):
             ["value `nonsense` in column `geom` is an empty geometry"],
             ["value `POLYGON EMPTY` in column `geom` is an empty geometry"],
             [None],
+        ],
+        checked_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_not_null_island(skip_if_runtime_not_geo_compatible, spark):
+    input_schema = "geom: string, geomz: string, geomzm: string"
+    test_df = spark.createDataFrame(
+        [
+            ["POINT(1 1)", "POINTZ(1 1 1)", "POINTZM(1 1 1 1)"],
+            ["POINT(0 0)", "POINTZ(0 0 0)", "POINTZM(0 0 0 0)"],
+            ["LINESTRING(0 0, 1 1)", "LINESTRING(0 0, 1 1)", "LINESTRING(0 0, 1 1)"],
+            ["nonsense", "nonsense", "nonsense"],
+            [None, None, None],
+        ],
+        input_schema,
+    )
+
+    actual = test_df.select(is_not_null_island("geom"), is_not_null_island("geomz"), is_not_null_island("geomzm"))
+
+    checked_schema = (
+        "geom_contains_null_island: string, geomz_contains_null_island: string, geomzm_contains_null_island: string"
+    )
+    expected = spark.createDataFrame(
+        [
+            [None, None, None],
+            [
+                "column `geom` contains a null island",
+                "column `geomz` contains a null island",
+                "column `geomzm` contains a null island",
+            ],
+            [None, None, None],
+            [None, None, None],
+            [None, None, None],
         ],
         checked_schema,
     )
