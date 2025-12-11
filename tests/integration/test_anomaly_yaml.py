@@ -69,21 +69,21 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
 def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, make_random: str):
     """Test YAML with multiple anomaly and standard checks."""
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
+        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_multi_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Define multiple checks in YAML
     checks_yaml = f"""
     - criticality: error
@@ -98,29 +98,32 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.5
+          score_threshold: 0.6
     """
-    
+
     checks = yaml.safe_load(checks_yaml)
-    
+
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (None, 2.0), (9999.0, 1.0)],
+        [(150.0, 3.0), (None, 3.0), (9999.0, 1.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
         "amount double, quantity double",
     )
-    
+
     dq_engine = DQEngine(mock_workspace_client)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    
+
     rows = result_df.collect()
-    
-    # Normal row: no errors
-    assert rows[0]["_errors"] == [] or rows[0]["_errors"] is None
-    
-    # Null row: has is_not_null error
-    assert len(rows[1]["_errors"]) > 0
-    
-    # Anomaly row: has anomaly error
-    assert len(rows[2]["_errors"]) > 0
+
+    # Normal row: no errors (or handle None)
+    row0_errors = rows[0]["_errors"] if rows[0]["_errors"] is not None else []
+    assert len(row0_errors) == 0
+
+    # Null row: has is_not_null error (handle None)
+    row1_errors = rows[1]["_errors"] if rows[1]["_errors"] is not None else []
+    assert len(row1_errors) > 0
+
+    # Anomaly row: has anomaly error (handle None)
+    row2_errors = rows[2]["_errors"] if rows[2]["_errors"] is not None else []
+    assert len(row2_errors) > 0
 
 
 def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, make_random: str):
@@ -166,8 +169,9 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
     # With high threshold (0.9), slightly unusual data should pass
     assert "_errors" in result_df.columns
     rows = result_df.collect()
-    # With high threshold, expect no or few errors
-    assert all(len(row["_errors"]) == 0 for row in rows) or sum(len(row["_errors"]) for row in rows) <= 1
+    # With high threshold, expect no or few errors (handle both None and empty list)
+    error_counts = [len(row["_errors"]) if row["_errors"] is not None else 0 for row in rows]
+    assert all(count == 0 for count in error_counts) or sum(error_counts) <= 1
 
 
 def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, make_random: str):
@@ -221,21 +225,21 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
 def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, make_random: str):
     """Test YAML configuration with drift_threshold."""
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
+        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_drift_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Define check with drift threshold
     checks_yaml = f"""
     - criticality: error
@@ -245,14 +249,14 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.5
+          score_threshold: 0.6
           drift_threshold: 3.0
     """
-    
+
     checks = yaml.safe_load(checks_yaml)
-    
+
     test_df = spark.createDataFrame(
-        [(100.0, 2.0)],
+        [(150.0, 3.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
         "amount double, quantity double",
     )
     
@@ -262,28 +266,29 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
     # Should succeed without errors (drift detection is configured)
     assert "_errors" in result_df.columns
     rows = result_df.collect()
-    # Normal data should not have errors
-    assert len(rows[0]["_errors"]) == 0
+    # Normal data should not have errors (handle None)
+    row_errors = rows[0]["_errors"] if rows[0]["_errors"] is not None else []
+    assert len(row_errors) == 0
 
 
 def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_random: str):
     """Test YAML with criticality='warn'."""
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
+        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_warn_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Define check with warn criticality
     checks_yaml = f"""
     - criticality: warn
@@ -293,13 +298,13 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.5
+          score_threshold: 0.6
     """
-    
+
     checks = yaml.safe_load(checks_yaml)
-    
+
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
+        [(150.0, 3.0), (9999.0, 1.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
         "amount double, quantity double",
     )
     

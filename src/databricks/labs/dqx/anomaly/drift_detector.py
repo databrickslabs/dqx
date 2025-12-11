@@ -60,18 +60,26 @@ def compute_drift_score(
         # Z-score for mean shift
         baseline_mean = baseline["mean"]
         baseline_std = baseline["std"]
+        
+        # Handle None values (can occur with single row or all identical values)
+        current_mean = current_stats["mean"] if current_stats["mean"] is not None else baseline_mean
+        current_std = current_stats["std"] if current_stats["std"] is not None else 0.0
 
         if baseline_std == 0:
             # Avoid division by zero; if baseline std is 0, any change is drift
-            z_score = abs(current_stats["mean"] - baseline_mean) if current_stats["mean"] != baseline_mean else 0.0
+            z_score = abs(current_mean - baseline_mean) if current_mean != baseline_mean else 0.0
         else:
-            z_score = abs(current_stats["mean"] - baseline_mean) / baseline_std
+            z_score = abs(current_mean - baseline_mean) / baseline_std
 
         # Relative change in standard deviation
-        if baseline_std > 0:
-            std_change = abs(current_stats["std"] - baseline_std) / baseline_std
+        if baseline_std > 0 and current_std > 0:
+            std_change = abs(current_std - baseline_std) / baseline_std
+        elif baseline_std > 0:
+            # Current std is 0 but baseline is not - this is drift
+            std_change = 1.0
         else:
-            std_change = abs(current_stats["std"]) if current_stats["std"] > 0 else 0.0
+            # Both are 0 - no change
+            std_change = 0.0
 
         # Combined drift score (weighted average)
         col_drift_score = (z_score * 0.7) + (std_change * 0.3)

@@ -72,9 +72,10 @@ datacontract = [
     "datacontract-cli>=0.11.1"
 ]
 anomaly = [
-    "mlflow>=2.0",
+    "mlflow[databricks]>=2.0",  # Unity Catalog support
     "scikit-learn>=1.0",
     "cloudpickle>=2.0",  # For serializing sklearn models in pandas UDFs
+    "shap>=0.42.0,<0.46",  # For TreeSHAP-based feature contributions (compatible with numpy<2)
 ]
 
 [project.entry-points.databricks]
@@ -98,7 +99,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
-features = ["pii", "llm", "datacontract"]
+features = ["pii", "llm", "datacontract", "anomaly"]
 dependencies = [
     "black~=24.8.0",
     "chispa~=0.10.1",

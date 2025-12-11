@@ -92,8 +92,14 @@ def train(
 
     _validate_columns(df, columns)
 
-    derived_model_name = model_name or _derive_model_name(df, columns)
     derived_registry_table = registry_table or _derive_registry_table(df)
+    
+    # Derive model_name and ensure it has full three-level catalog.schema.model format
+    # by extracting catalog.schema from registry_table
+    if model_name:
+        derived_model_name = _ensure_full_model_name(model_name, derived_registry_table)
+    else:
+        derived_model_name = _derive_model_name(df, columns, derived_registry_table)
 
     # Segment-based training
     if segment_by:
@@ -165,7 +171,9 @@ def _train_global(
             mlflow.log_params(_flatten_hyperparams(hyperparams))
             mlflow.log_metrics(validation_metrics)
             
-            model_uri = model_info.model_uri
+            # Use explicit version-based URI format
+            # model_name already has full catalog.schema.model format from train() setup
+            model_uri = f"models:/{model_name}/{model_info.registered_model_version}"
             run_id = run.info.run_id
     
     # Compute baseline statistics for drift detection (distributed on Spark)
@@ -344,7 +352,9 @@ def _train_single_segment(
         mlflow.log_params(_flatten_hyperparams(hyperparams))
         mlflow.log_metrics(validation_metrics)
         
-        model_uri = model_info.model_uri
+        # Use explicit version-based URI format
+        # model_name already has full catalog.schema.model format from _train_segmented()
+        model_uri = f"models:/{model_name}/{model_info.registered_model_version}"
         run_id = run.info.run_id
     
     # Compute baseline statistics for drift detection
@@ -398,7 +408,21 @@ def _validate_columns(df: DataFrame, columns: Iterable[str]) -> None:
         raise InvalidParameterError(f"Columns must be numeric for anomaly detection: {non_numeric}")
 
 
-def _derive_model_name(df: DataFrame, columns: list[str]) -> str:
+def _derive_model_name(df: DataFrame, columns: list[str], registry_table: str) -> str:
+    """
+    Derive a model name with full three-level catalog.schema.model format.
+    Uses catalog and schema from registry_table.
+    """
+    # Extract catalog.schema from registry_table
+    parts = registry_table.split(".")
+    if len(parts) >= 2:
+        catalog, schema = parts[0], parts[1]
+    else:
+        raise InvalidParameterError(
+            f"registry_table must have at least catalog.schema format, got: {registry_table}"
+        )
+    
+    # Generate base model name
     input_table = _get_input_table(df)
     if input_table:
         base = input_table.split(".")[-1]
@@ -406,7 +430,9 @@ def _derive_model_name(df: DataFrame, columns: list[str]) -> str:
         # Fallback when input table name cannot be inferred
         base = "unknown_table"
     col_hash = hashlib.md5(",".join(sorted(columns)).encode("utf-8")).hexdigest()[:8]
-    return f"{base}__{col_hash}__anomaly"
+    model_name = f"{base}__{col_hash}__anomaly"
+    
+    return f"{catalog}.{schema}.{model_name}"
 
 
 def _derive_registry_table(df: DataFrame) -> str:
@@ -449,6 +475,35 @@ def _get_input_table(df: DataFrame) -> str | None:
     # Note: Spark Connect doesn't support sql_ctx, so we can't reliably get table name
     # Return None for DataFrames created programmatically
     return None
+
+
+def _ensure_full_model_name(model_name: str, registry_table: str) -> str:
+    """
+    Ensure model name has the full three-level catalog.schema.model format required by Unity Catalog.
+    Uses catalog and schema from registry_table.
+    
+    If model_name already has three levels (two dots), returns it as-is.
+    Otherwise, prepends catalog and/or schema from registry_table.
+    """
+    if model_name.count('.') >= 2:
+        # Already has catalog.schema.model format
+        return model_name
+    
+    # Extract catalog.schema from registry_table
+    parts = registry_table.split(".")
+    if len(parts) >= 2:
+        catalog, schema = parts[0], parts[1]
+    else:
+        raise InvalidParameterError(
+            f"registry_table must have at least catalog.schema format, got: {registry_table}"
+        )
+    
+    if model_name.count('.') == 1:
+        # Has schema.model, add catalog
+        return f"{catalog}.{model_name}"
+    
+    # No dots, add catalog.schema.model
+    return f"{catalog}.{schema}.{model_name}"
 
 
 def _sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple[DataFrame, int, bool]:
@@ -777,10 +832,11 @@ def _train_ensemble(
             signature = infer_signature(train_pandas, predictions)
             
             # Log scikit-learn model for this ensemble member
+            ensemble_model_name = f"{model_name}_ensemble_{i}"
             model_info = mlflow.sklearn.log_model(
                 sk_model=model,
                 artifact_path="model",
-                registered_model_name=f"{model_name}_ensemble_{i}",
+                registered_model_name=ensemble_model_name,
                 signature=signature,
             )
             mlflow.log_params(_flatten_hyperparams(hyperparams))
@@ -788,7 +844,9 @@ def _train_ensemble(
             mlflow.log_param("ensemble_index", i)
             mlflow.log_param("ensemble_size", ensemble_size)
             
-            model_uris.append(model_info.model_uri)
+            # Use explicit version-based URI format
+            # ensemble_model_name inherits full catalog.schema.model format from base model_name
+            model_uris.append(f"models:/{ensemble_model_name}/{model_info.registered_model_version}")
     
     # Aggregate metrics (average across ensemble)
     aggregated_metrics = {}

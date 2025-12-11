@@ -16,7 +16,7 @@ import pyspark.sql.functions as F
 from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
 
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
-from databricks.labs.dqx.anomaly.trainer import _derive_model_name, _derive_registry_table
+from databricks.labs.dqx.anomaly.trainer import _derive_model_name, _derive_registry_table, _ensure_full_model_name
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.explainer import compute_feature_contributions
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -105,10 +105,9 @@ def _score_segmented(
         segment_scored = _score_with_sklearn_model(segment_model.model_uri, segment_df, columns)
         segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
         
-        # Add feature contributions if requested
+        # Add feature contributions if requested (using TreeSHAP)
         if include_contributions:
-            sklearn_model = mlflow.sklearn.load_model(segment_model.model_uri)
-            segment_scored = compute_feature_contributions(sklearn_model, segment_scored, columns)
+            segment_scored = compute_feature_contributions(segment_model.model_uri, segment_scored, columns)
         
         scored_dfs.append(segment_scored)
     
@@ -203,12 +202,22 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
         # Convert input columns to numpy array
         X = pd.concat(cols, axis=1).values
         
-        # Score samples (negative scores, higher = more anomalous)
-        scores = -model_local.score_samples(X)  # Negate to make higher = more anomalous
+        # Check for NaN values - IsolationForest cannot handle them
+        has_nan = pd.isna(X).any(axis=1)
         
-        # Predict labels (1 = anomaly, 0 = normal)
-        predictions = model_local.predict(X)
-        predictions = np.where(predictions == -1, 1, 0)  # Convert sklearn -1/1 to 0/1
+        # Initialize output arrays
+        scores = np.full(len(X), np.nan)
+        predictions = np.full(len(X), np.nan)
+        
+        # Only score rows without NaN
+        valid_mask = ~has_nan
+        if valid_mask.any():
+            X_valid = X[valid_mask]
+            # Score samples (negative scores, higher = more anomalous)
+            scores[valid_mask] = -model_local.score_samples(X_valid)
+            # Predict labels (1 = anomaly, 0 = normal)
+            preds = model_local.predict(X_valid)
+            predictions[valid_mask] = np.where(preds == -1, 1, 0)
         
         return pd.DataFrame({
             "anomaly_score": scores,
@@ -282,8 +291,9 @@ def has_no_anomalies(
                     "Provide at least one to infer the other from the model registry."
                 )
             
-            # If model name provided, use it to get model record
+            # If model name provided, normalize it to full catalog.schema.model format
             if model_name_local:
+                model_name_local = _ensure_full_model_name(model_name_local, registry_local)
                 record_for_discovery = registry_client.get_active_model(registry_local, model_name_local)
                 if not record_for_discovery:
                     raise InvalidParameterError(
@@ -299,8 +309,13 @@ def has_no_anomalies(
         # Now normalize columns (we know columns is not None at this point)
         normalized_columns = [get_column_name_or_alias(c) for c in columns]
         
-        model_name = model or _derive_model_name(df, normalized_columns)
         registry = registry_table or _derive_registry_table(df)
+        
+        # Normalize model_name to full catalog.schema.model format
+        if model:
+            model_name = _ensure_full_model_name(model, registry)
+        else:
+            model_name = _derive_model_name(df, normalized_columns, registry)
 
         # Check if segmented model
         if segment_by:
@@ -408,11 +423,10 @@ def has_no_anomalies(
             scored_df = _score_with_sklearn_model(record.model_uri, df_filtered, normalized_columns)
             scored_df = scored_df.withColumn("anomaly_score_std", F.lit(0.0))
 
-        # Add feature contributions if requested (distributed computation)
+        # Add feature contributions if requested (using TreeSHAP, distributed)
         if include_contributions:
             sklearn_model_uri = model_uris[0].strip() if len(model_uris) > 1 else record.model_uri
-            sklearn_model = mlflow.sklearn.load_model(sklearn_model_uri)
-            scored_df = compute_feature_contributions(sklearn_model, scored_df, normalized_columns)
+            scored_df = compute_feature_contributions(sklearn_model_uri, scored_df, normalized_columns)
 
         # Drop confidence column if not requested
         if not include_confidence:
