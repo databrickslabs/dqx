@@ -2050,17 +2050,16 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
         * **Type Coercion is Permitted:** Values that can be successfully cast to the target schema type
         (e.g., a JSON number like `0.12` parsing into a field defined as `STRING`) are considered valid.
         * **Extra Fields are Ignored:** Fields present in the JSON but missing from the schema are ignored.
-        * **Nullability & Missing Keys:**
-            * **Missing keys imply null:** If a key is missing from the JSON object, Spark treats it as a `null` value.
-            * **Strictness:** If a schema field is defined as `NOT NULL`, validation will fail if the key is missing (implicit null) or explicitly set to `null`.
-            * **Parent/Child Behavior:** If a nullable parent container is explicitly `null` (e.g., `{"parent": null}`), its children are **not** validated.
-            However, if the parent exists (e.g., `{"parent": {}}`) but a required child is missing, validation fails.
+        * **Missing keys imply null:** If a key is missing from the JSON object, Spark treats it as a `null` value.
+        * **Strictness:** If a schema field is defined as `NOT NULL`, validation will fail if the key is missing (implicit null) or explicitly set to `null`.
+        * **Nested JSON behavior:** If a nullable parent field is explicitly `null` (e.g., `{"parent": null}`), its children are **not** validated.
+        However, if the parent exists (e.g., `{"parent": {}}`) but a required child is missing, validation fails.
         * **Nested Depth Limit:** The validation logic supports a maximum nested depth of 10 levels.
 
     Args:
         column: Column name or Column expression containing JSON strings.
         schema: Expected schema as a DDL string (e.g., "struct<id:string NOT NULL>", "id INT, name STRING")
-            or a generic StructType. **Note:** To enforce strict presence of a field, you must explicit set it to `nullable=False`
+            or a generic StructType. To enforce strict presence of a field, you must explicitly set it to `nullable=False`
             or use `NOT NULL` in the DDL string.
 
     Returns:
