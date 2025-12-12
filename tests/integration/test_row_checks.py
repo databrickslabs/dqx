@@ -678,13 +678,13 @@ def test_is_col_older_than_n_days_cur(spark):
 
 
 def test_col_is_not_less_than(spark, set_utc_timezone):
-    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: map<string, int>"
+    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: map<string, int>, h: float"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], {"val": 1}],
-            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.99"), [2], {"val": 2}],
-            [4, 3, None, None, Decimal("2.01"), [4], {"val": 4}],
-            [None, None, None, None, None, [None], {"val": None}],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], {"val": 1}, 1.2],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.99"), [2], {"val": 2}, 3.6],
+            [4, 3, None, None, Decimal("2.01"), [4], {"val": 4}, 4.8],
+            [None, None, None, None, None, [None], {"val": None}, None],
         ],
         schema_num,
     )
@@ -698,13 +698,15 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
         is_not_less_than("e", 2),
         is_not_less_than(F.try_element_at("f", F.lit(1)), 2),
         is_not_less_than(F.col("g").getItem("val"), 2),
+        is_not_less_than("h", 2.4),
     )
 
     checked_schema = (
         "a_less_than_limit: string, a_less_than_limit: string, b_less_than_limit: string, "
         "c_less_than_limit: string, d_less_than_limit: string, e_less_than_limit: string, "
         "try_element_at_f_1_less_than_limit: string, "
-        "unresolvedextractvalue_g_val_less_than_limit: string"
+        "unresolvedextractvalue_g_val_less_than_limit: string, "
+        "h_less_than_limit: string"
     )
 
     expected = spark.createDataFrame(
@@ -718,6 +720,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 "Value '1.00' in Column 'e' is less than limit: 2",
                 "Value '1' in Column 'try_element_at(f, 1)' is less than limit: 2",
                 "Value '1' in Column 'UnresolvedExtractValue(g, val)' is less than limit: 2",
+                "Value '1.2' in Column 'h' is less than limit: 2.4",
             ],
             [
                 None,
@@ -726,6 +729,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 None,
                 None,
                 "Value '1.99' in Column 'e' is less than limit: 2",
+                None,
                 None,
                 None,
             ],
@@ -738,8 +742,9 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 None,
                 None,
                 None,
+                None,
             ],
-            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -748,13 +753,13 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
 
 
 def test_col_is_not_greater_than(spark, set_utc_timezone):
-    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
+    schema_num = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1]],
-            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2]],
-            [8, 3, None, None, Decimal("0.99"), [8]],
-            [None, None, None, None, None, [None]],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], 1.2],
+            [2, 4, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2], 3.6],
+            [8, 3, None, None, Decimal("0.99"), [8], 4.8],
+            [None, None, None, None, None, [None], None],
         ],
         schema_num,
     )
@@ -767,16 +772,17 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
         is_not_greater_than("d", datetime(2025, 1, 1)),
         is_not_greater_than("e", 1),
         is_not_greater_than(F.try_element_at("f", F.lit(1)), 1),
+        is_not_greater_than("g", 2.4),
     )
 
     checked_schema = (
         "a_greater_than_limit: string, a_greater_than_limit: string, b_greater_than_limit: string, "
         "c_greater_than_limit: string, d_greater_than_limit: string, e_greater_than_limit: string, "
-        "try_element_at_f_1_greater_than_limit: string"
+        "try_element_at_f_1_greater_than_limit: string, g_greater_than_limit: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
             [
                 "Value '2' in Column 'a' is greater than limit: 1",
                 None,
@@ -785,6 +791,7 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
                 "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01 00:00:00",
                 "Value '1.01' in Column 'e' is greater than limit: 1",
                 "Value '2' in Column 'try_element_at(f, 1)' is greater than limit: 1",
+                "Value '3.6' in Column 'g' is greater than limit: 2.4",
             ],
             [
                 "Value '8' in Column 'a' is greater than limit: 1",
@@ -794,8 +801,9 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
                 None,
                 None,
                 "Value '8' in Column 'try_element_at(f, 1)' is greater than limit: 1",
+                "Value '4.8' in Column 'g' is greater than limit: 2.4",
             ],
-            [None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
