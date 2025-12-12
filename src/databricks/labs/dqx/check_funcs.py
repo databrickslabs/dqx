@@ -1977,7 +1977,7 @@ def is_valid_json(column: str | Column) -> Column:
     Returns:
         A Spark Column representing the condition for invalid JSON strings.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     return make_condition(
         ~F.when(col_expr.isNotNull(), F.try_parse_json(col_expr_str).isNotNull()),
         F.concat_ws(
@@ -2008,7 +2008,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
     if any(not isinstance(k, str) for k in keys):
         raise InvalidParameterError("All keys must be of type string.")
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     json_keys_array = F.json_object_keys(col_expr)
     required_keys = F.array_distinct(F.array(*[F.lit(k) for k in keys]))
 
@@ -2074,7 +2074,7 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
 
     _expected_schema = _get_schema(schema)
     schema_str = _expected_schema.simpleString()
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     json_validation_error = is_valid_json(col_str_norm)
 
