@@ -100,9 +100,10 @@ def test_recommended_threshold_stored(spark: SparkSession, make_random: str):
         registry_table=registry_table,
     )
     
-    # Query recommended threshold from registry
-    record = spark.table(registry_table).filter(f"model_name = '{model_name}'").first()
-    
+    # Query recommended threshold from registry (use full three-level name)
+    full_model_name = f"main.default.{model_name}"
+    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+
     # Verify recommended_threshold exists in metrics
     assert record["metrics"] is not None
     assert "recommended_threshold" in record["metrics"]
@@ -130,11 +131,12 @@ def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client,
         registry_table=registry_table,
     )
     
-    # Query recommended threshold
+    # Query recommended threshold (use full three-level name)
+    full_model_name = f"main.default.{model_name}"
     recommended = spark.sql(f"""
         SELECT metrics['recommended_threshold'] as threshold
         FROM {registry_table}
-        WHERE model_name = '{model_name}' AND status = 'active'
+        WHERE model_name = '{full_model_name}' AND status = 'active'
     """).first()["threshold"]
     
     # Use recommended threshold in check
@@ -346,9 +348,10 @@ def test_validation_metrics_in_registry(spark: SparkSession, make_random: str):
         registry_table=registry_table,
     )
     
-    # Check metrics in registry
-    record = spark.table(registry_table).filter(f"model_name = '{model_name}'").first()
-    
+    # Check metrics in registry (use full three-level name)
+    full_model_name = f"main.default.{model_name}"
+    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+
     metrics = record["metrics"]
     assert metrics is not None
     

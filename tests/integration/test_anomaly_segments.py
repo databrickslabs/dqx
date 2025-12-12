@@ -33,7 +33,8 @@ def test_explicit_segment_training(
             data.append((region, base + i * 0.5, base * 0.8 + i * 0.3))
     
     df = spark.createDataFrame(data, "region string, amount double, discount double")
-    table_name = f"{make_schema}.segment_test_{make_random}"
+    suffix = make_random(8).lower()
+    table_name = f"{make_schema}.segment_test_{suffix}"
     df.write.saveAsTable(table_name)
     
     # Train with explicit segments
@@ -41,12 +42,12 @@ def test_explicit_segment_training(
         df=spark.table(table_name),
         columns=["amount", "discount"],
         segment_by=["region"],
-        model_name=f"test_segments_{make_random}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{make_random}",
+        model_name=f"test_segments_{suffix}",
+        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
     )
     
     # Verify segmented models were created
-    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{make_random}")
+    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{suffix}")
     models = registry.filter("status = 'active'").collect()
     assert len(models) == 3  # One per segment
     
@@ -69,15 +70,16 @@ def test_segment_scoring(
             data.append((region, base + i * 0.5))
     
     df = spark.createDataFrame(data, "region string, amount double")
-    table_name = f"{make_schema}.segment_score_test_{make_random}"
+    suffix = make_random(8).lower()
+    table_name = f"{make_schema}.segment_score_test_{suffix}"
     df.write.saveAsTable(table_name)
     
     train(
         df=spark.table(table_name),
         columns=["amount"],
         segment_by=["region"],
-        model_name=f"test_score_segments_{make_random}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{make_random}",
+        model_name=f"test_score_segments_{suffix}",
+        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
     )
     
     # Score with anomalous data
@@ -93,8 +95,8 @@ def test_segment_scoring(
     check = DQDatasetRule(has_no_anomalies(
         columns=["amount"],
         segment_by=["region"],
-        model=f"test_score_segments_{make_random}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{make_random}",
+        model=f"test_score_segments_{suffix}",
+        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
         score_threshold=0.7,
     ))
     
@@ -119,7 +121,8 @@ def test_multi_column_segments(
                 data.append((region, product, base + i * 0.5))
     
     df = spark.createDataFrame(data, "region string, product_type string, amount double")
-    table_name = f"{make_schema}.multi_segment_test_{make_random}"
+    suffix = make_random(8).lower()
+    table_name = f"{make_schema}.multi_segment_test_{suffix}"
     df.write.saveAsTable(table_name)
     
     # Train with multiple segment columns
@@ -127,12 +130,12 @@ def test_multi_column_segments(
         df=spark.table(table_name),
         columns=["amount"],
         segment_by=["region", "product_type"],
-        model_name=f"test_multi_segments_{make_random}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{make_random}",
+        model_name=f"test_multi_segments_{suffix}",
+        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
     )
     
     # Verify 4 segment models created (2 regions × 2 products)
-    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{make_random}")
+    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{suffix}")
     models = registry.filter("status = 'active'").collect()
     assert len(models) == 4
 
@@ -149,15 +152,16 @@ def test_unknown_segment_handling(
             data.append((region, base + i * 0.5))
     
     df = spark.createDataFrame(data, "region string, amount double")
-    table_name = f"{make_schema}.unknown_segment_test_{make_random}"
+    suffix = make_random(8).lower()
+    table_name = f"{make_schema}.unknown_segment_test_{suffix}"
     df.write.saveAsTable(table_name)
     
     train(
         df=spark.table(table_name),
         columns=["amount"],
         segment_by=["region"],
-        model_name=f"test_unknown_segments_{make_random}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{make_random}",
+        model_name=f"test_unknown_segments_{suffix}",
+        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
     )
     
     # Score with unknown region "APAC"
@@ -171,8 +175,8 @@ def test_unknown_segment_handling(
     check = DQDatasetRule(has_no_anomalies(
         columns=["amount"],
         segment_by=["region"],
-        model=f"test_unknown_segments_{make_random}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{make_random}",
+        model=f"test_unknown_segments_{suffix}",
+        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
     ))
     
     result = dq_engine.apply_checks(test_df, [check])

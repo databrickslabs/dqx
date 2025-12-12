@@ -6,6 +6,7 @@ import pyspark.sql.functions as F
 from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
@@ -27,8 +28,13 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, ma
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],
+        [(100.0 + i * 0.01, 2.0 + i * 0.001) for i in range(100)],
         "amount double, quantity double",
+    )
+    
+    stable_params = AnomalyParams(
+        sample_fraction=1.0,
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
     )
     
     train(
@@ -36,6 +42,7 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, ma
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=stable_params,
     )
     
     test_df = spark.createDataFrame(
@@ -80,9 +87,16 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, make
     model_name = f"test_split_{make_random(4).lower()}"
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
+    # Train on realistic 2D cluster with different scales
+    # amount ~ 100, quantity ~ 10 (different scales to test feature scaling)
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(200)],
         "amount double, quantity double",
+    )
+    
+    stable_params = AnomalyParams(
+        sample_fraction=1.0,
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.1),
     )
     
     train(
@@ -90,10 +104,12 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, make
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=stable_params,
     )
     
+    # Test with in-cluster points and clear outliers
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (101.0, 2.0), (9999.0, 1.0), (8888.0, 0.5)],
+        [(110.0, 12.0), (150.0, 15.0), (9999.0, 1.0), (8888.0, 100.0)],
         "amount double, quantity double",
     )
     
@@ -104,23 +120,34 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, make
             check_func=has_no_anomalies,
             check_func_kwargs={
                 "columns": ["amount", "quantity"],
-                "model": "test_split",
-                "registry_table": "main.default.test_split_registry",
+                "model": model_name,
+                "registry_table": registry_table,
                 "score_threshold": 0.6,
             }
         )
     ]
     
+    # First apply checks to see scores before split
+    result_df = dq_engine.apply_checks(test_df, checks)
+    
+    # Debug: Print scores to diagnose split behavior
+    print(f"\n=== Test Data Anomaly Scores ===")
+    test_scores = result_df.select("amount", "quantity", "anomaly_score").collect()
+    for row in test_scores:
+        print(f"  amount={row.amount}, quantity={row.quantity}, score={row.anomaly_score}")
+    
+    # Now split
     valid_df, quarantine_df = dq_engine.apply_checks_and_split(test_df, checks)
+    print(f"Valid count: {valid_df.count()}, Quarantine count: {quarantine_df.count()}")
     
     # Verify split occurred
     assert valid_df.count() + quarantine_df.count() == test_df.count()
     
     # Verify normal rows are in valid
-    assert valid_df.count() >= 2  # At least 2 normal rows
+    assert valid_df.count() >= 2, f"Expected >= 2 normal rows, got {valid_df.count()}"
     
     # Verify anomalous rows are in quarantine
-    assert quarantine_df.count() >= 1  # At least 1 anomalous row
+    assert quarantine_df.count() >= 1, f"Expected >= 1 anomalous row, got {quarantine_df.count()}"
     
     # Verify original columns are preserved (no DQX metadata in split DataFrames)
     assert "amount" in valid_df.columns
@@ -135,8 +162,13 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(200)],
         "amount double, quantity double",
+    )
+    
+    stable_params = AnomalyParams(
+        sample_fraction=1.0,
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.1),
     )
     
     train(
@@ -144,6 +176,7 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=stable_params,
     )
     
     test_df = spark.createDataFrame(
@@ -158,8 +191,8 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
             check_func=has_no_anomalies,
             check_func_kwargs={
                 "columns": ["amount", "quantity"],
-                "model": "test_quarantine_structure",
-                "registry_table": "main.default.test_quarantine_structure_registry",
+                "model": model_name,
+                "registry_table": registry_table,
                 "score_threshold": 0.6,
             }
         )
@@ -190,9 +223,15 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
     model_name = f"test_multi_checks_{make_random(4).lower()}"
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
+    # Train on very tight cluster with minimal variance for clear anomaly detection
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],
+        [(100.0 + i * 0.001, 2.0 + i * 0.0001) for i in range(1000)],
         "amount double, quantity double",
+    )
+    
+    stable_params = AnomalyParams(
+        sample_fraction=1.0,
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
     )
     
     train(
@@ -200,13 +239,14 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=stable_params,
     )
     
     test_df = spark.createDataFrame(
         [
-            (100.0, 2.0),  # Normal
-            (None, 2.0),  # Null amount
-            (9999.0, 1.0),  # Anomaly
+            (150.0, 15.0),  # Normal - in cluster (middle of training range)
+            (None, 10.0),  # Null amount - will fail is_not_null
+            (9999.0, 1.0),  # Far-out anomaly
         ],
         "amount double, quantity double",
     )
@@ -225,8 +265,8 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
             check_func=has_no_anomalies,
             check_func_kwargs={
                 "columns": ["amount", "quantity"],
-                "model": "test_multi_checks",
-                "registry_table": "main.default.test_multi_checks_registry",
+                "model": model_name,
+                "registry_table": registry_table,
                 "score_threshold": 0.6,
             }
         ),
@@ -235,8 +275,14 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
     result_df = dq_engine.apply_checks(test_df, checks)
     rows = result_df.collect()
     
+    # Debug: Print scores
+    print(f"\n=== Multi-Check Test Scores ===")
+    for i, row in enumerate(rows):
+        anomaly_score = row['anomaly_score'] if 'anomaly_score' in row.asDict() else 'N/A'
+        print(f"  Row {i}: amount={row['amount']}, anomaly_score={anomaly_score}, errors={len(row['_errors']) if row['_errors'] else 0}")
+    
     # Normal row: no errors
-    assert rows[0]["_errors"] == [] or rows[0]["_errors"] is None
+    assert rows[0]["_errors"] == [] or rows[0]["_errors"] is None, f"Normal row has errors: {rows[0]['_errors']}"
     
     # Null row: has is_not_null error
     assert rows[1]["_errors"] is not None
@@ -244,7 +290,8 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
     assert any("is_not_null" in str(err) for err in rows[1]["_errors"])
     
     # Anomaly row: has anomaly error
-    assert rows[2]["_errors"] is not None
+    anomaly_score = rows[2]['anomaly_score'] if 'anomaly_score' in rows[2].asDict() else 'N/A'
+    assert rows[2]["_errors"] is not None, f"Anomaly row has no errors. Score={anomaly_score}"
     assert len(rows[2]["_errors"]) > 0
 
 
@@ -256,8 +303,13 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, make_sche
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],
+        [(100.0 + i * 0.01, 2.0 + i * 0.001) for i in range(100)],
         "amount double, quantity double",
+    )
+    
+    stable_params = AnomalyParams(
+        sample_fraction=1.0,
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
     )
     
     train(
@@ -265,6 +317,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, make_sche
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=stable_params,
     )
     
     test_df = spark.createDataFrame(
@@ -280,8 +333,8 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, make_sche
             check_func=has_no_anomalies,
             check_func_kwargs={
                 "columns": ["amount", "quantity"],
-                "model": "test_crit_error",
-                "registry_table": "main.default.test_crit_error_registry",
+                "model": model_name,
+                "registry_table": registry_table,
                 "score_threshold": 0.6,
             }
         )
@@ -302,8 +355,13 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, make_schem
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],
+        [(100.0 + i * 0.01, 2.0 + i * 0.001) for i in range(100)],
         "amount double, quantity double",
+    )
+    
+    stable_params = AnomalyParams(
+        sample_fraction=1.0,
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
     )
     
     train(
@@ -311,6 +369,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, make_schem
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=stable_params,
     )
     
     test_df = spark.createDataFrame(
@@ -326,8 +385,8 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, make_schem
             check_func=has_no_anomalies,
             check_func_kwargs={
                 "columns": ["amount", "quantity"],
-                "model": "test_crit_warn",
-                "registry_table": "main.default.test_crit_warn_registry",
+                "model": model_name,
+                "registry_table": registry_table,
                 "score_threshold": 0.6,
             }
         )
@@ -351,9 +410,15 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
     model_name = f"test_helpers_{make_random(4).lower()}"
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
+    # Train on simple 1D cluster for clear anomaly detection  
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],
+        [(10.0 + i * 0.1, 10.0 + i * 0.1) for i in range(100)],
         "amount double, quantity double",
+    )
+    
+    stable_params = AnomalyParams(
+        sample_fraction=1.0,
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.1),
     )
     
     train(
@@ -361,10 +426,12 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=stable_params,
     )
     
+    # Test with in-cluster point (middle of range) and far-out anomaly
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
+        [(150.0, 15.0), (9999.0, 1.0)],
         "amount double, quantity double",
     )
     
@@ -375,8 +442,8 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
             check_func=has_no_anomalies,
             check_func_kwargs={
                 "columns": ["amount", "quantity"],
-                "model": "test_helpers",
-                "registry_table": "main.default.test_helpers_registry",
+                "model": model_name,
+                "registry_table": registry_table,
                 "score_threshold": 0.6,
             }
         )
@@ -385,16 +452,31 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
     # Apply checks
     result_df = dq_engine.apply_checks(test_df, checks)
     
+    # Debug: Print scores
+    print(f"\n=== Helper Test Scores ===")
+    test_scores = result_df.select("amount", "quantity", "anomaly_score").collect()
+    for row in test_scores:
+        print(f"  amount={row.amount}, quantity={row.quantity}, score={row.anomaly_score}")
+    
     # Use helpers to split
     valid_df = dq_engine.get_valid(result_df)
     invalid_df = dq_engine.get_invalid(result_df)
     
-    # Verify split
-    assert valid_df.count() >= 1  # At least one normal row
-    assert invalid_df.count() >= 1  # At least one anomalous row
+    print(f"Valid count: {valid_df.count()}, Invalid count: {invalid_df.count()}")
     
-    # Verify DQX metadata columns are NOT in valid/invalid
-    # (get_valid/get_invalid should drop them)
-    assert "_errors" not in valid_df.columns
-    assert "_errors" not in invalid_df.columns
+    # Verify split
+    assert valid_df.count() >= 1, f"Expected >= 1 normal row, got {valid_df.count()}"  # At least one normal row
+    assert invalid_df.count() >= 1, f"Expected >= 1 anomalous row, got {invalid_df.count()}"  # At least one anomalous row
+    
+    # get_valid() drops DQX metadata columns
+    assert "_errors" not in valid_df.columns, f"_errors should be dropped from valid. Columns: {valid_df.columns}"
+    assert "_warnings" not in valid_df.columns, f"_warnings should be dropped from valid. Columns: {valid_df.columns}"
+    
+    # get_invalid() KEEPS metadata columns so you can inspect failures
+    assert "_errors" in invalid_df.columns, f"_errors should be kept in invalid. Columns: {invalid_df.columns}"
+    assert "_warnings" in invalid_df.columns, f"_warnings should be kept in invalid. Columns: {invalid_df.columns}"
+    
+    # Anomaly scoring columns should be present in both
+    assert "anomaly_score" in valid_df.columns
+    assert "anomaly_score" in invalid_df.columns
 

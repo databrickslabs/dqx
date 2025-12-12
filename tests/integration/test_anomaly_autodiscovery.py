@@ -88,21 +88,22 @@ def test_zero_config_training(
             data.append((region, base + i * 0.5, base * 0.8 + i * 0.3))
     
     df = spark.createDataFrame(data, "region string, amount double, discount double")
-    table_name = f"{make_schema}.auto_train_test_{make_random}"
+    suffix = make_random(8).lower()
+    table_name = f"{make_schema}.auto_train_test_{suffix}"
     df.write.saveAsTable(table_name)
     
     # Train with zero config (should auto-discover columns and segments)
     model_uri = train(
         df=spark.table(table_name),
-        model_name=f"test_auto_{make_random}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{make_random}",
+        model_name=f"test_auto_{suffix}",
+        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
     )
     
     # Verify models were created
     assert model_uri is not None
     
     # Check registry for segment models
-    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{make_random}")
+    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{suffix}")
     models = registry.filter("status = 'active'").collect()
     
     # Should create 2 segment models (US and EU)
@@ -124,19 +125,20 @@ def test_explicit_columns_no_auto_segment(
             data.append((region, 100.0 + i))
     
     df = spark.createDataFrame(data, "region string, amount double")
-    table_name = f"{make_schema}.explicit_cols_test_{make_random}"
+    suffix = make_random(8).lower()
+    table_name = f"{make_schema}.explicit_cols_test_{suffix}"
     df.write.saveAsTable(table_name)
     
     # Train with explicit columns (should NOT auto-segment)
     train(
         df=spark.table(table_name),
         columns=["amount"],  # Explicit columns provided
-        model_name=f"test_explicit_{make_random}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{make_random}",
+        model_name=f"test_explicit_{suffix}",
+        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
     )
     
     # Verify only 1 global model created (no segmentation)
-    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{make_random}")
+    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{suffix}")
     models = registry.filter("status = 'active'").collect()
     assert len(models) == 1
     assert models[0].is_global_model is True

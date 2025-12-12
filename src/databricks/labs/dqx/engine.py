@@ -452,8 +452,8 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
-        # Ensure the result DataFrame has the same columns as the input DataFrame + the new result column
-        return result_df.select(*df.columns, dest_col)
+        # Preserve any new columns added by dataset-level checks alongside the result column
+        return result_df
 
     def _observe_metrics(self, df: DataFrame) -> DataFrame | tuple[DataFrame, Observation]:
         """

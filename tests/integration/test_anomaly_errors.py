@@ -27,7 +27,8 @@ def test_missing_model_error(spark: SparkSession, mock_workspace_client):
     dq_engine = DQEngine(mock_workspace_client)
     
     # Should raise clear error about missing model
-    with pytest.raises(InvalidParameterError, match="Model 'nonexistent_model' not found"):
+    # Model name gets normalized to full catalog.schema.model format
+    with pytest.raises(InvalidParameterError, match="Model 'main.default.nonexistent_model' not found"):
         condition_col, apply_fn = has_no_anomalies(
             columns=["amount", "quantity"],
             model="nonexistent_model",

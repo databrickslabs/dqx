@@ -39,13 +39,20 @@ def compute_feature_contributions(
     import numpy as np
     
     # Define pandas UDF for distributed SHAP computation
-    return_schema = StructType([
-        StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)
-    ])
+    return_schema = StructType(
+        [StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)]
+    )
     
     @pandas_udf(return_schema, PandasUDFType.SCALAR)
-    def compute_shap_udf(*cols: pd.Series) -> pd.DataFrame:
-        """Compute SHAP values for each row using TreeExplainer."""
+    def compute_shap_udf(s):
+        """Compute SHAP values for each row using TreeExplainer.
+        
+        Args:
+            s: Pandas Series containing struct with all feature columns
+            
+        Returns:
+            Series containing map of anomaly_contributions
+        """
         # Import SHAP inside UDF so it only loads on cluster executors, not locally
         try:
             import shap
@@ -62,8 +69,8 @@ def compute_feature_contributions(
         # Create TreeExplainer (fast for tree-based models)
         explainer = shap.TreeExplainer(model_local)
         
-        # Prepare input data
-        X = pd.concat(cols, axis=1).values
+        # s is already a DataFrame with struct fields as columns
+        X = s.values
         
         # Handle NaN values (SHAP can't process them)
         has_nan = pd.isna(X).any(axis=1)
@@ -92,19 +99,14 @@ def compute_feature_contributions(
                 
                 contributions_list.append(contributions)
         
+        # Return as a DataFrame so the StructType schema is satisfied
         return pd.DataFrame({"anomaly_contributions": contributions_list})
     
-    # Apply pandas UDF to DataFrame
+    # Combine feature columns into struct, then apply UDF
     result = df.withColumn(
-        "_shap_result",
-        compute_shap_udf(*[F.col(c) for c in columns])
-    )
-    
-    # Extract the map column
-    result = result.withColumn(
         "anomaly_contributions",
-        F.col("_shap_result.anomaly_contributions")
-    ).drop("_shap_result")
+        compute_shap_udf(F.struct(*[F.col(c) for c in columns]))
+    )
     
     return result
 

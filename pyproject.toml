@@ -75,7 +75,7 @@ anomaly = [
     "mlflow[databricks]>=2.0",  # Unity Catalog support
     "scikit-learn>=1.0",
     "cloudpickle>=2.0",  # For serializing sklearn models in pandas UDFs
-    "shap>=0.42.0,<0.46",  # For TreeSHAP-based feature contributions (compatible with numpy<2)
+    "shap>=0.42.0,<0.46.1",  # For TreeSHAP-based feature contributions (compatible with numpy<2)
 ]
 
 [project.entry-points.databricks]

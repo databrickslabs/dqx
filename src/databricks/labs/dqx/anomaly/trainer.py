@@ -528,9 +528,13 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
     
     Training happens on the driver node with collected data (already sampled to <=1M rows).
     Scoring will be distributed via pandas UDF.
+    
+    Feature scaling is applied automatically to handle different scales/units across features.
     """
     try:
         from sklearn.ensemble import IsolationForest
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.pipeline import Pipeline
         import pandas as pd
         import numpy as np
     except ImportError as e:
@@ -555,17 +559,25 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
         n_jobs=-1,  # Use all CPU cores on driver for parallel tree training
     )
     
-    # Fit on training data
-    iso_forest.fit(train_pandas.values)
+    # Create pipeline with StandardScaler for automatic feature scaling
+    # This handles different scales/units across features (e.g., amount in thousands, quantity in tens)
+    pipeline = Pipeline([
+        ('scaler', StandardScaler()),
+        ('model', iso_forest)
+    ])
+    
+    # Fit pipeline (scaler + model) on training data
+    pipeline.fit(train_pandas.values)
     
     hyperparams: dict[str, Any] = {
         "contamination": algo_cfg.contamination,
         "num_trees": algo_cfg.num_trees,
         "max_samples": algo_cfg.subsampling_rate,
         "random_seed": algo_cfg.random_seed,
+        "feature_scaling": "StandardScaler",  # Document that we use scaling
     }
     
-    return iso_forest, hyperparams
+    return pipeline, hyperparams
 
 
 def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str]) -> DataFrame:
@@ -601,6 +613,9 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str]) -> Dat
         
         # Convert input columns to numpy array
         X = pd.concat(cols, axis=1).values
+        
+        # Handle NaN values before scoring
+        X = np.nan_to_num(X, nan=0.0)
         
         # Score samples (negative scores, higher = more anomalous)
         scores = -model_local.score_samples(X)  # Negate to make higher = more anomalous
