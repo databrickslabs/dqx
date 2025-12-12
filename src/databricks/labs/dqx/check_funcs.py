@@ -2001,7 +2001,7 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
         require_all: If True, all specified keys must be present. If False, at least one key must be present.
 
     Returns:
-        Column: A Spark Column representing the condition for missing JSON keys.
+        A Spark Column representing the condition for missing JSON keys.
     """
     if not keys:
         raise InvalidParameterError("The 'keys' parameter must be a non-empty list of strings.")
@@ -2063,12 +2063,11 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
             or use `NOT NULL` in the DDL string.
 
     Returns:
-        Column: A string Column containing the error message if the JSON does not conform to the schema,
+        A string Column containing the error message if the JSON does not conform to the schema,
             or `null` if validation passes.
 
     Raises:
-        InvalidParameterError: If the schema string is invalid/unparsable, or if the input
-            schema is neither a string nor a StructType.
+        InvalidParameterError: If the schema string is invalid/unparsable, or if the input schema is neither a string nor a StructType.
     """
 
     _expected_schema = _get_schema(schema)
