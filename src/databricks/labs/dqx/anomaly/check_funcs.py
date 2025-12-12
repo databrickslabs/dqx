@@ -102,7 +102,7 @@ def _score_segmented(
                 )
         
         # Score this segment
-        segment_scored = _score_with_sklearn_model(segment_model.model_uri, segment_df, columns)
+        segment_scored = _score_with_sklearn_model(segment_model.model_uri, segment_df, columns, segment_model.feature_metadata)
         segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
         
         # Add feature contributions if requested (using TreeSHAP)
@@ -163,14 +163,18 @@ def _score_segmented(
     return result.withColumn(condition_col, condition)
 
 
-def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[str]) -> DataFrame:
+def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[str], feature_metadata_json: str) -> DataFrame:
     """
     Score DataFrame using scikit-learn model with distributed pandas UDF.
     
+    Feature engineering is applied in Spark before the pandas UDF.
+    The pandas UDF only handles standard sklearn components (RobustScaler + IsolationForest).
+    
     Args:
         model_uri: MLflow model URI
-        df: DataFrame to score
-        feature_cols: List of feature column names
+        df: DataFrame to score (with original columns)
+        feature_cols: List of original feature column names (before engineering)
+        feature_metadata_json: JSON string with feature engineering metadata (from registry)
     
     Returns:
         DataFrame with anomaly_score and prediction columns added
@@ -178,9 +182,41 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
     import cloudpickle
     import pandas as pd
     import numpy as np
+    from pyspark.sql import types as T
+    from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo, SparkFeatureMetadata, apply_feature_engineering
     
-    # Load and serialize model (will be captured in UDF closure - Spark Connect compatible)
+    # Load model
     sklearn_model = mlflow.sklearn.load_model(model_uri)
+    
+    # Load feature metadata from the provided JSON (from model registry)
+    feature_metadata = SparkFeatureMetadata.from_json(feature_metadata_json)
+    
+    # Reconstruct column_infos from metadata
+    column_infos = [
+        ColumnTypeInfo(
+            name=info["name"],
+            spark_type=T.StringType(),  # Placeholder, not needed for scoring
+            category=info["category"],
+            cardinality=info.get("cardinality"),
+            null_count=info.get("null_count"),
+        )
+        for info in feature_metadata.column_infos
+    ]
+    
+    # Apply feature engineering in Spark (distributed)
+    # Use pre-computed frequency maps from training
+    engineered_df, _ = apply_feature_engineering(
+        df,
+        column_infos,
+        categorical_cardinality_threshold=20,  # Use same threshold as training
+        frequency_maps=feature_metadata.categorical_frequency_maps,
+    )
+    
+    # Get engineered feature names
+    engineered_feature_cols = feature_metadata.engineered_feature_names
+    
+    # Serialize model (will be captured in UDF closure)
+    # Model contains only standard sklearn components (no custom transformers)
     model_bytes = cloudpickle.dumps(sklearn_model)
     
     # Define schema for UDF output (nullable=True to match pandas behavior)
@@ -190,51 +226,65 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
     ])
     
     @pandas_udf(schema, PandasUDFType.SCALAR)
-    def predict_udf(s):
-        """Pandas UDF for distributed scoring (Spark Connect compatible).
-        
-        Args:
-            s: Pandas Series containing struct with all feature columns
-            
-        Returns:
-            Pandas DataFrame with anomaly_score and prediction columns
-        """
-        import cloudpickle
+    def predict_udf(*cols):
+        """Pandas UDF for distributed scoring (Spark Connect compatible)."""
         import pandas as pd
         import numpy as np
+        import cloudpickle
         
-        # Deserialize model from closure (works with Spark Connect)
+        # Deserialize model (only standard sklearn components)
         model_local = cloudpickle.loads(model_bytes)
         
-        # s is already a DataFrame with struct fields as columns
-        X = s.values
+        # Convert input columns to DataFrame
+        X = pd.concat(cols, axis=1)
+        X.columns = engineered_feature_cols
         
-        # Check for NaN values - IsolationForest cannot handle them
-        has_nan = pd.isna(X).any(axis=1)
+        # Pipeline handles scaling and prediction (no custom transformers)
+        predictions = model_local.predict(X)
+        scores = -model_local.score_samples(X)  # Negate to make higher = more anomalous
         
-        # Initialize output arrays
-        scores = np.full(len(X), np.nan)
-        predictions = np.full(len(X), np.nan)
+        # Convert sklearn labels -1/1 to 0/1
+        predictions = np.where(predictions == -1, 1, 0)
         
-        # Only score rows without NaN
-        valid_mask = ~has_nan
-        if valid_mask.any():
-            X_valid = X[valid_mask]
-            # Score samples (negative scores, higher = more anomalous)
-            scores[valid_mask] = -model_local.score_samples(X_valid)
-            # Predict labels (1 = anomaly, 0 = normal)
-            preds = model_local.predict(X_valid)
-            predictions[valid_mask] = np.where(preds == -1, 1, 0)
-        
-        # Return as DataFrame to satisfy StructType schema and allow null ints
         return pd.DataFrame({
             "anomaly_score": scores,
-            "prediction": pd.Series(predictions).astype("Int64"),
+            "prediction": predictions
         })
     
-    # Combine feature columns into struct, then apply UDF
-    result = df.withColumn("_scores", predict_udf(struct(*[col(c) for c in feature_cols])))
-    result = result.select("*", "_scores.anomaly_score", "_scores.prediction").drop("_scores")
+    # Apply UDF to all engineered feature columns
+    scored_engineered = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
+    
+    # Extract scores into separate columns
+    scored_with_features = scored_engineered.select(
+        *engineered_feature_cols,  # Keep engineered features for alignment
+        "_scores.anomaly_score",
+        "_scores.prediction"
+    )
+    
+    # Important: The engineered_df and original df have the SAME row order (no shuffling)
+    # We can use zipWithIndex or rely on Spark's deterministic row ordering
+    # For simplicity, add all original columns from df alongside scores
+    # Since feature engineering doesn't shuffle/filter, rows align 1:1
+    
+    # Start with original DataFrame (preserves nulls)
+    result = df
+    
+    # Add scores from the engineered+scored DataFrame
+    # Use SQL-style approach: add row number to both, join, then drop
+    from pyspark.sql.window import Window
+    from pyspark.sql.functions import row_number, monotonically_increasing_id
+    
+    # Add row numbers to both DataFrames for alignment
+    window_spec = Window.orderBy(monotonically_increasing_id())
+    df_numbered = df.withColumn("__row_num__", row_number().over(window_spec))
+    scored_numbered = scored_with_features.withColumn("__row_num__", row_number().over(window_spec))
+    
+    # Join on row number to align scores with original data
+    result = df_numbered.join(
+        scored_numbered.select("__row_num__", "anomaly_score", "prediction"),
+        on="__row_num__",
+        how="left"
+    ).drop("__row_num__")
     
     return result
 
@@ -396,7 +446,7 @@ def has_no_anomalies(
             # Ensemble: score with all models (distributed) and average scores
             scored_dfs = []
             for i, uri in enumerate(model_uris):
-                temp_scored = _score_with_sklearn_model(uri, df_filtered, normalized_columns)
+                temp_scored = _score_with_sklearn_model(uri, df_filtered, normalized_columns, record.feature_metadata)
                 temp_scored = temp_scored.withColumn(f"_score_{i}", F.col("anomaly_score"))
                 scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score", "prediction"))
             
@@ -428,7 +478,7 @@ def has_no_anomalies(
                 scored_df = scored_df.drop(col)
         else:
             # Single model (distributed scoring via pandas UDF)
-            scored_df = _score_with_sklearn_model(record.model_uri, df_filtered, normalized_columns)
+            scored_df = _score_with_sklearn_model(record.model_uri, df_filtered, normalized_columns, record.feature_metadata)
             scored_df = scored_df.withColumn("anomaly_score_std", F.lit(0.0))
 
         # Add feature contributions if requested (using TreeSHAP, distributed)

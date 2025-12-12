@@ -17,6 +17,7 @@ __all__ = [
     "AnomalyConfig",
     "AnomalyParams",
     "IsolationForestConfig",
+    "FeatureEngineeringConfig",
     "TemporalAnomalyConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
@@ -98,6 +99,22 @@ class TemporalAnomalyConfig:
 
 
 @dataclass
+class FeatureEngineeringConfig:
+    """Configuration for multi-type feature engineering in anomaly detection."""
+
+    max_input_columns: int = 10  # Hard limit on input columns
+    max_engineered_features: int = 50  # Hard limit on total engineered features
+    categorical_cardinality_threshold: int = 20  # OneHot if <=20, Frequency if >20
+    # Datetime features (always 5 per column: hour_sin, hour_cos, dow_sin, dow_cos, is_weekend)
+    datetime_features: list[str] = field(default_factory=lambda: [
+        "hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_weekend"
+    ])
+    enable_categorical: bool = True
+    enable_datetime: bool = True
+    enable_boolean: bool = True
+
+
+@dataclass
 class AnomalyParams:
     """Optional tuning parameters for anomaly detection."""
 
@@ -106,6 +123,7 @@ class AnomalyParams:
     train_ratio: float = 0.8
     ensemble_size: int | None = None  # None = single model, >1 = ensemble
     algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
+    feature_engineering: FeatureEngineeringConfig = field(default_factory=FeatureEngineeringConfig)
 
 
 @dataclass

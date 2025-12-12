@@ -11,6 +11,10 @@ from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_utils import (
+    get_standard_2d_training_data,
+    get_standard_3d_training_data,
+)
 
 
 @pytest.fixture
@@ -175,8 +179,9 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str):
 
 def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, make_random: str):
     """Test that staleness warning is issued when model is >30 days old."""
+    # Use standard 2D training data with sufficient variance
     df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
+        get_standard_2d_training_data(),
         "amount double, quantity double",
     )
     
@@ -265,8 +270,9 @@ def test_registry_table_schema(spark: SparkSession, make_random: str):
 
 def test_registry_stores_metadata(spark: SparkSession, make_random: str):
     """Test that registry stores comprehensive metadata."""
+    # Use standard 3D training data with sufficient variance
     df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(50)],
+        get_standard_3d_training_data(),
         "amount double, quantity double, discount double",
     )
     

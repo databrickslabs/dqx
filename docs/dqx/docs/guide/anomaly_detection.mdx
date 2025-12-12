@@ -55,9 +55,15 @@ run_configs:
 ```
 
 **What gets auto-discovered**:
-- Numeric columns with variance (excludes IDs, timestamps, constants)
-- Categorical columns with 2-50 distinct values as segments
-- Automatic model naming based on table and selected columns
+- **Columns** (max 10, prioritized by type):
+  1. Numeric columns with variance (stddev > 0, null_rate < 50%)
+  2. Boolean columns (null_rate < 50%)
+  3. Low-cardinality categorical (≤20 values, null_rate < 50%)
+  4. Datetime columns (null_rate < 50%)
+  5. High-cardinality categorical (21-100 values, null_rate < 50%)
+- **Segments**: Categorical columns with 2-50 distinct values (null_rate < 10%)
+- **Exclusions**: ID patterns (columns ending in "id" or "key"), arrays, maps, structs
+- **Naming**: Automatic based on table and selected columns
 
 **Manual overrides available** for advanced users (see examples below).
 
@@ -173,12 +179,159 @@ run_configs:
 - KPIs: correlated metrics diverging (e.g., requests vs. errors) even if each is in-range.
 - Sensor data: multivariate drift (e.g., temp + pressure + flow) even if each is within a threshold.
 
+## Supported Column Types
+
+DQX anomaly detection now supports **multiple data types** with automatic feature engineering:
+
+| **Type** | **Examples** | **Feature Engineering** | **Features per Column** |
+|----------|--------------|-------------------------|-------------------------|
+| **Numeric** | int, long, float, double, decimal | None (use as-is) | 1 |
+| **Categorical** | string | OneHot (low card) or Frequency (high card) | 1-20 |
+| **Datetime** | date, timestamp | Cyclical encoding (hour, day-of-week, weekend) | 5 |
+| **Boolean** | boolean | Map to 0/1 | 1 |
+| **Unsupported** | array, map, struct, binary | Skip with warning | - |
+
+**Limits** (ensures optimal Isolation Forest performance):
+- **Max 10 input columns** (before feature engineering)
+- **Max 50 engineered features** (after encoding)
+- Violation raises error with actionable suggestions
+
+### Categorical Columns
+
+**Low cardinality** (≤20 distinct values): OneHot encoding
+```python
+# Example: product_type with ["Electronics", "Clothing", "Food"]
+train(df=df, columns=["amount", "product_type"])
+# Creates: amount, product_type_Electronics, product_type_Clothing, product_type_Food
+```
+
+**High cardinality** (>20 distinct values): Frequency encoding
+```python
+# Example: user_id with 500 distinct values
+train(df=df, columns=["amount", "user_id"])
+# Creates: amount, user_id_freq (frequency ratio: count/total)
+```
+
+**Unknown categories** during scoring: Handled gracefully
+- OneHot: All indicator columns set to 0
+- Frequency: Uses global frequency or 0
+- Warning if >10% of rows have unknowns
+
+### Datetime Columns
+
+**Cyclical encoding** preserves temporal relationships:
+```python
+# Example: order_timestamp
+train(df=df, columns=["amount", "order_timestamp"])
+# Creates 5 features:
+#   - order_timestamp_hour_sin, order_timestamp_hour_cos (daily cycle)
+#   - order_timestamp_dow_sin, order_timestamp_dow_cos (weekly cycle)
+#   - order_timestamp_is_weekend (0/1)
+```
+
+**Why cyclical?** Hour 23 is close to hour 0 in real-world patterns. Sin/cos encoding preserves this distance.
+
+**Use cases**:
+- Detect unusual transaction times (e.g., large transfers at 3am)
+- Capture weekday vs. weekend behavior differences
+- Identify time-based fraud patterns
+
+### Boolean Columns
+
+**Simple 0/1 mapping**:
+```python
+# Example: is_premium, is_discounted
+train(df=df, columns=["amount", "is_premium", "is_discounted"])
+# Creates: amount, is_premium (0/1), is_discounted (0/1)
+```
+
+### Null Handling
+
+**Strategy**: Null indicators + constant imputation
+
+For every column with nulls, DQX creates:
+1. **Original column** (imputed with type-specific constant)
+2. **Null indicator**: `{column}_is_null` (binary 0/1)
+
+**Imputation by type**:
+- **Numeric**: Replace with 0
+- **Categorical**: Replace with "MISSING" string
+- **Datetime**: Replace with dataset minimum date
+- **Boolean**: Replace with 0 (False)
+
+**Example**:
+```python
+# Input: amount column with nulls
+# Output: amount (imputed with 0), amount_is_null (0 or 1)
+```
+
+**High null rate** (>50%): Warning issued but column is included
+```
+UserWarning: Column 'optional_field' has 73% nulls. Null indicator feature added.
+```
+
+**Rationale**: Null patterns themselves can be anomalous (e.g., missing sensor readings indicate hardware failure).
+
+### Mixed Type Example
+
+```python
+from databricks.labs.dqx.anomaly import train
+
+# Train with all supported types
+train(
+    df=spark.table("catalog.schema.transactions"),
+    columns=[
+        "amount",           # numeric (1 feature)
+        "quantity",         # numeric (1 feature)
+        "product_type",     # categorical, 5 values (5 features via one-hot)
+        "is_premium",       # boolean (1 feature)
+        "order_time",       # datetime (5 cyclical features)
+    ]
+    # Total: ~13 features (well within 50 limit)
+)
+```
+
+### Feature Count Planning
+
+**Estimate before training**:
+```python
+# Feature count = 
+#   num_numeric * 1 
+#   + num_boolean * 1
+#   + num_datetime * 5
+#   + sum(cardinalities for low-card categoricals)
+#   + num_high_card_categorical * 1
+#   + num_columns_with_nulls * 1
+
+# Example:
+# 3 numeric → 3
+# 1 boolean → 1
+# 2 datetime → 10
+# 1 categorical (8 values) → 8
+# All have nulls → 7
+# Total: 29 features ✓ (under 50 limit)
+```
+
+**Error if exceeded**:
+```
+InvalidParameterError: Feature engineering would create 58 features (limit: 50).
+Feature breakdown:
+  - 3 datetime → 15 features
+  - 2 categorical → 30 features
+  - 3 numeric → 3 features
+  ...
+Suggestions:
+  1. Reduce number of categorical columns (highest impact)
+  2. Use columns with lower cardinality
+  3. Prioritize numeric/boolean columns (1 feature each)
+```
+
 ## Data prep and performance
 
-- Numeric columns only; ensure types are numeric before training/scoring.
+- Supports numeric, categorical (string), datetime, boolean columns with automatic feature engineering.
 - Sampling defaults: 30% up to 1M rows; auto warnings if capped. Override via `params` only if needed.
 - Train/validation split: default 80/20; basic score distribution metrics are logged to the registry.
-- Large datasets: training uses Spark ML; scoring runs via the saved Spark pipeline; for exploratory scoring, limit rows.
+- Large datasets: training on driver (efficient for sampled data ≤1M rows); scoring fully distributed via pandas UDFs.
 
 ## Model lifecycle
 
@@ -439,6 +592,49 @@ def quarantine():
     return dq_engine.get_invalid(df)
 ```
 
+## Feature Engineering Configuration
+
+Customize feature engineering behavior via `FeatureEngineeringConfig`:
+
+```python
+from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.config import AnomalyParams, FeatureEngineeringConfig
+
+train(
+    df=df,
+    columns=["amount", "category", "timestamp"],
+    params=AnomalyParams(
+        feature_engineering=FeatureEngineeringConfig(
+            max_input_columns=10,                      # Hard limit on input columns
+            max_engineered_features=50,                # Hard limit on total features
+            categorical_cardinality_threshold=20,      # OneHot if ≤20, Frequency if >20
+            enable_categorical=True,                   # Toggle categorical encoding
+            enable_datetime=True,                      # Toggle datetime feature extraction
+            enable_boolean=True,                       # Toggle boolean encoding
+        )
+    )
+)
+```
+
+**When to customize**:
+- **Increase cardinality threshold** (e.g., 30): More one-hot encoded features, better for interpretability
+- **Decrease cardinality threshold** (e.g., 10): Fewer features, faster training
+- **Disable types**: Force numeric-only if needed (`enable_categorical=False`)
+
+**YAML configuration**:
+```yaml
+run_configs:
+  - name: transactions
+    input_config:
+      location: catalog.schema.transactions
+    anomaly_config:
+      columns: [amount, category, timestamp]
+      params:
+        feature_engineering:
+          categorical_cardinality_threshold: 15
+          max_input_columns: 8
+```
+
 ## Requirements and notes
 
 - Spark ≥ 3.4 for pandas UDF support (distributed scoring).
@@ -446,7 +642,7 @@ def quarantine():
 - Works on Databricks, local Spark clusters, and any Spark 3.4+ environment.
 - **Training** runs on driver node (efficient for sampled data ≤1M rows).
 - **Scoring** is fully distributed across Spark cluster via pandas UDFs.
-- Rows with nulls in anomaly columns are skipped (not flagged).
+- **Null handling**: Automatic via null indicators + imputation (no rows skipped).
 
 ## Looking ahead
 
