@@ -2052,7 +2052,7 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
 
     Args:
         column: Column name or Column expression containing JSON strings.
-        schema: Expected schema as a DDL string (e.g.,"<struct<id:string>>", "id INT, name STRING") or StructType.
+        schema: Expected schema as a DDL string (e.g., "<struct<id:string>>", "id INT, name STRING") or StructType.
 
     Returns:
         Column: A Spark Column representing whether the column conforms to the expected JSON schema.
@@ -2340,7 +2340,7 @@ def _is_compatible_atomic_type(actual_type: types.AtomicType, expected_type: typ
 
 
 def _generate_field_presence_checks(
-    expected_schema: types.StructType, parsed_struct_col: Column, max_depth: int = 15, current_depth: int = 0
+    expected_schema: types.StructType, parsed_struct_col: Column, max_depth: int = 10, current_depth: int = 0
 ) -> list[Column]:
     """
     Recursively generate Spark Column expressions that verify each field defined in the expected
