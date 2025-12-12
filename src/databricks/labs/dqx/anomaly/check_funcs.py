@@ -163,7 +163,13 @@ def _score_segmented(
     return result.withColumn(condition_col, condition)
 
 
-def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[str], feature_metadata_json: str) -> DataFrame:
+def _score_with_sklearn_model(
+    model_uri: str, 
+    df: DataFrame, 
+    feature_cols: list[str], 
+    feature_metadata_json: str,
+    merge_columns: list[str]
+) -> DataFrame:
     """
     Score DataFrame using scikit-learn model with distributed pandas UDF.
     
@@ -175,6 +181,8 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
         df: DataFrame to score (with original columns)
         feature_cols: List of original feature column names (before engineering)
         feature_metadata_json: JSON string with feature engineering metadata (from registry)
+        merge_columns: Columns to use for joining results back (e.g., primary keys or row IDs).
+            Must be provided by caller to ensure correct row alignment.
     
     Returns:
         DataFrame with anomaly_score and prediction columns added
@@ -203,10 +211,14 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
         for info in feature_metadata.column_infos
     ]
     
-    # Apply feature engineering in Spark (distributed)
+    # Use provided merge columns for joining
+    join_cols = merge_columns
+    cols_to_preserve = merge_columns
+    
+    # Apply feature engineering in Spark (distributed), preserving join columns
     # Use pre-computed frequency maps from training
     engineered_df, _ = apply_feature_engineering(
-        df,
+        df.select(*feature_cols, *cols_to_preserve),
         column_infos,
         categorical_cardinality_threshold=20,  # Use same threshold as training
         frequency_maps=feature_metadata.categorical_frequency_maps,
@@ -252,39 +264,16 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
         })
     
     # Apply UDF to all engineered feature columns
-    scored_engineered = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
+    # The join columns are preserved in engineered_df
+    scored_df = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
     
-    # Extract scores into separate columns
-    scored_with_features = scored_engineered.select(
-        *engineered_feature_cols,  # Keep engineered features for alignment
-        "_scores.anomaly_score",
-        "_scores.prediction"
-    )
-    
-    # Important: The engineered_df and original df have the SAME row order (no shuffling)
-    # We can use zipWithIndex or rely on Spark's deterministic row ordering
-    # For simplicity, add all original columns from df alongside scores
-    # Since feature engineering doesn't shuffle/filter, rows align 1:1
-    
-    # Start with original DataFrame (preserves nulls)
-    result = df
-    
-    # Add scores from the engineered+scored DataFrame
-    # Use SQL-style approach: add row number to both, join, then drop
-    from pyspark.sql.window import Window
-    from pyspark.sql.functions import row_number, monotonically_increasing_id
-    
-    # Add row numbers to both DataFrames for alignment
-    window_spec = Window.orderBy(monotonically_increasing_id())
-    df_numbered = df.withColumn("__row_num__", row_number().over(window_spec))
-    scored_numbered = scored_with_features.withColumn("__row_num__", row_number().over(window_spec))
-    
-    # Join on row number to align scores with original data
-    result = df_numbered.join(
-        scored_numbered.select("__row_num__", "anomaly_score", "prediction"),
-        on="__row_num__",
+    # Join scores back to original DataFrame using the join columns
+    # This ensures anomaly scores align correctly with original rows
+    result = df.join(
+        scored_df.select(*join_cols, "_scores.anomaly_score", "_scores.prediction"),
+        on=join_cols,
         how="left"
-    ).drop("__row_num__")
+    )
     
     return result
 
@@ -430,14 +419,18 @@ def has_no_anomalies(
                     stacklevel=3,
                 )
 
+        # Add temporary row ID for alignment (since we control this scoring context)
+        from pyspark.sql.window import Window
+        from pyspark.sql.functions import row_number, monotonically_increasing_id
+        
+        window_spec = Window.orderBy(monotonically_increasing_id())
+        df_with_id = df.withColumn("__dqx_temp_id__", row_number().over(window_spec))
+        
         # Filter rows if row_filter is provided
-        # Determine join columns for merging results back
-        # If merge_columns is None, use all original DataFrame columns (default behavior)
-        # If row_filter is used, we need to join scored results back to preserve all rows
         if row_filter:
-            df_filtered = df.filter(F.expr(row_filter))
+            df_filtered = df_with_id.filter(F.expr(row_filter))
         else:
-            df_filtered = df
+            df_filtered = df_with_id
 
         # Check if ensemble model (multiple URIs separated by comma)
         model_uris = record.model_uri.split(",")
@@ -446,18 +439,16 @@ def has_no_anomalies(
             # Ensemble: score with all models (distributed) and average scores
             scored_dfs = []
             for i, uri in enumerate(model_uris):
-                temp_scored = _score_with_sklearn_model(uri, df_filtered, normalized_columns, record.feature_metadata)
+                temp_scored = _score_with_sklearn_model(uri, df_filtered, normalized_columns, record.feature_metadata, ["__dqx_temp_id__"])
                 temp_scored = temp_scored.withColumn(f"_score_{i}", F.col("anomaly_score"))
                 scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score", "prediction"))
             
-            # Merge all scored DataFrames
+            # Merge all scored DataFrames using temp ID
             scored_df = scored_dfs[0]
             for i in range(1, len(scored_dfs)):
-                # Join on all original columns
-                join_cols = [c for c in df_filtered.columns]
                 scored_df = scored_df.join(
-                    scored_dfs[i].select(join_cols + [f"_score_{i}"]),
-                    on=join_cols,
+                    scored_dfs[i].select("__dqx_temp_id__", f"_score_{i}"),
+                    on="__dqx_temp_id__",
                     how="inner"
                 )
             
@@ -478,7 +469,7 @@ def has_no_anomalies(
                 scored_df = scored_df.drop(col)
         else:
             # Single model (distributed scoring via pandas UDF)
-            scored_df = _score_with_sklearn_model(record.model_uri, df_filtered, normalized_columns, record.feature_metadata)
+            scored_df = _score_with_sklearn_model(record.model_uri, df_filtered, normalized_columns, record.feature_metadata, ["__dqx_temp_id__"])
             scored_df = scored_df.withColumn("anomaly_score_std", F.lit(0.0))
 
         # Add feature contributions if requested (using TreeSHAP, distributed)
@@ -490,12 +481,14 @@ def has_no_anomalies(
         if not include_confidence:
             scored_df = scored_df.drop("anomaly_score_std")
 
+        # Drop the temporary ID before returning
+        scored_df = scored_df.drop("__dqx_temp_id__")
+        
         # If row_filter was used, join scored results back to original DataFrame
         # This preserves all rows (non-filtered rows will have null anomaly_score)
         if row_filter:
-            # Determine which columns to use for joining
-            # Default to merge_columns if provided, otherwise use all original columns
-            join_cols = merge_columns if merge_columns else df.columns
+            # Use merge_columns if provided, otherwise use all original columns
+            join_cols = merge_columns if merge_columns else [c for c in df.columns]
             
             # Get score columns to join
             score_cols_to_join = ["anomaly_score"]

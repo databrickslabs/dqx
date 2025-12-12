@@ -493,8 +493,11 @@ def apply_feature_engineering(
         )
         engineered_features.append(col_name)
     
-    # Select only engineered features
-    result_df = transformed_df.select(*engineered_features)
+    # Select engineered features + preserve any extra columns not in column_infos
+    # (e.g., __dqx_row_id__ for joining results back)
+    feature_col_names = [c.name for c in column_infos]
+    extra_cols = [c for c in transformed_df.columns if c not in feature_col_names and c not in engineered_features]
+    result_df = transformed_df.select(*engineered_features, *extra_cols)
     
     # Create metadata for scoring
     metadata = SparkFeatureMetadata(

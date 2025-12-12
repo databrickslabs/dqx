@@ -140,7 +140,7 @@ def _train_global(
     
     if ensemble_size > 1:
         # Train ensemble
-        model_uris, hyperparams, validation_metrics = _train_ensemble(
+        model_uris, hyperparams, validation_metrics, feature_metadata = _train_ensemble(
             train_df, val_df, columns, params, ensemble_size, model_name
         )
         model_uri = ",".join(model_uris)  # Store as comma-separated string
@@ -773,14 +773,31 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
             "prediction": predictions
         })
     
+    # IMPORTANT: Use temporary row ID to ensure alignment between original and scored DataFrames
+    # Since feature engineering doesn't shuffle/filter, add ID once and preserve through transformations
+    from pyspark.sql.window import Window
+    from pyspark.sql.functions import row_number, monotonically_increasing_id
+    
+    window_spec = Window.orderBy(monotonically_increasing_id())
+    df_with_id = df.withColumn("__dqx_row_id__", row_number().over(window_spec))
+    
+    # Apply feature engineering, preserving the row ID
+    engineered_with_id, _ = apply_feature_engineering(
+        df_with_id.select(*feature_cols, "__dqx_row_id__"),
+        column_infos,
+        categorical_cardinality_threshold=20,
+        frequency_maps=feature_metadata.categorical_frequency_maps,
+    )
+    
     # Apply UDF to all engineered feature columns
-    result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
+    scored_with_id = engineered_with_id.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
     
-    # Add original columns back and extract scores
-    for original_col in feature_cols:
-        result = result.withColumn(original_col, df[original_col])
-    
-    result = result.select("*", "_scores.anomaly_score", "_scores.prediction").drop("_scores")
+    # Join scores back to original DataFrame using the row ID
+    result = df_with_id.join(
+        scored_with_id.select("__dqx_row_id__", "_scores.anomaly_score", "_scores.prediction"),
+        on="__dqx_row_id__",
+        how="left"
+    ).drop("__dqx_row_id__")
     
     return result
 
@@ -956,15 +973,17 @@ def _train_ensemble(
     params: AnomalyParams,
     ensemble_size: int,
     model_name: str,
-) -> tuple[list[str], dict[str, Any], dict[str, float]]:
+) -> tuple[list[str], dict[str, Any], dict[str, float], Any]:
     """
     Train ensemble of models with different random seeds.
     
     Returns:
-        Tuple of (model_uris, hyperparams, aggregated_metrics).
+        Tuple of (model_uris, hyperparams, aggregated_metrics, feature_metadata).
+        feature_metadata is from the first ensemble member (all members use same features).
     """
     model_uris = []
     all_metrics = []
+    first_feature_metadata = None  # Capture from first ensemble member
     
     # Register models to Unity Catalog
     # Note: When running outside Databricks, you may see warnings about workspace ID headers
@@ -980,6 +999,10 @@ def _train_ensemble(
         
         # Train model (sklearn IsolationForest on driver)
         model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, modified_params)
+        
+        # Capture feature_metadata from first member (all use same feature engineering)
+        if i == 0:
+            first_feature_metadata = feature_metadata
         
         # Compute metrics (distributed scoring on Spark)
         contamination = modified_params.algorithm_config.contamination
@@ -1024,7 +1047,7 @@ def _train_ensemble(
                     sum((v - aggregated_metrics[key]) ** 2 for v in values) / (len(values) - 1)
                 ) ** 0.5 if len(values) > 1 else 0.0
     
-    return model_uris, hyperparams, aggregated_metrics
+    return model_uris, hyperparams, aggregated_metrics, first_feature_metadata
 
 
 def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:
