@@ -2953,6 +2953,7 @@ def test_has_json_keys_require_all_true(spark):
             ['{"key": "value"}', None],
             [None, '{"key": "value"}'],
             ['{"nested": {"inner_key": "inner_value"}}', '{"nested": {"inner_key": "inner_value"}}'],
+            ['{"key": null, "another_key": null}', '{"nested": {"key": null}}'],
         ],
         schema,
     )
@@ -2991,6 +2992,10 @@ def test_has_json_keys_require_all_true(spark):
                 "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'a' is missing keys in the list: [key, another_key]",
                 "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'b' is missing keys in the list: [key]",
             ],
+            [
+                None,
+                "Value '{\"nested\": {\"key\": null}}' in Column 'b' is missing keys in the list: [key]",
+            ],
         ],
         expected_schema,
     )
@@ -3001,16 +3006,18 @@ def test_has_json_keys_require_at_least_one(spark):
     schema = "a: string, b: string"
     required_keys = ["key", "another_key", "extra_key"]
 
-    test_data = [
-        ['{"key": 1, "another_key": 2, "extra_key": 3}', '{"key": 1, "another_key": 2, "extra_key": 3}'],
-        ['{"key": 1}', '{"key": 1}'],
-        ['{"number": 123}', '{"random_sample": 1523}'],
-        ['{}', '{}'],
-        ['{"key": "value"', '{"key": "value"'],
-        [None, 'Not a JSON string'],
-    ]
-
-    test_df = spark.createDataFrame(test_data, schema)
+    test_df = spark.createDataFrame(
+        [
+            ['{"key": 1, "another_key": 2, "extra_key": 3}', '{"key": 1, "another_key": 2, "extra_key": 3}'],
+            ['{"key": 1}', '{"key": 1}'],
+            ['{"number": 123}', '{"random_sample": 1523}'],
+            ['{}', '{}'],
+            ['{"key": "value"', '{"key": "value"'],
+            [None, 'Not a JSON string'],
+            [None, None],
+        ],
+        schema,
+    )
 
     actual = test_df.select(
         has_json_keys("a", required_keys, require_all=False),
@@ -3036,6 +3043,7 @@ def test_has_json_keys_require_at_least_one(spark):
                 "Value '{\"key\": \"value\"' in Column 'b' is not a valid JSON string",
             ],
             [None, "Value 'Not a JSON string' in Column 'b' is not a valid JSON string"],
+            [None, None],
         ],
         expected_schema,
     )
@@ -3101,3 +3109,56 @@ def test_has_valid_json_schema(spark):
         has_valid_json_schema("b", json_schema),
     )
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_valid_json_schema_with_nested_depth_5(spark):
+    """Test has_valid_json_schema with nested fields of depth 5."""
+    schema = "json_data: string"
+    test_data = [
+        ['{"level1": {"level2": {"level3": {"level4": {"level5": "value"}}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": {"level5": 0.12}}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": {"level5": null}}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": {"level5": "0.123"}}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": null}}}}'],
+        [None],
+        ['Not a JSON string'],
+    ]
+
+    test_df = spark.createDataFrame(test_data, schema)
+
+    json_schema = "struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>"
+    expected_schema = "json_data_has_invalid_json_schema: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            [None],
+            [
+                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": {\"level5\": null}}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>"
+            ],
+            [None],
+            [
+                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": null}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>"
+            ],
+            [None],
+            ["Value 'Not a JSON string' in Column 'json_data' is not a valid JSON string"],
+        ],
+        expected_schema,
+    )
+    actual = test_df.select(
+        has_valid_json_schema("json_data", json_schema),
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_valid_json_schema_nullability(spark):
+    schema = "json_data: string"
+    test_df = spark.createDataFrame(
+        [['{"id": 1, "name": "valid"}'], ['{"id": 1, "name": null}'], ['{"id": 1}'], [None]], "json_data string", schema
+    )
+
+    expected_schema = "json_data_has_invalid_json_schema: string"
+    expected = spark.createDataFrame([[None], [None], [None], [None], [None]], expected_schema)
+
+    json_schema = "id int, name string"
+    actual_default = test_df.select(has_valid_json_schema("json_data", json_schema))
+    assert_df_equality(actual_default, expected)
