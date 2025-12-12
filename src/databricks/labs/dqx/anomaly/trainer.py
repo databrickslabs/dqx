@@ -533,7 +533,7 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
     """
     try:
         from sklearn.ensemble import IsolationForest
-        from sklearn.preprocessing import StandardScaler
+        from sklearn.preprocessing import RobustScaler
         from sklearn.pipeline import Pipeline
         import pandas as pd
         import numpy as np
@@ -559,10 +559,11 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
         n_jobs=-1,  # Use all CPU cores on driver for parallel tree training
     )
     
-    # Create pipeline with StandardScaler for automatic feature scaling
-    # This handles different scales/units across features (e.g., amount in thousands, quantity in tens)
+    # Create pipeline with RobustScaler for automatic feature scaling
+    # RobustScaler uses median and IQR, making it robust to outliers and heavy tails
+    # This is critical for DQ data which often has extreme values and spiky distributions
     pipeline = Pipeline([
-        ('scaler', StandardScaler()),
+        ('scaler', RobustScaler()),
         ('model', iso_forest)
     ])
     
@@ -574,7 +575,7 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
         "num_trees": algo_cfg.num_trees,
         "max_samples": algo_cfg.subsampling_rate,
         "random_seed": algo_cfg.random_seed,
-        "feature_scaling": "StandardScaler",  # Document that we use scaling
+        "feature_scaling": "RobustScaler",  # Document that we use robust scaling
     }
     
     return pipeline, hyperparams

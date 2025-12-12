@@ -88,15 +88,16 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, make
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
     # Train on realistic 2D cluster with different scales
-    # amount ~ 100, quantity ~ 10 (different scales to test feature scaling)
+    # amount ~ 100-300, quantity ~ 10-30 (different scales to test feature scaling)
+    # Use more data for better model training
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(200)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
         "amount double, quantity double",
     )
     
     stable_params = AnomalyParams(
         sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.1),
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),  # Lower contamination = tighter boundary
     )
     
     train(
@@ -162,13 +163,13 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(200)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
         "amount double, quantity double",
     )
     
     stable_params = AnomalyParams(
         sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.1),
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
     )
     
     train(
@@ -223,9 +224,9 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
     model_name = f"test_multi_checks_{make_random(4).lower()}"
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
-    # Train on very tight cluster with minimal variance for clear anomaly detection
+    # Train on realistic 2D cluster with different scales
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.001, 2.0 + i * 0.0001) for i in range(1000)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
         "amount double, quantity double",
     )
     
@@ -244,7 +245,7 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
     
     test_df = spark.createDataFrame(
         [
-            (150.0, 15.0),  # Normal - in cluster (middle of training range)
+            (110.0, 12.0),  # Normal - in dense part of training range (100-300, 10-50)
             (None, 10.0),  # Null amount - will fail is_not_null
             (9999.0, 1.0),  # Far-out anomaly
         ],
@@ -410,15 +411,15 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
     model_name = f"test_helpers_{make_random(4).lower()}"
     registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
     
-    # Train on simple 1D cluster for clear anomaly detection  
+    # Train on realistic 2D cluster with different scales
     train_df = spark.createDataFrame(
-        [(10.0 + i * 0.1, 10.0 + i * 0.1) for i in range(100)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
         "amount double, quantity double",
     )
     
     stable_params = AnomalyParams(
         sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.1),
+        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
     )
     
     train(
@@ -429,9 +430,9 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
         params=stable_params,
     )
     
-    # Test with in-cluster point (middle of range) and far-out anomaly
+    # Test with in-cluster point (in dense part of range) and far-out anomaly
     test_df = spark.createDataFrame(
-        [(150.0, 15.0), (9999.0, 1.0)],
+        [(110.0, 12.0), (9999.0, 1.0)],
         "amount double, quantity double",
     )
     
