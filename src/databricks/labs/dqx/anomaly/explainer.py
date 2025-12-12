@@ -57,6 +57,7 @@ def compute_feature_contributions(
         try:
             import shap
             import mlflow.sklearn
+            from sklearn.pipeline import Pipeline
         except ImportError as e:
             raise ImportError(
                 "To use feature contributions (include_contributions=True), install 'shap' version 0.42.0-0.46 on your cluster.\n"
@@ -66,11 +67,28 @@ def compute_feature_contributions(
         # Load model once per executor
         model_local = mlflow.sklearn.load_model(model_uri)
         
+        # If model is a Pipeline (due to feature scaling), extract components
+        # SHAP's TreeExplainer only supports tree models, not pipelines
+        if isinstance(model_local, Pipeline):
+            # Extract the scaler and the actual tree model
+            scaler = model_local.named_steps['scaler']
+            tree_model = model_local.named_steps['model']
+            needs_scaling = True
+        else:
+            scaler = None
+            tree_model = model_local
+            needs_scaling = False
+        
         # Create TreeExplainer (fast for tree-based models)
-        explainer = shap.TreeExplainer(model_local)
+        explainer = shap.TreeExplainer(tree_model)
         
         # s is already a DataFrame with struct fields as columns
         X = s.values
+        
+        # Scale the data if the model uses a scaler
+        # SHAP values are computed in the scaled space to match how the model was trained
+        if needs_scaling:
+            X = scaler.transform(X)
         
         # Handle NaN values (SHAP can't process them)
         has_nan = pd.isna(X).any(axis=1)

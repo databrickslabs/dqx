@@ -23,7 +23,9 @@ ANOMALY_MODEL_TABLE_SCHEMA = (
     "temporal_config map<string,string>, "
     "segment_by array<string>, "
     "segment_values map<string,string>, "
-    "is_global_model boolean"
+    "is_global_model boolean, "
+    "column_types map<string,string>, "
+    "feature_metadata string"  # JSON string with feature engineering metadata
 )
 
 
@@ -49,6 +51,8 @@ class AnomalyModelRecord:
     segment_by: list[str] | None = None
     segment_values: dict[str, str] | None = None
     is_global_model: bool = True
+    column_types: dict[str, str] | None = None  # Maps column name -> type category
+    feature_metadata: str | None = None  # JSON string with feature engineering metadata
 
 
 class AnomalyModelRegistry:
