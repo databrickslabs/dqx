@@ -2045,7 +2045,7 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
     """
     Validates that JSON strings in the specified column conform to an expected schema.
 
-    **Importantly, validation utilizes standard Spark JSON parsing rules, meaning:**
+    The validation utilizes standard Spark JSON parsing rules, meaning:**
     * **Type Coercion is Permitted:** Values that can be successfully cast to the target schema type (e.g., a JSON number like `0.12`
     successfully parsing into a field defined as `STRING`) will be considered valid.
     * **Extra Fields are Ignored:** Fields present in the JSON but missing from
@@ -2363,11 +2363,14 @@ def _generate_field_presence_checks(
     for field in expected_schema.fields:
         field_ref = parsed_struct_col[field.name]
         if isinstance(field.dataType, types.StructType):
-            validations += _generate_field_presence_checks(
+            child_checks = _generate_field_presence_checks(
                 field.dataType, field_ref, max_depth=max_depth, current_depth=current_depth + 1
             )
-        else:
-            validations.append(field_ref.isNotNull())
+            if field.nullable:
+                child_checks = [(field_ref.isNull() | check) for check in child_checks]
+                validations.extend(child_checks)
+            if not field.nullable:
+                validations.append(field_ref.isNotNull())
     return validations
 
 
