@@ -25,9 +25,9 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     model_name = f"test_basic_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
     
-    # Train on normal data (more data for stable model)
+    # Train on realistic 2D cluster with different scales
     train_df = spark.createDataFrame(
-        [(100.0 + i * 0.1, 2.0 + i * 0.01) for i in range(200)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
         "amount double, quantity double",
     )
     
@@ -44,7 +44,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     
     # Score normal + anomalous data
     test_df = spark.createDataFrame(
-        [(110.0, 2.5), (9999.0, 100.0)],  # First is clearly in range, second is clearly out
+        [(150.0, 15.0), (9999.0, 100.0)],  # First is in range, second is clearly out
         "amount double, quantity double",
     )
     
@@ -57,7 +57,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
                 "columns": ["amount", "quantity"],
                 "model": model_name,
                 "registry_table": registry_table,
-                "score_threshold": 0.7,  # Higher threshold to reduce false positives
+                "score_threshold": 0.6,
             }
         )
     ]
@@ -169,8 +169,9 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     model_name = f"test_threshold_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
     
+    # Train on realistic cluster with variance
     train_df = spark.createDataFrame(
-        [(100.0, 2.0) for i in range(50)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
         "amount double, quantity double",
     )
     
@@ -184,9 +185,9 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     # Create test data with clear normal and anomalous rows
     test_df = spark.createDataFrame(
         [
-            (100.0, 2.0),  # Normal
-            (101.0, 2.0),  # Normal
-            (9999.0, 0.1),  # Anomaly
+            (200.0, 30.0),  # Normal - center of training range (100-300, 10-50)
+            (210.0, 32.0),  # Normal - center of training range
+            (9999.0, 0.1),  # Anomaly - far out
         ],
         "amount double, quantity double",
     )
@@ -200,7 +201,7 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
                 "columns": ["amount", "quantity"],
                 "model": model_name,
                 "registry_table": registry_table,
-                "score_threshold": 0.5,
+                "score_threshold": 0.6,
             }
         )
     ]
@@ -225,8 +226,9 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
     model_name = f"test_auto_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
     
+    # Train on realistic cluster with variance
     train_df = spark.createDataFrame(
-        [(100.0, 2.0) for i in range(50)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
         "amount double, quantity double",
     )
     
@@ -272,8 +274,9 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
     model_name = f"test_multi_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
     
+    # Train on realistic 4D cluster with variance in all dimensions
     train_df = spark.createDataFrame(
-        [(100.0, 2.0, 0.1, 50.0) for i in range(50)],
+        [(100.0 + i * 0.5, 10.0 + i * 0.1, 0.1 + i * 0.001, 50.0 + i * 0.2) for i in range(400)],
         "amount double, quantity double, discount double, weight double",
     )
     
@@ -285,7 +288,7 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
     )
     
     test_df = spark.createDataFrame(
-        [(100.0, 2.0, 0.1, 50.0), (9999.0, 1.0, 0.95, 1.0)],
+        [(200.0, 30.0, 0.25, 90.0), (9999.0, 1.0, 0.95, 1.0)],  # First in center, second far out
         "amount double, quantity double, discount double, weight double",
     )
     
@@ -298,7 +301,7 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
                 "columns": ["amount", "quantity", "discount", "weight"],
                 "model": model_name,
                 "registry_table": registry_table,
-                "score_threshold": 0.5,
+                "score_threshold": 0.6,
             }
         )
     ]

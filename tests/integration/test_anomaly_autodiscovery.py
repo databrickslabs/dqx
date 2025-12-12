@@ -77,9 +77,13 @@ def test_auto_discover_excludes_high_cardinality(
 
 
 def test_zero_config_training(
-    spark: SparkSession, make_schema: str, make_random: str, skip_if_runtime_not_anomaly_compatible
+    spark: SparkSession, make_schema, make_random, skip_if_runtime_not_anomaly_compatible
 ):
     """Test zero-configuration training with auto-discovery."""
+    # Create unique schema for test isolation
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    
     # Create data with clear numeric and segment columns
     data = []
     for region in ["US", "EU"]:
@@ -88,22 +92,21 @@ def test_zero_config_training(
             data.append((region, base + i * 0.5, base * 0.8 + i * 0.3))
     
     df = spark.createDataFrame(data, "region string, amount double, discount double")
-    suffix = make_random(8).lower()
-    table_name = f"{make_schema}.auto_train_test_{suffix}"
+    table_name = f"{TEST_CATALOG}.{schema.name}.auto_train_test_{suffix}"
     df.write.saveAsTable(table_name)
     
     # Train with zero config (should auto-discover columns and segments)
     model_uri = train(
         df=spark.table(table_name),
         model_name=f"test_auto_{suffix}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
+        registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
     )
     
     # Verify models were created
     assert model_uri is not None
     
     # Check registry for segment models
-    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{suffix}")
+    registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
     models = registry.filter("status = 'active'").collect()
     
     # Should create 2 segment models (US and EU)
@@ -115,9 +118,13 @@ def test_zero_config_training(
 
 
 def test_explicit_columns_no_auto_segment(
-    spark: SparkSession, make_schema: str, make_random: str, skip_if_runtime_not_anomaly_compatible
+    spark: SparkSession, make_schema, make_random, skip_if_runtime_not_anomaly_compatible
 ):
     """Test that providing explicit columns disables auto-segmentation."""
+    # Create unique schema for test isolation
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    
     # Create data with segment column
     data = []
     for region in ["US", "EU"]:
@@ -125,8 +132,7 @@ def test_explicit_columns_no_auto_segment(
             data.append((region, 100.0 + i))
     
     df = spark.createDataFrame(data, "region string, amount double")
-    suffix = make_random(8).lower()
-    table_name = f"{make_schema}.explicit_cols_test_{suffix}"
+    table_name = f"{TEST_CATALOG}.{schema.name}.explicit_cols_test_{suffix}"
     df.write.saveAsTable(table_name)
     
     # Train with explicit columns (should NOT auto-segment)
@@ -134,11 +140,11 @@ def test_explicit_columns_no_auto_segment(
         df=spark.table(table_name),
         columns=["amount"],  # Explicit columns provided
         model_name=f"test_explicit_{suffix}",
-        registry_table=f"{make_schema}.dqx_anomaly_models_{suffix}",
+        registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
     )
     
     # Verify only 1 global model created (no segmentation)
-    registry = spark.table(f"{make_schema}.dqx_anomaly_models_{suffix}")
+    registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
     models = registry.filter("status = 'active'").collect()
     assert len(models) == 1
     assert models[0].is_global_model is True
