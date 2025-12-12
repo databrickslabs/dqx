@@ -2362,15 +2362,16 @@ def _generate_field_presence_checks(
     validations = []
     for field in expected_schema.fields:
         field_ref = parsed_struct_col[field.name]
+        if not field.nullable:
+            validations.append(field_ref.isNotNull())
         if isinstance(field.dataType, types.StructType):
             child_checks = _generate_field_presence_checks(
                 field.dataType, field_ref, max_depth=max_depth, current_depth=current_depth + 1
             )
             if field.nullable:
                 child_checks = [(field_ref.isNull() | check) for check in child_checks]
-                validations.extend(child_checks)
-            if not field.nullable:
-                validations.append(field_ref.isNotNull())
+            validations.extend(child_checks)
+
     return validations
 
 

@@ -3137,9 +3137,7 @@ def test_has_valid_json_schema_with_nested_depth_5(spark):
         [
             [None],
             [None],
-            [
-                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": {\"level5\": null}}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>"
-            ],
+            [None],
             [None],
             [
                 "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": null}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>"
@@ -3157,11 +3155,7 @@ def test_has_valid_json_schema_with_nested_depth_5(spark):
 
 def test_has_valid_json_schema_nullability(spark):
     schema = "json_data: string"
-    json_schema = "id int, name string"
-    strict_schema = types.StructType([
-    StructField("id", IntegerType(), nullable=True),
-    StructField("name", StringType(), nullable=False) # <--- STRICT
-])
+    json_schema = "id int, name string not null"
 
     test_df = spark.createDataFrame(
         [['{"id": 1, "name": "valid"}'], ['{"id": 1, "name": null}'], ['{"id": 1}'], [None], ["json_data string"]],
@@ -3169,7 +3163,10 @@ def test_has_valid_json_schema_nullability(spark):
     )
 
     expected_schema = "json_data_has_invalid_json_schema: string"
-    expected = spark.createDataFrame([[None], [None], [None], [None], ["Value 'json_data string' in Column 'json_data' is not a valid JSON string"]], expected_schema)
+    expected = spark.createDataFrame(
+        [[None], [None], [None], [None], ["Value 'json_data string' in Column 'json_data' is not a valid JSON string"]],
+        expected_schema,
+    )
 
     actual_default = test_df.select(has_valid_json_schema("json_data", json_schema))
     assert_df_equality(actual_default, expected)
