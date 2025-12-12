@@ -3164,7 +3164,17 @@ def test_has_valid_json_schema_nullability(spark):
 
     expected_schema = "json_data_has_invalid_json_schema: string"
     expected = spark.createDataFrame(
-        [[None], [None], [None], [None], ["Value 'json_data string' in Column 'json_data' is not a valid JSON string"]],
+        [
+            [None],
+            [
+                "Value '{\"id\": 1, \"name\": null}' in Column 'json_data' does not conform to expected JSON schema: struct<id:int,name:string>"
+            ],
+            [
+                "Value '{\"id\": 1}' in Column 'json_data' does not conform to expected JSON schema: struct<id:int,name:string>"
+            ],
+            [None],
+            ["Value 'json_data string' in Column 'json_data' is not a valid JSON string"],
+        ],
         expected_schema,
     )
 
