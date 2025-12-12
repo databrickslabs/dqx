@@ -2045,10 +2045,10 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
     """
     Validates that JSON strings in the specified column conform to an expected schema.
 
-    The validation utilizes standard Spark JSON parsing rules, meaning:**
+    The validation utilizes standard Spark JSON parsing rules, meaning:
     * **Type Coercion is Permitted:** Values that can be successfully cast to the target schema type (e.g., a JSON number like `0.12`
     successfully parsing into a field defined as `STRING`) will be considered valid.
-    * **Extra Fields are Ignored:** Fields present in the JSON but missing from
+    * **Extra Fields are Ignored:** Fields present in the JSON but missing from the schema are ignored and do not cause validation to fail.
 
     Args:
         column: Column name or Column expression containing JSON strings.
