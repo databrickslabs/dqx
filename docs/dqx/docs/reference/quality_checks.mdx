@@ -337,41 +337,6 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col5
       date_format: yyyy-MM-dd
 
-# is_valid_json check
-- criticality: error
-  check:
-    function: is_valid_json
-    arguments:
-      column: col_json_str
-
-# has_json_keys check
-- criticality: error
-  check:
-    function: has_json_keys
-    arguments:
-      column: col_json_str
-      keys:
-        - key1
-
-- criticality: error
-  name: col_json_str_does_not_have_json_keys2
-  check:
-    function: has_json_keys
-    arguments:
-      column: col_json_str
-      keys:
-        - key1
-        - key2
-      require_all: False
-
-- criticality: error
-  name: col_json_str2_has_invalid_json_schema
-  check:
-    function: has_valid_json_schema
-    arguments:
-      column: col_json_str2
-      schema:  "STRUCT<a: BIGINT, b: BIGINT>"
-
 # is_valid_timestamp check
 - criticality: error
   check:
@@ -419,6 +384,41 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column1: col5
       column2: col6
       days: 2
+
+# is_valid_json check
+- criticality: error
+  check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+
+# has_json_keys check
+- criticality: error
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+        - key1
+
+- criticality: error
+  name: col_json_str_does_not_have_json_keys2
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+        - key1
+        - key2
+      require_all: False
+
+- criticality: error
+  name: col_json_str2_has_invalid_json_schema
+  check:
+    function: has_valid_json_schema
+    arguments:
+      column: col_json_str2
+      schema:  "STRUCT<a: BIGINT, b: BIGINT>"
 
 # regex_match check
 - criticality: error
@@ -628,6 +628,13 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
 - criticality: error
   check:
     function: is_non_empty_geometry
+    arguments:
+      column: point_geom
+
+# is_not_null_island check
+- criticality: error
+  check:
+    function: is_not_null_island
     arguments:
       column: point_geom
 
@@ -1002,6 +1009,37 @@ checks = [
       name="col6_is_not_valid_timestamp2"
     ),
 
+    # is_not_in_future check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_in_future,
+      column="col6", # or as expr: F.col("col6")
+      check_func_kwargs={"offset": 86400}
+    ),
+
+    # is_not_in_near_future check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_in_near_future,
+      column="col6", # or as expr: F.col("col6")
+      check_func_kwargs={"offset": 36400}
+    ),
+
+    # is_older_than_n_days check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_older_than_n_days,
+      column="col5", # or as expr: F.col("col5")
+      check_func_kwargs={"days": 10000}
+    ),
+
+    # is_older_than_col2_for_n_days check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_older_than_col2_for_n_days,
+      check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2} # or as expr: F.col("col5"), F.col("col6")
+    ),
+
     # is_valid_json check
     DQRowRule(
       criticality="error",
@@ -1032,37 +1070,6 @@ checks = [
       column="col_json_str2", # or as expr: F.col("col_json_str")
       check_func_kwargs={"schema": "STRUCT<a: BIGINT, b: BIGINT>"},
       name="col_json_str2_has_valid_json_schema"
-    ),
-
-    # is_not_in_future check
-    DQRowRule(
-      criticality="error",
-      check_func=check_funcs.is_not_in_future,
-      column="col6", # or as expr: F.col("col6")
-      check_func_kwargs={"offset": 86400}
-    ),
-
-    # is_not_in_near_future check
-    DQRowRule(
-      criticality="error",
-      check_func=check_funcs.is_not_in_near_future,
-      column="col6", # or as expr: F.col("col6")
-      check_func_kwargs={"offset": 36400}
-    ),
-
-    # is_older_than_n_days check
-    DQRowRule(
-      criticality="error",
-      check_func=check_funcs.is_older_than_n_days,
-      column="col5", # or as expr: F.col("col5")
-      check_func_kwargs={"days": 10000}
-    ),
-
-    # is_older_than_col2_for_n_days check
-    DQRowRule(
-      criticality="error",
-      check_func=check_funcs.is_older_than_col2_for_n_days,
-      check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2} # or as expr: F.col("col5"), F.col("col6")
     ),
 
     # regex_match check
