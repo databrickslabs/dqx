@@ -5,7 +5,7 @@ from pyspark.sql import Column
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr, _get_limit_expr
+from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr, get_limit_expr
 
 POINT_TYPE = "ST_Point"
 LINESTRING_TYPE = "ST_LineString"
@@ -27,7 +27,7 @@ def is_latitude(column: str | Column) -> Column:
     Returns:
         Column object indicating whether the values in the input column are valid latitudes
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = ~F.when(col_expr.isNull(), F.lit(None)).otherwise(
         F.col(col_str_norm).try_cast("double").between(-90.0, 90.0)
     )
@@ -50,7 +50,7 @@ def is_longitude(column: str | Column) -> Column:
     Returns:
         Column object indicating whether the values in the input column are valid longitudes
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = ~F.when(col_expr.isNull(), F.lit(None)).otherwise(
         F.col(col_str_norm).try_cast("double").between(-180.0, 180.0)
     )
@@ -76,7 +76,7 @@ def is_geometry(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` function.
     geometry_col = F.expr(f"try_to_geometry({col_str_norm})")
@@ -103,7 +103,7 @@ def is_geography(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geography` function.
     geometry_col = F.expr(f"try_to_geography({col_str_norm})")
@@ -130,7 +130,7 @@ def is_point(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -157,7 +157,7 @@ def is_linestring(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -184,7 +184,7 @@ def is_polygon(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -211,7 +211,7 @@ def is_multipoint(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -238,7 +238,7 @@ def is_multilinestring(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -265,7 +265,7 @@ def is_multipolygon(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -292,7 +292,7 @@ def is_geometrycollection(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_geometrytype` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -319,7 +319,7 @@ def is_ogc_valid(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_isvalid` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -347,7 +347,7 @@ def is_non_empty_geometry(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_isempty` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -376,7 +376,7 @@ def is_not_null_island(column: str | Column) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry`, `st_geometrytype`, `st_x`, and `st_y` functions.
     try_geom_expr = f"try_to_geometry({col_str_norm})"
@@ -412,7 +412,7 @@ def has_dimension(column: str | Column, dimension: int) -> Column:
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_dimension` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -442,7 +442,7 @@ def has_x_coordinate_between(column: str | Column, min_value: float, max_value: 
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry`, `st_xmax` and `st_xmin` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -474,7 +474,7 @@ def has_y_coordinate_between(column: str | Column, min_value: float, max_value: 
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry`, `st_ymax` and `st_ymin` functions.
     geom_cond = F.expr(f"try_to_geometry({col_str_norm}) IS NULL")
@@ -514,7 +514,7 @@ def is_area_equal_to(
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    return _compare_sql_function_result(
+    return _compare_spatial_sql_function_result(
         column,
         value,
         spatial_function="st_area",
@@ -551,7 +551,7 @@ def is_area_not_equal_to(
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    return _compare_sql_function_result(
+    return _compare_spatial_sql_function_result(
         column,
         value,
         spatial_function="st_area",
@@ -588,7 +588,7 @@ def is_area_not_greater_than(
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    return _compare_sql_function_result(
+    return _compare_spatial_sql_function_result(
         column,
         value,
         spatial_function="st_area",
@@ -625,7 +625,7 @@ def is_area_not_less_than(
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    return _compare_sql_function_result(
+    return _compare_spatial_sql_function_result(
         column,
         value,
         spatial_function="st_area",
@@ -655,7 +655,7 @@ def is_num_points_equal_to(column: str | Column, value: int | float | str | Colu
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    return _compare_sql_function_result(
+    return _compare_spatial_sql_function_result(
         column,
         value,
         spatial_function="st_npoints",
@@ -683,7 +683,7 @@ def is_num_points_not_equal_to(column: str | Column, value: int | float | str | 
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    return _compare_sql_function_result(
+    return _compare_spatial_sql_function_result(
         column,
         value,
         spatial_function="st_npoints",
@@ -711,7 +711,7 @@ def is_num_points_not_greater_than(column: str | Column, value: int | float | st
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    return _compare_sql_function_result(
+    return _compare_spatial_sql_function_result(
         column,
         value,
         spatial_function="st_npoints",
@@ -739,7 +739,7 @@ def is_num_points_not_less_than(column: str | Column, value: int | float | str |
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    return _compare_sql_function_result(
+    return _compare_spatial_sql_function_result(
         column,
         value,
         spatial_function="st_npoints",
@@ -751,7 +751,7 @@ def is_num_points_not_less_than(column: str | Column, value: int | float | str |
     )
 
 
-def _compare_sql_function_result(
+def _compare_spatial_sql_function_result(
     column: str | Column,
     value: int | float | str | Column,
     spatial_function: str,
@@ -785,8 +785,8 @@ def _compare_sql_function_result(
     Note:
         This function requires Databricks serverless compute or runtime 17.1 or above.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    value_expr = _get_limit_expr(value)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    value_expr = get_limit_expr(value)
     # NOTE: This function is currently only available in Databricks runtime 17.1 or above or in
     #   Databricks SQL, due to the use of the `try_to_geometry` and `st_area` functions.
     if geodesic:
