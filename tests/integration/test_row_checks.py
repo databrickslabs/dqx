@@ -25,6 +25,9 @@ from databricks.labs.dqx.check_funcs import (
     is_not_null_and_is_in_list,
     is_not_null_and_not_empty_array,
     is_valid_date,
+    is_valid_json,
+    has_json_keys,
+    has_valid_json_schema,
     is_valid_timestamp,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
@@ -2876,4 +2879,381 @@ def test_col_is_equal_to(spark, set_utc_timezone):
         expected_schema,
     )
 
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_valid_json(spark):
+    schema = "a: string, b: string"
+    test_df = spark.createDataFrame(
+        [
+            ['{"key": "value"}', '{"key": value}'],
+            ['{"number": 123}', '{"number": 123}'],
+            ['{"array": [1, 2, 3]}', '{"array": [1, 2, 3}'],
+            ['Not a JSON string', 'Also not JSON'],
+            [None, None],
+            ['123', '"a string"'],
+            ['true', 'null'],
+            ['[]', '{}'],
+            ['{"a": 1,}', '{key: "value"}'],
+            ['[1, 2,', '{"a": "b"'],
+            ["{'a': 'b'}", ''],
+            [' {"a": 1} ', '{"b": 2}\n'],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(is_valid_json("a"), is_valid_json("b"))
+
+    expected_schema = "a_is_not_valid_json: string, b_is_not_valid_json: string"
+
+    expected = spark.createDataFrame(
+        [
+            [None, "Value '{\"key\": value}' in Column 'b' is not a valid JSON string"],
+            [None, None],
+            [None, "Value '{\"array\": [1, 2, 3}' in Column 'b' is not a valid JSON string"],
+            [
+                "Value 'Not a JSON string' in Column 'a' is not a valid JSON string",
+                "Value 'Also not JSON' in Column 'b' is not a valid JSON string",
+            ],
+            [None, None],
+            [None, None],
+            [None, None],
+            [None, None],
+            [
+                "Value '{\"a\": 1,}' in Column 'a' is not a valid JSON string",
+                "Value '{key: \"value\"}' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '[1, 2,' in Column 'a' is not a valid JSON string",
+                "Value '{\"a\": \"b\"' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '{'a': 'b'}' in Column 'a' is not a valid JSON string",
+                "Value '' in Column 'b' is not a valid JSON string",
+            ],
+            [None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_json_keys_require_all_true(spark):
+    schema = "a: string, b: string"
+    test_df = spark.createDataFrame(
+        [
+            ['{"key": "value", "another_key": 123}', '{"key": "value"}'],
+            ['{"number": 123}', '{"number": 123, "extra": true}'],
+            ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
+            ['{"key": "value"}', '{"missing_key": "value"}'],
+            [None, None],
+            ['Not a JSON string', '{"key": "value"}'],
+            ['{"key": "value"}', 'Not a JSON string'],
+            ['{"key": "value"}', None],
+            [None, '{"key": "value"}'],
+            ['{"nested": {"inner_key": "inner_value"}}', '{"nested": {"inner_key": "inner_value"}}'],
+            ['{"key": null, "another_key": null}', '{"nested": {"key": null}}'],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_json_keys("a", ["key", "another_key"]),
+        has_json_keys("b", ["key"]),
+    )
+
+    expected_schema = "a_does_not_have_json_keys: string, b_does_not_have_json_keys: string"
+
+    expected = spark.createDataFrame(
+        [
+            [None, None],
+            [
+                "Value '{\"number\": 123}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value '{\"number\": 123, \"extra\": true}' in Column 'b' is missing keys in the list: [key]",
+            ],
+            [
+                "Value '{\"array\": [1, 2, 3]}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value '{\"array\": {1, 2, 3}]' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value '{\"missing_key\": \"value\"}' in Column 'b' is missing keys in the list: [key]",
+            ],
+            [None, None],
+            ["Value 'Not a JSON string' in Column 'a' is not a valid JSON string", None],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value 'Not a JSON string' in Column 'b' is not a valid JSON string",
+            ],
+            ["Value '{\"key\": \"value\"}' in Column 'a' is missing keys in the list: [key, another_key]", None],
+            [None, None],
+            [
+                "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'a' is missing keys in the list: [key, another_key]",
+                "Value '{\"nested\": {\"inner_key\": \"inner_value\"}}' in Column 'b' is missing keys in the list: [key]",
+            ],
+            [
+                None,
+                "Value '{\"nested\": {\"key\": null}}' in Column 'b' is missing keys in the list: [key]",
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_json_keys_require_at_least_one(spark):
+    schema = "a: string, b: string"
+    required_keys = ["key", "another_key", "extra_key"]
+
+    test_df = spark.createDataFrame(
+        [
+            ['{"key": 1, "another_key": 2, "extra_key": 3}', '{"key": 1, "another_key": 2, "extra_key": 3}'],
+            ['{"key": 1}', '{"key": 1}'],
+            ['{"number": 123}', '{"random_sample": 1523}'],
+            ['{}', '{}'],
+            ['{"key": "value"', '{"key": "value"'],
+            [None, 'Not a JSON string'],
+            [None, None],
+            ['{"key": null}', '{"nested": {"key": null}}'],
+        ],
+        schema,
+    )
+
+    actual = test_df.select(
+        has_json_keys("a", required_keys, require_all=False),
+        has_json_keys("b", required_keys, require_all=False),
+    )
+
+    expected_schema = "a_does_not_have_json_keys: string, b_does_not_have_json_keys: string"
+
+    expected = spark.createDataFrame(
+        [
+            [None, None],
+            [None, None],
+            [
+                "Value '{\"number\": 123}' in Column 'a' is missing keys in the list: [key, another_key, extra_key]",
+                "Value '{\"random_sample\": 1523}' in Column 'b' is missing keys in the list: [key, another_key, extra_key]",
+            ],
+            [
+                "Value '{}' in Column 'a' is missing keys in the list: [key, another_key, extra_key]",
+                "Value '{}' in Column 'b' is missing keys in the list: [key, another_key, extra_key]",
+            ],
+            [
+                "Value '{\"key\": \"value\"' in Column 'a' is not a valid JSON string",
+                "Value '{\"key\": \"value\"' in Column 'b' is not a valid JSON string",
+            ],
+            [None, "Value 'Not a JSON string' in Column 'b' is not a valid JSON string"],
+            [None, None],
+            [
+                None,
+                "Value '{\"nested\": {\"key\": null}}' in Column 'b' is missing keys in the list: [key, another_key, extra_key]",
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_valid_json_schema(spark):
+    schema = "a: string, b: string"
+    test_df = spark.createDataFrame(
+        [
+            ['{"a": 1, "b": 2}', '{"a": 3, "b": 4}'],
+            ['{"key": "value", "another_key": 123}', '{"key": "value"}'],
+            ['{"number": 123}', '{"number": 123, "extra": true}'],
+            ['{"array": [1, 2, 3]}', '{"array": {1, 2, 3}]'],
+            ['{"key": "value"}', '{"missing_key": "value"}'],
+            [None, None],
+            ['Not a JSON string', '{"key": "value"}'],
+            ['{"key": "value"}', 'Not a JSON string'],
+            ['{"key": "value"}', None],
+        ],
+        schema,
+    )
+
+    json_schema = "STRUCT<a: BIGINT NOT NULL, b: BIGINT NOT NULL>"
+    expected_schema = "a_has_invalid_json_schema: string, b_has_invalid_json_schema: string"
+    expected = spark.createDataFrame(
+        [
+            [None, None],
+            [
+                "Value '{\"key\": \"value\", \"another_key\": 123}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value '{\"key\": \"value\"}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+            ],
+            [
+                "Value '{\"number\": 123}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value '{\"number\": 123, \"extra\": true}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+            ],
+            [
+                "Value '{\"array\": [1, 2, 3]}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value '{\"array\": {1, 2, 3}]' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value '{\"missing_key\": \"value\"}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+            ],
+            [None, None],
+            [
+                "Value 'Not a JSON string' in Column 'a' is not a valid JSON string",
+                "Value '{\"key\": \"value\"}' in Column 'b' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+            ],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                "Value 'Not a JSON string' in Column 'b' is not a valid JSON string",
+            ],
+            [
+                "Value '{\"key\": \"value\"}' in Column 'a' does not conform to expected JSON schema: struct<a:bigint,b:bigint>",
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    actual = test_df.select(
+        has_valid_json_schema("a", json_schema),
+        has_valid_json_schema("b", json_schema),
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_valid_json_schema_with_nested_depth_5(spark):
+    """Test has_valid_json_schema with nested fields of depth 5."""
+    schema = "json_data: string"
+    test_data = [
+        ['{"level1": {"level2": {"level3": {"level4": {"level5": "value"}}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": {"level5": 0.12}}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": {"level5": null}}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": {"level5": "0.123"}}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": null}}}}'],
+        ['{"level1": {"level2": {"level3": {"level4": {"level6": "sample"}}}}}'],
+        [None],
+        ['{"level1": null}'],
+        ['Not a JSON string'],
+    ]
+
+    test_df = spark.createDataFrame(test_data, schema)
+
+    json_schema = "struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string NOT NULL>>>>>"
+    expected_schema = "json_data_has_invalid_json_schema: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            [None],
+            [
+                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": {\"level5\": null}}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>"
+            ],
+            [None],
+            [None],
+            [
+                "Value '{\"level1\": {\"level2\": {\"level3\": {\"level4\": {\"level6\": \"sample\"}}}}}' in Column 'json_data' does not conform to expected JSON schema: struct<level1:struct<level2:struct<level3:struct<level4:struct<level5:string>>>>>",
+            ],
+            [None],
+            [None],
+            ["Value 'Not a JSON string' in Column 'json_data' is not a valid JSON string"],
+        ],
+        expected_schema,
+    )
+    actual = test_df.select(
+        has_valid_json_schema("json_data", json_schema),
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_has_valid_json_schema_nullability(spark):
+    schema = "json_data: string"
+    json_schema = "id int, name string not null"
+
+    test_df = spark.createDataFrame(
+        [['{"id": 1, "name": "valid"}'], ['{"id": 1, "name": null}'], ['{"id": 1}'], [None], ["json_data string"]],
+        schema,
+    )
+
+    expected_schema = "json_data_has_invalid_json_schema: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            [
+                "Value '{\"id\": 1, \"name\": null}' in Column 'json_data' does not conform to expected JSON schema: struct<id:int,name:string>"
+            ],
+            [
+                "Value '{\"id\": 1}' in Column 'json_data' does not conform to expected JSON schema: struct<id:int,name:string>"
+            ],
+            [None],
+            ["Value 'json_data string' in Column 'json_data' is not a valid JSON string"],
+        ],
+        expected_schema,
+    )
+
+    actual = test_df.select(has_valid_json_schema("json_data", json_schema))
+    assert_df_equality(actual, expected)
+
+
+def test_has_valid_json_schema_with_decimal_fields(spark):
+    schema = "json_data: string"
+    test_data = [
+        ['{"price": 19.99, "discount": 0.15}'],
+        ['{"price": 99.99, "discount": 0.5}'],
+        ['{"price": 0.01, "discount": 0.0}'],
+        ['{"price": 0.01, "discount": null}'],
+        ['{"price": true, "discount": false}'],
+        [None],
+    ]
+    test_df = spark.createDataFrame(test_data, schema)
+
+    json_schema = "STRUCT<price: DOUBLE, discount: DOUBLE>"
+    expected_schema = "json_data_has_invalid_json_schema: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            [None],
+            [None],
+            [None],
+            [
+                "Value '{\"price\": true, \"discount\": false}' in Column 'json_data' does not conform to expected JSON schema: struct<price:double,discount:double>"
+            ],
+            [None],
+        ],
+        expected_schema,
+    )
+    actual = test_df.select(
+        has_valid_json_schema("json_data", json_schema),
+    )
+    assert_df_equality(actual, expected)
+
+
+def test_has_valid_json_schema_with_complex_nested_structure(spark):
+    """Test has_valid_json_schema with complex nested structure - VALID case."""
+    schema = "json_data: string"
+    test_df = spark.createDataFrame(
+        [
+            ['{"user": {"id": 1, "profile": {"name": "John", "age": 30}}, "tags": ["admin", "user"]}'],
+            ['{"user": {"id": 2, "profile": {"name": "Jane", "age": 25}}, "tags": []}'],
+            [None],
+            ['{"user": {"id": "invalid", "profile": {"name": "John", "age": 30}}, "tags": ["admin"]}'],
+            ['{"user": {"id": 1, "profile": {"name": 123, "age": "thirty"}}, "tags": ["admin"]}'],
+            ['{"user": {"id": 1, "profile": null}, "tags": ["admin"]}'],
+        ],
+        schema,
+    )
+
+    json_schema = "struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>"
+    expected_schema = "json_data_has_invalid_json_schema: string"
+    expected = spark.createDataFrame(
+        [
+            [None],
+            [None],
+            [None],
+            [
+                "Value '{\"user\": {\"id\": \"invalid\", \"profile\": {\"name\": \"John\", \"age\": 30}}, \"tags\": [\"admin\"]}' in Column 'json_data' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>"
+            ],
+            [
+                "Value '{\"user\": {\"id\": 1, \"profile\": {\"name\": 123, \"age\": \"thirty\"}}, \"tags\": [\"admin\"]}' in Column 'json_data' does not conform to expected JSON schema: struct<user:struct<id:bigint,profile:struct<name:string,age:bigint>>,tags:array<string>>"
+            ],
+            [None],
+        ],
+        expected_schema,
+    )
+    actual = test_df.select(
+        has_valid_json_schema("json_data", json_schema),
+    )
     assert_df_equality(actual, expected, ignore_nullable=True)

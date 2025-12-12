@@ -41,6 +41,9 @@ You can also define your own custom checks in Python (see [Creating custom check
 | `is_not_greater_than`              | Checks whether the values in the input column are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `limit`: limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                                                                                                                                                                             |
 | `is_valid_date`                    | Checks whether the values in the input column have valid date formats.                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `date_format`: optional date format (e.g. 'yyyy-mm-dd')                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `is_valid_timestamp`               | Checks whether the values in the input column have valid timestamp formats.                                                                                                                                                                                                                                                                                                                                                       | `column`: column to check (can be a string column name or a column expression); `timestamp_format`: optional timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')                                                                                                                                                                                                                                                                                                                                                                                           |
+| `is_valid_json`                    | Checks whether the values in the input column are valid JSON strings.                                                                                                                                                                                                                                                                                                                                                             | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `has_json_keys`                    | Checks whether the values in the input column contain specific keys in the outermost JSON object.                                                                                                                                                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `keys`: A list of JSON keys to verify within the outermost JSON object; `require_all`: optional boolean flag to require all keys to be present                                                                                                                                                                                                                                                                                                                       |
+| `has_valid_json_schema`            | Checks whether the values in the specified column, which contain JSON strings, conform to the expected schema. This check allows extra fields and type coercion. Missing keys are treated as null; to fail validation on missing keys, you must explicitly use NOT NULL in the schema definition.                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); schema: the schema as a DDL string (e.g., "id INT NOT NULL, name STRING") or `StructType`                                                                                                                                                                                                                                                                                                                                                                            |
 | `is_not_in_future`                 | Checks whether the values in the input column contain a timestamp that is not in the future, where 'future' is defined as current_timestamp + offset (in seconds).                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                   |
 | `is_not_in_near_future`            | Checks whether the values in the input column contain a timestamp that is not in the near future, where 'near future' is defined as greater than the current timestamp but less than the current_timestamp + offset (in seconds).                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                   |
 | `is_older_than_n_days`             | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `days`: number of days; `curr_date`: current date, if not provided current_date() function is used; `negate`: if the condition should be negated                                                                                                                                                                                                                                                                                                                     |
@@ -382,6 +385,41 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column2: col6
       days: 2
 
+# is_valid_json check
+- criticality: error
+  check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+
+# has_json_keys check
+- criticality: error
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+        - key1
+
+- criticality: error
+  name: col_json_str_does_not_have_json_keys2
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+        - key1
+        - key2
+      require_all: False
+
+- criticality: error
+  name: col_json_str2_has_invalid_json_schema
+  check:
+    function: has_valid_json_schema
+    arguments:
+      column: col_json_str2
+      schema:  "STRUCT<a: BIGINT NOT NULL, b: BIGINT NOT NULL>"
+
 # regex_match check
 - criticality: error
   check:
@@ -543,42 +581,42 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_linestring
     arguments:
       column: linestring_geom
-      
+
 # is_polygon check
 - criticality: error
   check:
     function: is_polygon
     arguments:
       column: polygon_geom
-      
+
 # is_multipoint check
 - criticality: error
   check:
     function: is_multipoint
     arguments:
       column: multipoint_geom
-      
+
 # is_multilinestring check
 - criticality: error
   check:
     function: is_multilinestring
     arguments:
       column: multilinestring_geom
-      
+
 # is_multipolygon check
 - criticality: error
   check:
     function: is_multipolygon
     arguments:
       column: multipolygon_geom
-      
+
 # is_geometrycollection check
 - criticality: error
   check:
     function: is_geometrycollection
     arguments:
       column: geometrycollection_geom
-      
+
 # is_ogc_valid check
 - criticality: error
   check:
@@ -607,7 +645,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       dimension: 2
-      
+
 # has_x_coordinate_between check
 - criticality: error
   check:
@@ -616,7 +654,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: polygon_geom
       min_value: 0.0
       max_value: 10.0
-      
+
 # has_y_coordinate_between check
 - criticality: error
   check:
@@ -625,7 +663,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: polygon_geom
       min_value: 0.0
       max_value: 10.0
-      
+
 # is_area_not_less_than check (geometry)
 - criticality: error
   check:
@@ -633,7 +671,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       value: 100.0
-      
+
 # is_area_not_less_than check (geography with geodesic area)
 - criticality: error
   check:
@@ -642,7 +680,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: geography_geom
       value: 1000000.0  # 1 million square meters
       geodesic: true
-      
+
 # is_area_not_greater_than check (geometry with SRID)
 - criticality: error
   check:
@@ -659,7 +697,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       value: 1.0
-      
+
 # is_area_not_equal_to check
 - criticality: error
   check:
@@ -667,7 +705,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       value: 0.0
-      
+
 # is_num_points_not_less_than check
 - criticality: error
   check:
@@ -675,7 +713,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       value: 10
-      
+
 # is_num_points_not_greater_than check
 - criticality: error
   check:
@@ -683,7 +721,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       value: 3
-      
+
 # is_num_points_equal_to check
 - criticality: error
   check:
@@ -691,7 +729,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       value: 4
-      
+
 # is_num_points_not_equal_to check
 - criticality: error
   check:
@@ -1002,6 +1040,38 @@ checks = [
       check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2} # or as expr: F.col("col5"), F.col("col6")
     ),
 
+    # is_valid_json check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_valid_json,
+      column="col_json_str"
+    ),
+
+    # has_json_keys check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_json_keys,
+      column="col_json_str", # or as expr: F.col("col_json_str")
+      check_func_kwargs={"keys": ["key1"]},
+      name="col_json_str_has_json_keys"
+    ),
+
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_json_keys,
+      column="col_json_str", # or as expr: F.col("col_json_str")
+      check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
+      name="col_json_str_has_json_keys"
+    ),
+
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_valid_json_schema,
+      column="col_json_str2", # or as expr: F.col("col_json_str")
+      check_func_kwargs={"schema": "STRUCT<a: BIGINT NOT NULL, b: BIGINT NOT NULL>"},
+      name="col_json_str2_has_valid_json_schema"
+    ),
+
     # regex_match check
     DQRowRule(
       criticality="error",
@@ -1108,7 +1178,7 @@ checks = [
       check_func=geo_check_funcs.is_multilinestring,
       column="multilinestring_geom"
     ),
-    
+
     # is_multipolygon check
     DQRowRule(
       criticality="error",
@@ -1143,7 +1213,7 @@ checks = [
       check_func=geo_check_funcs.is_not_null_island,
       column="point_geom"
     ),
-    
+
     # has_dimension check
     DQRowRule(
       criticality="error",
@@ -1190,8 +1260,8 @@ checks = [
       check_func=geo_check_funcs.is_area_not_greater_than,
       column="polygon_geom",
       check_func_kwargs={"value": 0.1, "srid": 3857}
-    ),    
-    
+    ),
+
     # is_area_equal_to check
     DQRowRule(
       criticality="error",
@@ -2339,7 +2409,7 @@ checks = [
         "strict": True,
       },
     ),
-    
+
     # has_no_outliers check
     DQDatasetRule(
       criticality="error",
@@ -2504,7 +2574,7 @@ Using `count_distinct` with `group_by` performs multiple expensive operations. F
 
 #### Detecting Statistical Anomalies
 
-Descriptive statistics are often used for process control, forecasting, and regression analysis. Variation from expected values could signal that a process has changed or that a model's features have drifted. Monitor dataset statistics (e.g. `avg`, `stddev`) to detect significant variations. 
+Descriptive statistics are often used for process control, forecasting, and regression analysis. Variation from expected values could signal that a process has changed or that a model's features have drifted. Monitor dataset statistics (e.g. `avg`, `stddev`) to detect significant variations.
 
 ```yaml
 # Detect unusually high temperature variance per machine
@@ -3427,7 +3497,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
        function: does_not_contain_pii
        arguments:
          column: description
-   
+
    # PII detection check with custom threshold and named entities
    - criticality: error
      check:
@@ -3444,7 +3514,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
    ```python
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
-   
+
    checks = [
         # Basic PII detection check
         DQRowRule(
@@ -3462,7 +3532,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
             check_func_kwargs={"threshold": 0.8, "entities": ["PERSON", "EMAIL_ADDRESS"]}
         ),
    ]
-   ``` 
+   ```
   </TabItem>
 </Tabs>
 
@@ -3499,7 +3569,7 @@ These can be loaded using `NLPEngineConfig`:
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
    from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
-   
+
    checks = [
         # PII detection check using spacy as a named entity recognizer
         DQRowRule(
@@ -3508,7 +3578,7 @@ These can be loaded using `NLPEngineConfig`:
             column="description",
             check_func=does_not_contain_pii,
             check_func_kwargs={"nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM}
-        ),    
+        ),
    ]
    ```
    </TabItem>
@@ -3528,7 +3598,7 @@ Using custom models for named-entity recognition may require you to install thes
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.engine import DQEngine
    from databricks.sdk import WorkspaceClient
-   
+
    nlp_engine_config = {
         'nlp_engine_name': 'transformers_stanford_deidentifier_base',
         'models': [
@@ -3571,9 +3641,9 @@ Using custom models for named-entity recognition may require you to install thes
             column="description",
             check_func=does_not_contain_pii,
             check_func_kwargs={"nlp_engine_config": nlp_engine_config},
-        ),    
+        ),
    ]
-   
+
    dq_engine = DQEngine(WorkspaceClient())
    df = spark.read.table("main.default.table")
    valid_df, quarantine_df = dq_engine.apply_checks_and_split(df, checks)
