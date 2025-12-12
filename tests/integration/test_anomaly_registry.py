@@ -89,9 +89,10 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
     # Verify both models exist in registry
     registry_df = spark.table(registry_table)
     model_names = [row["model_name"] for row in registry_df.select("model_name").distinct().collect()]
-    
-    assert model_a in model_names
-    assert model_b in model_names
+
+    # Models are stored with full three-level names
+    assert f"main.default.{model_a}" in model_names
+    assert f"main.default.{model_b}" in model_names
     
     # Verify correct model is loaded for each check - call directly
     
@@ -137,12 +138,13 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str):
         registry_table=registry_table,
     )
     
-    # Get active model
+    # Get active model (use full three-level name)
     registry = AnomalyModelRegistry(spark)
-    model_v1 = registry.get_active_model(registry_table, model_name)
-    
+    full_model_name = f"main.default.{model_name}"
+    model_v1 = registry.get_active_model(registry_table, full_model_name)
+
     assert model_v1 is not None
-    assert model_v1.model_name == model_name
+    assert model_v1.model_name == full_model_name
     assert model_v1.status == "active"
     v1_training_time = model_v1.training_time
     
@@ -153,19 +155,19 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str):
         model_name=model_name,
         registry_table=registry_table,
     )
-    
-    # Get active model (should be v2)
-    model_v2 = registry.get_active_model(registry_table, model_name)
-    
+
+    # Get active model (should be v2, use full three-level name)
+    model_v2 = registry.get_active_model(registry_table, full_model_name)
+
     assert model_v2 is not None
-    assert model_v2.model_name == model_name
+    assert model_v2.model_name == full_model_name
     assert model_v2.status == "active"
     assert model_v2.training_time > v1_training_time
     
     # Verify first model is archived
     archived_count = (
         spark.table(registry_table)
-        .filter(f"model_name = '{model_name}' AND status = 'archived'")
+        .filter(f"model_name = '{full_model_name}' AND status = 'archived'")
         .count()
     )
     assert archived_count == 1
@@ -190,12 +192,13 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
         registry_table=registry_table,
     )
     
-    # Mock old training_time in registry
+    # Mock old training_time in registry (use full three-level name)
+    full_model_name = f"main.default.{model_name}"
     old_time = datetime.utcnow() - timedelta(days=35)
     spark.sql(
         f"UPDATE {registry_table} "
         f"SET training_time = timestamp('{old_time.strftime('%Y-%m-%d %H:%M:%S')}') "
-        f"WHERE model_name = '{model_name}'"
+        f"WHERE model_name = '{full_model_name}'"
     )
     
     # Score with old model (should issue warning) - call directly
@@ -278,11 +281,12 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: str):
         registry_table=registry_table,
     )
     
-    # Query registry
-    record = spark.table(registry_table).filter(f"model_name = '{model_name}'").first()
-    
+    # Query registry (use full three-level name)
+    full_model_name = f"main.default.{model_name}"
+    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+
     # Verify key metadata is present
-    assert record["model_name"] == model_name
+    assert record["model_name"] == full_model_name
     assert record["model_uri"] is not None
     assert record["algorithm"] == "IsolationForest"
     assert record["status"] == "active"

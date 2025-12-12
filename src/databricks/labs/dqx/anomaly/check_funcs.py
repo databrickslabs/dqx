@@ -190,8 +190,15 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
     ])
     
     @pandas_udf(schema, PandasUDFType.SCALAR)
-    def predict_udf(*cols):
-        """Pandas UDF for distributed scoring (Spark Connect compatible)."""
+    def predict_udf(s):
+        """Pandas UDF for distributed scoring (Spark Connect compatible).
+        
+        Args:
+            s: Pandas Series containing struct with all feature columns
+            
+        Returns:
+            Pandas DataFrame with anomaly_score and prediction columns
+        """
         import cloudpickle
         import pandas as pd
         import numpy as np
@@ -199,8 +206,8 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
         # Deserialize model from closure (works with Spark Connect)
         model_local = cloudpickle.loads(model_bytes)
         
-        # Convert input columns to numpy array
-        X = pd.concat(cols, axis=1).values
+        # s is already a DataFrame with struct fields as columns
+        X = s.values
         
         # Check for NaN values - IsolationForest cannot handle them
         has_nan = pd.isna(X).any(axis=1)
@@ -219,13 +226,14 @@ def _score_with_sklearn_model(model_uri: str, df: DataFrame, feature_cols: list[
             preds = model_local.predict(X_valid)
             predictions[valid_mask] = np.where(preds == -1, 1, 0)
         
+        # Return as DataFrame to satisfy StructType schema and allow null ints
         return pd.DataFrame({
             "anomaly_score": scores,
-            "prediction": predictions
+            "prediction": pd.Series(predictions).astype("Int64"),
         })
     
-    # Apply UDF to all feature columns
-    result = df.withColumn("_scores", predict_udf(*[col(c) for c in feature_cols]))
+    # Combine feature columns into struct, then apply UDF
+    result = df.withColumn("_scores", predict_udf(struct(*[col(c) for c in feature_cols])))
     result = result.select("*", "_scores.anomaly_score", "_scores.prediction").drop("_scores")
     
     return result
