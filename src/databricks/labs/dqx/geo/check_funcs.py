@@ -384,8 +384,8 @@ def is_not_null_island(column: str | Column) -> Column:
 
     is_point_cond = F.expr(f"st_geometrytype({try_geom_expr}) = '{POINT_TYPE}'")
     null_xy_cond = F.expr(f"st_x({try_geom_expr}) = 0.0 AND st_y({try_geom_expr}) = 0.0")
-    null_z_cond = F.expr(f"coalesce(st_z({try_geom_expr}), -1) = 0.0")
-    null_m_cond = F.expr(f"coalesce(st_m({try_geom_expr}), -1) = 0.0")
+    null_z_cond = F.expr(f"st_z({try_geom_expr}) IS NULL OR st_z({try_geom_expr}) = 0.0")
+    null_m_cond = F.expr(f"st_m({try_geom_expr}) IS NULL OR st_m({try_geom_expr}) = 0.0")
 
     is_point_null_island = is_point_cond & null_xy_cond & null_z_cond & null_m_cond
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(~geom_cond & is_point_cond & is_point_null_island)
