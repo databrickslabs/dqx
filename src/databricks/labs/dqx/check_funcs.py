@@ -102,7 +102,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = _does_not_match_pattern(col_expr, pattern)
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
@@ -126,7 +126,7 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if trim_strings:
         col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.isNull() | (col_expr.cast("string").isNull() | (col_expr.cast("string") == F.lit("")))
@@ -145,7 +145,7 @@ def is_not_empty(column: str | Column) -> Column:
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = col_expr.cast("string") == F.lit("")
     return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
 
@@ -160,7 +160,7 @@ def is_not_null(column: str | Column) -> Column:
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
 
 
@@ -190,7 +190,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
         raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
     if not case_sensitive:
@@ -244,7 +244,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
         raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
     if not case_sensitive:
@@ -330,8 +330,8 @@ def is_older_than_col2_for_n_days(
     Returns:
         new Column
     """
-    col_str_norm1, col_expr_str1, col_expr1 = _get_normalized_column_and_expr(column1)
-    col_str_norm2, col_expr_str2, col_expr2 = _get_normalized_column_and_expr(column2)
+    col_str_norm1, col_expr_str1, col_expr1 = get_normalized_column_and_expr(column1)
+    col_str_norm2, col_expr_str2, col_expr2 = get_normalized_column_and_expr(column2)
 
     col1_date = F.to_date(col_expr1)
     col2_date = F.to_date(col_expr2)
@@ -380,7 +380,7 @@ def is_older_than_n_days(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if curr_date is None:
         curr_date = F.current_date()
 
@@ -428,7 +428,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -463,7 +463,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -500,8 +500,8 @@ def is_equal_to(
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    value_expr = _get_limit_expr(value)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    value_expr = get_limit_expr(value)
     condition = col_expr != value_expr
 
     return make_condition(
@@ -531,8 +531,8 @@ def is_not_equal_to(
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    value_expr = _get_limit_expr(value)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    value_expr = get_limit_expr(value)
     condition = col_expr == value_expr
 
     return make_condition(
@@ -561,8 +561,8 @@ def is_not_less_than(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    limit_expr = _get_limit_expr(limit)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
     condition = col_expr < limit_expr
 
     return make_condition(
@@ -591,8 +591,8 @@ def is_not_greater_than(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    limit_expr = _get_limit_expr(limit)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
     condition = col_expr > limit_expr
 
     return make_condition(
@@ -624,9 +624,9 @@ def is_in_range(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    min_limit_expr = _get_limit_expr(min_limit)
-    max_limit_expr = _get_limit_expr(max_limit)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    min_limit_expr = get_limit_expr(min_limit)
+    max_limit_expr = get_limit_expr(max_limit)
 
     condition = (col_expr < min_limit_expr) | (col_expr > max_limit_expr)
 
@@ -662,9 +662,9 @@ def is_not_in_range(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    min_limit_expr = _get_limit_expr(min_limit)
-    max_limit_expr = _get_limit_expr(max_limit)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    min_limit_expr = get_limit_expr(min_limit)
+    max_limit_expr = get_limit_expr(max_limit)
 
     condition = (col_expr >= min_limit_expr) & (col_expr <= max_limit_expr)
 
@@ -696,7 +696,7 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if negate:
         condition = col_expr.rlike(regex)
         return make_condition(condition, f"Column '{col_expr_str}' is matching regex", f"{col_str_norm}_matching_regex")
@@ -717,7 +717,7 @@ def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = col_expr.isNull() | (F.size(col_expr) == 0)
     return make_condition(
         condition, f"Column '{col_expr_str}' is null or empty array", f"{col_str_norm}_is_null_or_empty_array"
@@ -735,7 +735,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     date_col = F.try_to_timestamp(col_expr) if date_format is None else F.try_to_timestamp(col_expr, F.lit(date_format))
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(date_col.isNull())
     condition_str = f"' in Column '{col_expr_str}' is not a valid date"
@@ -759,7 +759,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     ts_col = (
         F.try_to_timestamp(col_expr)
         if timestamp_format is None
@@ -818,7 +818,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
     ipv4_msg_col = is_valid_ipv4_address(column)
 
@@ -857,7 +857,7 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
         UserWarning,
     )
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     is_valid_ipv6_address_udf = _build_is_valid_ipv6_address_udf()
     ipv6_match_condition = is_valid_ipv6_address_udf(col_expr)
@@ -906,7 +906,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not _is_valid_ipv6_cidr_block(cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     cidr_lit = F.lit(cidr_block)
     ipv6_msg_col = is_valid_ipv6_address(column)
     is_valid_ipv6 = ipv6_msg_col.isNull()
@@ -949,10 +949,10 @@ def is_data_fresh(
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if base_timestamp is None:
         base_timestamp = F.current_timestamp()
-    base_timestamp_col_expr = _get_limit_expr(base_timestamp)
+    base_timestamp_col_expr = get_limit_expr(base_timestamp)
     # Calculate the threshold timestamp (base time - max_age_minutes)
     threshold_timestamp = base_timestamp_col_expr - F.expr(f"INTERVAL {max_age_minutes} MINUTES")
 
@@ -995,7 +995,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
     """
     column = F.col(column) if isinstance(column, str) else column
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
@@ -1026,8 +1026,8 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
             # Create outlier condition
             lower_bound = median - (3.5 * mad)
             upper_bound = median + (3.5 * mad)
-            lower_bound_expr = _get_limit_expr(lower_bound)
-            upper_bound_expr = _get_limit_expr(upper_bound)
+            lower_bound_expr = get_limit_expr(lower_bound)
+            upper_bound_expr = get_limit_expr(upper_bound)
 
             condition = (col_expr < (lower_bound_expr)) | (col_expr > (upper_bound_expr))
 
@@ -1085,7 +1085,7 @@ def is_unique(
     else:  # composite key
         column = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
@@ -1200,8 +1200,8 @@ def foreign_key(
     else:
         column, ref_column, not_null_condition = _handle_fk_composite_keys(columns, ref_columns, not_null_condition)
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_normalized_column_and_expr(ref_column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    ref_col_str_norm, ref_col_expr_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
@@ -1784,7 +1784,7 @@ def is_data_fresh_per_time_window(
         InvalidParameterError: If min_records_per_window or window_minutes are not positive integers,
             or if lookback_windows is provided and is not a positive integer.
     """
-    col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex
     condition_col = f"__data_volume_condition_completeness_{col_str_norm}_{unique_str}"
@@ -2732,7 +2732,7 @@ def _is_aggr_compare(
             stacklevel=3,
         )
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
 
     group_by_list_str = (
         ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
@@ -2751,7 +2751,7 @@ def _is_aggr_compare(
         else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
     )
 
-    limit_expr = _get_limit_expr(limit)
+    limit_expr = get_limit_expr(limit)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
@@ -2901,7 +2901,7 @@ def _cleanup_alias_name(column: str) -> str:
     return column.replace(".", "_")
 
 
-def _get_limit_expr(
+def get_limit_expr(
     limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """
@@ -2930,7 +2930,7 @@ def _get_limit_expr(
     return F.lit(limit)
 
 
-def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
+def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
     """
     Extract the normalized column name, original column name as string, and column expression.
 
