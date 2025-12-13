@@ -1,10 +1,14 @@
 import pytest
 
 
-from databricks.sdk.errors import NotFound, BadRequest
+from databricks.sdk.errors import NotFound
+
 from databricks.labs.dqx.config import VolumeFileChecksStorageConfig, InstallationChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
+
+from tests.conftest import TEST_CATALOG
+
 
 TEST_CHECKS = [
     {
@@ -21,58 +25,69 @@ EXPECTED_CHECKS = [
 ]
 
 
-def test_load_checks_when_volume_checks_file_missing(ws, make_schema, make_volume, spark):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
-    volume = f"/Volume/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
-
-    with pytest.raises(BadRequest, match="Invalid path: unsupported first path component: Volume"):
-        config = VolumeFileChecksStorageConfig(location=volume)
-        DQEngine(ws, spark).load_checks(config=config)
-
-
-def test_load_checks_when_checks_volume_path_missing_schema(ws, make_random, spark):
-    volume = f"/Volumes/{make_random(10).lower()}"
-
-    with pytest.raises(BadRequest, match="Invalid path: Path is missing a schema name"):
-        config = VolumeFileChecksStorageConfig(location=volume)
-        DQEngine(ws, spark).load_checks(config=config)
-
-
-def test_load_checks_when_checks_volume_path_missing_volume_file(ws, make_random, spark):
-    catalog_name = "main"
-    volume = f"/Volumes/{catalog_name}/{make_random(10).lower()}"
-
-    with pytest.raises(BadRequest, match="Invalid path: Path is missing a volume name"):
-        config = VolumeFileChecksStorageConfig(location=volume)
-        DQEngine(ws, spark).load_checks(config=config)
-
-
-def test_load_checks_when_checks_volume_does_not_exist_with_no_file(ws, make_schema, make_volume, spark):
-    catalog_name = "main"
-    schema_name = make_schema(catalog_name=catalog_name).name
-    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
-    volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
-
-    with pytest.raises(NotFound, match=f"Checks file {volume} missing: The file being accessed is not found."):
-        config = VolumeFileChecksStorageConfig(location=volume)
-        DQEngine(ws, spark).load_checks(config=config)
-
-
-def test_load_checks_when_checks_volume_does_not_exist(ws, make_schema, make_volume, spark):
-    catalog_name = "main"
+def test_load_checks_from_volume_file_missing(ws, make_schema, make_volume, spark):
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
 
-    with pytest.raises(NotFound, match=f"Checks file {volume} missing: The file being accessed is not found."):
+    with pytest.raises(NotFound, match=f"Checks file {volume} missing"):
+        config = VolumeFileChecksStorageConfig(location=volume)
+        DQEngine(ws, spark).load_checks(config=config)
+
+
+def test_load_checks_from_volumes_volume_missing_in_path(ws, make_random, spark):
+    volume = f"/{make_random(10).lower()}/"
+
+    with pytest.raises(InvalidParameterError, match="The volume path must start with '/Volumes/'"):
+        VolumeFileChecksStorageConfig(location=volume)
+
+
+def test_load_checks_from_volume_catalog_missing_in_path(ws, make_random, spark):
+    volume = "/Volumes/"
+
+    with pytest.raises(InvalidParameterError, match="Invalid path: Path is missing a catalog name"):
+        VolumeFileChecksStorageConfig(location=volume)
+
+
+def test_load_checks_from_volume_schema_missing_in_path(ws, make_random, spark):
+    volume = f"/Volumes/{make_random(10).lower()}/"
+
+    with pytest.raises(InvalidParameterError, match="Invalid path: Path is missing a schema name"):
+        VolumeFileChecksStorageConfig(location=volume)
+
+
+def test_load_checks_from_volume_file_missing_in_path(ws, make_random, spark):
+    catalog_name = TEST_CATALOG
+    volume = f"/Volumes/{catalog_name}/{make_random(10).lower()}"
+
+    with pytest.raises(InvalidParameterError, match="Invalid path: Path is missing a volume name"):
+        VolumeFileChecksStorageConfig(location=volume)
+
+
+def test_load_checks_from_volume_file_missing_in_dir_path(ws, make_schema, make_volume, spark):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
+    volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/dir"
+
+    with pytest.raises(InvalidParameterError, match="Invalid path: Path must include a file name after the volume"):
+        VolumeFileChecksStorageConfig(location=volume)
+
+
+def test_load_checks_from_missing_volume(ws, make_schema, make_volume, spark):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
+    volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
+
+    with pytest.raises(NotFound, match=f"Checks file {volume} missing"):
         config = VolumeFileChecksStorageConfig(location=volume)
         DQEngine(ws, spark).load_checks(config=config)
 
 
 def test_save_and_load_checks_from_volume(ws, spark, make_schema, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
@@ -84,11 +99,11 @@ def test_save_and_load_checks_from_volume(ws, spark, make_schema, make_volume):
     assert checks == EXPECTED_CHECKS, "Checks were not loaded correctly."
 
 
-def test_load_checks_from_installation_when_checks_file_does_not_exist_in_volume(
+def test_load_checks_from_volume_in_installation_when_checks_file_does_not_exist(
     ws, spark, installation_ctx, make_schema, make_volume
 ):
     installation_ctx.installation.save(installation_ctx.config)
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
@@ -107,7 +122,7 @@ def test_load_checks_from_installation_when_checks_file_does_not_exist_in_volume
 
 
 def test_save_load_checks_from_volume_in_user_installation(ws, spark, installation_ctx, make_schema, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"
@@ -128,7 +143,7 @@ def test_save_load_checks_from_volume_in_user_installation(ws, spark, installati
     assert checks == EXPECTED_CHECKS, "Checks were not saved correctly"
 
 
-def test_load_checks_when_user_installation_missing(ws, spark, make_random):
+def test_load_checks_from_volume_user_installation_missing(ws, spark, make_random):
     with pytest.raises(NotFound):
         config = InstallationChecksStorageConfig(
             run_config_name="default", assume_user=True, product_name=make_random(10)
@@ -136,10 +151,10 @@ def test_load_checks_when_user_installation_missing(ws, spark, make_random):
         DQEngine(ws, spark).load_checks(config=config)
 
 
-def test_load_checks_from_yaml_file(
+def test_load_checks_from_volume_as_yaml_file(
     ws, spark, make_schema, make_volume, make_volume_check_file_as_yaml, expected_checks
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
@@ -152,10 +167,10 @@ def test_load_checks_from_yaml_file(
     assert checks == expected_checks, "Checks were not loaded correctly"
 
 
-def test_load_checks_from_json_file(
+def test_load_checks_from_volume_as_json_file(
     ws, spark, make_schema, make_volume, make_volume_check_file_as_json, expected_checks
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
@@ -168,10 +183,10 @@ def test_load_checks_from_json_file(
     assert checks == expected_checks, "Checks were not loaded correctly"
 
 
-def test_load_invalid_checks_from_yaml_file(
+def test_load_invalid_checks_from_volume_as_yaml_file(
     ws, spark, make_schema, make_volume, make_volume_invalid_check_file_as_yaml
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
@@ -183,10 +198,10 @@ def test_load_invalid_checks_from_yaml_file(
         )
 
 
-def test_load_invalid_checks_from_json_file(
+def test_load_invalid_checks_from_volume_as_json_file(
     ws, spark, make_schema, make_volume, make_volume_invalid_check_file_as_json
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
@@ -199,7 +214,7 @@ def test_load_invalid_checks_from_json_file(
 
 
 def test_save_checks_in_volume_file_as_yml(ws, spark, make_schema, make_volume, installation_ctx):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
@@ -215,7 +230,7 @@ def test_save_checks_in_volume_file_as_yml(ws, spark, make_schema, make_volume, 
 def test_save_checks_in_volume_file_as_json(ws, spark, make_schema, make_volume, installation_ctx):
     installation_ctx.config.run_configs[0].checks_location = "checks.json"
     installation_ctx.installation.save(installation_ctx.config)
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     install_dir = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}"
@@ -260,9 +275,9 @@ EXPECTED_CHECKS_FILTER = [
 ]
 
 
-def test_save_and_load_checks_with_filters_from_volume(ws, spark, make_schema, make_volume):
+def test_save_and_load_checks_from_volume_with_filters(ws, spark, make_schema, make_volume):
 
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
     volume = f"/Volumes/{catalog_name}/{schema_name}/{volume_name}/checks.yml"

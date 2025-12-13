@@ -3,11 +3,9 @@ from unittest import skip
 from unittest.mock import patch, create_autospec
 import pytest
 
-from databricks.labs.dqx.config_loader import RunConfigLoader
 from databricks.labs.dqx.installer.install import WorkspaceInstaller
-from tests.integration.conftest import contains_expected_workflows
+from tests.integration.conftest import contains_expected_workflows, TestInstallationMixin
 import databricks
-from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.wheels import WheelsV2
@@ -44,9 +42,9 @@ def new_installation(ws, env_or_skip, make_random):
 
         prompts = MockPrompts(
             {
-                r'Provide location for the input data .*': '/',
-                r'Provide output table .*': 'main.dqx_test.output_table',
-                r'Do you want to uninstall DQX .*': 'yes',
+                r"Provide location for the input data .*": "/",
+                r"Provide output table .*": "main.dqx_test.output_table",
+                r"Do you want to uninstall DQX .*": "yes",
                 r".*PRO or SERVERLESS SQL warehouse.*": "1",
                 r".*": "",
             }
@@ -301,6 +299,7 @@ def test_global_installation_on_existing_global_install(ws, installation_ctx):
         config.run_configs[0].warehouse_id = None
         assert config == WorkspaceConfig(
             log_level='INFO',
+            serverless_clusters=False,
             run_configs=[
                 RunConfig(
                     name="default",
@@ -403,7 +402,9 @@ def test_custom_folder_installation_on_existing_user_installation(ws, make_direc
     )
 
     custom_folder = str(make_directory().absolute())
-    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
+    custom_installation = TestInstallationMixin(ws).get_installation(
+        product_name=product_info.product_name(), install_folder=custom_folder
+    )
     installation = new_installation(
         product_info=product_info,
         installation=custom_installation,
@@ -419,7 +420,9 @@ def test_custom_folder_installation_upgrade(ws, installation_ctx_custom_install_
     installation_ctx_custom_install_folder.installation.save(installation_ctx_custom_install_folder.config)
 
     custom_folder = installation_ctx_custom_install_folder.installation_service.install_folder
-    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
+    custom_installation = TestInstallationMixin(ws).get_installation(
+        product_name=product_info.product_name(), install_folder=custom_folder
+    )
     second_installation = new_installation(
         product_info=product_info,
         installation=custom_installation,
@@ -434,7 +437,9 @@ def test_custom_folder_installation_with_environment_variable(ws, make_directory
     product_info = ProductInfo.for_testing(WorkspaceConfig)
     custom_folder = str(make_directory().absolute())
 
-    custom_installation = RunConfigLoader.get_custom_installation(ws, product_info.product_name(), custom_folder)
+    custom_installation = TestInstallationMixin(ws).get_installation(
+        product_name=product_info.product_name(), install_folder=custom_folder
+    )
     installation = new_installation(
         product_info=product_info,
         installation=custom_installation,
@@ -521,21 +526,12 @@ def test_workflows_deployment_creates_jobs_with_remove_after_tag():
 def test_my_username():
     """Test the _my_username property to cover both conditions."""
 
-    class TestInstallationMixin(InstallationMixin):
-        def get_my_username(self):
-            return self._my_username
-
-        def get_me(self):
-            return self._me
-
     # Mock the dependencies
-    mock_config = create_autospec(WorkspaceConfig)
-    mock_installation = create_autospec(Installation)
     mock_ws = create_autospec(WorkspaceClient)
     mock_ws.current_user.me.return_value.user_name = "test_user"
 
     # Test when _me is NOT set (should trigger the API call)
-    mixin = TestInstallationMixin(mock_config, mock_installation, mock_ws)
+    mixin = TestInstallationMixin(mock_ws)
 
     # Ensure _me is not set before calling the property
     assert not hasattr(mixin, "_me")
@@ -551,3 +547,22 @@ def test_my_username():
     mock_ws.current_user.me.assert_called_once()  # Call count should remain 1
     # Verify the value is still correct
     assert mixin.get_my_username() == "test_user"
+
+
+def test_get_installation(ws, installation_ctx):
+    installation_ctx.installation_service.run()
+
+    installation = TestInstallationMixin(ws).get_installation(product_name=installation_ctx.installation.product())
+    assert installation_ctx.installation.install_folder() == installation.install_folder()
+
+
+def test_get_custom_folder_installation(ws, make_directory):
+    product_info = ProductInfo.for_testing(WorkspaceConfig)
+    custom_folder = str(make_directory().absolute())
+
+    custom_installation = TestInstallationMixin(ws).get_installation(
+        product_name=product_info.product_name(), install_folder=custom_folder
+    )
+
+    assert custom_installation.install_folder() == custom_folder
+    assert ws.workspace.get_status(custom_folder)

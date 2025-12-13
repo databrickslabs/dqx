@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import os.path
 import re
@@ -373,19 +374,23 @@ class WorkflowDeployment(InstallationMixin):
         self._product_info = product_info
         self._tasks = tasks
         self._this_file = Path(__file__)
-        super().__init__(config, installation, ws)
+        super().__init__(ws)
 
     def create_jobs(self) -> None:
         remote_wheels = self._upload_wheel()
 
         for task in self._tasks:
-            settings = self._job_settings(
-                task.workflow, remote_wheels, self._config.serverless_clusters, task.spark_conf
-            )
+            # If override_clusters is set, use regular clusters (not serverless)
+            use_serverless = self._config.serverless_clusters and not task.override_clusters
+            remote_wheels_with_extras = remote_wheels
+            if use_serverless:
+                # installing extras from a file is only possible with serverless
+                remote_wheels_with_extras = [f"{wheel}[llm,pii]" for wheel in remote_wheels]
+            settings = self._job_settings(task.workflow, remote_wheels_with_extras, use_serverless, task.spark_conf)
             if task.override_clusters:
                 settings = self._apply_cluster_overrides(
                     settings,
-                    task.override_clusters,  # e.g. {self.STANDARD_CLUSTER_KEY: "0709-132523-cnhxf2p6"}
+                    task.override_clusters,  # e.g. {self.CLUSTER_KEY: "0709-132523-cnhxf2p6"}
                 )
             self._deploy_workflow(task.workflow, settings)
 
@@ -483,9 +488,82 @@ class WorkflowDeployment(InstallationMixin):
             case _:
                 return 2
 
+    @staticmethod
+    def _extract_dependency_prefix(requirement: str) -> str | None:
+        """
+        Extract package name prefix from a requirement string.
+
+        Args:
+            requirement: Requirement string (e.g., "databricks-sdk>=0.71")
+
+        Returns:
+            Package name prefix with underscores, or None if invalid.
+        """
+        match = re.match(r'^([a-zA-Z0-9-]+)', requirement)
+        if match:
+            pkg_name = match.group(1)
+            return pkg_name.replace('-', '_')
+        return None
+
+    @staticmethod
+    def _get_fallback_dependencies() -> list[str]:
+        """
+        Get fallback dependency prefixes when metadata is unavailable. The list should match the dependency list
+        from the pyproject.toml file in the project root.
+
+        Returns:
+            List of core dependency prefixes.
+        """
+        return [
+            "databricks_labs_blueprint",
+            "databricks_sdk",
+            "databricks_labs_lsql",
+            "sqlalchemy",
+        ]
+
+    @staticmethod
+    def _get_dependency_prefixes() -> list[str]:
+        """
+        Dynamically retrieve dependency prefixes from package metadata.
+
+        Includes both core and optional (extras) dependencies to ensure workflows
+        have access to all required packages.
+
+        Returns:
+            List of dependency package name prefixes for wheel files.
+        """
+        try:
+            requires = importlib.metadata.requires('databricks-labs-dqx')
+        except importlib.metadata.PackageNotFoundError:
+            logger.warning("databricks-labs-dqx package metadata not found, using fallback dependencies")
+            return WorkflowDeployment._get_fallback_dependencies()
+
+        if not requires:
+            logger.warning("No dependencies found in package metadata")
+            return []
+
+        prefixes = []
+        for req in requires:
+            prefix = WorkflowDeployment._extract_dependency_prefix(req)
+            if prefix:
+                prefixes.append(prefix)
+
+        # Remove duplicates while preserving order
+        unique_prefixes = list(dict.fromkeys(prefixes))
+        logger.info(f"Discovered {len(unique_prefixes)} dependencies from package metadata (including extras)")
+        return unique_prefixes
+
     def _upload_wheel(self):
         wheel_paths = []
         with self._wheels:
+            # Upload dependencies if workspace blocks Internet access
+            if self._config.upload_dependencies:
+                logger.info("Uploading dependencies to workspace...")
+                dependency_prefixes = self._get_dependency_prefixes()
+                # TODO the _build_wheel in the upload wheel dependencies method
+                #  currently does not handle installation of extras, therefore they are not uploaded
+                for whl in self._wheels.upload_wheel_dependencies(dependency_prefixes):
+                    wheel_paths.append(whl)
             wheel_paths.sort(key=WorkflowDeployment._library_dep_order)
             wheel_paths.append(self._wheels.upload_to_wsfs())
             wheel_paths = [f"/Workspace{wheel}" for wheel in wheel_paths]
@@ -496,7 +574,12 @@ class WorkflowDeployment(InstallationMixin):
         settings: dict[str, Any],
         overrides: dict[str, str],
     ) -> dict:
-        settings["job_clusters"] = [_ for _ in settings["job_clusters"] if _.job_cluster_key not in overrides]
+        # Filter out job_clusters that are being overridden with existing clusters
+        # Note: job_clusters should always exist when override_clusters is set (handled in create_jobs)
+        if "job_clusters" in settings:
+            settings["job_clusters"] = [_ for _ in settings["job_clusters"] if _.job_cluster_key not in overrides]
+
+        # Replace job cluster references with existing cluster IDs
         for job_task in settings["tasks"]:
             if job_task.job_cluster_key is None:
                 continue
@@ -518,7 +601,7 @@ class WorkflowDeployment(InstallationMixin):
         if serverless_clusters:
             job_tasks, envs = self._configure_serverless_tasks(step_name, remote_wheels)
             settings = {
-                "name": self._name(step_name),
+                "name": self._get_name(name=step_name, install_folder=self._installation.install_folder()),
                 "tags": tags,
                 "email_notifications": email_notifications,
                 "tasks": job_tasks,
@@ -527,7 +610,7 @@ class WorkflowDeployment(InstallationMixin):
         else:
             job_tasks, job_clusters = self._configure_cluster_tasks(step_name, remote_wheels, spark_conf)
             settings = {
-                "name": self._name(step_name),
+                "name": self._get_name(name=step_name, install_folder=self._installation.install_folder()),
                 "tags": tags,
                 "email_notifications": email_notifications,
                 "tasks": job_tasks,

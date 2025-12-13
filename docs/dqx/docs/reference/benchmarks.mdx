@@ -9,9 +9,11 @@ sidebar_position: 13
 # Performance Benchmarks Report
 
 ## Specification
+
 * 100 million rows are used for each test.
-* Tests are run sequentially to reduce variability.
+* DQX rules are executed in parallel and in distributed manner using Spark. To minimize test variability, each type of check is executed sequentially in this benchmark. Specific tests, such as `test_benchmark_apply_checks_all_dataset_checks` and `test_benchmark_apply_checks_all_row_checks`, execute all types of checks in parallel simultaneously.
 * Benchmarks are created using Databricks Serverless cluster.
+* The provided benchmarks are indicative. You should always consider benchmarking results in the context of your own data and environment.
 
 ## Results
 | Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | iqr (s) | q1 (s) | q3 (s) | Rounds | iqr outliers | stddev outliers | Ops/s |
@@ -21,6 +23,7 @@ sidebar_position: 13
 | test_benchmark_compare_datasets | 3.598445 | 3.556993 | 3.430710 | 3.793938 | 0.158157 | 0.280218 | 3.466942 | 3.747160 | 5 | 0 | 2 | 0.28 |
 | test_benchmark_foreach_compare_datasets[n_rows_100000000_n_columns_5] | 25.879615 | 25.919933 | 25.536855 | 26.071184 | 0.217230 | 0.307223 | 25.748681 | 26.055904 | 5 | 0 | 1 | 0.04 |
 | test_benchmark_foreach_foreign_key[n_rows_100000000_n_columns_5] | 24.264873 | 22.893218 | 20.587308 | 29.037093 | 4.062789 | 7.705522 | 20.652819 | 28.358341 | 5 | 0 | 1 | 0.04 |
+| test_benchmark_foreach_has_no_outliers[n_rows_100000000_n_columns_5] | 22.524313 | 22.347593 | 22.104944 | 22.924248 | 0.374170 | 0.646915 | 22.271984 | 22.918899 | 5 | 0 | 3 | 0.04 |
 | test_benchmark_foreach_has_valid_schema[n_rows_100000000_n_columns_5] | 1.068582 | 1.050490 | 0.979350 | 1.219259 | 0.092674 | 0.112164 | 1.003924 | 1.116088 | 5 | 0 | 1 | 0.94 |
 | test_benchmark_foreach_is_aggr_equal[n_rows_100000000_n_columns_5] | 1.239298 | 1.213153 | 1.192442 | 1.341836 | 0.060654 | 0.068928 | 1.200719 | 1.269646 | 5 | 0 | 1 | 0.81 |
 | test_benchmark_foreach_is_aggr_not_equal[n_rows_100000000_n_columns_5] | 1.264898 | 1.250273 | 1.218577 | 1.345211 | 0.051090 | 0.071957 | 1.225905 | 1.297862 | 5 | 0 | 1 | 0.79 |
@@ -52,13 +55,21 @@ sidebar_position: 13
 | test_benchmark_foreach_sql_query[n_rows_100000000_n_columns_5] | 4.578799 | 4.602143 | 4.442396 | 4.644892 | 0.083901 | 0.113694 | 4.530776 | 4.644470 | 5 | 0 | 1 | 0.22 |
 | test_benchmark_foreign_key | 31.784272 | 31.787610 | 31.414708 | 32.123221 | 0.269713 | 0.386951 | 31.597198 | 31.984149 | 5 | 0 | 2 | 0.03 |
 | test_benchmark_has_dimension | 0.215338 | 0.213285 | 0.210530 | 0.223131 | 0.005056 | 0.007086 | 0.211819 | 0.218905 | 5 | 0 | 1 | 4.64 |
+| test_benchmark_has_no_outliers | 0.234952 | 0.228169 | 0.224165 | 0.257274 | 0.013649 | 0.017354 | 0.225936 | 0.243290 | 5 | 0 | 1 | 4.26 |
 | test_benchmark_has_valid_schema | 0.172078 | 0.172141 | 0.163793 | 0.181081 | 0.006715 | 0.009295 | 0.167010 | 0.176305 | 6 | 0 | 2 | 5.81 |
 | test_benchmark_has_x_coordinate_between | 0.217192 | 0.213656 | 0.209310 | 0.236233 | 0.011150 | 0.012638 | 0.209410 | 0.222048 | 5 | 0 | 1 | 4.60 |
 | test_benchmark_has_y_coordinate_between | 0.218497 | 0.219630 | 0.209352 | 0.234111 | 0.010103 | 0.013743 | 0.209584 | 0.223327 | 5 | 0 | 1 | 4.58 |
+| test_benchmark_is_aggr_approx_count_distinct_with_group_by | 0.242859 | 0.239567 | 0.223938 | 0.272970 | 0.018260 | 0.017771 | 0.232410 | 0.250181 | 5 | 0 | 2 | 4.12 |
+| test_benchmark_is_aggr_count_distinct_no_group_by | 0.277439 | 0.272561 | 0.250425 | 0.320653 | 0.027686 | 0.038256 | 0.256090 | 0.294346 | 5 | 0 | 1 | 3.60 |
+| test_benchmark_is_aggr_count_distinct_with_group_by | 0.248015 | 0.249024 | 0.231550 | 0.270066 | 0.016044 | 0.026386 | 0.233048 | 0.259434 | 5 | 0 | 2 | 4.03 |
 | test_benchmark_is_aggr_equal | 0.304401 | 0.305693 | 0.266624 | 0.330403 | 0.026888 | 0.044641 | 0.284540 | 0.329181 | 5 | 0 | 1 | 3.29 |
 | test_benchmark_is_aggr_not_equal | 0.296462 | 0.296800 | 0.275119 | 0.312035 | 0.013498 | 0.013448 | 0.291054 | 0.304502 | 5 | 0 | 2 | 3.37 |
 | test_benchmark_is_aggr_not_greater_than | 0.307771 | 0.315185 | 0.277924 | 0.316280 | 0.016705 | 0.010701 | 0.304974 | 0.315675 | 5 | 1 | 1 | 3.25 |
 | test_benchmark_is_aggr_not_less_than | 0.296828 | 0.303167 | 0.276023 | 0.314350 | 0.018030 | 0.033665 | 0.278439 | 0.312105 | 5 | 0 | 1 | 3.37 |
+| test_benchmark_is_area_equal_to | 0.209381 | 0.207647 | 0.205255 | 0.216179 | 0.004471 | 0.006593 | 0.206066 | 0.212659 | 5 | 0 | 1 | 4.78 |
+| test_benchmark_is_area_not_equal_to | 0.208875 | 0.207436 | 0.203626 | 0.217694 | 0.005257 | 0.004513 | 0.206265 | 0.210778 | 5 | 1 | 1 | 4.79 |
+| test_benchmark_is_area_not_greater_than | 0.177230 | 0.179352 | 0.161536 | 0.190875 | 0.010356 | 0.013261 | 0.169503 | 0.182763 | 6 | 0 | 2 | 5.64 |
+| test_benchmark_is_area_not_less_than | 0.171868 | 0.166867 | 0.161877 | 0.204155 | 0.015957 | 0.003194 | 0.164123 | 0.167316 | 6 | 1 | 1 | 5.82 |
 | test_benchmark_is_data_fresh | 0.279160 | 0.235545 | 0.231767 | 0.430390 | 0.085563 | 0.072198 | 0.233457 | 0.305655 | 5 | 1 | 1 | 3.58 |
 | test_benchmark_is_data_fresh_per_time_window | 0.259995 | 0.246444 | 0.242483 | 0.291510 | 0.022543 | 0.037112 | 0.243019 | 0.280132 | 5 | 0 | 1 | 3.85 |
 | test_benchmark_is_equal_to | 0.241270 | 0.241646 | 0.226919 | 0.248632 | 0.008799 | 0.010992 | 0.237380 | 0.248371 | 5 | 0 | 1 | 4.14 |
@@ -114,6 +125,7 @@ sidebar_position: 13
 | test_benchmark_is_not_null_and_is_in_list[col2] | 0.242585 | 0.239179 | 0.235409 | 0.257352 | 0.008682 | 0.009090 | 0.237418 | 0.246509 | 5 | 0 | 1 | 4.12 |
 | test_benchmark_is_not_null_and_is_in_list[col3] | 0.266090 | 0.254002 | 0.242063 | 0.319918 | 0.030873 | 0.025710 | 0.250317 | 0.276027 | 5 | 1 | 1 | 3.76 |
 | test_benchmark_is_not_null_and_not_empty_array | 0.242006 | 0.245388 | 0.219974 | 0.255484 | 0.013192 | 0.011067 | 0.237343 | 0.248410 | 5 | 1 | 2 | 4.13 |
+| test_benchmark_is_not_null_island | 0.229706 | 0.229359 | 0.219877 | 0.241720 | 0.009478 | 0.016914 | 0.220834 | 0.237748 | 5 | 0 | 2 | 4.35 |
 | test_benchmark_is_null_or_empty[col1] | 0.245738 | 0.249997 | 0.230094 | 0.262357 | 0.014764 | 0.027013 | 0.230391 | 0.257404 | 5 | 0 | 3 | 4.07 |
 | test_benchmark_is_null_or_empty[col2] | 0.243129 | 0.241425 | 0.233387 | 0.253421 | 0.008940 | 0.016398 | 0.235432 | 0.251830 | 5 | 0 | 2 | 4.11 |
 | test_benchmark_is_null_or_empty[col3] | 0.243480 | 0.236580 | 0.222777 | 0.278160 | 0.022199 | 0.031183 | 0.226982 | 0.258165 | 5 | 0 | 1 | 4.11 |
@@ -122,6 +134,10 @@ sidebar_position: 13
 | test_benchmark_is_null_or_empty[col6] | 0.271883 | 0.288303 | 0.233084 | 0.291877 | 0.025875 | 0.038427 | 0.251213 | 0.289639 | 5 | 0 | 1 | 3.68 |
 | test_benchmark_is_null_or_empty[col7] | 0.255479 | 0.255281 | 0.230887 | 0.289014 | 0.022139 | 0.029264 | 0.238686 | 0.267950 | 5 | 0 | 2 | 3.91 |
 | test_benchmark_is_null_or_empty[col8] | 0.219256 | 0.217609 | 0.214083 | 0.226223 | 0.005137 | 0.008602 | 0.215124 | 0.223726 | 5 | 0 | 2 | 4.56 |
+| test_benchmark_is_num_points_equal_to | 0.213472 | 0.208326 | 0.200840 | 0.228556 | 0.011595 | 0.018574 | 0.205502 | 0.224076 | 5 | 0 | 2 | 4.68 |
+| test_benchmark_is_num_points_not_equal_to | 0.211439 | 0.212084 | 0.200625 | 0.223375 | 0.008900 | 0.013585 | 0.204124 | 0.217709 | 5 | 0 | 2 | 4.73 |
+| test_benchmark_is_num_points_not_greater_than | 0.162069 | 0.161908 | 0.149400 | 0.178192 | 0.010833 | 0.014197 | 0.154168 | 0.168365 | 5 | 0 | 2 | 6.17 |
+| test_benchmark_is_num_points_not_less_than | 0.159204 | 0.157405 | 0.151457 | 0.175503 | 0.008775 | 0.008935 | 0.152260 | 0.161195 | 6 | 1 | 1 | 6.28 |
 | test_benchmark_is_ogc_valid | 0.220708 | 0.223267 | 0.206378 | 0.235649 | 0.011210 | 0.015703 | 0.211743 | 0.227446 | 5 | 0 | 2 | 4.53 |
 | test_benchmark_is_older_than_col2_for_n_days | 0.235241 | 0.230978 | 0.224354 | 0.254865 | 0.011884 | 0.013734 | 0.227788 | 0.241522 | 5 | 0 | 1 | 4.25 |
 | test_benchmark_is_older_than_n_days | 0.246935 | 0.248889 | 0.234393 | 0.253353 | 0.007733 | 0.010372 | 0.242547 | 0.252920 | 5 | 0 | 1 | 4.05 |

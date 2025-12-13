@@ -42,6 +42,55 @@ resources:
                 package: databricks-labs-dqx==0.8.0
 ```
 
+Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
+
+### Optional dependencies
+
+DQX provides optional extras for specific features:
+
+#### AI-Assisted Quality Checks Generation
+
+To use AI-assisted rule generation with LLM support, install the `llm` extras:
+```commandline
+pip install 'databricks-labs-dqx[llm]'
+```
+
+This installs additional dependencies including DSPy for LLM integration. See the [AI-Assisted Generation Guide](/docs/guide/ai_assisted_quality_checks_generation) for more details.
+
+#### PII detection capabilities
+
+To use built-in pii detection rules, install the `pii` extras:
+```commandline
+pip install 'databricks-labs-dqx[pii]'
+```
+
+This installs additional dependencies including Microsoft Presidio library.
+
+#### Data Contract Support
+
+To use data contract-based rule generation with ODCS (Open Data Contract Standard) support, install the `datacontract` extras:
+```commandline
+pip install 'databricks-labs-dqx[datacontract]'
+```
+
+This installs the `datacontract-cli` library for parsing and validating ODCS contracts.
+
+If your data contracts include text-based quality expectations (natural language rules), also install the `llm` extras:
+```commandline
+pip install 'databricks-labs-dqx[datacontract,llm]'
+```
+
+See the [Data Contract Quality Rules Generation Guide](/docs/guide/data_contract_quality_rules_generation) for more details.
+
+
+### Installing DQX with company-hosted PyPI mirror
+
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.11.1/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
+```
+
 ## DQX installation as a Tool in a Databricks Workspace
 
 If you install DQX via PyPI and use it purely as a library, you don’t need to pre-install DQX in the workspace.
@@ -73,8 +122,15 @@ Install DQX in your Databricks workspace via Databricks CLI:
 databricks labs install dqx
 ```
 
+As a best practice, you should always pin the version so that your code is not affected by future changes:
+```commandline
+databricks labs install dqx@v0.8.0
+```
+
 You'll be prompted to provide several configuration options.
 You can use standard Databricks CLI options like `--profile` for authentication.
+
+Breaking changes between versions are listed in [Github Release Notes](https://github.com/databrickslabs/dqx/releases) under the `BREAKING CHANGES!` section.
 
 <Admonition type="tip" title="Execution Environment">
 * Make sure to have Databricks CLI v0.241 or later installed locally to avoid encountering the error: ModuleNotFoundError: No module named 'pyspark'.
@@ -178,6 +234,12 @@ extra_params:                       # <- optional extra parameters to pass to th
     user_metadata:
         custom_metadata: custom_value # <- optional user metadata to be added to the results
 
+llm_config:                         # <- configuration for the llm-assisted features
+  model:
+    model_name: "databricks/databricks-claude-sonnet-4-5"
+    api_key: xxx                    # <- optional API key for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+    api_base: xxx                   # <- optional API base for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+
 run_configs:                        # <- list of run configurations, each run config defines one specific input and output location
 
 - name: default                     # <- unique name of the run config (it can be any string), e.g. input table or job name (use "default" during installation)
@@ -210,6 +272,11 @@ run_configs:                        # <- list of run configurations, each run co
     trigger:                             # <- optional streaming trigger, only applicable if input_config.is_streaming is enabled
       availableNow: true
 
+  metrics_config:                        # <-  optional summary metrics storage
+    format: delta
+    location: main.iot.dq_metrics
+    mode: append
+
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
   # if wanting to store checks in lakebase table
@@ -218,7 +285,7 @@ run_configs:                        # <- list of run configurations, each run co
   # lakebase_user: 00000000-0000-0000-0000-000000000000 # <- the user to connect to the lakebase, e.g., user@domain.com or a Databricks service principal client ID
   # lakebase_port: 5432                                 # <- optional port to connect to Lakebase, default is 5432
 
-  custom_check_functions:                # <- optional mapping of custom check function name to Python file (module) containing check function definition
+  custom_check_functions:                               # <- optional mapping of custom check function name to Python file (module) containing check function definition
     my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
     my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
     email_mask: /Volumes/main/dqx_utils/custom/email.py # or UC volume path
@@ -238,11 +305,14 @@ run_configs:                        # <- list of run configurations, each run co
     sample_fraction: 0.3                      # <- fraction of data to sample in the profiler (30%)
     sample_seed: 30                           # <- optional seed for reproducible sampling
     limit: 1000                               # <- limit the number of records to profile
-    filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source 
+    filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source
+    llm_primary_key_detection: false          # <- whether to use llm-assisted pk detection to generate uniqueness check
 
-  warehouse_id: your-warehouse-id         # <- warehouse id for refreshing dashboard
+  checks_user_requirements: business rules description  # <- optional user input for AI-assisted rule generation; only supported if `serverless_clusters` is enabled
 
-- name: another_run_config                            # <- unique name of the run config
+  warehouse_id: your-warehouse-id             # <- warehouse id for refreshing dashboard
+
+- name: another_run_config                    # <- unique name of the run config
   ...
 ```
 
@@ -312,6 +382,26 @@ resources:
             # or install from pypi
             #- pypi:
             #    package: databricks-labs-dqx==0.8.0
+```
+
+### Installing DQX with company-hosted PyPI mirror
+
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.11.1/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
+```
+
+During DQX installation as a tool in the workspace reply *yes* to the question "Does the given workspace block Internet access"?
+
+If the installation host has no access to GitHub, then dqx installation will not be able to download the files locally and will fail.
+In order to address that, follow the steps below
+ - install dqx on a host which has access to github using the instruction above
+ - zip the installation from ~/.databricks/labs/dqx
+ - copy the zip file to the target host and unzip
+Now the installation can be done in offline mode (ensure Databricks CLI is upgraded to version v0.244.0 or higher)
+```commandline
+PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx --offline=true
 ```
 
 ### Upgrade DQX in the Databricks workspace

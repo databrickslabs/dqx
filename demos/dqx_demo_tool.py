@@ -44,6 +44,7 @@
 # MAGIC     limit: 1000
 # MAGIC     sample_fraction: 0.3
 # MAGIC     summary_stats_file: profile_summary_stats.yml
+# MAGIC     llm_primary_key_detection: false
 # MAGIC   warehouse_id: your-warehouse-id
 # MAGIC ```
 # MAGIC
@@ -189,7 +190,7 @@ from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
-from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.io import read_input_data
 from databricks.sdk import WorkspaceClient
 
@@ -200,7 +201,7 @@ ws = WorkspaceClient()
 dq_engine = DQEngine(ws)
 
 # load the run configuration
-run_config = RunConfigLoader(ws).load_run_config(
+run_config = ConfigSerializer(ws).load_run_config(
   run_config_name="default", product_name=dqx_product_name, install_folder=custom_install_path
 )
 
@@ -307,13 +308,13 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.io import read_input_data
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
-from databricks.labs.dqx.config_loader import RunConfigLoader
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 
 
 dq_engine = DQEngine(WorkspaceClient())
 
 # load the run configuration
-run_config = RunConfigLoader(ws).load_run_config(
+run_config = ConfigSerializer(ws).load_run_config(
   run_config_name="default", assume_user=True, product_name=dqx_product_name, install_folder=custom_install_path
 )
 

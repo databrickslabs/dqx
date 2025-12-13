@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 ---
 
 import Admonition from '@theme/Admonition';
@@ -10,34 +10,6 @@ import TabItem from '@theme/TabItem';
 # Loading and Storing Quality Checks
 
 DQX provides flexible methods to load and save quality checks (rules) defined as metadata (a list of dictionaries) from different storage backends, making it easier to manage, share, and reuse checks across workflows and environments.
-
-Saving and loading methods accept a storage backend configuration as input. The following backend configuration are currently supported:
-* `FileChecksStorageConfig`: local files (JSON/YAML), or workspace files if invoked from Databricks notebook or job. Containing fields:
-    * `location`: absolute or relative file path in the local filesystem (JSON or YAML); also works with absolute or relative workspace file paths if invoked from Databricks notebook or job.
-* `WorkspaceFileChecksStorageConfig`: workspace files (JSON/YAML) using absolute paths. Containing fields:
-    * `location`: absolute workspace file path (JSON or YAML).
-* `TableChecksStorageConfig`: Unity Catalog tables. Containing fields:
-    * `location`: table fully qualified name.
-    * `run_config_name`: (optional) run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
-    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
-* `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
-    * `location`: Unity Catalog Volume file path (JSON or YAML).
-* `LakebaseChecksStorageConfig`: Lakebase table. Containing fields:
-    * `instance_name`: name of the Lakebase instance, e.g., "my-instance".
-    * `user`: user to connect to the Lakebase instance, e.g., "user@domain.com" or Databricks service principal client ID.
-    * `location`: fully-qualified table name in the format "database.schema.table".
-    * `port`: (optional) port on which to connect to the Lakebase instance (use 5432 if not provided).
-    * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).
-    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
-* `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config. Containing fields:
-    * `location` (optional): automatically set based on the `checks_location` field from the run configuration.
-    * `install_folder`: (optional) installation folder where DQX is installed, only required when custom installation folder is used.
-    * `run_config_name` (optional) - run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
-    * `product_name`: (optional) name of the product (use "dqx" if not provided).
-    * `assume_user`: (optional) if True, assume user installation, otherwise global installation (skipped if `install_folder` is provided).
-    * the config inherits from the specific configs such as `WorkspaceFileChecksStorageConfig`, `TableChecksStorageConfig`, `VolumeFileChecksStorageConfig`, and `LakebaseChecksStorageConfig` so relevant fields from these specific configs can be provided (e.g. instance_name and user for lakebase).
-
-You can find details on how to define checks [here](/docs/guide/quality_checks_definition).
 
 ## Saving quality checks to a storage
 
@@ -246,3 +218,35 @@ If you create checks as a list of DQRule objects, you can convert them using the
     When using the quality checker or e2e workflows to apply quality checks, they load checks from the `checks_location` field defined in the [configuration file](/docs/installation/#configuration-file).
   </TabItem>
 </Tabs>
+
+## Supported storage backends
+
+Saving and loading methods accept a storage backend configuration as input.
+
+The following backend configuration are currently supported:
+* `FileChecksStorageConfig`: local files (JSON/YAML), or workspace files if invoked from Databricks notebook or job. Containing fields:
+    * `location`: absolute or relative file path in the local filesystem (JSON or YAML); also works with absolute or relative workspace file paths if invoked from Databricks notebook or job.
+* `WorkspaceFileChecksStorageConfig`: workspace files (JSON/YAML) using absolute paths. Containing fields:
+    * `location`: absolute workspace file path (JSON or YAML).
+* `TableChecksStorageConfig`: Unity Catalog tables. Containing fields:
+    * `location`: table fully qualified name.
+    * `run_config_name`: (optional) run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+* `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
+    * `location`: Unity Catalog Volume file path (JSON or YAML).
+* `LakebaseChecksStorageConfig`: Lakebase table. Containing fields:
+    * `instance_name`: name of the Lakebase instance, e.g., "my-instance".
+    * `user`: user to connect to the Lakebase instance, e.g., "user@domain.com" or Databricks service principal client ID.
+    * `location`: fully-qualified table name in the format "database.schema.table".
+    * `port`: (optional) port on which to connect to the Lakebase instance (use 5432 if not provided).
+    * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+* `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config. Containing fields:
+    * `location` (optional): automatically set based on the `checks_location` field from the run configuration.
+    * `install_folder`: (optional) installation folder where DQX is installed, only required when custom installation folder is used.
+    * `run_config_name` (optional) - run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
+    * `product_name`: (optional) name of the product (use "dqx" if not provided).
+    * `assume_user`: (optional) if True, assume user installation, otherwise global installation (skipped if `install_folder` is provided).
+    * the config inherits from the specific configs such as `WorkspaceFileChecksStorageConfig`, `TableChecksStorageConfig`, `VolumeFileChecksStorageConfig`, and `LakebaseChecksStorageConfig` so relevant fields from these specific configs can be provided (e.g. instance_name and user for lakebase).
+
+You can find details on how to define checks [here](/docs/guide/quality_checks_definition).

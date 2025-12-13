@@ -28,3 +28,7 @@ class InvalidCheckError(DQXError):
 
 class CheckDownloadError(InvalidCheckError):
     """Raised when a data quality check cannot be downloaded (e.g., from Unity Catalog)."""
+
+
+class ODCSContractError(DQXError):
+    """Raised when there is an error related to ODCS data contracts."""

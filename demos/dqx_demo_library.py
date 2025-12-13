@@ -41,12 +41,12 @@ default_catalog = "main"
 default_schema = "default"
 
 dbutils.widgets.text("demo_file_directory", default_file_directory, "File Directory")
-dbutils.widgets.text("demo_catalog_name", default_catalog, "Catalog Name")
-dbutils.widgets.text("demo_schema_name", default_schema, "Schema Name")
+dbutils.widgets.text("demo_catalog", default_catalog, "Catalog Name")
+dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
 
 demo_file_directory = dbutils.widgets.get("demo_file_directory")
-demo_catalog_name = dbutils.widgets.get("demo_catalog_name")
-demo_schema_name = dbutils.widgets.get("demo_schema_name")
+demo_catalog_name = dbutils.widgets.get("demo_catalog")
+demo_schema_name = dbutils.widgets.get("demo_schema")
 
 schema = "col1: int, col2: int, col3: int, col4 int"
 input_df = spark.createDataFrame([[1, 3, 3, 1], [2, None, 4, 1]], schema)
@@ -691,6 +691,227 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ### Extended Aggregate Functions for Data Quality Checks
+# MAGIC
+# MAGIC DQX now supports 20 curated aggregate functions for advanced data quality monitoring:
+# MAGIC - **Statistical functions**: `stddev`, `variance`, `median`, `mode`, `skewness`, `kurtosis` for anomaly detection
+# MAGIC - **Percentile functions**: `percentile`, `approx_percentile` for SLA monitoring
+# MAGIC - **Cardinality functions**: `count_distinct`, `approx_count_distinct` (uses HyperLogLog++)
+# MAGIC - **Any Databricks built-in aggregate**: Supported with runtime validation
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 1: Statistical Functions - Anomaly Detection with Standard Deviation
+# MAGIC
+# MAGIC Detect unusual variance in sensor readings per machine. High standard deviation indicates unstable sensors that may need calibration.
+
+# COMMAND ----------
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx import check_funcs
+from databricks.sdk import WorkspaceClient
+
+# Manufacturing sensor data with readings from multiple machines
+manufacturing_df = spark.createDataFrame([
+    ["M1", "2024-01-01", 20.1],
+    ["M1", "2024-01-02", 20.3],
+    ["M1", "2024-01-03", 20.2],  # Machine 1: stable readings (low stddev)
+    ["M2", "2024-01-01", 18.5],
+    ["M2", "2024-01-02", 25.7],
+    ["M2", "2024-01-03", 15.2],  # Machine 2: unstable readings (high stddev) - should FAIL
+    ["M3", "2024-01-01", 19.8],
+    ["M3", "2024-01-02", 20.1],
+    ["M3", "2024-01-03", 19.9],  # Machine 3: stable readings
+], "machine_id: string, date: string, temperature: double")
+
+# Quality check: Standard deviation should not exceed 3.0 per machine
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="temperature",
+        check_func_kwargs={
+            "aggr_type": "stddev",
+            "group_by": ["machine_id"],
+            "limit": 3.0
+        },
+    ),
+]
+
+dq_engine = DQEngine(WorkspaceClient())
+result_df = dq_engine.apply_checks(manufacturing_df, checks)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 2: Approximate Aggregate Functions - Efficient Cardinality Estimation
+# MAGIC
+# MAGIC **`approx_count_distinct`** provides fast, memory-efficient cardinality estimation for large datasets.
+# MAGIC
+# MAGIC **From [Databricks Documentation](https://docs.databricks.com/aws/en/sql/language-manual/functions/approx_count_distinct.html):**
+# MAGIC - Uses **HyperLogLog++** (HLL++) algorithm, a state-of-the-art cardinality estimator
+# MAGIC - **Accurate within 5%** by default (configurable via `relativeSD` parameter)
+# MAGIC - **Memory efficient**: Uses fixed memory regardless of cardinality
+# MAGIC - **Ideal for**: High-cardinality columns, large datasets, real-time analytics
+# MAGIC
+# MAGIC **Use Case**: Monitor daily active users without expensive exact counting.
+
+# COMMAND ----------
+
+# User activity data with high cardinality
+user_activity_df = spark.createDataFrame([
+    ["2024-01-01", f"user_{i}"] for i in range(1, 95001)  # 95,000 distinct users on day 1
+] + [
+    ["2024-01-02", f"user_{i}"] for i in range(1, 50001)  # 50,000 distinct users on day 2
+], "activity_date: string, user_id: string")
+
+# Quality check: Ensure daily active users don't drop below 60,000
+# Using approx_count_distinct is much faster than count_distinct for large datasets
+checks = [
+    DQDatasetRule(
+        criticality="warn",
+        check_func=check_funcs.is_aggr_not_less_than,
+        column="user_id",
+        check_func_kwargs={
+            "aggr_type": "approx_count_distinct",  # Fast approximate counting
+            "group_by": ["activity_date"],
+            "limit": 60000
+        },
+    ),
+]
+
+result_df = dq_engine.apply_checks(user_activity_df, checks)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 3: Non-Curated Aggregate Functions with Runtime Validation
+# MAGIC
+# MAGIC DQX supports any Databricks built-in aggregate function beyond the curated list:
+# MAGIC - **Warning**: Non-curated functions trigger a warning
+# MAGIC - **Runtime validation**: Ensures the function returns numeric values compatible with comparisons
+# MAGIC - **Graceful errors**: Invalid aggregates (e.g., `collect_list` returning arrays) fail with clear messages
+# MAGIC
+# MAGIC **Note**: User-Defined Aggregate Functions (UDAFs) are not currently supported.
+
+# COMMAND ----------
+
+import warnings
+
+# Sensor data with multiple readings per sensor
+sensor_sample_df = spark.createDataFrame([
+    ["S1", 45.2],
+    ["S1", 45.8],
+    ["S2", 78.1],
+    ["S2", 78.5],
+], "sensor_id: string, reading: double")
+
+# Using a valid but non-curated aggregate function: any_value
+# This will work but produce a warning
+checks = [
+    DQDatasetRule(
+        criticality="warn",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="reading",
+        check_func_kwargs={
+            "aggr_type": "any_value",  # Not in curated list - triggers warning
+            "group_by": ["sensor_id"],
+            "limit": 100.0
+        },
+    ),
+]
+
+# Capture warnings during execution
+with warnings.catch_warnings(record=True) as w:
+    warnings.simplefilter("always")
+    result_df = dq_engine.apply_checks(sensor_sample_df, checks)
+    
+    # Display warning message if present
+    if w:
+        print(f"⚠️  Warning: {w[0].message}")
+
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 4: Percentile Functions for SLA Monitoring
+# MAGIC
+# MAGIC Monitor P95 latency to ensure 95% of API requests meet SLA requirements.
+# MAGIC
+# MAGIC **Using `aggr_params`:** Pass aggregate function parameters as a dictionary.
+# MAGIC - Single parameter: `aggr_params={"percentile": 0.95}`
+# MAGIC - Multiple parameters: `aggr_params={"percentile": 0.99, "accuracy": 10000}`
+
+# COMMAND ----------
+
+# API latency data in milliseconds
+api_latency_df = spark.createDataFrame([
+    ["2024-01-01", i * 10.0] for i in range(1, 101)  # 10ms to 1000ms latencies
+], "date: string, latency_ms: double")
+
+# Quality check: P95 latency must be under 950ms
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="latency_ms",
+        check_func_kwargs={
+            "aggr_type": "percentile",
+            "aggr_params": {"percentile": 0.95},  # aggr_params as dict
+            "group_by": ["date"],
+            "limit": 950.0
+        },
+    ),
+]
+
+result_df = dq_engine.apply_checks(api_latency_df, checks)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Example 5: Uniqueness Validation with Count Distinct
+# MAGIC
+# MAGIC Ensure referential integrity: each country should have exactly one country code.
+# MAGIC
+# MAGIC Use `count_distinct` for exact cardinality validation across groups.
+
+# COMMAND ----------
+
+# Country data with potential duplicates
+country_df = spark.createDataFrame([
+    ["US", "USA"],
+    ["US", "USA"],  # OK: same code
+    ["FR", "FRA"],
+    ["FR", "FRN"],  # ERROR: different codes for same country
+    ["DE", "DEU"],
+], "country: string, country_code: string")
+
+# Quality check: Each country must have exactly one distinct country code
+checks = [
+    DQDatasetRule(
+        criticality="error",
+        check_func=check_funcs.is_aggr_not_greater_than,
+        column="country_code",
+        check_func_kwargs={
+            "aggr_type": "count_distinct",  # Exact distinct count per group
+            "group_by": ["country"],
+            "limit": 1
+        },
+    ),
+]
+
+result_df = dq_engine.apply_checks(country_df, checks)
+display(result_df)
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ### Creating custom dataset-level checks
 # MAGIC Requirement: Fail all readings from a sensor if any reading for that sensor exceeds a specified threshold from the sensor specification table.
 
@@ -722,11 +943,15 @@ dq_engine = DQEngine(WorkspaceClient())
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### Using `sql_query` check
+# MAGIC #### Using `sql_query` check - Row-level validation
+# MAGIC 
+# MAGIC The `sql_query` check supports two modes:
+# MAGIC - **Row-level validation** (with `merge_columns`): Query results are joined back to mark specific rows
+# MAGIC - **Dataset-level validation** (without `merge_columns`): Check result applies to all rows
 
 # COMMAND ----------
 
-# using DQX classes
+# Row-level validation example: Check each sensor against its threshold
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.check_funcs import sql_query
 
@@ -752,7 +977,7 @@ checks = [
         check_func=sql_query,
         check_func_kwargs={
             "query": query,
-            "merge_columns": ["sensor_id"],
+            "merge_columns": ["sensor_id"],  # Results joined back by sensor_id
             "condition_column": "condition",  # the check fails if this column evaluates to True
             "msg": "one of the sensor reading is greater than limit",
             "name": "sensor_reading_check",
@@ -764,6 +989,41 @@ checks = [
 # Pass reference DataFrame with sensor specifications
 ref_dfs = {"sensor_specs": sensor_specs_df}
 
+valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC #### Using `sql_query` check - Dataset-level validation
+# MAGIC 
+# MAGIC When `merge_columns` is not provided, the check applies to all rows (all pass or all fail together).
+# MAGIC This is useful for dataset-level aggregate validations.
+
+# COMMAND ----------
+
+# Dataset-level validation example: Check total sensor count
+dataset_query = """
+    SELECT COUNT(DISTINCT sensor_id) < 1 AS condition
+    FROM {{ sensor }}
+"""
+
+checks = [
+    DQDatasetRule(
+        criticality="warn",
+        check_func=sql_query,
+        check_func_kwargs={
+            "query": dataset_query,
+            # No merge_columns = dataset-level check (all rows get same result)
+            "condition_column": "condition",
+            "msg": "Dataset has no sensors",
+            "name": "dataset_has_sensors",
+            "input_placeholder": "sensor",
+        },
+    ),
+]
+
+ref_dfs = {"sensor_specs": sensor_specs_df}
 valid_and_quarantine_df = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
 display(valid_and_quarantine_df)
 
@@ -803,6 +1063,30 @@ checks = yaml.safe_load(
 ref_dfs = {"sensor_specs": sensor_specs_df}
 
 valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks, ref_dfs=ref_dfs)
+display(valid_and_quarantine_df)
+
+# COMMAND ----------
+
+# YAML example for dataset-level validation (without merge_columns)
+checks_dataset_level = yaml.safe_load(
+    """
+    - criticality: warn
+      check:
+        function: sql_query
+        arguments:
+          # No merge_columns = dataset-level validation
+          condition_column: condition
+          msg: Dataset has no sensors
+          name: dataset_has_sensors
+          input_placeholder: sensor
+          query: |
+            SELECT COUNT(DISTINCT sensor_id) < 1 AS condition
+            FROM {{ sensor }}
+    """
+)
+
+ref_dfs = {"sensor_specs": sensor_specs_df}
+valid_and_quarantine_df = dq_engine.apply_checks_by_metadata(sensor_df, checks_dataset_level, ref_dfs=ref_dfs)
 display(valid_and_quarantine_df)
 
 # COMMAND ----------

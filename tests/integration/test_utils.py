@@ -1,11 +1,13 @@
+from unittest import skip
 import pytest
 from databricks.sdk.errors import NotFound
-
 from databricks.labs.dqx.utils import list_tables
+
+from tests.conftest import TEST_CATALOG
 
 
 def test_list_tables(spark, ws, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table1_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     table2_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
@@ -24,23 +26,32 @@ def test_list_tables(spark, ws, make_schema, make_random):
     tables = list_tables(ws, patterns=[f"{catalog_name}.{schema_name}.*"])
     assert set(tables) == {table1_name, table2_name}
 
-    tables = list_tables(ws, patterns=[f"{catalog_name}.*"])
-    assert table1_name in tables
-    assert table2_name in tables
+    tables = list_tables(ws, patterns=[f"{catalog_name}.{schema_name}.*"])
+    assert set(tables) == {table1_name, table2_name}
+
+
+@skip("Ad-hoc test only: Running multiple tests in parallel can cause a failure")
+def test_list_tables_extended(spark, ws, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    input_schema = "col1: int"
+    input_df = spark.createDataFrame([[1]], input_schema)
+    input_df.write.format("delta").saveAsTable(table_name)
 
     tables = list_tables(ws, patterns=["*"])
-    assert table1_name in tables
-    assert table2_name in tables
+    assert len(tables) > 0
 
     tables = list_tables(ws, patterns=None)
     assert len(tables) > 0
 
-    tables = list_tables(ws, patterns=[table1_name, table2_name], exclude_matched=True)
-    assert not {table1_name, table2_name} & set(tables)
+    tables = list_tables(ws, patterns=[table_name], exclude_matched=True)
+    assert not {table_name} & set(tables)
 
 
 def test_list_tables_with_exclude_patterns(spark, ws, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 

@@ -7,6 +7,7 @@ clean: docs-clean
 .venv/bin/python:
 	pip install hatch
 	hatch env create
+	hatch run pip install ".[llm,pii,datacontract]"
 
 dev: .venv/bin/python
 	@hatch run which python
@@ -17,7 +18,6 @@ lint:
 fmt:
 	hatch run fmt
 	hatch run update_github_urls
-	hatch run extract_checks_examples
 
 test:
 	hatch run test

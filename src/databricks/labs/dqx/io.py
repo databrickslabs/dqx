@@ -4,6 +4,8 @@ import re
 from typing import Any
 from pyspark.sql import SparkSession
 from pyspark.sql.dataframe import DataFrame
+from pyspark.sql.streaming import StreamingQuery
+
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.errors import InvalidConfigError
 
@@ -82,25 +84,29 @@ def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFram
     return spark.readStream.options(**input_config.options).table(input_config.location)
 
 
-def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig):
+def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> StreamingQuery | None:
     """
     Helper method to save a DataFrame to a Delta table.
 
     Args:
         df: The DataFrame to save
-        output_config: Output table name or delta path, write mode, and options
+        output_config: Output table name or path, write mode, and options
+
+    Returns:
+        StreamingQuery handle if the DataFrame is streaming, None otherwise
     """
     if TABLE_PATTERN.match(output_config.location):
         logger.info(f"Saving data to {output_config.location} table")
         return _dataframe_writer_table(df=df, output_config=output_config)
-    
+
     if STORAGE_PATH_PATTERN.match(output_config.location):
         logger.info(f"Saving data to {output_config.location} path")
         return _dataframe_writer_path(df=df, output_config=output_config)
-    
+
     raise InvalidConfigError(
         f"Invalid output location. It must be a 2 or 3-level table namespace or storage path, given {output_config.location}"
     )
+
 
 def _dataframe_writer(df: DataFrame, output_config: OutputConfig):
     """
@@ -111,24 +117,27 @@ def _dataframe_writer(df: DataFrame, output_config: OutputConfig):
         output_config: Output table name or delta path, write mode, and options
     """
 
-    if df.isStreaming:
-        dataframe_writer = (
-            df.writeStream.format(output_config.format)
-            .outputMode(output_config.mode)
-            .options(**output_config.options)
-             )
-        
-        if output_config.trigger:
-            trigger: dict[str, Any] = output_config.trigger
-            dataframe_writer = dataframe_writer.trigger(**trigger)
-        
-    else:
-        dataframe_writer = (
+    if not df.isStreaming:
+        return (
             df.write.format(output_config.format)
             .mode(output_config.mode)
             .options(**output_config.options)
-            )
-    return dataframe_writer
+        )
+
+    query = (
+        df.writeStream.format(output_config.format)
+        .outputMode(output_config.mode)
+        .options(**output_config.options)
+     )
+
+    if output_config.trigger:
+        logger.info(f"Setting streaming trigger: {trigger}")
+        trigger: dict[str, Any] = output_config.trigger
+        return query.trigger(**trigger)
+
+    logger.info("Using default streaming trigger")
+    return query
+
 
 def _dataframe_writer_table(df: DataFrame, output_config: OutputConfig):
     """
@@ -160,6 +169,21 @@ def _dataframe_writer_path(df: DataFrame, output_config: OutputConfig):
         query.awaitTermination()
     else:
         dataframe_writer.save(output_config.location)
+
+
+def is_one_time_trigger(trigger: dict[str, Any] | None) -> bool:
+    """
+    Checks if a trigger is a one-time trigger that should wait for completion.
+
+    Args:
+        trigger: Trigger configuration dict
+
+    Returns:
+        True if the trigger is 'once' or 'availableNow', False otherwise
+    """
+    if trigger is None:
+        return False
+    return "once" in trigger or "availableNow" in trigger
 
 def get_reference_dataframes(
     spark: SparkSession, reference_tables: dict[str, InputConfig] | None = None

@@ -4,10 +4,13 @@ from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidConfigError
+
+from tests.conftest import TEST_CATALOG
 
 
 def test_save_results_in_table(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table_mode = "overwrite"
@@ -51,7 +54,7 @@ def test_save_results_in_table(ws, spark, make_schema, make_random):
 
 
 def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table_mode = "overwrite"
@@ -72,7 +75,7 @@ def test_save_results_in_table_only_output(ws, spark, make_schema, make_random):
 
 
 def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     quarantine_table_mode = "overwrite"
@@ -89,7 +92,7 @@ def test_save_results_in_table_only_quarantine(ws, spark, make_schema, make_rand
 
 
 def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
@@ -122,7 +125,7 @@ def test_save_results_in_table_in_user_installation(ws, spark, installation_ctx,
 
 
 def test_save_results_in_table_in_user_installation_only_output(ws, spark, installation_ctx, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
 
@@ -150,7 +153,7 @@ def test_save_results_in_table_in_user_installation_only_output(ws, spark, insta
 def test_save_results_in_table_in_user_installation_only_quarantine(
     ws, spark, installation_ctx, make_schema, make_random
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
 
@@ -178,7 +181,7 @@ def test_save_results_in_table_in_user_installation_only_quarantine(
 def test_save_results_in_table_in_user_installation_output_table_provided(
     ws, spark, installation_ctx, make_schema, make_random
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
@@ -213,7 +216,7 @@ def test_save_results_in_table_in_user_installation_output_table_provided(
 def test_save_results_in_table_in_user_installation_quarantine_table_provided(
     ws, spark, installation_ctx, make_schema, make_random
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
@@ -248,7 +251,7 @@ def test_save_results_in_table_in_user_installation_quarantine_table_provided(
 def test_save_results_in_table_in_user_installation_missing_output_and_quarantine_table(
     ws, spark, installation_ctx, make_schema, make_random
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
@@ -282,10 +285,18 @@ def test_save_results_in_table_in_user_installation_missing_output_and_quarantin
     ), "Quarantine table should not have been saved"
 
 
+def test_save_results_in_table_missing_output_and_quarantine_dfs(ws, spark):
+    engine = DQEngine(ws, spark)
+    with pytest.raises(
+        InvalidConfigError, match="At least one of 'output_df' or 'quarantine_df' Dataframe must be present."
+    ):
+        engine.save_results_in_table()
+
+
 def test_save_results_in_table_in_custom_folder_installation(
     ws, spark, installation_ctx_custom_install_folder, make_schema, make_random
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     quarantine_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
@@ -320,7 +331,7 @@ def test_save_results_in_table_in_custom_folder_installation(
 
 
 def test_save_streaming_results_in_table(ws, spark, make_schema, make_random, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     random_name = make_random(10).lower()

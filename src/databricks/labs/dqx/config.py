@@ -1,7 +1,8 @@
 import abc
 from functools import cached_property
-from datetime import datetime, timezone
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
+
+from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
 __all__ = [
@@ -11,6 +12,8 @@ __all__ = [
     "OutputConfig",
     "ExtraParams",
     "ProfilerConfig",
+    "LLMModelConfig",
+    "LLMConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
@@ -40,7 +43,21 @@ class OutputConfig:
     format: str = "delta"
     mode: str = "append"
     options: dict[str, str] = field(default_factory=dict)
-    trigger: dict[str, bool | str] = field(default_factory=dict)
+    trigger: dict[str, str | bool] = field(default_factory=dict)
+
+    def __post_init__(self):
+        """
+        Normalize trigger configuration by converting string boolean representations to actual booleans.
+        This is required due to the limitation of the config deserializer.
+        """
+        # Convert string representations of booleans to actual booleans
+        for key, value in list(self.trigger.items()):
+            if isinstance(value, str):
+                if value.lower() == 'true':
+                    self.trigger[key] = True
+                elif value.lower() == 'false':
+                    self.trigger[key] = False
+                # Otherwise keep it as a string (e.g., "10 seconds" for processingTime)
 
 
 @dataclass
@@ -52,6 +69,9 @@ class ProfilerConfig:
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
     filter: str | None = None  # filter to apply to the data before profiling
+    llm_primary_key_detection: bool = (
+        False  # whether to use LLM for primary key detection to generate uniqueness checks
+    )
 
 
 @dataclass
@@ -62,7 +82,9 @@ class RunConfig:
     input_config: InputConfig | None = None
     output_config: OutputConfig | None = None
     quarantine_config: OutputConfig | None = None  # quarantined data table
+    metrics_config: OutputConfig | None = None  # summary metrics table
     profiler_config: ProfilerConfig = field(default_factory=ProfilerConfig)
+    checks_user_requirements: str | None = None  # user input for AI-assisted rule generation
 
     checks_location: str = (
         "checks.yml"  # absolute or relative workspace file path or table containing quality rules / checks
@@ -81,8 +103,23 @@ class RunConfig:
     lakebase_port: str | None = None
 
 
-def _default_run_time() -> str:
-    return datetime.now(timezone.utc).isoformat()
+@dataclass
+class LLMModelConfig:
+    """Configuration for LLM model"""
+
+    # The model to use for the DSPy language model
+    model_name: str = "databricks/databricks-claude-sonnet-4-5"
+    # Optional API key for the model as text or secret scope/key. Not required by foundational models
+    api_key: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
+    # Optional API base URL for the model. Not required by foundational models
+    api_base: str = ""  # when used with Profiler Workflow, this should be a secret: secret_scope/secret_key
+
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """Configuration for LLM usage"""
+
+    model: LLMModelConfig = field(default_factory=LLMModelConfig)
 
 
 @dataclass(frozen=True)
@@ -90,8 +127,9 @@ class ExtraParams:
     """Class to represent extra parameters for DQEngine."""
 
     result_column_names: dict[str, str] = field(default_factory=dict)
-    run_time: str = field(default_factory=_default_run_time)
     user_metadata: dict[str, str] = field(default_factory=dict)
+    run_time_overwrite: str | None = None
+    run_id_overwrite: str | None = None
 
 
 @dataclass
@@ -106,7 +144,10 @@ class WorkspaceConfig:
 
     # whether to use serverless clusters for the jobs, only used during workspace installation
     serverless_clusters: bool = True
-    extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. run_time
+    upload_dependencies: bool = (
+        False  # whether to upload dependencies to the workspace during installation to enable DQX in restricted (no-internet) environments
+    )
+    extra_params: ExtraParams | None = None  # extra parameters to pass to the jobs, e.g. result_column_names
 
     # cluster configuration for the jobs (applicable for non-serverless clusters only)
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
@@ -120,6 +161,20 @@ class WorkspaceConfig:
 
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables
+    custom_metrics: list[str] | None = None  # custom summary metrics tracked by the observer when applying checks
+
+    llm_config: LLMConfig = field(default_factory=LLMConfig)
+
+    def as_dict(self) -> dict:
+        """
+        Convert the WorkspaceConfig to a dictionary for serialization.
+        This method ensures that all fields, including boolean False values, are properly serialized.
+        Used by blueprint's installation when saving the config (Installation.save()).
+
+        Returns:
+            A dictionary representation of the WorkspaceConfig.
+        """
+        return asdict(self)
 
     def get_run_config(self, run_config_name: str | None = "default") -> RunConfig:
         """Get the run configuration for a given run name, or the default configuration if no run name is provided.
@@ -149,7 +204,13 @@ class WorkspaceConfig:
 
 @dataclass
 class BaseChecksStorageConfig(abc.ABC):
-    """Marker base class for storage configuration."""
+    """Marker base class for storage configuration.
+
+    Args:
+        location: The file path or table name where checks are stored.
+    """
+
+    location: str
 
 
 @dataclass
@@ -222,7 +283,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
     instance_name: str | None = None
     user: str | None = None
-    location: str | None = None
+    location: str
     port: str = "5432"
     run_config_name: str = "default"
     mode: str = "overwrite"
@@ -277,7 +338,24 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
 
     def __post_init__(self):
         if not self.location:
-            raise InvalidConfigError("The Unity Catalog volume file path ('location' field) must not be empty or None.")
+            raise InvalidParameterError(
+                "The Unity Catalog volume file path ('location' field) must not be empty or None."
+            )
+
+        # Expected format: /Volumes/{catalog}/{schema}/{volume}/{path/to/file}
+        if not self.location.startswith("/Volumes/"):
+            raise InvalidParameterError("The volume path must start with '/Volumes/'.")
+
+        parts = self.location.split("/")
+        # After split need at least: ['', 'Volumes', 'catalog', 'schema', 'volume', optional 'dir', 'file']
+        if len(parts) < 3 or not parts[2]:
+            raise InvalidParameterError("Invalid path: Path is missing a catalog name")
+        if len(parts) < 4 or not parts[3]:
+            raise InvalidParameterError("Invalid path: Path is missing a schema name")
+        if len(parts) < 5 or not parts[4]:
+            raise InvalidParameterError("Invalid path: Path is missing a volume name")
+        if len(parts) < 6 or not parts[-1].lower().endswith(tuple(FILE_SERIALIZERS.keys())):
+            raise InvalidParameterError("Invalid path: Path must include a file name after the volume")
 
 
 @dataclass

@@ -3,12 +3,14 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
+
 import yaml
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
+import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
 from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.check_funcs import sql_query
 from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams, RunConfig
@@ -22,8 +24,9 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
-import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
-from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS
+
+from tests.conftest import TEST_CATALOG
+from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID, build_quality_violation
 
 
 SCHEMA = "a: int, b: int, c: int"
@@ -78,6 +81,100 @@ def test_apply_checks_passed(ws, spark):
 
     expected = spark.createDataFrame([[1, 3, 3, None, None]], EXPECTED_SCHEMA)
     assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
+    output_table = f"{catalog}.{schema}.{make_random(8).lower()}"
+
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1, 1, 1], [None, 1, 2], [1, None, 3]], SCHEMA)
+
+    checks = [
+        DQRowRule(
+            name="a_is_null_or_empty",
+            criticality="error",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column="a",
+        ),
+        DQRowRule(
+            name="b_is_null_or_empty",
+            criticality="error",
+            check_func=check_funcs.is_not_null_and_not_empty,
+            column=F.col("b"),
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # persist result to materialize run_time
+    checked.write.saveAsTable(output_table)
+    checked_materialized = spark.table(output_table)
+
+    # Extract run_time field from the results, as it is auto-generated
+    run_time_values = (
+        checked_materialized.select(F.explode(F.col("_errors")).alias("error")).select("error.run_time").collect()
+    )
+    run_id_values = (
+        checked_materialized.select(F.explode(F.col("_errors")).alias("error")).select("error.run_id").collect()
+    )
+
+    run_time = None
+    for run_time_row in run_time_values:
+        if run_time_row:
+            run_time = run_time_row[0]
+            break
+    run_id = None
+    for run_id_row in run_id_values:
+        if run_id_row:
+            run_id = run_id_row[0]
+            break
+
+    expected = spark.createDataFrame(
+        [
+            [1, 1, 1, None, None],
+            [
+                None,
+                1,
+                2,
+                [
+                    {
+                        "name": "a_is_null_or_empty",
+                        "message": "Column 'a' value is null or empty",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time,
+                        "run_id": run_id,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                None,
+                3,
+                [
+                    {
+                        "name": "b_is_null_or_empty",
+                        "message": "Column 'b' value is null or empty",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": run_time,
+                        "run_id": run_id,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_df_equality(checked_materialized, expected, ignore_nullable=True)
 
 
 def test_foreign_key_check(ws, spark):
@@ -150,6 +247,7 @@ def test_foreign_key_check(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -166,6 +264,7 @@ def test_foreign_key_check(ws, spark):
                         "filter": "a > 4",
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -177,6 +276,7 @@ def test_foreign_key_check(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -255,6 +355,7 @@ def test_foreign_key_check_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -272,6 +373,7 @@ def test_foreign_key_check_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -295,6 +397,7 @@ def test_foreign_key_check_negate(ws, spark):
                         "filter": "a > 4",
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -306,6 +409,7 @@ def test_foreign_key_check_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -421,6 +525,7 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -523,6 +628,7 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -540,6 +646,7 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -643,6 +750,7 @@ def test_foreign_key_check_yaml(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -659,6 +767,7 @@ def test_foreign_key_check_yaml(ws, spark):
                         "filter": "a > 4",
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -670,6 +779,7 @@ def test_foreign_key_check_yaml(ws, spark):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -710,7 +820,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
         SCHEMA,
     )
 
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     ref_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
@@ -780,6 +890,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -796,6 +907,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                         "filter": "a > 4",
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -807,6 +919,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema, make_random):
                         "filter": None,
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -1041,6 +1154,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b > 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1058,6 +1172,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b > 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1075,6 +1190,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b > 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1091,6 +1207,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b = 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1108,6 +1225,7 @@ def test_apply_is_unique(ws, spark):
                         "filter": "b = 1 or b is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1195,6 +1313,7 @@ def test_compare_datasets_with_tolerance(ws, spark):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1211,6 +1330,7 @@ def test_compare_datasets_with_tolerance(ws, spark):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1298,6 +1418,7 @@ def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_ma
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1357,6 +1478,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     }
                 ],
@@ -1374,6 +1496,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value13", "tag2": "value23"},
                     }
                 ],
@@ -1385,6 +1508,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value11", "tag2": "value21"},
                     }
                 ],
@@ -1401,6 +1525,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     },
                     {
@@ -1410,6 +1535,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value13", "tag2": "value23"},
                     },
                 ],
@@ -1421,6 +1547,7 @@ def test_apply_checks(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value11", "tag2": "value21"},
                     }
                 ],
@@ -1501,6 +1628,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1510,6 +1638,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1519,6 +1648,7 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1567,6 +1697,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1576,6 +1707,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1585,6 +1717,7 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1624,6 +1757,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1641,6 +1775,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1652,6 +1787,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1668,6 +1804,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1677,6 +1814,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1688,6 +1826,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1743,6 +1882,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1761,6 +1901,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1770,6 +1911,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1786,6 +1928,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1797,6 +1940,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1806,6 +1950,7 @@ def test_apply_checks_and_split(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1868,6 +2013,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1879,6 +2025,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1896,6 +2043,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1905,6 +2053,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1921,6 +2070,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1932,6 +2082,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -1941,6 +2092,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -1990,6 +2142,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2001,6 +2154,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2018,6 +2172,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2027,6 +2182,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2043,6 +2199,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2054,6 +2211,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2063,6 +2221,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2110,6 +2269,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2121,6 +2281,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2138,6 +2299,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2147,6 +2309,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2163,6 +2326,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2174,6 +2338,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2183,6 +2348,7 @@ def test_apply_checks_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2230,6 +2396,7 @@ def test_apply_checks_with_filter(ws, spark):
                         "filter": "a<3",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2248,6 +2415,7 @@ def test_apply_checks_with_filter(ws, spark):
                         "filter": "b>3",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2319,6 +2487,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2328,6 +2497,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2337,6 +2507,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2354,6 +2525,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2363,6 +2535,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2372,6 +2545,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2419,6 +2593,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                         "filter": "a<3",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2437,6 +2612,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                         "filter": "b>3",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2476,6 +2652,7 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2514,6 +2691,7 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -2700,6 +2878,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2709,6 +2888,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2718,6 +2898,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2735,6 +2916,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2751,6 +2933,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -2760,6 +2943,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2774,6 +2958,7 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2850,6 +3035,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2867,6 +3053,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2876,6 +3063,584 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
         sensor_schema + REPORTING_COLUMNS,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
+    """Test sql_query check without merge_columns - dataset-level validation."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [1, None, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check without merge_columns
+    # Query returns a single row with a condition column
+    # The check will fail because COUNT(*) > 2 is True (we have 4 rows)
+    query_fail = "SELECT COUNT(*) > 2 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_fail,
+                "condition_column": "condition",
+                "msg": "Dataset has more than 2 rows",
+                "name": "dataset_check_fail",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # All rows should have the same error result since it's a dataset-level check
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                None,
+                3,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                1,
+                None,
+                4,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "dataset_check_fail",
+                        "message": "Dataset has more than 2 rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_filter(ws, spark):
+    """Test sql_query check without merge_columns with row_filter - should only apply to filtered rows."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, 10, 3], [1, 20, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check without merge_columns but WITH a filter
+    # The query checks if SUM(a) > 2, but only for rows where b >= 10
+    # Only 2 rows match the filter: [2, 10, 3] and [1, 20, 4], and SUM(a) = 3 > 2, so condition is True
+    query_with_filter = "SELECT SUM(a) > 2 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            filter="b >= 10",  # Only apply to rows where b >= 10
+            check_func_kwargs={
+                "query": query_with_filter,
+                "condition_column": "condition",
+                "msg": "Filtered sum check failed",
+                "name": "dataset_filtered_check",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # Only rows matching the filter (b >= 10) should have the error
+    # Rows not matching the filter should have None for both _errors and _warnings
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                None,  # b=3 doesn't match filter (b >= 10), so no error
+                None,
+            ],
+            [
+                2,
+                10,
+                3,
+                [
+                    {
+                        "name": "dataset_filtered_check",
+                        "message": "Filtered sum check failed",
+                        "columns": None,
+                        "filter": "b >= 10",
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                1,
+                20,
+                4,
+                [
+                    {
+                        "name": "dataset_filtered_check",
+                        "message": "Filtered sum check failed",
+                        "columns": None,
+                        "filter": "b >= 10",
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                None,
+                None,
+                None,
+                None,  # b=None doesn't match filter, so no error
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_passes(ws, spark):
+    """Test sql_query without merge_columns where condition evaluates to False (no violations)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Dataset-level check that passes: COUNT(*) > 100 is False (we only have 2 rows)
+    query_pass = "SELECT COUNT(*) > 100 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_pass,
+                "condition_column": "condition",
+                "msg": "Dataset has too many rows",
+                "name": "dataset_size_check",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # All rows should have None for errors since condition is False
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 3, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_empty_result(ws, spark):
+    """Test sql_query without merge_columns where query returns no rows (treated as False)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Query with WHERE 1=0 returns no rows
+    query_no_rows = "SELECT TRUE AS condition FROM {{input_view}} WHERE 1=0"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_no_rows,
+                "condition_column": "condition",
+                "msg": "Empty query result",
+                "name": "empty_query_check",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # No rows from query means condition is False, so no violations
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 3, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_negate(ws, spark):
+    """Test sql_query without merge_columns with negate=True."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3]], SCHEMA)
+
+    # Query that returns False, but with negate=True should fail
+    query_false = "SELECT COUNT(*) > 100 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_false,
+                "condition_column": "condition",
+                "msg": "Dataset does not have enough rows",
+                "name": "dataset_min_size_check",
+                "negate": True,  # Fail when condition is False
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # With negate=True, False becomes violation
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                [
+                    {
+                        "name": "dataset_min_size_check",
+                        "message": "Dataset does not have enough rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                None,
+                3,
+                [
+                    {
+                        "name": "dataset_min_size_check",
+                        "message": "Dataset does not have enough rows",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
+    """Test sql_query without merge_columns with warning criticality."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 3], [3, 4, 5]], SCHEMA)
+
+    # Dataset-level warning: COUNT(*) > 2 is True
+    query_warn = "SELECT COUNT(*) > 2 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",  # Warning instead of error
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_warn,
+                "condition_column": "condition",
+                "msg": "Dataset has more than 2 rows (warning)",
+                "name": "dataset_warn_check",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # All rows should have warning (not error)
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                3,
+                3,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                2,
+                None,
+                3,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                3,
+                4,
+                5,
+                None,
+                [
+                    {
+                        "name": "dataset_warn_check",
+                        "message": "Dataset has more than 2 rows (warning)",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df(ws, spark):
+    """Test sql_query without merge_columns (dataset-level) with reference DataFrame."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    # Main dataset
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200], [3, 30, 300]], SCHEMA)
+
+    # Reference dataset with expected totals
+    ref_df = spark.createDataFrame([[600]], "expected_total: int")
+
+    # Dataset-level check: violation occurs when totals do NOT match the reference table
+    query = """
+        SELECT (SELECT SUM(c) FROM {{input_view}}) != (SELECT expected_total FROM {{expected_totals}}) AS condition
+    """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query,
+                "condition_column": "condition",
+                "msg": "Total amount matches expected",
+                "name": "multi_dataset_check",
+            },
+        ),
+    ]
+
+    ref_dfs = {"expected_totals": ref_df}
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
+
+    # All rows should pass (SUM(100,200,300) = 600)
+    expected = spark.createDataFrame(
+        [
+            [1, 10, 100, None, None],
+            [2, 20, 200, None, None],
+            [3, 30, 300, None, None],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, spark):
+    """Test sql_query without merge_columns (dataset-level) with reference DataFrame that fails."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    # Main dataset
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200], [3, 30, 300]], SCHEMA)
+
+    # Reference dataset with expected totals (wrong value)
+    ref_df = spark.createDataFrame([[999]], "expected_total: int")
+
+    # Dataset-level check: violation occurs when totals do NOT match the reference table
+    query = """
+        SELECT (SELECT SUM(c) FROM {{input_view}}) != (SELECT expected_total FROM {{expected_totals}}) AS condition
+    """
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query,
+                "condition_column": "condition",
+                "msg": "Total amount does not match expected",
+                "name": "multi_dataset_check",
+            },
+        ),
+    ]
+
+    ref_dfs = {"expected_totals": ref_df}
+    checked = dq_engine.apply_checks(test_df, checks, ref_dfs=ref_dfs)
+
+    # All rows should fail (SUM(100,200,300) = 600 != 999)
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                10,
+                100,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                20,
+                200,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                3,
+                30,
+                300,
+                [
+                    {
+                        "name": "multi_dataset_check",
+                        "message": "Total amount does not match expected",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_query",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_sql_query_without_merge_columns_multiple_rows_error(ws, spark):
+    """Ensure dataset-level sql_query errors when the query returns more than one row."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 10, 100], [2, 20, 200]], SCHEMA)
+
+    query_multi_rows = "SELECT a > 0 AS condition FROM {{input_view}}"
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            check_func_kwargs={
+                "query": query_multi_rows,
+                "condition_column": "condition",
+                "msg": "Should never reach application",
+                "name": "dataset_multi_row_error",
+            },
+        ),
+    ]
+
+    with pytest.raises(
+        InvalidParameterError, match="Dataset-level sql_query without merge_columns must return exactly one row"
+    ):
+        dq_engine.apply_checks(test_df, checks)
 
 
 def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
@@ -2943,6 +3708,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -2960,6 +3726,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         "filter": None,
                         "function": "sql_query",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3011,6 +3778,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3028,6 +3796,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3045,6 +3814,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3054,6 +3824,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3063,6 +3834,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3072,6 +3844,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3081,6 +3854,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3090,6 +3864,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3099,6 +3874,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3116,6 +3892,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3125,6 +3902,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3134,6 +3912,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3143,6 +3922,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3152,6 +3932,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3161,6 +3942,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_a_column_no_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3170,6 +3952,7 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3215,6 +3998,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3224,6 +4008,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3241,6 +4026,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3250,6 +4036,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3267,6 +4054,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3276,6 +4064,7 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_dataset_check_func_with_ref_dfs",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3333,6 +4122,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3342,6 +4132,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3351,6 +4142,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3360,6 +4152,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3377,6 +4170,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3386,6 +4180,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3395,6 +4190,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3404,6 +4200,7 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "filter": None,
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3435,6 +4232,7 @@ def test_get_valid_records(ws, spark):
                         "filter": None,
                         "function": "is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3451,6 +4249,7 @@ def test_get_valid_records(ws, spark):
                         "filter": None,
                         "function": "is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3492,6 +4291,7 @@ def test_get_invalid_records(ws, spark):
                         "filter": None,
                         "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3508,6 +4308,7 @@ def test_get_invalid_records(ws, spark):
                         "filter": None,
                         "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3534,6 +4335,7 @@ def test_get_invalid_records(ws, spark):
                         "filter": None,
                         "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3550,6 +4352,7 @@ def test_get_invalid_records(ws, spark):
                         "filter": None,
                         "function": "a_is_null_or_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3570,7 +4373,8 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
-            run_time=RUN_TIME.isoformat(),
+            run_time_overwrite=RUN_TIME.isoformat(),
+            run_id_overwrite=RUN_ID,
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3595,6 +4399,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3612,6 +4417,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -3631,7 +4437,8 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                 ColumnArguments.ERRORS.value: "dq_errors",
                 ColumnArguments.WARNINGS.value: "dq_warnings",
             },
-            run_time=RUN_TIME.isoformat(),
+            run_time_overwrite=RUN_TIME.isoformat(),
+            run_id_overwrite=RUN_ID,
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3652,17 +4459,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     2,
                     None,
                     4,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
                     None,
                 ],
                 [
@@ -3670,44 +4467,14 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     4,
                     None,
                     None,
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
                 [
                     None,
                     None,
                     None,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "user_metadata": {},
-                        }
-                    ],
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
             ],
             EXPECTED_SCHEMA_WITH_CUSTOM_NAMES,
@@ -3720,7 +4487,8 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
         ws,
         extra_params=ExtraParams(
             result_column_names={"errors_invalid": "dq_errors", "warnings_invalid": "dq_warnings"},
-            run_time=RUN_TIME.isoformat(),
+            run_time_overwrite=RUN_TIME.isoformat(),
+            run_id_overwrite=RUN_ID,
         ),
     )
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
@@ -3741,17 +4509,7 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     2,
                     None,
                     4,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
                     None,
                 ],
                 [
@@ -3759,44 +4517,14 @@ def test_apply_checks_by_metadata_with_custom_column_naming_fallback_to_default(
                     4,
                     None,
                     None,
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
                 [
                     None,
                     None,
                     None,
-                    [
-                        {
-                            "name": "b_is_null_or_empty",
-                            "message": "Column 'b' value is null or empty",
-                            "columns": ["b"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "user_metadata": {},
-                        }
-                    ],
-                    [
-                        {
-                            "name": "a_is_null_or_empty",
-                            "message": "Column 'a' value is null or empty",
-                            "columns": ["a"],
-                            "filter": None,
-                            "function": "is_not_null_and_not_empty",
-                            "run_time": RUN_TIME,
-                            "user_metadata": {},
-                        }
-                    ],
+                    [build_quality_violation("b_is_null_or_empty", "Column 'b' value is null or empty", ["b"])],
+                    [build_quality_violation("a_is_null_or_empty", "Column 'a' value is null or empty", ["a"])],
                 ],
             ],
             EXPECTED_SCHEMA,
@@ -3849,6 +4577,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3858,6 +4587,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3867,6 +4597,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -3927,6 +4658,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3936,6 +4668,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3945,6 +4678,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -3954,6 +4688,7 @@ def test_apply_checks_with_sql_expression_using_classes(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4031,6 +4766,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4048,6 +4784,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4064,6 +4801,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4073,6 +4811,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4084,6 +4823,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4100,6 +4840,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4109,6 +4850,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4120,6 +4862,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4136,6 +4879,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4147,6 +4891,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4163,6 +4908,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4174,6 +4920,7 @@ def test_apply_checks_with_is_unique(ws, spark, set_utc_timezone):
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4245,6 +4992,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4254,6 +5002,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4263,6 +5012,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4274,6 +5024,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4290,6 +5041,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4299,6 +5051,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4308,6 +5061,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4319,6 +5073,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4335,6 +5090,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4344,6 +5100,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4361,6 +5118,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4370,6 +5128,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4387,6 +5146,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4396,6 +5156,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4407,6 +5168,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4423,6 +5185,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -4432,6 +5195,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": None,
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -4443,6 +5207,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
                         "filter": "col2 is null",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -4454,7 +5219,7 @@ def test_apply_checks_with_is_unique_nulls_not_distinct(ws, spark, set_utc_timez
 
 
 def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, make_random, make_volume, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
     output_table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
@@ -4598,7 +5363,7 @@ def test_apply_checks_all_row_checks_as_yaml_with_streaming(ws, make_schema, mak
 def test_apply_checks_all_row_geo_checks_as_yaml_with_streaming(
     skip_if_runtime_not_geo_compatible, ws, make_schema, make_random, make_volume, spark
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
     output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -5819,6 +6584,17 @@ def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compa
             check_func=geo_check_funcs.is_non_empty_geometry,
             column=F.col("point_geom"),
         ),
+        # is_not_null_island check
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_not_null_island,
+            column="point_geom",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_not_null_island,
+            column=F.col("point_geom"),
+        ),
         # has_dimension check
         DQRowRule(
             criticality="error",
@@ -5857,6 +6633,54 @@ def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compa
             check_func=geo_check_funcs.has_y_coordinate_between,
             column=F.col("polygon_geom"),
             check_func_kwargs={"min_value": 0.0, "max_value": 10.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_area_not_less_than,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"value": 0.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_area_not_greater_than,
+            column=F.col("point_geom"),
+            check_func_kwargs={"value": 1.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_area_equal_to,
+            column=F.col("point_geom"),
+            check_func_kwargs={"value": 0.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_area_not_equal_to,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"value": 0.0},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_num_points_not_less_than,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"value": 2},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_num_points_not_greater_than,
+            column=F.col("point_geom"),
+            check_func_kwargs={"value": 2},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_num_points_equal_to,
+            column=F.col("point_geom"),
+            check_func_kwargs={"value": 1},
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_num_points_not_equal_to,
+            column=F.col("polygon_geom"),
+            check_func_kwargs={"value": 2},
         ),
     ]
 
@@ -5952,7 +6776,9 @@ def test_apply_checks_all_geo_checks_using_classes(skip_if_runtime_not_geo_compa
 
 def test_define_user_metadata_and_extract_dq_results(ws, spark):
     user_metadata = {"key1": "value1", "key2": "value2"}
-    extra_params = ExtraParams(run_time=RUN_TIME.isoformat(), user_metadata=user_metadata)
+    extra_params = ExtraParams(
+        run_time_overwrite=RUN_TIME.isoformat(), user_metadata=user_metadata, run_id_overwrite=RUN_ID
+    )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     test_df = spark.createDataFrame([[None, 1, 1]], SCHEMA)
 
@@ -5999,6 +6825,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 None,
                 "is_not_null_and_not_empty",
                 RUN_TIME,
+                RUN_ID,
                 user_metadata,
             ],
             [
@@ -6008,6 +6835,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 "b = 1",
                 "is_not_null",
                 RUN_TIME,
+                RUN_ID,
                 user_metadata,
             ],
         ],
@@ -6056,6 +6884,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6065,6 +6894,7 @@ def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6138,6 +6968,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6147,6 +6978,7 @@ def test_apply_checks_complex_types_by_metadata(ws, spark):
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6222,6 +7054,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6231,6 +7064,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6250,7 +7084,9 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
 
 def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
     extra_params = ExtraParams(
-        run_time=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+        run_time_overwrite=RUN_TIME.isoformat(),
+        run_id_overwrite=RUN_ID,
+        user_metadata={"tag2": "from_engine", "tag3": "from_engine"},
     )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
@@ -6286,6 +7122,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
                     }
                 ],
@@ -6302,6 +7139,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
                     }
                 ],
@@ -6318,6 +7156,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
                     },
                     {
@@ -6327,6 +7166,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
                     },
                 ],
@@ -6342,7 +7182,9 @@ def test_apply_checks_with_check_and_engine_metadata_from_config(ws, spark):
 
 def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
     extra_params = ExtraParams(
-        run_time=RUN_TIME.isoformat(), user_metadata={"tag2": "from_engine", "tag3": "from_engine"}
+        run_time_overwrite=RUN_TIME.isoformat(),
+        run_id_overwrite=RUN_ID,
+        user_metadata={"tag2": "from_engine", "tag3": "from_engine"},
     )
     dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
     schema = "col1: string, col2: string"
@@ -6380,6 +7222,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
                     }
                 ],
@@ -6396,6 +7239,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
                     }
                 ],
@@ -6412,6 +7256,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "from_check", "tag3": "from_engine"},
                     },
                     {
@@ -6421,6 +7266,7 @@ def test_apply_checks_with_check_and_engine_metadata_from_classes(ws, spark):
                         "filter": None,
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value2", "tag2": "from_engine", "tag3": "from_engine"},
                     },
                 ],
@@ -6575,11 +7421,12 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6591,15 +7438,17 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_greater_than_limit",
-                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6609,6 +7458,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6620,47 +7470,52 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "b_sum_group_by_a_not_equal_to_limit",
-                        "message": "Sum 2 in column 'b' per group of columns 'a' is not equal to limit: 8",
+                        "message": "Sum value 2 in column 'b' per group of columns 'a' is not equal to limit: 8",
                         "columns": ["b"],
                         "filter": None,
                         "function": "is_aggr_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
+                        "message": "Count value 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6672,15 +7527,17 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_greater_than_limit",
-                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6690,6 +7547,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6701,65 +7559,72 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "b_sum_group_by_a_not_equal_to_limit",
-                        "message": "Sum 2 in column 'b' per group of columns 'a' is not equal to limit: 8",
+                        "message": "Sum value 2 in column 'b' per group of columns 'a' is not equal to limit: 8",
                         "columns": ["b"],
                         "filter": None,
                         "function": "is_aggr_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
+                        "message": "Count value 1 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
+                        "message": "Count value 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
-                        "message": "Count 1 in column 'a' per group of columns 'a' is less than limit: 10",
+                        "message": "Count value 1 in column 'a' per group of columns 'a' is less than limit: 10",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6771,24 +7636,27 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_greater_than_limit",
-                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 in column 'a' is greater than limit: 0",
+                        "message": "Count value 1 in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -6798,6 +7666,7 @@ def test_apply_aggr_checks(ws, spark):
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -6952,67 +7821,74 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_not_equal_to_limit",
-                        "message": "Count 2 in column 'a' is equal to limit: 2",
+                        "message": "Count value 2 in column 'a' is equal to limit: 2",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_greater_than_limit",
-                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "count_equal_to_limit",
-                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "message": "Count value 3 in column '*' is equal to limit: 3",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_not_equal_to_limit",
-                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "message": "Average value 4.0 in column 'c' is equal to limit: 4.0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7024,94 +7900,104 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
+                        "message": "Count value 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_not_equal_to_limit",
-                        "message": "Count 2 in column 'a' is equal to limit: 2",
+                        "message": "Count value 2 in column 'a' is equal to limit: 2",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_greater_than_limit",
-                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "count_equal_to_limit",
-                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "message": "Count value 3 in column '*' is equal to limit: 3",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_not_equal_to_limit",
-                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "message": "Average value 4.0 in column 'c' is equal to limit: 4.0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7123,130 +8009,144 @@ def test_apply_aggr_checks_by_metadata(ws, spark):
                 [
                     {
                         "name": "a_count_group_by_a_greater_than_limit",
-                        "message": "Count 2 in column 'a' per group of columns 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_group_by_a_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 in column 'a' per group of columns 'a' is greater than limit: 0",
+                        "message": "Count value 1 in column 'a' per group of columns 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "row_count_group_by_a_b_greater_than_limit",
-                        "message": "Count 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
+                        "message": "Count value 1 in column 'a' per group of columns 'a, b' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_group_by_a_greater_than_limit",
-                        "message": "Avg 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
+                        "message": "Average value 4.0 in column 'c' per group of columns 'a' is greater than limit: 0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_group_by_a_less_than_limit_with_b_not_null",
-                        "message": "Count 1 in column 'a' per group of columns 'a' is less than limit: 10",
+                        "message": "Count value 1 in column 'a' per group of columns 'a' is less than limit: 10",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_not_equal_to_limit",
-                        "message": "Count 2 in column 'a' is equal to limit: 2",
+                        "message": "Count value 2 in column 'a' is equal to limit: 2",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_not_equal_to_limit_with_filter",
-                        "message": "Count 1 in column 'a' is equal to limit: 1",
+                        "message": "Count value 1 in column 'a' is equal to limit: 1",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_greater_than_limit",
-                        "message": "Count 2 in column 'a' is greater than limit: 0",
+                        "message": "Count value 2 in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "a_count_greater_than_limit_with_b_not_null",
-                        "message": "Count 1 in column 'a' is greater than limit: 0",
+                        "message": "Count value 1 in column 'a' is greater than limit: 0",
                         "columns": ["a"],
                         "filter": "b is not null",
                         "function": "is_aggr_not_greater_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "count_equal_to_limit",
-                        "message": "Count 3 in column '*' is equal to limit: 3",
+                        "message": "Count value 3 in column '*' is equal to limit: 3",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "c_avg_not_equal_to_limit",
-                        "message": "Avg 4.0 in column 'c' is equal to limit: 4.0",
+                        "message": "Average value 4.0 in column 'c' is equal to limit: 4.0",
                         "columns": ["c"],
                         "filter": None,
                         "function": "is_aggr_not_equal",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7384,6 +8284,7 @@ def test_compare_datasets_check(ws, spark, set_utc_timezone):
                         "filter": "id1 != 2",
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1"},
                     }
                 ],
@@ -7485,6 +8386,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7520,6 +8422,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7556,6 +8459,7 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
                         "filter": None,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7647,7 +8551,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
         schema_ref,
     )
 
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     ref_table_schema = make_schema(catalog_name=catalog_name)
     ref_table = f"{catalog_name}.{ref_table_schema.name}.{make_random(10).lower()}"
     ref_df.write.saveAsTable(ref_table)
@@ -7701,6 +8605,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                         "filter": filter_str,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7726,6 +8631,7 @@ def test_compare_datasets_check_missing_records_with_partial_filter(
                         "filter": filter_str,
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -7792,6 +8698,7 @@ def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_time
                         "filter": None,
                         "function": "is_data_fresh_per_time_window",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7899,6 +8806,16 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
             columns=["missing_col"],
             filter="missing_col > 0",
         ),
+        # invalid sql expression column
+        DQRowRule(
+            name="invalid_col_sql_expression",
+            criticality="error",
+            check_func=check_funcs.sql_expression,
+            check_func_args=["missing_col > 0"],  # verify validation works when using args
+            check_func_kwargs={
+                "msg": "missing_col is less than 0",
+            },
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -7920,6 +8837,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": "missing_col > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7929,15 +8847,18 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "missing_col_sql_expression",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -7948,6 +8869,17 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": "missing_col > 0",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_sql_expression",
+                        "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -7959,6 +8891,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "filter": "a > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     },
                 ],
@@ -8050,6 +8983,17 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                 "arguments": {"columns": ["missing_col"]},
             },
         },
+        {
+            "name": "invalid_col_sql_expression",
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "missing_col > 0",
+                    "msg": "missing_col is less than 0",
+                },
+            },
+        },
     ]
 
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
@@ -8071,6 +9015,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": "missing_col > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8080,15 +9025,18 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
                         "name": "missing_col_sql_expression",
-                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+                        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']; "
+                        "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
                         "columns": ["missing_col"],
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                     {
@@ -8099,6 +9047,17 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": "missing_col > 0",
                         "function": "is_unique",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "invalid_col_sql_expression",
+                        "message": "Check evaluation skipped due to invalid sql expression: 'missing_col > 0'",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     },
                 ],
@@ -8110,6 +9069,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "filter": "a > 0",
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     },
                 ],

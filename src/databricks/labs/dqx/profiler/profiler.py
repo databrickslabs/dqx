@@ -1,6 +1,7 @@
 import datetime
 import decimal
 import math
+import uuid
 import logging
 import os
 from concurrent import futures
@@ -13,15 +14,24 @@ from typing import Any
 
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
+from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.base import DQEngineBase
-from databricks.labs.dqx.config import InputConfig
-from databricks.labs.dqx.io import read_input_data
+from databricks.labs.dqx.config import InputConfig, LLMModelConfig
+from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
+from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import InvalidParameterError
+
+try:
+    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
+
+    LLM_ENABLED = True
+except ImportError:
+    LLM_ENABLED = False
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +48,17 @@ class DQProfile:
 class DQProfiler(DQEngineBase):
     """Data Quality Profiler class to profile input data."""
 
-    def __init__(self, workspace_client: WorkspaceClient, spark: SparkSession | None = None):
+    def __init__(
+        self,
+        workspace_client: WorkspaceClient,
+        spark: SparkSession | None = None,
+        llm_model_config: LLMModelConfig | None = None,
+    ):
         super().__init__(workspace_client=workspace_client)
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+
+        llm_model_config = llm_model_config or LLMModelConfig()
+        self.llm_engine = DQLLMEngine(model_config=llm_model_config, spark=self.spark) if LLM_ENABLED else None
 
     default_profile_options = {
         "round": True,  # round the min/max values
@@ -56,6 +74,7 @@ class DQProfiler(DQEngineBase):
         "sample_seed": None,  # seed for sampling
         "limit": 1000,  # limit the number of samples
         "filter": None,  # filter to apply to the dataset
+        "llm_primary_key_detection": True,  # detect primary keys
     }
 
     @staticmethod
@@ -119,7 +138,7 @@ class DQProfiler(DQEngineBase):
     @telemetry_logger("profiler", "profile_table")
     def profile_table(
         self,
-        table: str,
+        input_config: InputConfig,
         columns: list[str] | None = None,
         options: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], list[DQProfile]]:
@@ -127,15 +146,18 @@ class DQProfiler(DQEngineBase):
         Profiles a table to generate summary statistics and data quality rules.
 
         Args:
-            table: The fully-qualified table name (*catalog.schema.table*) to be profiled
+            input_config: Input configuration containing the table location.
             columns: An optional list of column names to include in the profile. If None, all columns are included.
             options: An optional dictionary of options for profiling.
 
         Returns:
             A tuple containing a dictionary of summary statistics and a list of data quality profiles.
         """
-        logger.info(f"Profiling {table} with options: {options}")
-        df = read_input_data(spark=self.spark, input_config=InputConfig(location=table))
+        if not input_config or not input_config.location:
+            raise MissingParameterError("Input config with location is required")
+
+        logger.info(f"Profiling {input_config.location} with options: {options}")
+        df = read_input_data(spark=self.spark, input_config=input_config)
         return self.profile(df=df, columns=columns, options=options)
 
     @telemetry_logger("profiler", "profile_tables_for_patterns")
@@ -181,6 +203,54 @@ class DQProfiler(DQEngineBase):
             max_parallelism=max_parallelism,
         )
 
+    @telemetry_logger("profiler", "detect_primary_keys_with_llm")
+    def detect_primary_keys_with_llm(self, input_config: InputConfig) -> dict[str, Any]:
+        """
+        Detects primary keys using LLM-based analysis.
+
+        This method analyzes table schema and metadata to identify primary key columns.
+
+        Args:
+            input_config: Input configuration containing the table location.
+
+        Returns:
+            A dictionary containing the primary key detection result with the following keys:
+            - table: The table name
+            - success: Whether detection was successful
+            - primary_key_columns: List of detected primary key columns (if successful)
+            - confidence: Confidence level (high/medium/low)
+            - reasoning: LLM reasoning for the selection
+            - has_duplicates: Whether duplicates were found (if validation performed)
+            - duplicate_count: Number of duplicate combinations (if validation performed)
+            - error: Error message (if failed)
+        """
+        if self.llm_engine is None:
+            raise MissingParameterError(
+                "LLM engine not available. Make sure LLM dependencies are installed: "
+                "pip install 'databricks-labs-dqx[llm]'"
+            )
+
+        if not input_config.location:
+            raise InvalidConfigError("Input location not configured")
+
+        def _detect_with_temp_view(df: DataFrame, view_name: str) -> dict[str, Any]:
+            try:
+                df.createOrReplaceTempView(view_name)
+                assert self.llm_engine is not None  # for mypy
+                return self.llm_engine.detect_primary_keys_with_llm(view_name)
+            finally:
+                try:
+                    self.spark.sql(f"DROP VIEW IF EXISTS {view_name}")
+                except AnalysisException:
+                    pass
+
+        if STORAGE_PATH_PATTERN.match(input_config.location):
+            input_df = read_input_data(self.spark, input_config)
+            temp_view_name = f"temp_from_dataframe_{id(input_df)}_{uuid.uuid4().hex}"
+            return _detect_with_temp_view(input_df, temp_view_name)
+
+        return self.llm_engine.detect_primary_keys_with_llm(input_config.location)
+
     def _profile_tables(
         self,
         tables: list[str] | None = None,
@@ -210,7 +280,7 @@ class DQProfiler(DQEngineBase):
         for table in tables:
             args.append(
                 {
-                    "table": table,
+                    "input_config": InputConfig(location=table),
                     "columns": columns.get(table, None),
                     "options": DQProfiler._build_options_from_list(table, options),
                 }
@@ -313,6 +383,63 @@ class DQProfiler(DQEngineBase):
             metrics = summary_stats[field_name]
 
             self._calculate_metrics(df, dq_rules, field_name, metrics, opts, total_count, typ)
+
+        self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
+
+    def _add_llm_primary_key_for_dataframe(
+        self, df: DataFrame, dq_rules: list[DQProfile], summary_stats: dict[str, Any], opts: dict[str, Any]
+    ) -> None:
+        """
+        Adds LLM-based primary key detection results for DataFrames to summary statistics if enabled.
+
+        Args:
+            df: The DataFrame to analyze
+            dq_rules: A list to store the generated data quality rules.
+            summary_stats: Summary statistics dictionary to update with PK detection results
+            opts: A dictionary of options for profiling.
+        """
+        if not LLM_ENABLED or not opts.get("llm_primary_key_detection", False):
+            return
+
+        logger.info("🤖 Starting LLM-based primary key detection for DataFrame")
+
+        temp_view_name = f"temp_from_dataframe_{id(df)}_{uuid.uuid4().hex}"
+        pk_result: dict[str, Any] = {}
+
+        try:
+            df.createOrReplaceTempView(temp_view_name)
+            pk_result = self.detect_primary_keys_with_llm(input_config=InputConfig(location=temp_view_name))
+        finally:
+            try:  # Clean up the temporary view using SQL (Unity Catalog compatible)
+                self.spark.sql(f"DROP VIEW IF EXISTS {temp_view_name}")
+            except AnalysisException:
+                pass  # Ignore cleanup errors
+
+        if pk_result and pk_result.get("success", False) and not pk_result.get("has_duplicates", False):
+            pk_columns = pk_result.get("primary_key_columns", [])
+            if pk_columns and pk_columns != ["none"]:
+                # Validate that detected columns actually exist in the DataFrame
+                valid_columns = [col for col in pk_columns if col in df.columns]
+                if valid_columns:
+                    reasoning = pk_result.get("reasoning", "")
+                    confidence = pk_result.get("confidence", "unknown")
+                    dq_rules.append(
+                        DQProfile(
+                            name="is_unique",
+                            column=",".join(valid_columns),
+                            parameters={"nulls_distinct": False, "reasoning": reasoning, "confidence": confidence},
+                            filter=opts.get("filter", None),
+                            description=f"LLM-detected primary key columns: {', '.join(valid_columns)}",
+                        )
+                    )
+                    # Add to summary stats (but don't automatically generate rules)
+                    summary_stats["llm_primary_key_detection"] = {
+                        "detected_columns": valid_columns,
+                        "confidence": confidence,
+                        "reasoning": reasoning,
+                        "method": "llm",
+                    }
+                    logger.info(f"✅ LLM-based primary key detected for DataFrame: {valid_columns}")
 
     def _calculate_metrics(
         self,
