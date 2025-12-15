@@ -1877,7 +1877,7 @@ def has_valid_schema(
     This function checks whether the DataFrame schema is compatible with the expected schema.
     In non-strict mode, validates that all expected columns exist with compatible types.
     In strict mode, validates that the schema matches exactly (same columns, same order, same types)
-    for the columns specified in `columns` or for all columns if `columns` is not specified.
+    for the columns specified in columns or for all columns if columns is not specified.
 
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
@@ -2046,25 +2046,24 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
     Validates that JSON strings in the specified column conform to an expected schema.
 
     The validation utilizes standard Spark JSON parsing rules, specifically:
-
-        * **Type Coercion is Permitted:** Values that can be successfully cast to the target schema type
-        (e.g., a JSON number like `0.12` parsing into a field defined as `STRING`) are considered valid.
-        * **Extra Fields are Ignored:** Fields present in the JSON but missing from the schema are ignored.
-        * **Missing keys imply null:** If a key is missing from the JSON object, Spark treats it as a `null` value.
-        * **Strictness:** If a schema field is defined as `NOT NULL`, validation will fail if the key is missing (implicit null) or explicitly set to `null`.
-        * **Nested JSON behavior:** If a nullable parent field is explicitly `null` (e.g., `{"parent": null}`), its children are **not** validated.
-        However, if the parent exists (e.g., `{"parent": {}}`) but a required child is missing, validation fails.
-        * **Nested Depth Limit:** The validation logic supports a maximum nested depth of 10 levels.
+    * **Type Coercion is Permitted:** Values that can be successfully cast to the target schema type
+    (e.g. a JSON number like 0.12 parsing into a field defined as STRING) are considered valid.
+    * **Extra Fields are Ignored:** Fields present in the JSON, but missing from the schema are ignored.
+    * **Missing keys imply null:** If a key is missing from the JSON object, Spark treats it as a null value.
+    * **Strictness:** If a schema field is defined as NOT NULL, validation will fail if the key is missing (implicit null) or explicitly set to null.
+    * **Nested JSON behavior:** If a nullable parent field is explicitly null (e.g. `{"parent": null}`), its children are **not** validated.
+    However, if the parent exists (e.g. `{"parent": {}}`) but a required child is missing, validation fails.
+    * **Nested Depth Limit:** The validation logic supports a maximum nested depth of 10 levels.
 
     Args:
         column: Column name or Column expression containing JSON strings.
-        schema: Expected schema as a DDL string (e.g., "struct<id:string NOT NULL>", "id INT, name STRING")
-            or a generic StructType. To enforce strict presence of a field, you must explicitly set it to `nullable=False`
-            or use `NOT NULL` in the DDL string.
+        schema: Expected schema as a DDL string (e.g. "struct<id:string NOT NULL>", "id INT, name STRING")
+            or a generic StructType. To enforce strict presence of a field, you must explicitly set it to nullable=False
+            or use NOT NULL in the DDL string.
 
     Returns:
         A string Column containing the error message if the JSON does not conform to the schema,
-            or `null` if validation passes.
+            or null if validation passes.
 
     Raises:
         InvalidParameterError: If the schema string is invalid/unparsable, or if the input schema is neither a string nor a StructType.
