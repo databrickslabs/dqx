@@ -86,10 +86,11 @@ def get_required_check_functions_definitions(
     return required_function_docs
 
 
-def get_required_summary_stats(summary_stats: dict) -> dict:
+def get_required_summary_stats(summary_stats: dict[str, Any]) -> dict[str, Any]:
     """
-    Extract only required summary stats information (mean, min, max).
-    Converts Decimal values to strings for JSON serialization.
+    Filters the summary statistics to include only mean, min, and max values,
+    which provide sufficient information for LLM-based rule generation while
+    reducing token usage. Converts all values to JSON-serializable format..
 
     Args:
         summary_stats: Dictionary containing summary statistics for each column.

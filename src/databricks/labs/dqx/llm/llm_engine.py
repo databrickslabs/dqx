@@ -54,7 +54,7 @@ class DQLLMEngine:
         self._llm_pk_detector = LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
 
     def detect_business_rules_with_llm(
-        self, user_input: str = "", schema_info: str = "", summary_stats: dict | None = None
+        self, user_input: str = "", schema_info: str = "", summary_stats: dict[str, Any] | None = None
     ) -> dspy.primitives.prediction.Prediction:
         """
         Detect DQX rules based on natural language request with optional schema or summary statistics.
