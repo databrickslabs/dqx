@@ -12,46 +12,6 @@
   quality_rules: '[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"product_code"}}}]'
   reasoning: "Product code is a critical identifier field that should not have nulls to maintain referential integrity."
 
-- name: "order_quantity_reasonable_range_from_stats"
-  data_summary_stats:
-    quantity:
-      mean: "50.5"
-      min: "1"
-      max: "100"
-    order_id:
-      mean: null
-      min: "ORD001"
-      max: "ORD1000"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"quantity","min_limit":1,"max_limit":100}}}]'
-  reasoning: "Based on the statistics, quantity ranges from 1 to 100 with a mean of 50.5, which represents the normal business range for order quantities."
-
-- name: "price_positive_and_within_observed_range"
-  business_description: "E-commerce pricing data for products sold online, ensuring all prices are valid and within acceptable ranges"
-  data_summary_stats:
-    price:
-      mean: "125.50"
-      min: "10.00"
-      max: "500.00"
-    product_id:
-      mean: null
-      min: "P001"
-      max: "P999"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"price","min_limit":10.00,"max_limit":500.00}}}]'
-  reasoning: "Price statistics show the data ranges from $10 to $500 with a mean of $125.50. This range should be enforced to catch data entry errors."
-
-- name: "age_within_valid_range_based_on_distribution"
-  data_summary_stats:
-    age:
-      mean: "42.5"
-      min: "18"
-      max: "75"
-    customer_id:
-      mean: null
-      min: "C001"
-      max: "C1000"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"age","min_limit":18,"max_limit":75}}}]'
-  reasoning: "Age distribution shows values between 18 and 75 with mean 42.5, which is the expected range for adult customers."
-
 - name: "temperature_sensor_range_validation"
   business_description: "IoT sensor data from manufacturing facility monitoring ambient temperature across different zones"
   data_summary_stats:
@@ -63,10 +23,6 @@
       mean: null
       min: "SEN001"
       max: "SEN100"
-    timestamp:
-      mean: null
-      min: "2024-01-01 00:00:00"
-      max: "2024-12-31 23:59:59"
   quality_rules: '[{"criticality":"warn","check":{"function":"is_in_range","arguments":{"column":"temperature","min_limit":-10.0,"max_limit":50.0}}}]'
   reasoning: "Temperature sensor data shows a range from -10°C to 50°C with mean 22.5°C. Values outside this range may indicate sensor malfunction."
 
@@ -81,65 +37,7 @@
       min: "2024-01-01"
       max: "2024-12-31"
   quality_rules: '[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"order_amount"}}},{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"order_amount","min_limit":0.01,"max_limit":2500.00}}}]'
-  reasoning: "Order amount ranges from $0.01 to $2500 with mean $250.75. All orders must have an amount and be within the valid business range."
-
-- name: "discount_percentage_reasonable_range"
-  business_description: "Promotional discount tracking system for retail products across different categories"
-  data_summary_stats:
-    discount_percentage:
-      mean: "15.5"
-      min: "0.0"
-      max: "50.0"
-    product_category:
-      mean: null
-      min: "Category A"
-      max: "Category Z"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"discount_percentage","min_limit":0.0,"max_limit":50.0}}}]'
-  reasoning: "Discount percentage ranges from 0% to 50% with a mean of 15.5%. This is the acceptable business range for discounts."
-
-- name: "rating_bounded_integer_range"
-  data_summary_stats:
-    rating:
-      mean: "3.8"
-      min: "1"
-      max: "5"
-    product_id:
-      mean: null
-      min: "P0001"
-      max: "P9999"
-    review_date:
-      mean: null
-      min: "2024-01-01"
-      max: "2024-12-31"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"rating","min_limit":1,"max_limit":5}}}]'
-  reasoning: "Rating statistics show values strictly between 1 and 5 with mean 3.8, which is the valid range for star ratings."
-
-- name: "employee_id_no_nulls_high_coverage"
-  business_description: "Human resources employee database with employee information and department assignments"
-  data_summary_stats:
-    employee_id:
-      mean: null
-      min: "E001"
-      max: "E1000"
-    department:
-      mean: null
-      min: "Engineering"
-      max: "Sales"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"employee_id"}}}]'
-  reasoning: "Employee ID is a required identifier field that must be present for all records to maintain data integrity."
-
-- name: "transaction_amount_outlier_detection"
-  data_summary_stats:
-    transaction_amount:
-      mean: "500.00"
-      min: "1.00"
-      max: "5000.00"
-    transaction_type:
-      mean: null
-      min: "credit"
-      max: "debit"
-  quality_rules: '[{"criticality":"warn","check":{"function":"is_in_range","arguments":{"column":"transaction_amount","min_limit":1.00,"max_limit":5000.00}}}]'
-  reasoning: "Transaction amounts range from $1 to $5000 with mean $500. Using the observed range helps detect outliers and data entry errors."
+  reasoning: "Order amount ranges from $0.01 to $2500 with mean $250.75. All orders must have an amount and be within the valid business range. Multiple rules ensure both presence and validity."
 
 - name: "timestamp_freshness_based_on_max"
   business_description: "Real-time event tracking system for user interactions on website and mobile app"
@@ -153,49 +51,99 @@
       min: "click"
       max: "view"
   quality_rules: '[{"criticality":"error","check":{"function":"is_data_fresh","arguments":{"column":"event_timestamp","max_age_minutes":1440}}}]'
-  reasoning: "Event timestamps show data from the last 2 days (min: 2024-12-30, max: 2024-12-31). Events should be within 24 hours to be considered fresh."
+  reasoning: "Event timestamps show data from the last 2 days (min: 2024-12-30, max: 2024-12-31). Events should be within 24 hours to be considered fresh for real-time analytics."
 
-- name: "percentage_field_bounded_range"
+- name: "email_format_validation"
+  business_description: "Customer contact database requiring valid email addresses for communication"
   data_summary_stats:
-    completion_percentage:
-      mean: "67.5"
-      min: "0.0"
-      max: "100.0"
-    task_id:
+    email:
       mean: null
-      min: "T001"
-      max: "T1500"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"completion_percentage","min_limit":0.0,"max_limit":100.0}}}]'
-  reasoning: "Completion percentage naturally ranges from 0 to 100 with mean 67.5%, representing the valid range for percentage fields."
-
-- name: "salary_reasonable_business_range"
-  business_description: "Payroll system tracking employee compensation across different job levels and departments"
-  data_summary_stats:
-    salary:
-      mean: "75000.00"
-      min: "30000.00"
-      max: "200000.00"
-    job_level:
+      min: "alice@company.com"
+      max: "zoe@partner.org"
+    customer_type:
       mean: null
-      min: "Junior"
-      max: "Senior"
-  quality_rules: '[{"criticality":"warn","check":{"function":"is_in_range","arguments":{"column":"salary","min_limit":30000.00,"max_limit":200000.00}}}]'
-  reasoning: "Salary ranges from $30K to $200K with mean $75K. This represents the company's typical salary range and should be validated."
+      min: "B2B"
+      max: "B2C"
+    registration_date:
+      mean: null
+      min: "2024-01-01"
+      max: "2024-12-31"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_email","arguments":{"column":"email"}}}]'
+  reasoning: "Email column contains addresses that should follow standard email format for reliable customer communication. Format validation is essential beyond just checking for null values."
 
-- name: "stock_quantity_non_negative"
+- name: "unique_transaction_id"
+  business_description: "Financial transactions requiring unique identifiers to prevent duplicate processing"
   data_summary_stats:
-    stock_quantity:
-      mean: "125.5"
+    transaction_id:
+      mean: null
+      min: "TXN000001"
+      max: "TXN999999"
+    amount:
+      mean: "500.50"
+      min: "0.01"
+      max: "10000.00"
+    transaction_date:
+      mean: null
+      min: "2024-01-01"
+      max: "2024-12-31"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_unique","arguments":{"column":"transaction_id"}}}]'
+  reasoning: "Transaction IDs must be unique to prevent duplicate processing and ensure data integrity in the financial system."
+
+- name: "product_code_pattern_validation"
+  business_description: "Inventory system with standardized product codes following company format"
+  data_summary_stats:
+    product_code:
+      mean: null
+      min: "PROD-1000-A"
+      max: "PROD-9999-Z"
+    category:
+      mean: null
+      min: "Electronics"
+      max: "Home"
+    stock_level:
+      mean: "150"
       min: "0"
       max: "1000"
-    product_sku:
-      mean: null
-      min: "SKU001"
-      max: "SKU2500"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"stock_quantity","min_limit":0,"max_limit":1000}}}]'
-  reasoning: "Stock quantity ranges from 0 to 1000 units with mean 125.5. The minimum of 0 indicates out-of-stock items are valid, but negative values would be errors."
+  quality_rules: '[{"criticality":"error","check":{"function":"matches_pattern","arguments":{"column":"product_code","pattern":"^PROD-\\d{4}-[A-Z]$"}}}]'
+  reasoning: "Product codes follow a specific pattern PROD-####-X where #### is 4 digits and X is a capital letter. This standard format ensures consistency across the inventory system and integration with other systems."
 
-- name: "email_completeness_check"
+- name: "conditional_discount_validation"
+  business_description: "Sales data where premium customers get discounts but standard customers should not"
+  data_summary_stats:
+    discount_amount:
+      mean: "25.50"
+      min: "0.00"
+      max: "500.00"
+    customer_tier:
+      mean: null
+      min: "premium"
+      max: "standard"
+    order_total:
+      mean: "350.00"
+      min: "10.00"
+      max: "5000.00"
+  quality_rules: '[{"criticality":"warn","check":{"function":"is_in_range","arguments":{"column":"discount_amount","min_limit":0,"max_limit":0}},"filter":"customer_tier = ''standard''"}]'
+  reasoning: "Standard tier customers should not receive discounts (amount must be 0), while premium customers can. This business rule is conditional based on customer tier, requiring context understanding."
+
+- name: "phone_number_format"
+  business_description: "Customer contact information with international phone numbers"
+  data_summary_stats:
+    phone:
+      mean: null
+      min: "+1-555-0001"
+      max: "+44-7700-900999"
+    country:
+      mean: null
+      min: "UK"
+      max: "US"
+    contact_preference:
+      mean: null
+      min: "email"
+      max: "phone"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_phone_number","arguments":{"column":"phone"}}}]'
+  reasoning: "Phone numbers should follow valid international format for reliable customer communication across different countries."
+
+- name: "email_completeness_and_format"
   business_description: "User registration database storing customer account information including contact details"
   data_summary_stats:
     email:
@@ -206,5 +154,9 @@
       mean: null
       min: "alice"
       max: "zoe"
-  quality_rules: '[{"criticality":"warn","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"email"}}}]'
-  reasoning: "Email should be present for all user accounts to enable communication. Missing emails should be flagged as warnings for follow-up."
+    account_status:
+      mean: null
+      min: "active"
+      max: "suspended"
+  quality_rules: '[{"criticality":"warn","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"email"}}},{"criticality":"error","check":{"function":"is_email","arguments":{"column":"email"}}}]'
+  reasoning: "Email should be present for all user accounts and follow valid format. Combining completeness and format validation ensures high-quality contact information."
