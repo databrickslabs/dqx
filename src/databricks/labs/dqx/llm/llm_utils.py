@@ -63,7 +63,7 @@ def get_check_function_definitions(custom_check_functions: dict[str, Callable] |
 
 
 def get_required_check_functions_definitions(
-    custom_check_functions: dict[str, Callable] | None = None
+    custom_check_functions: dict[str, Callable] | None = None,
 ) -> list[dict[str, str]]:
     """
     Extract only required function information (name and doc).
