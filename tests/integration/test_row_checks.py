@@ -22,6 +22,7 @@ from databricks.labs.dqx.check_funcs import (
     regex_match,
     sql_expression,
     is_in_list,
+    is_not_in_list,
     is_not_null_and_is_in_list,
     is_not_null_and_not_empty_array,
     is_valid_date,
@@ -376,6 +377,104 @@ def test_col_is_not_null_and_is_in_list_mismatch_datatype(spark):
     )
     with pytest.raises(AnalysisException, match="[DATATYPE_MISMATCH.DATA_DIFF_TYPES]"):
         actual.count()
+
+
+def test_is_not_in_list(spark):
+    """Test is_not_in_list check function - blacklist functionality."""
+    input_schema = "a: string, b: int, c: map<string, string>, d: array<string>"
+    test_df = spark.createDataFrame(
+        [
+            ["active", 1, {"status": "ok"}, ["read", "write"]],
+            ["banned", None, {"status": "banned"}, [None, "admin"]],
+            ["suspended", 3, {"status": None}, [None, "read"]],
+            ["BANNED", 4, {"status": "OK"}, ["ADMIN", "write"]],
+            ["normal", 5, {"status": "error"}, ["read", "DELETE"]],
+        ],
+        input_schema,
+    )
+
+    # Test with forbidden values - should fail when value IS in the forbidden list
+    actual = test_df.select(
+        is_not_in_list("a", ["banned", "suspended", "deleted"]),
+        is_not_in_list("b", [F.lit(99), F.lit(100)]),
+        is_not_in_list(F.col("c").getItem("status"), [F.lit("banned"), F.lit("error")]),
+        is_not_in_list(F.try_element_at("d", F.lit(1)), ["admin", "root"]),
+        is_not_in_list("a", ["banned", "suspended"], case_sensitive=False),
+        is_not_in_list(F.col("c").getItem("status"), [F.lit("ok")], case_sensitive=False),
+        is_not_in_list(F.try_element_at("d", F.lit(1)), ["admin"], case_sensitive=False),
+        is_not_in_list("d", [["admin", "root"], ["DELETE", "write"]]),
+        is_not_in_list("d", [["admin", "root"], ["DELETE", "write"]], case_sensitive=False),
+    )
+
+    checked_schema = (
+        "a_is_in_the_forbidden_list: string, "
+        + "b_is_in_the_forbidden_list: string, "
+        + "unresolvedextractvalue_c_status_is_in_the_forbidden_list: string, "
+        + "try_element_at_d_1_is_in_the_forbidden_list: string, "
+        + "a_is_in_the_forbidden_list: string, "
+        + "unresolvedextractvalue_c_status_is_in_the_forbidden_list: string, "
+        + "try_element_at_d_1_is_in_the_forbidden_list: string, "
+        + "d_is_in_the_forbidden_list: string, "
+        + "d_is_in_the_forbidden_list: string"
+    )
+
+    expected = spark.createDataFrame(
+        [
+            # Row 1: "active" - all pass (not in forbidden lists)
+            [None, None, None, None, None, None, None, None, None],
+            # Row 2: "banned" - fails where "banned" is forbidden
+            [
+                "Value 'banned' in Column 'a' is in the forbidden list: [banned, suspended, deleted]",
+                None,
+                "Value 'banned' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [banned, error]",
+                "Value 'admin' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin, root]",
+                "Value 'banned' in Column 'a' is in the forbidden list: [banned, suspended]",
+                None,
+                "Value 'admin' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin]",
+                None,
+                None,
+            ],
+            # Row 3: "suspended" - fails where "suspended" is forbidden
+            [
+                "Value 'suspended' in Column 'a' is in the forbidden list: [banned, suspended, deleted]",
+                None,
+                None,
+                None,
+                "Value 'suspended' in Column 'a' is in the forbidden list: [banned, suspended]",
+                None,
+                None,
+                None,
+                None,
+            ],
+            # Row 4: "BANNED" - case sensitive tests
+            [
+                None,  # case sensitive: "BANNED" != "banned"
+                None,
+                None,
+                "Value 'ADMIN' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin, root]",
+                "Value 'BANNED' in Column 'a' is in the forbidden list: [banned, suspended]",  # case insensitive
+                "Value 'OK' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [ok]",  # case insensitive
+                "Value 'ADMIN' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin]",  # case insensitive
+                None,
+                None,
+            ],
+            # Row 5: "normal", but "error" status and "DELETE" in array
+            [
+                None,
+                None,
+                "Value 'error' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [banned, error]",
+                None,
+                None,
+                None,
+                None,
+                "Value '[read, DELETE]' in Column 'd' is in the forbidden list: [[admin, root], [DELETE, write]]",
+                "Value '[read, DELETE]' in Column 'd' is in the forbidden list: [[admin, root], [DELETE, write]]",
+            ],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
 
 
 def test_col_sql_expression(spark):

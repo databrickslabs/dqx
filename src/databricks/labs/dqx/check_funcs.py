@@ -273,6 +273,60 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 
 
 @register_rule("row")
+def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool = True) -> Column:
+    """Checks whether the values in the input column are NOT present in the list of forbidden values
+    (null values are allowed). Can optionally perform a case-insensitive comparison.
+    This check is not suited for `MapType` or `StructType` columns.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        forbidden: list of forbidden values (actual values or Column objects)
+        case_sensitive: whether to perform a case-sensitive comparison (default: True)
+
+    Returns:
+        Column object for condition
+
+    Raises:
+        MissingParameterError: If the forbidden list is not provided.
+        InvalidParameterError: If the forbidden parameter is not a list.
+    """
+    if forbidden is None:
+        raise MissingParameterError("forbidden list is not provided.")
+    if not isinstance(forbidden, list):
+        raise InvalidParameterError(f"forbidden parameter must be a list, got {str(type(forbidden))} instead.")
+    if not forbidden:
+        raise InvalidParameterError("forbidden list must not be empty.")
+
+    forbidden_cols = [item if isinstance(item, Column) else F.lit(item) for item in forbidden]
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+
+    # Apply case-insensitive transformation if needed
+    if not case_sensitive:
+        has_arrays = any(isinstance(item, (list, tuple)) for item in forbidden if not isinstance(item, Column))
+        col_expr_compare = to_lowercase(col_expr, is_array=has_arrays)
+        forbidden_cols_compare = [
+            to_lowercase(c, is_array=isinstance(forbidden[i], (list, tuple))) for i, c in enumerate(forbidden_cols)
+        ]
+    else:
+        col_expr_compare, forbidden_cols_compare = col_expr, forbidden_cols
+
+    condition = col_expr_compare.isin(*forbidden_cols_compare)
+
+    return make_condition(
+        condition,
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
+            F.lit(f"' in Column '{col_expr_str}' is in the forbidden list: ["),
+            F.concat_ws(", ", *[c.cast("string") for c in forbidden_cols]),
+            F.lit("]"),
+        ),
+        f"{col_str_norm}_is_in_the_forbidden_list",
+    )
+
+
+@register_rule("row")
 def sql_expression(
     expression: str,
     msg: str | None = None,
