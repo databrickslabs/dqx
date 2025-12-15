@@ -78,7 +78,7 @@ class DQLLMEngine:
         """
         if summary_stats is not None:
             return self._llm_rule_compiler.model_using_data_stats(
-                business_description=user_input if user_input else None,
+                business_description=user_input or None,
                 data_summary_stats=json.dumps(get_required_summary_stats(summary_stats=summary_stats)),
                 available_functions=self._available_check_functions,
             )
