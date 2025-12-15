@@ -69,7 +69,7 @@ llm = [
     "langchain-core>=0.1.0"
 ]
 datacontract = [
-    "datacontract-cli>=0.10.0"
+    "datacontract-cli>=0.11.1"
 ]
 
 [project.entry-points.databricks]

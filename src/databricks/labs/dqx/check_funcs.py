@@ -102,7 +102,7 @@ def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = _does_not_match_pattern(col_expr, pattern)
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
@@ -126,7 +126,7 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if trim_strings:
         col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.isNull() | (col_expr.cast("string").isNull() | (col_expr.cast("string") == F.lit("")))
@@ -145,7 +145,7 @@ def is_not_empty(column: str | Column) -> Column:
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = col_expr.cast("string") == F.lit("")
     return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
 
@@ -160,7 +160,7 @@ def is_not_null(column: str | Column) -> Column:
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
 
 
@@ -190,7 +190,7 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
         raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
     if not case_sensitive:
@@ -244,7 +244,7 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
         raise InvalidParameterError("allowed list must not be empty.")
 
     allowed_cols = [item if isinstance(item, Column) else F.lit(item) for item in allowed]
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     # Apply case-insensitive transformation if needed
     if not case_sensitive:
@@ -330,8 +330,8 @@ def is_older_than_col2_for_n_days(
     Returns:
         new Column
     """
-    col_str_norm1, col_expr_str1, col_expr1 = _get_normalized_column_and_expr(column1)
-    col_str_norm2, col_expr_str2, col_expr2 = _get_normalized_column_and_expr(column2)
+    col_str_norm1, col_expr_str1, col_expr1 = get_normalized_column_and_expr(column1)
+    col_str_norm2, col_expr_str2, col_expr2 = get_normalized_column_and_expr(column2)
 
     col1_date = F.to_date(col_expr1)
     col2_date = F.to_date(col_expr2)
@@ -380,7 +380,7 @@ def is_older_than_n_days(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if curr_date is None:
         curr_date = F.current_date()
 
@@ -428,7 +428,7 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -463,7 +463,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if curr_timestamp is None:
         curr_timestamp = F.current_timestamp()
 
@@ -500,8 +500,8 @@ def is_equal_to(
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    value_expr = _get_limit_expr(value)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    value_expr = get_limit_expr(value)
     condition = col_expr != value_expr
 
     return make_condition(
@@ -531,8 +531,8 @@ def is_not_equal_to(
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    value_expr = _get_limit_expr(value)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    value_expr = get_limit_expr(value)
     condition = col_expr == value_expr
 
     return make_condition(
@@ -561,8 +561,8 @@ def is_not_less_than(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    limit_expr = _get_limit_expr(limit)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
     condition = col_expr < limit_expr
 
     return make_condition(
@@ -591,8 +591,8 @@ def is_not_greater_than(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    limit_expr = _get_limit_expr(limit)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    limit_expr = get_limit_expr(limit)
     condition = col_expr > limit_expr
 
     return make_condition(
@@ -624,9 +624,9 @@ def is_in_range(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    min_limit_expr = _get_limit_expr(min_limit)
-    max_limit_expr = _get_limit_expr(max_limit)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    min_limit_expr = get_limit_expr(min_limit)
+    max_limit_expr = get_limit_expr(max_limit)
 
     condition = (col_expr < min_limit_expr) | (col_expr > max_limit_expr)
 
@@ -662,9 +662,9 @@ def is_not_in_range(
     Returns:
         new Column
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    min_limit_expr = _get_limit_expr(min_limit)
-    max_limit_expr = _get_limit_expr(max_limit)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    min_limit_expr = get_limit_expr(min_limit)
+    max_limit_expr = get_limit_expr(max_limit)
 
     condition = (col_expr >= min_limit_expr) & (col_expr <= max_limit_expr)
 
@@ -696,7 +696,7 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if negate:
         condition = col_expr.rlike(regex)
         return make_condition(condition, f"Column '{col_expr_str}' is matching regex", f"{col_str_norm}_matching_regex")
@@ -717,7 +717,7 @@ def is_not_null_and_not_empty_array(column: str | Column) -> Column:
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = col_expr.isNull() | (F.size(col_expr) == 0)
     return make_condition(
         condition, f"Column '{col_expr_str}' is null or empty array", f"{col_str_norm}_is_null_or_empty_array"
@@ -735,7 +735,7 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     date_col = F.try_to_timestamp(col_expr) if date_format is None else F.try_to_timestamp(col_expr, F.lit(date_format))
     condition = F.when(col_expr.isNull(), F.lit(None)).otherwise(date_col.isNull())
     condition_str = f"' in Column '{col_expr_str}' is not a valid date"
@@ -759,7 +759,7 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     ts_col = (
         F.try_to_timestamp(col_expr)
         if timestamp_format is None
@@ -818,7 +818,7 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not re.match(DQPattern.IPV4_CIDR_BLOCK.value, cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv4 CIDR block.")
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     cidr_col_expr = F.lit(cidr_block)
     ipv4_msg_col = is_valid_ipv4_address(column)
 
@@ -857,7 +857,7 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
         UserWarning,
     )
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     is_valid_ipv6_address_udf = _build_is_valid_ipv6_address_udf()
     ipv6_match_condition = is_valid_ipv6_address_udf(col_expr)
@@ -906,7 +906,7 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
     if not _is_valid_ipv6_cidr_block(cidr_block):
         raise InvalidParameterError(f"CIDR block '{cidr_block}' is not a valid IPv6 CIDR block.")
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     cidr_lit = F.lit(cidr_block)
     ipv6_msg_col = is_valid_ipv6_address(column)
     is_valid_ipv6 = ipv6_msg_col.isNull()
@@ -949,10 +949,10 @@ def is_data_fresh(
     Returns:
         Column object for condition
     """
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if base_timestamp is None:
         base_timestamp = F.current_timestamp()
-    base_timestamp_col_expr = _get_limit_expr(base_timestamp)
+    base_timestamp_col_expr = get_limit_expr(base_timestamp)
     # Calculate the threshold timestamp (base time - max_age_minutes)
     threshold_timestamp = base_timestamp_col_expr - F.expr(f"INTERVAL {max_age_minutes} MINUTES")
 
@@ -995,7 +995,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
     """
     column = F.col(column) if isinstance(column, str) else column
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
@@ -1026,8 +1026,8 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
             # Create outlier condition
             lower_bound = median - (3.5 * mad)
             upper_bound = median + (3.5 * mad)
-            lower_bound_expr = _get_limit_expr(lower_bound)
-            upper_bound_expr = _get_limit_expr(upper_bound)
+            lower_bound_expr = get_limit_expr(lower_bound)
+            upper_bound_expr = get_limit_expr(upper_bound)
 
             condition = (col_expr < (lower_bound_expr)) | (col_expr > (upper_bound_expr))
 
@@ -1085,7 +1085,7 @@ def is_unique(
     else:  # composite key
         column = F.struct(*[F.col(col) if isinstance(col, str) else col for col in columns])
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{col_str_norm}_{unique_str}"
@@ -1200,8 +1200,8 @@ def foreign_key(
     else:
         column, ref_column, not_null_condition = _handle_fk_composite_keys(columns, ref_columns, not_null_condition)
 
-    col_str_norm, col_expr_str, col_expr = _get_normalized_column_and_expr(column)
-    ref_col_str_norm, ref_col_expr_str, ref_col_expr = _get_normalized_column_and_expr(ref_column)
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    ref_col_str_norm, ref_col_expr_str, ref_col_expr = get_normalized_column_and_expr(ref_column)
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__{col_str_norm}_{unique_str}"
 
@@ -1784,7 +1784,7 @@ def is_data_fresh_per_time_window(
         InvalidParameterError: If min_records_per_window or window_minutes are not positive integers,
             or if lookback_windows is provided and is not a positive integer.
     """
-    col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
 
     unique_str = uuid.uuid4().hex
     condition_col = f"__data_volume_condition_completeness_{col_str_norm}_{unique_str}"
@@ -1877,7 +1877,7 @@ def has_valid_schema(
     This function checks whether the DataFrame schema is compatible with the expected schema.
     In non-strict mode, validates that all expected columns exist with compatible types.
     In strict mode, validates that the schema matches exactly (same columns, same order, same types)
-    for the columns specified in `columns` or for all columns if `columns` is not specified.
+    for the columns specified in columns or for all columns if columns is not specified.
 
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
@@ -1964,6 +1964,162 @@ def has_valid_schema(
     )
 
     return condition, apply
+
+
+@register_rule("row")
+def is_valid_json(column: str | Column) -> Column:
+    """
+    Checks whether the values in the input column are valid JSON strings.
+
+    Args:
+        column: Column name (str) or Column expression to check for valid JSON.
+
+    Returns:
+        A Spark Column representing the condition for invalid JSON strings.
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    return make_condition(
+        ~F.when(col_expr.isNotNull(), F.try_parse_json(col_expr_str).isNotNull()),
+        F.concat_ws(
+            "",
+            F.lit("Value '"),
+            col_expr.cast("string"),
+            F.lit(f"' in Column '{col_expr_str}' is not a valid JSON string"),
+        ),
+        f"{col_str_norm}_is_not_valid_json",
+    )
+
+
+@register_rule("row")
+def has_json_keys(column: str | Column, keys: list[str], require_all: bool = True) -> Column:
+    """
+    Checks whether the values in the input column contain specific keys in the outermost JSON object.
+
+    Args:
+        column: The name of the column or the column expression to check for JSON keys.
+        keys: A list of JSON keys to verify within the outermost JSON object.
+        require_all: If True, all specified keys must be present. If False, at least one key must be present.
+
+    Returns:
+        A Spark Column representing the condition for missing JSON keys.
+    """
+    if not keys:
+        raise InvalidParameterError("The 'keys' parameter must be a non-empty list of strings.")
+    if any(not isinstance(k, str) for k in keys):
+        raise InvalidParameterError("All keys must be of type string.")
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    json_keys_array = F.json_object_keys(col_expr)
+    required_keys = F.array_distinct(F.array(*[F.lit(k) for k in keys]))
+
+    json_validation_error = is_valid_json(col_expr_str)
+    is_invalid_json = json_validation_error.isNotNull()
+
+    has_json_keys_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
+        F.lit(f"' in Column '{col_expr_str}' is missing keys in the list: ["),
+        F.concat_ws(", ", F.lit(keys)),
+        F.lit("]"),
+    )
+    message = F.when(is_invalid_json, json_validation_error).otherwise(has_json_keys_msg)
+
+    if require_all:
+        missing = F.array_except(required_keys, json_keys_array)
+        condition_when_valid = F.size(missing) == 0
+    else:
+        condition_when_valid = F.arrays_overlap(json_keys_array, required_keys)
+
+    condition = F.when(~is_invalid_json, condition_when_valid).otherwise(F.lit(False))
+
+    return make_condition(
+        ~condition,
+        message,
+        f"{col_str_norm}_does_not_have_json_keys",
+    )
+
+
+@register_rule("row")
+def has_valid_json_schema(column: str | Column, schema: str | types.StructType) -> Column:
+    """
+    Validates that JSON strings in the specified column conform to an expected schema.
+
+    The validation utilizes standard Spark JSON parsing rules, specifically:
+    * **Type Coercion is Permitted:** Values that can be successfully cast to the target schema type
+    (e.g. a JSON number like 0.12 parsing into a field defined as STRING) are considered valid.
+    * **Extra Fields are Ignored:** Fields present in the JSON, but missing from the schema are ignored.
+    * **Missing keys imply null:** If a key is missing from the JSON object, Spark treats it as a null value.
+    * **Strictness:** If a schema field is defined as NOT NULL, validation will fail if the key is missing (implicit null) or explicitly set to null.
+    * **Nested JSON behavior:** If a nullable parent field is explicitly null (e.g. `{"parent": null}`), its children are **not** validated.
+    However, if the parent exists (e.g. `{"parent": {}}`) but a required child is missing, validation fails.
+    * **Nested Depth Limit:** The validation logic supports a maximum nested depth of 10 levels.
+
+    Args:
+        column: Column name or Column expression containing JSON strings.
+        schema: Expected schema as a DDL string (e.g. "struct<id:string NOT NULL>", "id INT, name STRING")
+            or a generic StructType. To enforce strict presence of a field, you must explicitly set it to nullable=False
+            or use NOT NULL in the DDL string.
+
+    Returns:
+        A string Column containing the error message if the JSON does not conform to the schema,
+            or null if validation passes.
+
+    Raises:
+        InvalidParameterError: If the schema string is invalid/unparsable, or if the input schema is neither a string nor a StructType.
+    """
+
+    _expected_schema = _get_schema(schema)
+    schema_str = _expected_schema.simpleString()
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+
+    json_validation_error = is_valid_json(col_str_norm)
+
+    is_invalid_json = json_validation_error.isNotNull()
+
+    # Add unique corrupt-record field to isolate parse errors
+    corrupt_record_name = f"{uuid.uuid4().hex[:8]}_dqx_corrupt_record"
+
+    extended_schema = types.StructType(
+        _expected_schema.fields + [types.StructField(corrupt_record_name, types.StringType(), True)]
+    )
+
+    # Attempt to parse JSON using the extended schema
+    parsed_struct = F.from_json(
+        col_expr,
+        extended_schema,
+        options={"columnNameOfCorruptRecord": corrupt_record_name},
+    )
+
+    # Core conformity: must be valid JSON and not corrupt
+    is_not_corrupt = parsed_struct[corrupt_record_name].isNull()
+    base_conformity = ~is_invalid_json & is_not_corrupt
+
+    # Field presence checks (non-null + exists)
+    field_presence_checks = _generate_field_presence_checks(_expected_schema, parsed_struct)
+    has_missing_or_null_fields = F.array_contains(
+        F.array(*[F.coalesce(expr, F.lit(False)) for expr in field_presence_checks]),
+        False,
+    )
+
+    is_conforming = base_conformity & ~has_missing_or_null_fields
+    condition = is_conforming | col_expr.isNull()
+
+    error_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
+        F.lit(f"' in Column '{col_expr_str}' does not conform to expected JSON schema: "),
+        F.lit(schema_str),
+    )
+
+    final_error_msg = F.when(is_invalid_json, json_validation_error).otherwise(error_msg)
+
+    return make_condition(
+        ~condition,
+        final_error_msg,
+        f"{col_str_norm}_has_invalid_json_schema",
+    )
 
 
 def _get_schema(input_schema: str | types.StructType, columns: list[str] | None = None) -> types.StructType:
@@ -2189,6 +2345,42 @@ def _is_compatible_atomic_type(actual_type: types.AtomicType, expected_type: typ
         return True
 
     return False
+
+
+def _generate_field_presence_checks(
+    expected_schema: types.StructType, parsed_struct_col: Column, max_depth: int = 10, current_depth: int = 0
+) -> list[Column]:
+    """
+    Recursively generate Spark Column expressions that verify each field defined in the expected
+    schema is present and non-null within a parsed struct column.
+
+    Args:
+        expected_schema: The StructType defining the expected JSON schema.
+        parsed_struct_col: The parsed struct column (e.g., from from_json) to validate.
+        max_depth: Maximum recursion depth to prevent excessive nesting. Default is 10.
+        current_depth: Current recursion depth.
+
+    Returns:
+        A list of Column expressions, one per field in the expected schema, that evaluate to True
+        if the corresponding field is non-null.
+    """
+    if current_depth > max_depth:
+        return []
+
+    validations = []
+    for field in expected_schema.fields:
+        field_ref = parsed_struct_col[field.name]
+        if not field.nullable:
+            validations.append(field_ref.isNotNull())
+        if isinstance(field.dataType, types.StructType):
+            child_checks = _generate_field_presence_checks(
+                field.dataType, field_ref, max_depth=max_depth, current_depth=current_depth + 1
+            )
+            if field.nullable:
+                child_checks = [(field_ref.isNull() | check) for check in child_checks]
+            validations.extend(child_checks)
+
+    return validations
 
 
 def _match_rows(
@@ -2548,7 +2740,7 @@ def _is_aggr_compare(
             stacklevel=3,
         )
 
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = _get_normalized_column_and_expr(column)
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
 
     group_by_list_str = (
         ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
@@ -2567,7 +2759,7 @@ def _is_aggr_compare(
         else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
     )
 
-    limit_expr = _get_limit_expr(limit)
+    limit_expr = get_limit_expr(limit)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__condition_{aggr_col_str_norm}_{aggr_type}_{compare_op_name}_{unique_str}"
@@ -2717,7 +2909,7 @@ def _cleanup_alias_name(column: str) -> str:
     return column.replace(".", "_")
 
 
-def _get_limit_expr(
+def get_limit_expr(
     limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """
@@ -2746,7 +2938,7 @@ def _get_limit_expr(
     return F.lit(limit)
 
 
-def _get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
+def get_normalized_column_and_expr(column: str | Column) -> tuple[str, str, Column]:
     """
     Extract the normalized column name, original column name as string, and column expression.
 
