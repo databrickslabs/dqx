@@ -3995,6 +3995,41 @@
       }
     },
     {
+      "group": null,
+      "name": "test_benchmark_is_not_null_island",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_not_null_island",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.23868395699992107,
+        "max": 0.2549301170001854,
+        "mean": 0.24984811640024418,
+        "stddev": 0.006427984924664557,
+        "rounds": 5,
+        "median": 0.25176965100035886,
+        "iqr": 0.005726162749851937,
+        "q1": 0.24778499925037067,
+        "q3": 0.2535111620002226,
+        "iqr_outliers": 1,
+        "stddev_outliers": 1,
+        "outliers": "1;1",
+        "ld15iqr": 0.25081868000052054,
+        "hd15iqr": 0.2549301170001854,
+        "ops": 4.002431614885781,
+        "total": 1.249240582001221,
+        "iterations": 1
+      }
+    },
+    {
       "group": "test_benchmark_is_null_or_empty col1",
       "name": "test_benchmark_is_null_or_empty[col1]",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_is_null_or_empty[col1]",

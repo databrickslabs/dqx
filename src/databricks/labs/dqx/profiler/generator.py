@@ -127,7 +127,7 @@ class DQGenerator(DQEngineBase):
             )
         if not summary_stats and not user_input:
             raise MissingParameterError(
-                "If summary statistics are not provided, user input is required to generate rules using LLM."
+                "Either summary statistics or user input must be provided to generate rules using LLM."
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
