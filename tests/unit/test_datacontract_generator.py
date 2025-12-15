@@ -8,7 +8,7 @@ import pytest
 import pyspark.sql.functions as F
 import yaml
 from datacontract.data_contract import DataContract
-from datacontract.lint.resolve import resolve_data_contract_v2
+from datacontract.lint.resolve import resolve_data_contract_from_location
 
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
@@ -1901,7 +1901,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
     def _load_contract_and_get_model(self, temp_path):
         """Helper to load contract and extract first schema (ODCS v3.x)."""
-        odcs = resolve_data_contract_v2(data_contract_location=temp_path)
+        odcs = resolve_data_contract_from_location(location=temp_path)
         schema = odcs.schema_[0]  # Get first schema
         return schema
 
