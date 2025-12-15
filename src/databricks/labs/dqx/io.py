@@ -155,10 +155,8 @@ def _write_batch(writer: DataFrameWriter, output_config: OutputConfig) -> None:
 
     if TABLE_PATTERN.match(output_config.location):
         writer.saveAsTable(output_config.location)
-
-    if STORAGE_PATH_PATTERN.match(output_config.location):
+    elif STORAGE_PATH_PATTERN.match(output_config.location):
         writer.save(output_config.location)
-
     else:
         raise InvalidConfigError(
             f"Invalid output location. It must be a 2 or 3-level table namespace or storage path, given {output_config.location}"
