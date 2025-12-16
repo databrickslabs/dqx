@@ -111,7 +111,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
     """
     writer = _get_dataframe_writer(df, output_config)
 
-    if isinstance(writer, DataStreamWriter):
+    if df.isStreaming:
         return _write_stream(writer, output_config)
 
     _write_batch(writer, output_config)
