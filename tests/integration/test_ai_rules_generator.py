@@ -147,3 +147,37 @@ def test_generate_dq_rules_ai_assisted_with_sql_expression(ws, spark):
     ]
 
     assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_summary_stats_and_user_input(ws, spark):
+    """Test AI rule generation using summary statistics with business description."""
+    user_input = "Validate product inventory: ensure prices and quantities are within reasonable ranges"
+
+    summary_stats = {
+        "product_code": {"mean": None, "min": "PROD-1000-A", "max": "PROD-9999-Z"},
+        "price": {"mean": "125.50", "min": "10.00", "max": "500.00"},
+        "stock_quantity": {"mean": "150", "min": "0", "max": "1000"},
+    }
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input, summary_stats=summary_stats)
+
+    # Verify checks were generated and are valid
+    assert len(actual_checks) > 0
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors
+
+
+def test_generate_dq_rules_ai_assisted_with_summary_stats_only(ws, spark):
+    """Test AI rule generation using summary statistics without business description."""
+    summary_stats = {
+        "temperature": {"mean": "22.5", "min": "-10.0", "max": "50.0"},
+        "humidity": {"mean": "65.5", "min": "20.0", "max": "95.0"},
+        "sensor_id": {"mean": None, "min": "SEN001", "max": "SEN100"},
+    }
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(summary_stats=summary_stats)
+
+    # Verify checks were generated and are valid
+    assert len(actual_checks) > 0
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors
