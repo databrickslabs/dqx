@@ -1,6 +1,5 @@
 import logging
 import datetime
-from decimal import Decimal
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
