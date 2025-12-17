@@ -1,6 +1,5 @@
 import logging
 import datetime
-import json
 from decimal import Decimal
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
