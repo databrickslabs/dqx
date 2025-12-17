@@ -650,8 +650,8 @@ def is_in_range(
 @register_rule("row")
 def is_not_in_range(
     column: str | Column,
-    min_limit: int | float |  Decimal | datetime.date | datetime.datetime | str | Column | None = None,
-    max_limit: int | float |  Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are outside the provided limits (inclusive of both boundaries).
 
@@ -1403,7 +1403,7 @@ def sql_query(
 @register_rule("dataset")
 def is_aggr_not_greater_than(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -1448,7 +1448,7 @@ def is_aggr_not_greater_than(
 @register_rule("dataset")
 def is_aggr_not_less_than(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -1493,7 +1493,7 @@ def is_aggr_not_less_than(
 @register_rule("dataset")
 def is_aggr_equal(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -1538,7 +1538,7 @@ def is_aggr_equal(
 @register_rule("dataset")
 def is_aggr_not_equal(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -2694,7 +2694,7 @@ def _validate_aggregate_return_type(
 
 def _is_aggr_compare(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str,
     aggr_params: dict[str, Any] | None,
     group_by: list[str | Column] | None,
@@ -2913,7 +2913,7 @@ def _cleanup_alias_name(column: str) -> str:
 
 
 def get_limit_expr(
-    limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """
     Generate a Spark Column expression for a limit value.
