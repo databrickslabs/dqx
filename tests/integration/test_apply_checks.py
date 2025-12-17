@@ -7494,7 +7494,7 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7514,7 +7514,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
@@ -7583,7 +7583,7 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7603,7 +7603,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",
@@ -7692,7 +7692,7 @@ def test_apply_aggr_checks(ws, spark):
                 [
                     {
                         "name": "count_greater_than_limit",
-                        "message": "Count 3 in column '*' is greater than limit: 0",
+                        "message": "Count value 3 in column '*' is greater than limit: 0",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_greater_than",
@@ -7722,7 +7722,7 @@ def test_apply_aggr_checks(ws, spark):
                     },
                     {
                         "name": "count_less_than_limit",
-                        "message": "Count 3 in column '*' is less than limit: 10",
+                        "message": "Count value 3 in column '*' is less than limit: 10",
                         "columns": ["*"],
                         "filter": None,
                         "function": "is_aggr_not_less_than",

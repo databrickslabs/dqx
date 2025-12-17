@@ -22,7 +22,9 @@ __all__ = [
     "TableManager",
     "get_check_function_definitions",
     "get_required_check_functions_definitions",
+    "get_required_summary_stats",
     "create_optimizer_training_set",
+    "create_optimizer_training_set_with_stats",
     "get_column_metadata",
 ]
 
@@ -84,6 +86,45 @@ def get_required_check_functions_definitions(
     return required_function_docs
 
 
+def get_required_summary_stats(summary_stats: dict[str, Any]) -> dict[str, Any]:
+    """
+    Filters the summary statistics to include only mean, min, and max values,
+    which provide sufficient information for LLM-based rule generation while
+    reducing token usage. Converts all values to JSON-serializable format.
+
+    Args:
+        summary_stats: Dictionary containing summary statistics for each column.
+
+    Returns:
+        dict: A dictionary containing the required fields for each summary stats with JSON-serializable values.
+    """
+
+    required_summary_stats: dict = {}
+    for key, value in summary_stats.items():
+        required_summary_stats[key] = {
+            "mean": _convert_to_json_serializable(value.get("mean", None)),
+            "min": _convert_to_json_serializable(value.get("min", None)),
+            "max": _convert_to_json_serializable(value.get("max", None)),
+        }
+    return required_summary_stats
+
+
+def _convert_to_json_serializable(value: Any) -> str | None:
+    """
+    Convert a value to JSON-serializable format.
+    Converts all values to strings for JSON serialization.
+
+    Args:
+        value: The value to convert.
+
+    Returns:
+        String representation of the value, or None if value is None.
+    """
+    if value is None:
+        return None
+    return str(value)
+
+
 def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | None = None) -> list[dspy.Example]:
     """
     Get quality check training examples for the dspy optimizer.
@@ -114,6 +155,38 @@ def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | 
     return examples
 
 
+def create_optimizer_training_set_with_stats(
+    custom_check_functions: dict[str, Callable] | None = None,
+) -> list[dspy.Example]:
+    """
+    Get quality check training examples using data summary statistics for the dspy optimizer.
+
+    Args:
+        custom_check_functions: A dictionary of custom check functions.
+
+    Returns:
+        list[dspy.Example]: A list of dspy.Example objects created from training examples with stats.
+    """
+    training_examples = _load_training_examples_with_stats()
+
+    examples = []
+    for example_data in training_examples:
+        # Convert data_summary_stats to JSON string format expected by dspy.Example
+        data_summary_stats_json = json.dumps(example_data["data_summary_stats"])
+
+        example = dspy.Example(
+            business_description=example_data.get("business_description", ""),
+            data_summary_stats=data_summary_stats_json,
+            available_functions=json.dumps(get_required_check_functions_definitions(custom_check_functions)),
+            quality_rules=example_data["quality_rules"],
+            reasoning=example_data["reasoning"],
+        ).with_inputs("business_description", "data_summary_stats", "available_functions")
+
+        examples.append(example)
+
+    return examples
+
+
 def get_column_metadata(spark: SparkSession, input_config: InputConfig) -> str:
     """
     Get the column metadata for a given table.
@@ -138,6 +211,23 @@ def _load_training_examples() -> list[dict[str, Any]]:
         list[dict[str, Any]]: Training examples as a list of dictionaries.
     """
     resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
+
+    training_examples_as_text = resource.read_text(encoding="utf-8")
+    training_examples = yaml.safe_load(training_examples_as_text)
+
+    if not isinstance(training_examples, list):
+        raise DQXError("YAML file must contain a list at the root level.")
+
+    return training_examples
+
+
+def _load_training_examples_with_stats() -> list[dict[str, Any]]:
+    """A function to load the training examples with data stats from the llm/resources/training_examples_with_stats.yml file.
+
+    Returns:
+        list[dict[str, Any]]: Training examples with data summary statistics as a list of dictionaries.
+    """
+    resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples_with_stats.yml"))
 
     training_examples_as_text = resource.read_text(encoding="utf-8")
     training_examples = yaml.safe_load(training_examples_as_text)

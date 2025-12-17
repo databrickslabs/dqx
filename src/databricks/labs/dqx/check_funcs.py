@@ -92,7 +92,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
-def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
+def _matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     """Checks whether the values in the input column match a given pattern.
 
     Args:
@@ -840,7 +840,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
     Returns:
         Column object for condition
     """
-    return matches_pattern(column, DQPattern.IPV4_ADDRESS)
+    return _matches_pattern(column, DQPattern.IPV4_ADDRESS)
 
 
 @register_rule("row")
@@ -2086,6 +2086,8 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
         condition_when_valid = F.arrays_overlap(json_keys_array, required_keys)
 
     condition = F.when(~is_invalid_json, condition_when_valid).otherwise(F.lit(False))
+    # Treat NULL values as valid (no violation) to ensure consistent behavior across ANSI/non-ANSI modes
+    condition = condition | col_expr.isNull()
 
     return make_condition(
         ~condition,

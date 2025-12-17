@@ -462,5 +462,3 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # Cleanup
 os.unlink(contract_file)
 print("✅ Demo complete!")
-
-

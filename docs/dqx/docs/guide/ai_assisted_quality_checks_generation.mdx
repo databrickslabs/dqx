@@ -114,6 +114,44 @@ The LLM will analyze the schema of the input data to generate more accurate rule
   </TabItem>
 </Tabs>
 
+### Using with Profiler Summary Statistics
+
+You can generate AI-assisted quality rules directly from profiler-generated summary statistics.
+This approach leverages the statistical patterns discovered during profiling to create appropriate data quality checks.
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+
+    # Step 1: Profile the data to generate summary statistics
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
+    input_df = spark.read.table("catalog1.schema1.sales_data")
+    summary_stats, profiles = profiler.profile(input_df)
+
+    # Step 2: Use summary statistics to generate AI-assisted rules
+    generator = DQGenerator(workspace_client=ws, spark=spark)
+    
+    # Option A: With business context
+    checks = generator.generate_dq_rules_ai_assisted(
+        user_input="Validate sales data for anomalies and business rules",
+        summary_stats=summary_stats
+    )
+    
+    # Option B: Without business context (LLM infers rules from statistics alone)
+    checks = generator.generate_dq_rules_ai_assisted(
+        summary_stats=summary_stats
+    )
+
+    print(f"Generated {len(checks)} quality checks from profiler statistics")
+    ```
+  </TabItem>
+</Tabs>
+
 ### Providing custom check functions
 
 DQX provides a collection of predefined built-in quality rules (check functions). Additionally, you can define your own custom check functions using python to meet specific requirements (see [here](/docs/reference/quality_checks).
