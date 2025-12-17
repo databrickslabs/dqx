@@ -103,18 +103,14 @@ print(checks)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Generate DQ rules using AI-Assisted approach using summary stats generated using DQ profiler
+# MAGIC ### Generate DQ rules using AI-Assisted approach using summary stats generated from profiler
 # MAGIC
-
-# COMMAND ----------
-
-sample_customer_df = spark.read.table(table_name)
 
 # COMMAND ----------
 
 # Profile Samples Data
 profiler = DQProfiler(ws)
-summary_stats, profiles = profiler.profile(sample_customer_df)
+summary_stats, profiles = profiler.profile_table(InputConfig(location=table_name))
 
 # COMMAND ----------
 
@@ -129,7 +125,3 @@ checks = generator.generate_dq_rules_ai_assisted(summary_stats=summary_stats)
 
 # User requirement provided
 checks = generator.generate_dq_rules_ai_assisted(user_input="Market segment should always be in Upper Case" , summary_stats=summary_stats)
-
-# COMMAND ----------
-
-
