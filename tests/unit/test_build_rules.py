@@ -16,6 +16,7 @@ from databricks.labs.dqx.check_funcs import (
     is_in_list,
     is_not_null_and_not_empty_array,
     is_not_null_and_is_in_list,
+    has_no_outliers,
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
@@ -25,6 +26,8 @@ from databricks.labs.dqx.check_funcs import (
     is_not_less_than,
     is_not_greater_than,
     is_valid_date,
+    is_valid_json,
+    has_json_keys,
     regex_match,
     compare_datasets,
 )
@@ -231,6 +234,7 @@ def test_build_rules():
             column="i",
             check_func_kwargs={"column": "i_as_kwargs"},
         ),
+        DQDatasetRule(criticality="warn", check_func=has_no_outliers, column="c"),
         DQDatasetRule(criticality="warn", check_func=is_unique, columns=["g"]),
         DQDatasetRule(criticality="warn", check_func=is_unique, check_func_kwargs={"columns": ["g_as_kwargs"]}),
         # columns field should be used instead of columns kwargs
@@ -426,6 +430,7 @@ def test_build_rules():
             check_func_kwargs={"column": "i_as_kwargs"},
             check_func_args=[[1, 2]],
         ),
+        DQDatasetRule(name="c_has_outliers", criticality="warn", check_func=has_no_outliers, column="c"),
         DQDatasetRule(
             name="g_is_not_unique",
             criticality="warn",
@@ -547,6 +552,15 @@ def test_build_rules_by_metadata():
             "name": "custom_common_name",
             "criticality": "error",
             "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}},
+        },
+        {
+            "name": "c_has_no_outliers",
+            "criticality": "error",
+            "filter": "a=0",
+            "check": {
+                "function": "has_no_outliers",
+                "arguments": {"column": "c"},
+            },
         },
         {
             "criticality": "error",
@@ -722,6 +736,13 @@ def test_build_rules_by_metadata():
             criticality="error",
             check_func=is_not_null,
             column="b",
+        ),
+        DQDatasetRule(
+            name="c_has_no_outliers",
+            criticality="error",
+            check_func=has_no_outliers,
+            filter="a=0",
+            column="c",
         ),
         DQDatasetRule(
             name="struct_a_b_is_not_unique",
@@ -1124,6 +1145,20 @@ def test_convert_dq_rules_to_metadata():
         DQRowRule(
             criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
         ),
+        DQRowRule(criticality="error", check_func=is_valid_json, column="col_json_str"),
+        DQRowRule(
+            criticality="error",
+            check_func=has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1"]},
+        ),
+        DQRowRule(
+            name="col_json_str_has_no_json_key1_key2",
+            criticality="error",
+            check_func=has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
+        ),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
             criticality="error",
@@ -1148,6 +1183,7 @@ def test_convert_dq_rules_to_metadata():
         DQDatasetRule(
             criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
         ),
+        DQDatasetRule(criticality="error", check_func=has_no_outliers, column="col2"),
     ]
     actual_metadata = serialize_checks(checks)
 
@@ -1283,6 +1319,27 @@ def test_convert_dq_rules_to_metadata():
             },
         },
         {
+            "name": "col_json_str_is_not_valid_json",
+            "criticality": "error",
+            "check": {
+                "function": "is_valid_json",
+                "arguments": {"column": "col_json_str"},
+            },
+        },
+        {
+            "name": "col_json_str_does_not_have_json_keys",
+            "criticality": "error",
+            "check": {"function": "has_json_keys", "arguments": {"column": "col_json_str", "keys": ["key1"]}},
+        },
+        {
+            "name": "col_json_str_has_no_json_key1_key2",
+            "criticality": "error",
+            "check": {
+                "function": "has_json_keys",
+                "arguments": {"column": "col_json_str", "keys": ["key1", "key2"], "require_all": False},
+            },
+        },
+        {
             "name": "struct_col1_col2_is_not_unique",
             "criticality": "error",
             "check": {
@@ -1350,6 +1407,11 @@ def test_convert_dq_rules_to_metadata():
             'name': 'col1_is_not_unique',
             'criticality': 'error',
             'check': {'function': 'is_unique', 'arguments': {'columns': ['col1'], 'row_filter': 'col2 > 0'}},
+        },
+        {
+            "name": "col2_has_outliers",
+            "criticality": "error",
+            "check": {"function": "has_no_outliers", "arguments": {"column": "col2"}},
         },
     ]
 
@@ -1454,6 +1516,7 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
         DQRowRule(
             criticality="error", check_func=is_valid_date, column="b", check_func_kwargs={"date_format": "yyyy-MM-dd"}
         ),
+        DQRowRule(criticality="error", check_func=is_valid_json, column="b"),
         DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1", "col2"]),
         DQDatasetRule(
             criticality="error",

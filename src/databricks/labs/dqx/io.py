@@ -2,9 +2,9 @@ import logging
 import re
 
 from typing import Any
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, DataFrameWriter
 from pyspark.sql.dataframe import DataFrame
-from pyspark.sql.streaming import StreamingQuery
+from pyspark.sql.streaming import StreamingQuery, DataStreamWriter
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.errors import InvalidConfigError
@@ -12,8 +12,8 @@ from databricks.labs.dqx.errors import InvalidConfigError
 logger = logging.getLogger(__name__)
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
-# catalog.schema.table or schema.table or database.table
-TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
+# catalog.schema.table or schema.table or database.table (backticks allow special chars like hyphens for table)
+TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.(?:`[^`]+`|[a-zA-Z0-9_]+)$")
 
 
 def read_input_data(
@@ -86,45 +86,85 @@ def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFram
 
 def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> StreamingQuery | None:
     """
-    Helper method to save a DataFrame to a Delta table.
+    Saves a DataFrame as a table using a Unity Catalog table reference or storage path.
+
+    Supports both batch and streaming writes. For streaming DataFrames, returns a StreamingQuery
+    that can be used by the caller to monitor or wait for completion. For batch DataFrames, data is
+    written synchronously and None is returned.
 
     Args:
-        df: The DataFrame to save
-        output_config: Output table name, write mode, and options
+        df: The DataFrame to save (batch or streaming)
+        output_config: Output configuration specifying:
+            - location: Table name (e.g., 'catalog.schema.table') or storage path
+              (e.g., '/Volumes/...', 's3://...', 'abfss://...', 'gs://...')
+            - mode: Write mode ('overwrite', 'append', etc.)
+            - format: Data format (default: 'delta')
+            - options: Additional Spark write options as dict (e.g., "mergeSchema", "overwriteSchema")
+            - trigger: (Streaming only) Trigger configuration dict (e.g., "availableNow", "processingTime")
 
     Returns:
-        StreamingQuery handle if the DataFrame is streaming, None otherwise
+        StreamingQuery if the DataFrame is streaming, None if the DataFrame is batch
+
+    Raises:
+        InvalidConfigError: If the output location format is invalid (must be a 2 or 3-level
+            table namespace or a storage path starting with /, s3:/, abfss:/, or gs:/)
     """
-    logger.info(f"Saving data to {output_config.location} table")
-
     if df.isStreaming:
-        if not output_config.trigger:
-            logger.info("Using default streaming trigger")
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .toTable(output_config.location)
-            )
-        else:
-            trigger: dict[str, Any] = output_config.trigger
-            logger.info(f"Setting streaming trigger: {trigger}")
-            query = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-                .trigger(**trigger)
-                .toTable(output_config.location)
-            )
-        return query
+        stream_writer = (
+            df.writeStream.format(output_config.format).outputMode(output_config.mode).options(**output_config.options)
+        )
 
-    (
-        df.write.format(output_config.format)
-        .mode(output_config.mode)
-        .options(**output_config.options)
-        .saveAsTable(output_config.location)
-    )
+        if output_config.trigger:
+            logger.info(f"Setting streaming trigger: {output_config.trigger}")
+            trigger: dict[str, Any] = output_config.trigger
+            stream_writer = stream_writer.trigger(**trigger)
+        else:
+            logger.info("Using default streaming trigger")
+
+        return _write_stream(stream_writer, output_config)
+
+    batch_writer = df.write.format(output_config.format).mode(output_config.mode).options(**output_config.options)
+    _write_batch(batch_writer, output_config)
     return None
+
+
+def _write_batch(writer: DataFrameWriter, output_config: OutputConfig) -> None:
+    """
+    Helper method to save a DataFrame to a Delta table or files using batch APIs.
+
+    Args:
+        writer: Spark DataFrameWriter for saving data using Spark batch APIs
+        output_config: Output table name or delta path, write mode, and options
+    """
+
+    if TABLE_PATTERN.match(output_config.location):
+        writer.saveAsTable(output_config.location)
+    elif STORAGE_PATH_PATTERN.match(output_config.location):
+        writer.save(output_config.location)
+    else:
+        raise InvalidConfigError(
+            f"Invalid output location. It must be a 2 or 3-level table namespace or storage path, given {output_config.location}"
+        )
+
+
+def _write_stream(writer: DataStreamWriter, output_config: OutputConfig) -> StreamingQuery:
+    """
+    Helper method to save a DataFrame to a Delta table or files using streaming APIs.
+
+    Args:
+        writer: Spark DataStreamWriter for saving data using Spark streaming APIs
+        output_config: Output table name or delta path, write mode, and options
+    """
+
+    if TABLE_PATTERN.match(output_config.location):
+        return writer.toTable(output_config.location)
+
+    if STORAGE_PATH_PATTERN.match(output_config.location):
+        return writer.start(output_config.location)
+
+    raise InvalidConfigError(
+        f"Invalid output location. It must be a 2 or 3-level table namespace or storage path, given {output_config.location}"
+    )
 
 
 def is_one_time_trigger(trigger: dict[str, Any] | None) -> bool:

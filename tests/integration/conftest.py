@@ -33,6 +33,27 @@ RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
 EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID)
 
 
+def build_quality_violation(
+    name: str,
+    message: str,
+    columns: list[str] | None,
+    *,
+    function: str = "is_not_null_and_not_empty",
+) -> dict[str, Any]:
+    """Helper for constructing expected violation entries with shared metadata."""
+
+    return {
+        "name": name,
+        "message": message,
+        "columns": columns,
+        "filter": None,
+        "function": function,
+        "run_time": RUN_TIME,
+        "run_id": RUN_ID,
+        "user_metadata": {},
+    }
+
+
 @pytest.fixture
 def webbrowser_open():
     with patch("webbrowser.open") as mock_open:
@@ -183,6 +204,9 @@ def setup_workflows_with_custom_folder(
     Set up the workflows with installation in the custom install folder.
     """
 
+    if os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip()
+
     def create(_spark, **kwargs):
         installation_ctx_custom_install_folder.installation_service.run()
 
@@ -298,16 +322,9 @@ def expected_quality_checking_output(spark) -> DataFrame:
                 3,
                 None,
                 [
-                    {
-                        "name": "name_is_not_null_and_not_empty",
-                        "message": "Column 'name' value is null or empty",
-                        "columns": ["name"],
-                        "filter": None,
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                    }
+                    build_quality_violation(
+                        "name_is_not_null_and_not_empty", "Column 'name' value is null or empty", ["name"]
+                    )
                 ],
                 None,
             ],
@@ -315,16 +332,9 @@ def expected_quality_checking_output(spark) -> DataFrame:
                 None,
                 "c",
                 [
-                    {
-                        "name": "id_is_not_null",
-                        "message": "Column 'id' value is null",
-                        "columns": ["id"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                    },
+                    build_quality_violation(
+                        "id_is_not_null", "Column 'id' value is null", ["id"], function="is_not_null"
+                    )
                 ],
                 None,
             ],
@@ -332,16 +342,9 @@ def expected_quality_checking_output(spark) -> DataFrame:
                 3,
                 None,
                 [
-                    {
-                        "name": "name_is_not_null_and_not_empty",
-                        "message": "Column 'name' value is null or empty",
-                        "columns": ["name"],
-                        "filter": None,
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                    }
+                    build_quality_violation(
+                        "name_is_not_null_and_not_empty", "Column 'name' value is null or empty", ["name"]
+                    )
                 ],
                 None,
             ],

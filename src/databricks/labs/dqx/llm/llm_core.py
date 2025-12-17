@@ -93,11 +93,14 @@ class DspyRuleSignature(dspy.Signature):
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
     quality_rules: str = dspy.OutputField(
         desc=(
-            "Return a valid JSON array of data quality rules. Use double quotes only. "
+            "Return a valid JSON array of data quality rules. Use double quotes for JSON syntax. "
+            "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes. "
+            "In SQL filter expressions, use single quotes for string literals and capitalize SQL keywords. "
             "Criticality can be error or warn. "
+            "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
-            "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}}}] "
-            "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}}}]"
+            "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
+            "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
         )
     )
     reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
@@ -206,16 +209,25 @@ class DspyRuleGenerationWithSchemaInference(dspy.Module):
 
 
 class LLMRuleCompiler:
+    """
+    Compiles and optimizes LLM-based data quality rules.
+
+    Note: This class assumes DSPy is already configured with a language model.
+    The configuration should be done externally before instantiating this class.
+    """
+
     def __init__(
         self,
-        model_config: LLMModelConfig,
         custom_check_functions: dict[str, Callable] | None = None,
         rule_validator: RuleValidator | None = None,
         optimizer: BootstrapFewShotOptimizer | None = None,
     ):
         """
+        Initialize the rule compiler.
+
+        Note: DSPy must be configured before creating this instance.
+
         Args:
-            model_config: Configuration for the LLM model.
             custom_check_functions: Optional custom check functions.
             rule_validator: Optional rule validator instance.
             optimizer: Optional optimizer instance.
@@ -223,10 +235,6 @@ class LLMRuleCompiler:
         self._custom_check_functions = custom_check_functions
         self._optimizer = optimizer or BootstrapFewShotOptimizer()
         self._rule_validator = rule_validator or RuleValidator(custom_check_functions)
-
-        configurator = LLMModelConfigurator(model_config)
-        configurator.configure()
-
         self._dq_model = DspyRuleGenerationWithSchemaInference()
 
     @cached_property

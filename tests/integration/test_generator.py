@@ -66,13 +66,21 @@ def test_generate_dq_rules(ws):
             "name": "product_launch_date_not_less_than",
             "criticality": "error",
         },
+        {
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "product_launch_date", "limit": datetime.date(2020, 1, 1)},
+            },
+            "name": "product_launch_date_not_less_than",
+            "criticality": "error",
+        },
     ]
     assert expectations == expected
 
 
 def test_generate_dq_rules_warn(ws):
     generator = DQGenerator(ws)
-    expectations = generator.generate_dq_rules(test_rules, level="warn")
+    expectations = generator.generate_dq_rules(test_rules, criticality="warn")
     expected = [
         {
             "check": {"function": "is_not_null", "arguments": {"column": "vendor_id"}},
@@ -111,6 +119,14 @@ def test_generate_dq_rules_warn(ws):
             "name": "product_launch_date_not_less_than",
             "criticality": "warn",
         },
+        {
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "product_launch_date", "limit": datetime.date(2020, 1, 1)},
+            },
+            "name": "product_launch_date_not_less_than",
+            "criticality": "warn",
+        },
     ]
     assert expectations == expected
 
@@ -129,7 +145,7 @@ def test_generate_dq_rules_logging(ws, caplog):
 
 def test_generate_dq_no_rules(ws):
     generator = DQGenerator(ws)
-    expectations = generator.generate_dq_rules(None, level="warn")
+    expectations = generator.generate_dq_rules(None, criticality="warn")
     assert not expectations
 
 
@@ -258,3 +274,49 @@ def test_generate_dq_rules_dataframe_filter_none(ws):
         },
     ]
     assert expectations == expected
+
+
+def test_generate_is_unique_dq_rule(ws, spark):
+    generator = DQGenerator(ws, spark)
+    test_is_unique_rules = [
+        DQProfile(
+            name='is_unique',
+            column='col1,col2',
+            description='LLM-detected primary key columns: col1, col2',
+            parameters={"nulls_distinct": False, "confidence": "high"},
+        ),
+    ]
+    checks = generator.generate_dq_rules(test_is_unique_rules, criticality="warn")
+
+    expected_checks = [
+        {
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1", "col2"], "nulls_distinct": False}},
+            "name": "primary_key_col1_col2_validation",
+            "criticality": "warn",
+            "user_metadata": {"pk_detection_confidence": "high"},
+        }
+    ]
+    assert checks == expected_checks
+
+
+def test_generate_is_unique_dq_rule_default_criticality(ws, spark):
+    generator = DQGenerator(ws, spark)
+    test_is_unique_rules = [
+        DQProfile(
+            name='is_unique',
+            column='col1',
+            description='LLM-detected primary key columns: col1, col2',
+            parameters={"nulls_distinct": True, "confidence": "low"},
+        ),
+    ]
+    checks = generator.generate_dq_rules(test_is_unique_rules)
+
+    expected_checks = [
+        {
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "nulls_distinct": True}},
+            "name": "primary_key_col1_validation",
+            "criticality": "error",
+            "user_metadata": {"pk_detection_confidence": "low"},
+        }
+    ]
+    assert checks == expected_checks

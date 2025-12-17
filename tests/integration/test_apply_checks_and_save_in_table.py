@@ -1803,14 +1803,27 @@ def test_apply_checks_and_save_in_tables_for_patterns_no_tables_matching(ws, spa
         )
 
 
-def test_apply_checks_and_save_in_tables_for_patterns_exclude_no_tables_matching(ws, spark):
-    # Test with empty list of table configs
+def test_apply_checks_and_save_in_tables_for_patterns_exclude_no_tables_matching(ws, spark, make_schema, make_table):
+    # Create an isolated schema with a known table, then exclude it using exclude_patterns
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+
+    # Create a table in the isolated schema
+    make_table(
+        catalog_name=catalog_name,
+        schema_name=schema.name,
+        ctas="SELECT 1 as id",
+    )
+
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
-    # This should not raise an error
+    # Include the schema pattern, but exclude all tables with wildcard - should result in no tables
+    # Using exclude_patterns avoids the full catalog scan that exclude_matched=True triggers
     with pytest.raises(NotFound, match="No tables found matching include or exclude criteria"):
         engine.apply_checks_and_save_in_tables_for_patterns(
-            patterns=["*"], checks_location="some/location", exclude_matched=True
+            patterns=[f"{catalog_name}.{schema.name}.*"],
+            exclude_patterns=[f"{catalog_name}.{schema.name}.*"],
+            checks_location="some/location",
         )
 
 

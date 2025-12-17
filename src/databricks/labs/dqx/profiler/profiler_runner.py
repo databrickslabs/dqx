@@ -10,6 +10,7 @@ from databricks.labs.dqx.config import (
     BaseChecksStorageConfig,
     InstallationChecksStorageConfig,
     RunConfig,
+    InputConfig,
 )
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.engine import DQEngine
@@ -70,16 +71,17 @@ class ProfilerRunner:
                 "sample_seed": run_config.profiler_config.sample_seed,
                 "limit": run_config.profiler_config.limit,
                 "filter": run_config.profiler_config.filter,
+                "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,
             },
         )
-        checks = generator.generate_dq_rules(profiles)  # use default criticality level "error"
+        checks = generator.generate_dq_rules(profiles)  # use default criticality "error"
         logger.info(f"Using options: \n{run_config.profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
         logger.info(f"Generated summary statistics: \n{summary_stats}")
 
         if run_config.checks_user_requirements:
             checks += generator.generate_dq_rules_ai_assisted(
-                run_config.checks_user_requirements, table_name=run_config.input_config.location
+                user_input=run_config.checks_user_requirements, input_config=run_config.input_config
             )
 
         storage_config = InstallationChecksStorageConfig(
@@ -130,12 +132,14 @@ class ProfilerRunner:
         )
 
         for table, (summary_stats, profiles) in results.items():
-            checks = generator.generate_dq_rules(profiles)  # use default criticality level "error"
+            checks = generator.generate_dq_rules(profiles)  # use default criticality "error"
             logger.info(f"Generated checks: \n{checks}")
             logger.info(f"Generated summary statistics: \n{summary_stats}")
 
             if run_config.checks_user_requirements:
-                checks += generator.generate_dq_rules_ai_assisted(run_config.checks_user_requirements, table_name=table)
+                checks += generator.generate_dq_rules_ai_assisted(
+                    user_input=run_config.checks_user_requirements, input_config=InputConfig(location=table)
+                )
 
             storage_config = InstallationChecksStorageConfig(
                 location=(

@@ -433,3 +433,26 @@ def test_argument_type_list_mismatch_args():
         "Item 1 in argument 'columns' should be of type 'str | pyspark.sql.column.Column' "
         "for function 'is_unique' in the 'arguments' block" in str(status)
     )
+
+
+def test_is_in_range_float_arguments():
+    checks = [
+        {
+            "criticality": "warn",
+            "check": {"function": "is_in_range", "arguments": {"column": "a", "min_limit": 1.5, "max_limit": 2.5}},
+        },
+        {
+            "criticality": "warn",
+            "check": {"function": "is_in_range", "arguments": {"column": "b", "min_limit": 0.1, "max_limit": 0.9}},
+        },
+        {
+            "criticality": "warn",
+            "check": {"function": "is_not_in_range", "arguments": {"column": "c", "min_limit": 1.5, "max_limit": 2.5}},
+        },
+        {
+            "criticality": "warn",
+            "check": {"function": "is_not_in_range", "arguments": {"column": "c", "min_limit": 0.1, "max_limit": 0.9}},
+        },
+    ]
+    status = DQEngine.validate_checks(checks)
+    assert not status.has_errors

@@ -7,14 +7,16 @@
   quality_rules: '[{"criticality":"error","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"product_code"}}}]'
   reasoning: "Product code is a key identifier and cannot be missing or blank"
 
-- name: "status_in_allowed_values"
+- name: "status_in_allowed_values_for_placed_orders"
   schema_info:
     columns:
       - name: "status"
         type: "integer"
-  business_description: "Status must be one of the allowed values: 1=Active, 2=Inactive, 3=Pending"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"status","allowed":[1,2,3]}}}]'
-  reasoning: "Restrict status to predefined set of values for data consistency"
+      - name: "order_id"
+        type: "string"
+  business_description: "Status must be one of the allowed values for all placed orders: 1=Active, 2=Inactive, 3=Pending"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"status","allowed":[1,2,3]}},"filter": "order_id is not null"}]'
+  reasoning: "Restrict status to predefined set of values for all placed orders (where order_id not null) for data consistency"
 
 - name: "order_quantity_in_range"
   schema_info:

@@ -11,14 +11,23 @@ min_python: 3.10
 commands:
   - name: open-remote-config
     description: Opens remote configuration in the browser.
+    flags:
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
   - name: open-dashboards
     description: Opens remote dashboards directory.
+    flags:
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
   - name: installations
     description: Show installations by different users on the same workspace.
     table_template: |-
       Path\tVersion\Input
       {{range .}}{{.path}}\t{{.version}}\t{{.input}}
       {{end}}
+    flags:
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
   - name: validate-checks
     description: Validate checks
     flags:
@@ -27,6 +36,8 @@ commands:
       - name: validate-custom-check-functions
         description: Whether to validate custom check functions.
         default: true
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
     table_template: |-
       Run Config\tErrors
       {{range .}}{{.run_config}}\t{{.error}}
@@ -42,6 +53,8 @@ commands:
         description: (Optional) Semicolon separated list of location patterns to exclude from profiling. Useful if wanting to exclude existing output tables.
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
   - name: apply-checks
     description: Apply data quality checks to the input data, and save the results to the output table and optionally quarantine table (based on the run config).
     flags:
@@ -59,6 +72,8 @@ commands:
         default: "_dq_quarantine"
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
   - name: e2e
     description: Run end to end workflow to profile input data and apply quality checks, and save the results to the output table and optionally quarantine table (based on the run config).
     flags:
@@ -76,14 +91,21 @@ commands:
         default: "_dq_quarantine"
       - name: timeout-minutes
         description: The timeout in minutes for the cli to wait for the workflow to complete.
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
   - name: workflows
     description: Show deployed workflows and their latest run state.
     table_template: |-
       Workflow\tWorkflow ID\tState\tStarted
       {{range .}}{{.workflow}}\t{{.workflow_id}}\t{{.state}}\t{{.started}}
       {{end}}
+    flags:
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.
   - name: logs
     description: Show logs from the latest job run
     flags:
       - name: workflow
         description: Name of the workflow to show logs for, e.g. profiler.
+      - name: install-folder
+        description: (Optional) Custom installation folder. If not provided, the default installation folder is used.

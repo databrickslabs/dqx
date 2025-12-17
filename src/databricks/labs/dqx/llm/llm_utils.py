@@ -7,10 +7,24 @@ from typing import Any
 import json
 import yaml
 import dspy  # type: ignore
+from pyspark.sql import SparkSession
 from databricks.labs.dqx.checks_resolver import resolve_check_function
+from databricks.labs.dqx.errors import DQXError
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
+from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.io import read_input_data
+from databricks.labs.dqx.llm.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
+
+# Re-export TableManager for backward compatibility
+__all__ = [
+    "TableManager",
+    "get_check_function_definitions",
+    "get_required_check_functions_definitions",
+    "create_optimizer_training_set",
+    "get_column_metadata",
+]
 
 
 def get_check_function_definitions(custom_check_functions: dict[str, Callable] | None = None) -> list[dict[str, str]]:
@@ -49,7 +63,7 @@ def get_check_function_definitions(custom_check_functions: dict[str, Callable] |
 
 
 def get_required_check_functions_definitions(
-    custom_check_functions: dict[str, Callable] | None = None
+    custom_check_functions: dict[str, Callable] | None = None,
 ) -> list[dict[str, str]]:
     """
     Extract only required function information (name and doc).
@@ -100,6 +114,23 @@ def create_optimizer_training_set(custom_check_functions: dict[str, Callable] | 
     return examples
 
 
+def get_column_metadata(spark: SparkSession, input_config: InputConfig) -> str:
+    """
+    Get the column metadata for a given table.
+
+    Args:
+        input_config (InputConfig): Input configuration for the table.
+        spark (SparkSession): The Spark session used to access the table.
+
+    Returns:
+        str: A JSON string containing the column metadata with columns wrapped in a "columns" key.
+    """
+    df = read_input_data(spark, input_config)
+    columns = [{"name": field.name, "type": field.dataType.simpleString()} for field in df.schema.fields]
+    schema_info = {"columns": columns}
+    return json.dumps(schema_info)
+
+
 def _load_training_examples() -> list[dict[str, Any]]:
     """A function to load the training examples from the llm/resources/training_examples.yml file.
 
@@ -112,6 +143,6 @@ def _load_training_examples() -> list[dict[str, Any]]:
     training_examples = yaml.safe_load(training_examples_as_text)
 
     if not isinstance(training_examples, list):
-        raise ValueError("YAML file must contain a list at the root level.")
+        raise DQXError("YAML file must contain a list at the root level.")
 
     return training_examples

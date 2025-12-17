@@ -10,11 +10,10 @@ data quality issues and are primarily designed for complete datasets,
 making integration into streaming workloads difficult.
 They cannot quarantine invalid data and have compatibility issues with Databricks Runtime.
 
-This project introduces a simple but powerful Python validation framework for assessing the data quality of PySpark DataFrames.
-It enables real-time quality validation during data processing rather than relying solely on post-factum monitoring.
-The validation output includes detailed information on why specific rows and columns have issues, 
-allowing for quicker identification and resolution of data quality problems. The framework offers the ability to quarantine invalid data
-and investigate quality issues before they escalate.
+This project introduces a simple but powerful Python validation framework for assessing the data quality of PySpark DataFrames and Tables.
+It enables both **at-rest validation** (**post-factum monitoring** of already persisted data) and **in-transit validation** (**pre-commit checks** before data is written).
+The validation output includes detailed information on why specific rows and columns have issues, allowing for quicker identification and resolution of data quality problems.
+The framework offers the ability to quarantine invalid data and investigate quality issues before they escalate.
 
 ## What makes DQX unique?
 
@@ -54,28 +53,41 @@ Apply checks on the DataFrame and annotate invalid records as additional columns
 
 ### DQX usage in the Lakehouse Architecture
 
-In the Lakehouse architecture, new data validation should happen during data entry into the curated layer to ensure bad data is not propagated to the subsequent layers.
+In the Lakehouse architecture, data validation should occur as new data enters the curated layer, preventing bad data from propagating to downstream layers.
+Additionally, ongoing data quality monitoring between layers is crucial to detect degradation, while monitoring in the gold layer ensures high-quality outputs for end-users and business decisions.
+
 With DQX, you can implement Dead-Letter pattern to quarantine invalid data and re-ingest it after curation to ensure data quality constraints are met.
-The data quality can be monitored in real-time between layers, and the quarantine process can be automated.
+
+There are 2 options for applying the quality checks in the Lakehouse architecture:
+
+#### Pre-commit validation
+
+Apply DQX checks before writing data to the target table, ensuring only valid data is persisted. This requires DQX usage as a library and code-level integration with the data pipelines.
 
 <div className='bg-gray-100 p-4 rounded-lg'>
- <img src={useBaseUrl('/img/dqx_lakehouse.png')} alt="Lakehouse" />
+ <img src={useBaseUrl('/img/dqx_lakehouse.png')} alt="Pre-commit validation" />
+</div>
+
+#### Post-factum monitoring
+
+Run DQX checks on already persisted data as a background process to identify and flag invalid records. This does not require code-level integration with the data pipelines and can be implemented as a separate monitoring workflow.
+
+<div className='bg-gray-100 p-4 rounded-lg'>
+ <img src={useBaseUrl('/img/dqx_lakehouse_post_factum.png')} alt="Post-commit validation" />
 </div>
 
 ## When to use DQX
 
 DQX is a robust framework designed to define, validate, and enforce data quality rules within Databricks environments.
 Consider using DQX when you need:
-* Proactive Monitoring: Implement quality checks before data is saved.
-* Data Quarantining: Isolate and manage bad data to prevent it from affecting downstream processes.
-* Data in-transit checking: Monitor and validate data in real-time.
 * Granular Validation: Perform row, column and dataset-level quality checks.
 * Custom Quality Rules: Define and enforce tailored data quality rules specific to your business needs.
+* Data in-transit checking: Monitor and validate data before data is saved.
+* Data Quarantining: Isolate and manage bad data to prevent it from affecting downstream processes.
 
-For monitoring data quality of already persisted data in Delta tables (post-factum monitoring), try
-[Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html).
+For detecting anomalies of already persisted data (post-factum monitoring), you might also consider using [Databricks Lakehouse Monitoring](https://docs.databricks.com/en/lakehouse-monitoring/index.html) together with DQX.
 
 DQX seamlessly integrates with other Databricks tools and frameworks such as:
-* [Lakeflow Pipelines (formerly DLT)](https://www.databricks.com/product/data-engineering/lakeflow-declarative-pipelines), where you can use DQX to apply DQX quality checks or to profile input data and generate Lakeflow expectation candidates.
-* [dbt](https://github.com/dbt-labs/dbt-core), where you can apply DQX quality checks on the output of dbt models.
-* [dlt-meta](https://databrickslabs.github.io/dlt-meta/) framework, where you can use DQX to apply data quality checks on the output of transformations.
+* [Lakeflow Pipelines (formerly DLT)](https://www.databricks.com/product/data-engineering/lakeflow-declarative-pipelines) to apply quality checks in the Lakeflow pipelines or to profile input data and generate [Lakeflow expectation](https://docs.databricks.com/aws/en/ldp/expectations) candidates.
+* [dbt](https://github.com/dbt-labs/dbt-core) to apply DQX quality checks on the output of dbt models.
+* [dlt-meta](https://databrickslabs.github.io/dlt-meta/) framework to apply data quality checks on the output of transformations.
