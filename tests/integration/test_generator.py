@@ -34,7 +34,7 @@ test_rules = [
         name='min_max',
         column='d1',
         description='Real min/max values were used',
-        parameters={'max': Decimal('333323.00'), 'min': Decimal('1.23')},
+        parameters={'max': 333323.00, 'min': 1.23},
     ),
 ]
 
@@ -91,7 +91,7 @@ def test_generate_dq_rules(ws, spark):
         {
             "check": {
                 "function": "is_in_range",
-                "arguments": {"column": "d1", "min_limit": Decimal('1.23'), "max_limit": Decimal('333323.00')},
+                "arguments": {"column": "d1", "min_limit": 1.23, "max_limit": 333323.00},
             },
             "name": "d1_isnt_in_range",
             "criticality": "error",
@@ -152,7 +152,7 @@ def test_generate_dq_rules_warn(ws, spark):
         {
             "check": {
                 "function": "is_in_range",
-                "arguments": {"column": "d1", "min_limit": Decimal('1.23'), "max_limit": Decimal('333323.00')},
+                "arguments": {"column": "d1", "min_limit": 1.23, "max_limit": 333323.00},
             },
             "name": "d1_isnt_in_range",
             "criticality": "warn",

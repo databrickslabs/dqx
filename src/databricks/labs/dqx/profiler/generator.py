@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import datetime
 import json
-from decimal import Decimal
 from collections.abc import Callable
 from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
@@ -244,7 +243,7 @@ class DQGenerator(DQEngineBase):
             return None
 
         def _is_num(value):
-            return isinstance(value, (int, float, Decimal))
+            return isinstance(value, (int, float))
 
         def _is_temporal(value):
             return isinstance(value, (datetime.date, datetime.datetime))
