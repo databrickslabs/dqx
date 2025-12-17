@@ -90,7 +90,7 @@ def get_required_summary_stats(summary_stats: dict[str, Any]) -> dict[str, Any]:
     """
     Filters the summary statistics to include only mean, min, and max values,
     which provide sufficient information for LLM-based rule generation while
-    reducing token usage. Converts all values to JSON-serializable format..
+    reducing token usage. Converts all values to JSON-serializable format.
 
     Args:
         summary_stats: Dictionary containing summary statistics for each column.
