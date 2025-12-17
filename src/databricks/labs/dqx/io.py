@@ -12,8 +12,8 @@ from databricks.labs.dqx.errors import InvalidConfigError
 logger = logging.getLogger(__name__)
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
-# catalog.schema.table or schema.table or database.table
-TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$")
+# catalog.schema.table or schema.table or database.table (backticks allow special chars like hyphens for table)
+TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.(?:`[^`]+`|[a-zA-Z0-9_]+)$")
 
 
 def read_input_data(
@@ -109,39 +109,23 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
         InvalidConfigError: If the output location format is invalid (must be a 2 or 3-level
             table namespace or a storage path starting with /, s3:/, abfss:/, or gs:/)
     """
-    writer = _get_dataframe_writer(df, output_config)
+    if df.isStreaming:
+        stream_writer = (
+            df.writeStream.format(output_config.format).outputMode(output_config.mode).options(**output_config.options)
+        )
 
-    if isinstance(writer, DataStreamWriter):
-        return _write_stream(writer, output_config)
+        if output_config.trigger:
+            logger.info(f"Setting streaming trigger: {output_config.trigger}")
+            trigger: dict[str, Any] = output_config.trigger
+            stream_writer = stream_writer.trigger(**trigger)
+        else:
+            logger.info("Using default streaming trigger")
 
-    _write_batch(writer, output_config)
+        return _write_stream(stream_writer, output_config)
+
+    batch_writer = df.write.format(output_config.format).mode(output_config.mode).options(**output_config.options)
+    _write_batch(batch_writer, output_config)
     return None
-
-
-def _get_dataframe_writer(df: DataFrame, output_config: OutputConfig) -> DataFrameWriter | DataStreamWriter:
-    """
-    Builds a DataFrameWriter or DataStreamWriter for the given DataFrame and output configuration.
-
-    Args:
-        df: The DataFrame to save
-        output_config: Output configuration with format, mode, options, and optional trigger
-
-    Returns:
-        DataFrameWriter or DataStreamWriter configured with the specified format, mode, options, and trigger
-    """
-
-    if not df.isStreaming:
-        return df.write.format(output_config.format).mode(output_config.mode).options(**output_config.options)
-
-    writer = df.writeStream.format(output_config.format).outputMode(output_config.mode).options(**output_config.options)
-
-    if output_config.trigger:
-        logger.info(f"Setting streaming trigger: {output_config.trigger}")
-        trigger: dict[str, Any] = output_config.trigger
-        return writer.trigger(**trigger)
-
-    logger.info("Using default streaming trigger")
-    return writer
 
 
 def _write_batch(writer: DataFrameWriter, output_config: OutputConfig) -> None:
