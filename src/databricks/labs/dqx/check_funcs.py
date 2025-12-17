@@ -92,7 +92,7 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
-def matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
+def _matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     """Checks whether the values in the input column match a given pattern.
 
     Args:
@@ -786,7 +786,7 @@ def is_valid_ipv4_address(column: str | Column) -> Column:
     Returns:
         Column object for condition
     """
-    return matches_pattern(column, DQPattern.IPV4_ADDRESS)
+    return _matches_pattern(column, DQPattern.IPV4_ADDRESS)
 
 
 @register_rule("row")
