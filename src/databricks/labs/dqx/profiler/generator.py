@@ -253,10 +253,12 @@ class DQGenerator(DQEngineBase):
             # numeric with numeric OR temporal with temporal
             if value_a is None or value_b is None:
                 return True
-            return any([
-                _is_num(value_a) and _is_num(value_b),
-                _is_temporal(value_a) and _is_temporal(value_b),
-            ])
+            return any(
+                [
+                    _is_num(value_a) and _is_num(value_b),
+                    _is_temporal(value_a) and _is_temporal(value_b),
+                ]
+            )
 
         # Both bounds
         if min_limit is not None and max_limit is not None and _same_family(min_limit, max_limit):
