@@ -12,8 +12,8 @@ from databricks.labs.dqx.errors import InvalidConfigError
 logger = logging.getLogger(__name__)
 
 STORAGE_PATH_PATTERN = re.compile(r"^(/|s3:/|abfss:/|gs:/)")
-# catalog.schema.table or schema.table or database.table
-TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_-]+\.)?[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+$")
+# catalog.schema.table or schema.table or database.table (backticks allow special chars like hyphens for table)
+TABLE_PATTERN = re.compile(r"^(?:[a-zA-Z0-9_]+\.)?[a-zA-Z0-9_]+\.(?:`[^`]+`|[a-zA-Z0-9_]+)$")
 
 
 def read_input_data(
