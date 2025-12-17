@@ -556,7 +556,7 @@ def is_not_less_than(
 
     Args:
         column: column to check; can be a string column name or a column expression
-        limit: limit to use in the condition as number, date, timestamp, Decimal, column name or sql expression
+        limit: limit to use in the condition as number, date, timestamp, column name or sql expression
 
     Returns:
         new Column
@@ -586,7 +586,7 @@ def is_not_greater_than(
 
     Args:
         column: column to check; can be a string column name or a column expression
-        limit: limit to use in the condition as number, date, timestamp, Decimal, column name or sql expression
+        limit: limit to use in the condition as number, date, timestamp, column name or sql expression
 
     Returns:
         new Column
@@ -618,8 +618,8 @@ def is_in_range(
 
     Args:
         column: column to check; can be a string column name or a column expression
-        min_limit: min limit to use in the condition as number, date, timestamp, Decimal, column name or sql expression
-        max_limit: max limit to use in the condition as number, date, timestamp, Decimal, column name or sql expression
+        min_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
+        max_limit: max limit to use in the condition as number, date, timestamp, column name or sql expression
 
     Returns:
         new Column
