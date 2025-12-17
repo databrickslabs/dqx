@@ -1,5 +1,6 @@
 import logging
 import datetime
+import json
 from decimal import Decimal
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
@@ -26,7 +27,7 @@ test_rules = [
     DQProfile(
         name="min_max",
         column="product_expiry_ts",
-        parameters={"min": None, "max": datetime.datetime(2020, 1, 1)},
+        parameters={"min": None, "max": datetime.datetime(2021, 1, 1)},
         description="Real min/max values were used",
     ),
     DQProfile(name="is_random", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
@@ -82,14 +83,22 @@ def test_generate_dq_rules(ws, spark):
         },
         {
             "check": {
-                "function": "is_not_less_than",
-                "arguments": {"column": "product_launch_date", "limit": datetime.date(2020, 1, 1)},
+                "function": "is_not_greater_than",
+                "arguments": {"column": "product_expiry_ts", "limit": datetime.datetime(2021, 1, 1)},
             },
-            "name": "product_launch_date_not_less_than",
+            "name": "product_expiry_ts_not_greater_than",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "is_in_range",
+                "arguments": {"column": "d1", "min_limit": Decimal('1.23'), "max_limit": Decimal('333323.00')},
+            },
+            "name": "d1_isnt_in_range",
             "criticality": "error",
         },
     ]
-    assert expectations == expected
+    assert expectations == expected, f"Actual expectations: {json.dumps(expectations, indent=2, default=str)}"
 
 
 def test_generate_dq_rules_warn(ws, spark):
@@ -135,14 +144,22 @@ def test_generate_dq_rules_warn(ws, spark):
         },
         {
             "check": {
-                "function": "is_not_less_than",
-                "arguments": {"column": "product_launch_date", "limit": datetime.date(2020, 1, 1)},
+                "function": "is_not_greater_than",
+                "arguments": {"column": "product_expiry_ts", "limit": datetime.datetime(2021, 1, 1)},
             },
-            "name": "product_launch_date_not_less_than",
+            "name": "product_expiry_ts_not_greater_than",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "is_in_range",
+                "arguments": {"column": "d1", "min_limit": Decimal('1.23'), "max_limit": Decimal('333323.00')},
+            },
+            "name": "d1_isnt_in_range",
             "criticality": "warn",
         },
     ]
-    assert expectations == expected
+    assert expectations == expected, f"Actual expectations: {json.dumps(expectations, indent=2, default=str)}"
 
 
 def test_generate_dq_rules_logging(ws, spark, caplog):
