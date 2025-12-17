@@ -120,6 +120,7 @@ You can generate AI-assisted quality rules directly from profiler-generated summ
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
+    ```python
     from databricks.labs.dqx.profiler.profiler import DQProfiler
     from databricks.labs.dqx.profiler.generator import DQGenerator
     from databricks.sdk import WorkspaceClient
@@ -146,6 +147,7 @@ You can generate AI-assisted quality rules directly from profiler-generated summ
     )
 
     print(f"Generated {len(checks)} quality checks from profiler statistics")
+    ```
   </TabItem>
 </Tabs>
 
