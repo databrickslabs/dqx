@@ -265,7 +265,7 @@ class DQGenerator(DQEngineBase):
                     "function": "is_in_range",
                     "arguments": {
                         "column": column,
-                        # pass through Python ints or datetime/date without stringification
+                        # pass through Python num or datetime/date without stringification
                         "min_limit": min_limit,
                         "max_limit": max_limit,
                     },
