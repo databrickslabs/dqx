@@ -2032,6 +2032,8 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
         condition_when_valid = F.arrays_overlap(json_keys_array, required_keys)
 
     condition = F.when(~is_invalid_json, condition_when_valid).otherwise(F.lit(False))
+    # Treat NULL values as valid (no violation) to ensure consistent behavior across ANSI/non-ANSI modes
+    condition = condition | col_expr.isNull()
 
     return make_condition(
         ~condition,
