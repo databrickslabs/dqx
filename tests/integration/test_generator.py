@@ -98,7 +98,7 @@ def test_generate_dq_rules(ws, spark):
             "criticality": "error",
         },
     ]
-    assert expectations == expected, f"Actual expectations: {json.dumps(expectations, indent=2, default=str)}"
+    assert expectations == expected, f"Actual expectations: {expectations}"
 
 
 def test_generate_dq_rules_warn(ws, spark):
@@ -159,7 +159,7 @@ def test_generate_dq_rules_warn(ws, spark):
             "criticality": "warn",
         },
     ]
-    assert expectations == expected, f"Actual expectations: {json.dumps(expectations, indent=2, default=str)}"
+    assert expectations == expected, f"Actual expectations: {expectations}"
 
 
 def test_generate_dq_rules_logging(ws, spark, caplog):
