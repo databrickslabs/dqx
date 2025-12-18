@@ -15,6 +15,8 @@ from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_serializer import CHECKS_TABLE_SCHEMA
 
+from tests.conftest import TEST_CATALOG
+
 
 INPUT_CHECKS = [
     {
@@ -65,7 +67,7 @@ EXPECTED_CHECKS = [
 
 
 def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_random, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -76,7 +78,7 @@ def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_rand
 
 
 def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -88,7 +90,7 @@ def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
 
 
 def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -148,7 +150,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 
 
 def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -254,7 +256,7 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
 
 
 def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -364,7 +366,7 @@ def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema,
 
 
 def test_save_and_load_checks_from_table_with_run_config(ws, make_schema, make_random, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -391,7 +393,7 @@ def test_save_and_load_checks_from_table_with_run_config(ws, make_schema, make_r
 
 
 def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -406,7 +408,7 @@ def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random
 
 
 def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, make_schema, make_random, spark):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
@@ -429,6 +431,8 @@ def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, 
 @dataclass
 class ChecksDummyStorageConfig(BaseChecksStorageConfig):
     """Dummy storage config for testing unsupported storage type."""
+
+    location: str = "test_location"
 
 
 def test_load_checks_invalid_storage_config(ws, spark):

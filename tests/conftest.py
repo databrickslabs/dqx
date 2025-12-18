@@ -1,10 +1,17 @@
 import os
+from datetime import timedelta
+from io import BytesIO
+from typing import Any
 import re
+import logging
 from collections.abc import Callable, Generator
-from dataclasses import replace
+from dataclasses import replace, dataclass
 from functools import cached_property
 
 import pytest
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
+from databricks.sdk.retries import retried
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
@@ -19,9 +26,15 @@ from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
+from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
+
+logger = logging.getLogger(__name__)
 
 
-@pytest.fixture
+TEST_CATALOG = "dqx"
+
+
+@pytest.fixture(scope="session")
 def debug_env_name():
     return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
@@ -407,6 +420,35 @@ def expected_checks():
 
 
 @pytest.fixture
+def df(spark):
+    return spark.createDataFrame(
+        data=[
+            (1, None, "2006-04-09", "ymason@example.net", "APAC", "France", "High"),
+            (2, "Mark Brooks", "1992-07-27", "johnthomas@example.net", "LATAM", "Trinidad and Tobago", None),
+            (3, "Lori Gardner", "2001-01-22", "heather68@example.com", None, None, None),
+            (4, None, "1968-10-24", "hollandfrank@example.com", None, "Palau", "Low"),
+            (5, "Laura Mitchell DDS", "1968-01-08", "paynebrett@example.org", "NA", "Qatar", None),
+            (6, None, "1951-09-11", "williamstracy@example.org", "EU", "Benin", "High"),
+            (7, "Benjamin Parrish", "1971-08-17", "hmcpherson@example.net", "EU", "Kazakhstan", "Medium"),
+            (8, "April Hamilton", "1989-09-04", "adamrichards@example.net", "EU", "Saint Lucia", None),
+            (9, "Stephanie Price", "1975-03-01", "ktrujillo@example.com", "NA", "Togo", "High"),
+            (10, "Jonathan Sherman", "1976-04-13", "charles93@example.org", "NA", "Japan", "Low"),
+        ],
+        schema=StructType(
+            [
+                StructField("id", IntegerType(), True),
+                StructField("name", StringType(), True),
+                StructField("birthdate", StringType(), True),
+                StructField("email", StringType(), True),
+                StructField("region", StringType(), True),
+                StructField("state", StringType(), True),
+                StructField("tier", StringType(), True),
+            ]
+        ),
+    )
+
+
+@pytest.fixture
 def make_local_check_file_as_yaml(checks_yaml_content, make_random):
     file_path = f"checks_{make_random(10).lower()}.yml"
     with open(file_path, "w", encoding="utf-8") as f:
@@ -575,7 +617,7 @@ def make_volume_check_file_as_yaml(ws, make_directory, checks_yaml_content):
             folder = make_directory()
             volume_file_path = str(folder.absolute()) + "/checks.yaml"
 
-        ws.files.upload(volume_file_path, checks_yaml_content.encode(), overwrite=True)
+        ws.files.upload(volume_file_path, BytesIO(checks_yaml_content.encode()), overwrite=True)
 
         return volume_file_path
 
@@ -594,7 +636,7 @@ def make_volume_check_file_as_json(ws, make_directory, checks_json_content):
             folder = make_directory()
             volume_file_path = str(folder.absolute()) + "/checks.json"
 
-        ws.files.upload(volume_file_path, checks_json_content.encode(), overwrite=True)
+        ws.files.upload(volume_file_path, BytesIO(checks_json_content.encode()), overwrite=True)
 
         return volume_file_path
 
@@ -613,7 +655,7 @@ def make_volume_invalid_check_file_as_yaml(ws, make_directory, checks_yaml_inval
             folder = make_directory()
             volume_file_path = str(folder.absolute()) + "/checks.yaml"
 
-        ws.files.upload(volume_file_path, checks_yaml_invalid_content.encode(), overwrite=True)
+        ws.files.upload(volume_file_path, BytesIO(checks_yaml_invalid_content.encode()), overwrite=True)
 
         return volume_file_path
 
@@ -632,7 +674,7 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
             folder = make_directory()
             volume_file_path = str(folder.absolute()) + "/checks.json"
 
-        ws.files.upload(volume_file_path, checks_json_invalid_content.encode(), overwrite=True)
+        ws.files.upload(volume_file_path, BytesIO(checks_json_invalid_content.encode()), overwrite=True)
 
         return volume_file_path
 
@@ -640,3 +682,117 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
         ws.files.delete(volume_file_path)
 
     yield from factory("file", create, delete)
+
+
+@pytest.fixture
+def lakebase_user(ws):
+    """
+    Get a Lakebase user.
+
+    This fixture reads ARM_CLIENT_ID which is set in the CI/CD pipeline.
+    For local development where the ARM_CLIENT_ID is not set, the user is fetched from the workspace client.
+
+    Returns:
+        The client ID or use name to use as the Lakebase user.
+    """
+    client_id = os.environ.get("ARM_CLIENT_ID")
+    if not client_id:
+        return ws.current_user.me().user_name
+    return client_id
+
+
+@dataclass
+class LakebaseInstance:
+    name: str
+    catalog_name: str
+    database_name: str
+
+
+@pytest.fixture
+def make_lakebase_instance(ws, make_random):
+    def create() -> LakebaseInstance:
+        run_id = os.getenv("GITHUB_RUN_ID", "local")
+        instance_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
+        database_name = "dqx"  # does not need to be random
+        catalog_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
+        capacity = "CU_1"
+
+        # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
+        # Retries are performed until the timeout is reached.
+        @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=20))
+        def _create_database_instance():
+            ws.database.create_database_instance_and_wait(
+                database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
+            )
+
+        _create_database_instance()
+
+        logger.info(f"Successfully created database instance: {instance_name}")
+
+        ws.database.create_database_catalog(
+            DatabaseCatalog(
+                name=catalog_name,
+                database_name=database_name,
+                database_instance_name=instance_name,
+                create_database_if_not_exists=True,
+            )
+        )
+        logger.info(f"Successfully created database catalog: {catalog_name}")
+
+        return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
+
+    def delete(instance: LakebaseInstance) -> None:
+        # Delete catalog first, then instance.
+        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+        def _delete_catalog():
+            try:
+                ws.database.delete_database_catalog(name=instance.catalog_name)
+                logger.info(f"Successfully deleted database catalog: {instance.catalog_name}")
+            except NotFound:
+                logger.info(f"Database catalog {instance.catalog_name} not found (already deleted)")
+
+        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+        def _delete_instance():
+            try:
+                ws.database.delete_database_instance(name=instance.name)
+                logger.info(f"Successfully deleted database instance: {instance.name}")
+            except NotFound:
+                logger.info(f"Database instance {instance.name} not found (already deleted)")
+
+        _delete_catalog()
+        _delete_instance()
+
+    yield from factory("lakebase", create, delete)
+
+
+def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
+    """
+    Compares two lists of checks dictionaries for equality, ensuring
+    they contain the same checks with identical fields.
+
+    Args:
+        result: The result checks list.
+        expected: The expected checks list.
+
+    Returns:
+        None
+    """
+    assert len(result) == len(expected), f"Expected {len(expected)} checks, got {len(result)}"
+    sorted_result = sorted(result, key=_sort_key)
+    sorted_expected = sorted(expected, key=_sort_key)
+    for res, exp in zip(sorted_result, sorted_expected):
+        for key in exp:
+            assert res.get(key) == exp[key], f"Mismatch for key '{key}': {res.get(key)} != {exp[key]}"
+
+
+def _sort_key(check: dict[str, Any]) -> str:
+    """
+    Sorts a checks dictionary by the 'name' field.
+
+    Args:
+        check: The check dictionary.
+
+    Returns:
+        The name of the check as a string, or an empty string if not found.
+    """
+    return str(check.get("name", ""))

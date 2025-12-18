@@ -1,0 +1,108 @@
+- name: "product_code_not_null_or_empty"
+  schema_info:
+    columns:
+      - name: "product_code"
+        type: "string"
+  business_description: "Product code must always be present and not empty"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"product_code"}}}]'
+  reasoning: "Product code is a key identifier and cannot be missing or blank"
+
+- name: "status_in_allowed_values_for_placed_orders"
+  schema_info:
+    columns:
+      - name: "status"
+        type: "integer"
+      - name: "order_id"
+        type: "string"
+  business_description: "Status must be one of the allowed values for all placed orders: 1=Active, 2=Inactive, 3=Pending"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_in_list","arguments":{"column":"status","allowed":[1,2,3]}},"filter": "order_id is not null"}]'
+  reasoning: "Restrict status to predefined set of values for all placed orders (where order_id not null) for data consistency"
+
+- name: "order_quantity_in_range"
+  schema_info:
+    columns:
+      - name: "quantity"
+        type: "integer"
+  business_description: "Order quantity must be between 1 and 1000"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"quantity","min_limit":1,"max_limit":1000}}}]'
+  reasoning: "Quantities outside this range are invalid business values"
+
+- name: "order_date_valid_range"
+  schema_info:
+    columns:
+      - name: "order_date"
+        type: "date"
+  business_description: "Order date must be between January 1, 2025 and December 31, 2025"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"order_date","min_limit":"2025-01-01","max_limit":"2025-12-31"}}}]'
+  reasoning: "Orders can only be created within the current business year"
+
+- name: "unique_customer_email"
+  schema_info:
+    columns:
+      - name: "email"
+        type: "string"
+  business_description: "Customer email must be unique across all records"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["email"]}}}]'
+  reasoning: "Emails uniquely identify customers and duplicates must not exist"
+
+- name: "unique_customer_order"
+  schema_info:
+    columns:
+      - name: "customer_id"
+        type: "string"
+      - name: "order_id"
+        type: "string"
+  business_description: "Each customer can only have a unique order id"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["customer_id","order_id"]}}}]'
+  reasoning: "The combination of customer and order id should not be duplicated"
+
+- name: "description_no_pii"
+  schema_info:
+    columns:
+      - name: "description"
+        type: "string"
+  business_description: "Free-text description must not contain personally identifiable information (PII)"
+  quality_rules: '[{"criticality":"error","check":{"function":"does_not_contain_pii","arguments":{"column":"description"}}}]'
+  reasoning: "To comply with privacy regulations, no PII should be stored in descriptions"
+
+- name: "customer_id_must_exist_in_reference"
+  schema_info:
+    columns:
+      - name: "customer_id"
+        type: "string"
+  business_description: "Each customer_id in orders must exist in the customers table"
+  quality_rules: '[{"criticality":"error","check":{"function":"foreign_key","arguments":{"columns":["customer_id"],"ref_columns":["id"],"ref_table":"sales.customers"}}}]'
+  reasoning: "Foreign key relationship ensures data integrity between orders and customers"
+
+- name: "discount_not_greater_than_price"
+  schema_info:
+    columns:
+      - name: "price"
+        type: "decimal"
+      - name: "discount"
+        type: "decimal"
+  business_description: "Discount value must never exceed price"
+  quality_rules: '[{"criticality":"error","check":{"function":"sql_expression","arguments":{"expression":"discount <= price","msg":"Discount is greater than price", "columns":["price","discount"]}}}]'
+  reasoning: "A discount higher than price is invalid business logic"
+
+- name: "event_timestamp_recent"
+  schema_info:
+    columns:
+      - name: "event_time"
+        type: "timestamp"
+  business_description: "Event timestamp must be within the last 24 hours"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_data_fresh","arguments":{"column":"event_time","max_age_minutes":1440}}}]'
+  reasoning: "Events must reflect recent activity, stale records are invalid"
+
+- name: "order_total_within_daily_average"
+  schema_info:
+    columns:
+      - name: "order_id"
+        type: "string"
+      - name: "order_date"
+        type: "date"
+      - name: "order_total"
+        type: "decimal"
+  business_description: "Each order's total must not exceed 10 times the average order total for that day"
+  quality_rules: '[{"criticality":"warn","check":{"function":"sql_query","arguments":{"query":"SELECT order_id, CASE WHEN order_total > 10 * AVG(order_total) OVER (PARTITION BY order_date) THEN true ELSE false END as condition FROM {{ orders }}","merge_columns":["order_id"],"condition_column":"condition","input_placeholder":"orders","msg":"Order total exceeds 10x daily average"}}}]'
+  reasoning: "The sql_query function enables complex aggregation checks using window functions to detect outlier orders that are significantly higher than the daily average. Input table can be provided directly by fully qualified name or with curly brackets {{ orders }}, where 'orders' is the name of the input table specified in the input_placeholder argument"

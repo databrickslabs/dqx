@@ -15,11 +15,13 @@ from databricks.labs.dqx.config import (
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
-from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, REPORTING_COLUMNS
+from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, RUN_ID, REPORTING_COLUMNS
+
+from tests.conftest import TEST_CATALOG
 
 
 def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -71,6 +73,7 @@ def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_rand
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -89,6 +92,7 @@ def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_rand
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -100,7 +104,7 @@ def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_rand
 
 
 def test_apply_checks_and_save_in_single_table_with_quarantine(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -151,6 +155,7 @@ def test_apply_checks_and_save_in_single_table_with_quarantine(ws, spark, make_s
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -165,7 +170,7 @@ def test_apply_checks_and_save_in_single_table_with_quarantine(ws, spark, make_s
 
 
 def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -215,6 +220,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schem
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -233,6 +239,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schem
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -244,7 +251,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schem
 
 
 def test_apply_checks_by_metadata_and_save_in_single_table_with_quarantine(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -294,6 +301,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table_with_quarantine(ws, s
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -308,7 +316,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table_with_quarantine(ws, s
 
 
 def test_apply_checks_and_save_in_table_with_options(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -376,7 +384,7 @@ def test_apply_checks_and_save_in_table_with_options(ws, spark, make_schema, mak
 
 
 def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -421,6 +429,7 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -458,6 +467,7 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -471,7 +481,7 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
 
 
 def test_apply_checks_by_metadata_and_save_in_table_with_custom_functions(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -522,6 +532,7 @@ def test_apply_checks_by_metadata_and_save_in_table_with_custom_functions(ws, sp
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -533,7 +544,7 @@ def test_apply_checks_by_metadata_and_save_in_table_with_custom_functions(ws, sp
 
 
 def test_apply_checks_and_save_in_table_with_custom_functions(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -584,6 +595,7 @@ def test_apply_checks_and_save_in_table_with_custom_functions(ws, spark, make_sc
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -595,7 +607,7 @@ def test_apply_checks_and_save_in_table_with_custom_functions(ws, spark, make_sc
 
 
 def test_apply_checks_and_save_in_table_with_ref_df(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -643,7 +655,7 @@ def test_apply_checks_and_save_in_table_with_ref_df(ws, spark, make_schema, make
 
 
 def test_apply_checks_by_metadata_and_save_in_table_with_ref_df(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -689,7 +701,7 @@ def test_apply_checks_by_metadata_and_save_in_table_with_ref_df(ws, spark, make_
 
 
 def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, make_random, make_volume):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -738,6 +750,7 @@ def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, 
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -750,7 +763,7 @@ def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, 
 
 
 def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, make_directory):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -811,6 +824,7 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -829,6 +843,7 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -842,7 +857,7 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
 def test_apply_checks_and_save_in_tables_streaming_write(
     ws, spark, make_schema, make_random, make_directory, make_volume
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -904,6 +919,7 @@ def test_apply_checks_and_save_in_tables_streaming_write(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -916,7 +932,7 @@ def test_apply_checks_and_save_in_tables_streaming_write(
 
 
 def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema, make_random, make_directory):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     # Create multiple input and output tables
@@ -991,6 +1007,7 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1015,6 +1032,7 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1028,7 +1046,7 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
 
 
 def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema, make_random, make_directory):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     input_tables = [f"{catalog_name}.{schema.name}.{make_random(8).lower()}" for _ in range(2)]
@@ -1096,6 +1114,7 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1120,7 +1139,7 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
 
 
 def test_apply_checks_and_save_in_tables_custom_parallelism(ws, spark, make_schema, make_random, make_directory):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
@@ -1210,7 +1229,7 @@ def test_apply_checks_and_save_in_tables_missing_output_config(ws, spark):
 
 
 def test_apply_checks_and_save_in_tables_with_custom_functions(ws, spark, make_schema, make_random, make_directory):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -1282,6 +1301,7 @@ def custom_string_check(column: str) -> Column:
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1293,7 +1313,7 @@ def custom_string_check(column: str) -> Column:
 
 
 def test_apply_checks_and_save_in_tables_with_ref_df(ws, spark, make_schema, make_random, make_directory):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -1348,7 +1368,7 @@ def test_apply_checks_and_save_in_tables_with_ref_df(ws, spark, make_schema, mak
 
 
 def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, make_random, make_directory):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     # Create multiple input and output tables
@@ -1412,6 +1432,7 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1436,6 +1457,7 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1449,7 +1471,7 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
 
 
 def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark, make_schema, make_random):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     # Create multiple input and output tables
@@ -1516,6 +1538,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1540,6 +1563,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark,
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1555,7 +1579,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark,
 def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
     ws, spark, make_schema, make_random, make_directory
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     # Create multiple input and output tables
@@ -1635,6 +1659,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1658,6 +1683,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1675,7 +1701,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
 def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
     ws, spark, make_schema, make_random, make_directory
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -1749,6 +1775,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1790,7 +1817,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_exclude_no_tables_matching
 def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
     ws, spark, make_schema, make_random, make_directory
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
 
     # Create multiple input and output tables
@@ -1886,6 +1913,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1909,6 +1937,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
                         "filter": None,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1926,7 +1955,7 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
 def test_apply_checks_and_save_in_tables_with_patterns_and_custom_functions(
     ws, spark, make_schema, make_random, make_directory
 ):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{input_table}_dq_output"
@@ -1987,6 +2016,7 @@ def custom_string_check(column: str) -> Column:
                         "filter": None,
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
                         "user_metadata": {},
                     }
                 ],
@@ -1998,7 +2028,7 @@ def custom_string_check(column: str) -> Column:
 
 
 def test_apply_checks_and_save_in_tables_with_patterns_and_ref_df(ws, spark, make_schema, make_random, make_directory):
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
     output_table = f"{input_table}_dq_output"

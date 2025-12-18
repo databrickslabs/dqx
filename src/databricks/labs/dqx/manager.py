@@ -7,6 +7,7 @@ import pyspark.sql.functions as F
 from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, Column, SparkSession
 
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.executor import DQCheckResult, DQRuleExecutorFactory
 from databricks.labs.dqx.rule import (
     DQRule,
@@ -36,15 +37,17 @@ class DQRuleManager:
         check: The DQRule instance that defines the check to apply.
         df: The DataFrame on which to apply the check.
         engine_user_metadata: Metadata provided by the engine (overridden by check.user_metadata if present).
-        run_time: The timestamp when the check is executed.
+        run_time_overwrite: Optional timestamp override. If None, current_timestamp() is used for per-micro-batch timestamps.
         ref_dfs: Optional reference DataFrames for dataset-level checks.
+        run_id: Optional unique run id.
     """
 
     check: DQRule
     df: DataFrame
     spark: SparkSession
     engine_user_metadata: dict[str, str]
-    run_time: datetime
+    run_time_overwrite: datetime | None
+    run_id: str
     ref_dfs: dict[str, DataFrame] | None = None
 
     @cached_property
@@ -94,6 +97,23 @@ class DQRuleManager:
         """
         return self._is_invalid_column(self.filter_condition)
 
+    @cached_property
+    def invalid_sql_expression(self) -> str | None:
+        """
+        Returns an invalid expression for sql expression check.
+        """
+        if self.check.check_func is check_funcs.sql_expression:
+            if "expression" in self.check.check_func_kwargs:
+                field_value = self.check.check_func_kwargs["expression"]
+            elif self.check.check_func_args:
+                field_value = self.check.check_func_args[0]
+            else:
+                return None  # should never happen, as it is validated for correct args when building rules
+
+            if self._is_invalid_column(field_value):
+                return field_value
+        return None
+
     def process(self) -> DQCheckResult:
         """
         Process the data quality rule (check) and return results as DQCheckResult containing:
@@ -119,13 +139,18 @@ class DQRuleManager:
         return DQCheckResult(condition=check_result, check_df=raw_result.check_df)
 
     def _build_result_struct(self, condition: Column) -> Column:
+        # Use current_timestamp() to make sure streaming gets per-micro-batch timestamps,
+        # or use literal run time if explicitly overridden
+        run_time_expr = F.current_timestamp() if self.run_time_overwrite is None else F.lit(self.run_time_overwrite)
+
         return F.struct(
             F.lit(self.check.name).alias("name"),
             condition.alias("message"),
             self.check.columns_as_string_expr.alias("columns"),
             F.lit(self.check.filter or None).cast("string").alias("filter"),
             F.lit(self.check.check_func.__name__).alias("function"),
-            F.lit(self.run_time).alias("run_time"),
+            run_time_expr.alias("run_time"),
+            F.lit(self.run_id).alias("run_id"),
             F.create_map(*[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
                 "user_metadata"
             ),
@@ -151,6 +176,14 @@ class DQRuleManager:
                 f"Check evaluation skipped due to invalid check filter: '{self.check.filter}'"
             )
 
+        if self.invalid_sql_expression:
+            logger.warning(
+                f"Skipping check '{self.check.name}' due to invalid sql expression: '{self.invalid_sql_expression}'"
+            )
+            invalid_cols_message_parts.append(
+                f"Check evaluation skipped due to invalid sql expression: '{self.invalid_sql_expression}'"
+            )
+
         invalid_cols_message = "; ".join(invalid_cols_message_parts)
 
         return invalid_cols_message
@@ -164,7 +197,8 @@ class DQRuleManager:
             col_expr = F.expr(column) if isinstance(column, str) else column
             _ = self.df.select(col_expr).schema  # perform logical plan validation without triggering computation
         except AnalysisException as e:
-            # if column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown
+            # If column is not accessible or column expression cannot be evaluated, an AnalysisException is thrown.
+            # Note: This does not cover all error conditions. Some issues only appear during a Spark action.
             logger.debug(
                 f"Invalid column '{column}' provided in the check '{self.check.name}'",
                 exc_info=e,

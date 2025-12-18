@@ -38,12 +38,12 @@ default_catalog = "main"
 default_schema = "default"
 
 # Create widgets for configuration
-dbutils.widgets.text("demo_catalog_name", default_catalog, "Catalog Name")
-dbutils.widgets.text("demo_schema_name", default_schema, "Schema Name")
+dbutils.widgets.text("demo_catalog", default_catalog, "Catalog Name")
+dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
 
 # Get configuration values
-demo_catalog_name = dbutils.widgets.get("demo_catalog_name")
-demo_schema_name = dbutils.widgets.get("demo_schema_name")
+demo_catalog_name = dbutils.widgets.get("demo_catalog")
+demo_schema_name = dbutils.widgets.get("demo_schema")
 
 print(f"Using catalog: {demo_catalog_name}")
 print(f"Using schema: {demo_schema_name}")

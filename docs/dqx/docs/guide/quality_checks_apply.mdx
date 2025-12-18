@@ -1,5 +1,5 @@
 ---
-sidebar_position: 7
+sidebar_position: 8
 ---
 
 import Admonition from '@theme/Admonition';
@@ -15,6 +15,7 @@ You can apply quality checks to your data using the following approaches:
 
 DQX offers a set of predefined built-in quality rules (checks) as described [here](/docs/guide/quality_checks_definition).
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
+All rule types, including row-level and dataset-level rules, can be applied together in a single execution.
 
 ## Programmatic approach
 
@@ -29,9 +30,13 @@ Checks can be applied to the input data by one of the following methods of the `
   * `apply_checks_by_metadata_and_split`: apply quality checks and split the input DataFrame into valid and invalid (quarantined) DataFrames.
   * `apply_checks_by_metadata_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to output table(s) via single method call.
 
+* There are also method for applying checks to multiple input locations at once:
+  * `apply_checks_and_save_in_tables`: apply quality checks to input locations defined by provided list of `RunConfig`.
+  * `apply_checks_and_save_in_tables_for_patterns`: apply quality checks to tables matching wildcard patterns.
+
 You can see the full list of `DQEngine` methods [here](/docs/reference/engine/#dqx-engine-methods).
 
-The engine ensures that the specified `column`, `columns`, or `filter` fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields.
+The engine ensures that the specified `column`, `columns`, `filter`, or sql 'expression' fields can be resolved in the input DataFrame. If any of these fields are invalid, the check evaluation is skipped, and the results include the check failure with a message identifying the invalid fields.
 The engine will raise an error if you try to apply checks with invalid definition (e.g. wrong syntax).
 In addition, you can also perform a standalone syntax validation of the checks as described [here](/docs/guide/quality_checks_definition#validating-syntax-of-quality-checks).
 
@@ -41,7 +46,7 @@ You can either use the end-to-end methods or manage the input stream and output 
 You can find ready-to-use examples of applying checks with different methods in the [demo](/docs/demos) section.
 
 The results are reported as additional columns in the output DataFrame (by default `_warning` and `_error` columns).
-See [quality check results](/docs/guide/quality_checks_apply#quality-checking-results) for details on the structure of the results.
+See [quality check results](/docs/guide/quality_checks_apply#detailed-quality-checking-results) for details on the structure of the results.
 You can customize the reporting columns as described in the [additional configuration](/docs/guide/additional_configuration) section.
 
 ### Applying checks defined with DQX classes
@@ -192,8 +197,8 @@ In the example below, checks are defined in YAML syntax for convenience and then
 
 <Admonition type="note" title="Note">
 Checks are applied to a `column` specified in the `arguments` of the `check`. This can be either a column name as `string` or column expression.
-Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (e.g. `sql_expression`).
-Alternatively, `for_each_column` can be used to define a list of columns that the check should be applied for one by one.
+Some checks require `columns` (e.g. `is_unique`) instead of `column`, which is a list of column names or expressions. There are also checks that require no columns at all (e.g. `sql_expression` and `sql_query`).
+Alternatively, `for_each_column` can be used to define a list of columns for which the same check should be applied. The `for_each_column` is supported for quality rules that take `column` or `columns` as arguments (e.g. not supported by `sql_expression` and `sql_query`).
 For details on each check, please refer to the documentation [here](/docs/reference/quality_checks).
 </Admonition>
 
@@ -575,7 +580,7 @@ When running the quality checker workflow using Databricks API or UI, you have t
   - If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table.
     If the `checks_location` in the run config points to a file, file name is replaced with "&lt;input_table&gt;.yml". In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder.
     For example:
-    - If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table".
+    - If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table" or "database.schema.table" in case of using Lakebase to store checks.
     - If "checks_location=folder/checks.yml", the  location will be resolved to "install_folder/folder/&lt;input_table&gt;.yml".
     - If "checks_location=/App/checks.yml", the location will be resolved to "/App/&lt;input_table&gt;.yml".
     - If "checks_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/&lt;input_table&gt;.yml".
@@ -690,7 +695,7 @@ When running the e2e workflow using Databricks API or UI, you have the same exec
   - If the `checks_location` in the run config points to a table, the checks will be directly loaded from that table.
     If the `checks_location` in the run config points to a file, file name is replaced with &lt;input_table&gt;.yml. In addition, if the location is specified as a relative path, it is prefixed with the workspace installation folder.
     For example:
-    - If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table".
+    - If "checks_location=catalog.schema.table", the location will be resolved to "catalog.schema.table" or "database.schema.table" in case of using Lakebase to store checks.
     - If "checks_location=folder/checks.yml", the  location will be resolved to "install_folder/folder/&lt;input_table&gt;.yml".
     - If "checks_location=/App/checks.yml", the location will be resolved to "/App/&lt;input_table&gt;.yml".
     - If "checks_location=/Volume/catalog/schema/folder/checks.yml", the location will be resolved to "/Volume/catalog/schema/folder/&lt;input_table&gt;.yml".
@@ -719,6 +724,7 @@ The following fields from the [configuration file](/docs/installation/#configura
 - `output_config`: configuration for the output data. 'location' is autogenerated when the workflow is executed for patterns.
 - `quarantine_config`: (optional) configuration for the quarantine data. 'location' is autogenerated when the workflow is executed for patterns.
 - `checks_location`: location of the quality checks in storage. Autogenerated when the workflow is executed for patterns.
+- `metrics_config`: (optional) configuration for storing summary metrics.
 - `serverless_clusters`: whether to use serverless clusters for running the workflow (default: `true`). Using serverless clusters is recommended as it allows for automated cluster management and scaling.
 - `e2e_spark_conf`: (optional) spark configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
 - `e2e_override_clusters`: (optional) cluster configuration to use for the e2e workflow, only applicable if `serverless_clusters` is set to `false`.
@@ -734,15 +740,23 @@ The following fields from the [configuration file](/docs/installation/#configura
    - `sample_seed`: seed for reproducible sampling.
    - `limit`: maximum number of records to analyze.
    - `filter`: filter for the input data as a string SQL expression (default: None).
+- `checks_user_requirements`: (optional) user input for AI-assisted rule generation
+- `llm_config`: (optional) configuration for the AI-assisted features
 - `extra_params`: (optional) extra parameters to pass to the jobs such as result column names and user_metadata
+- `custom_metrics`: (optional) list of Spark SQL expressions for capturing custom summary metrics. By default, the number of input, warning, and error rows will be tracked. When custom metrics are defined, they will be tracked in addition to the default metrics.
 - `custom_check_functions`: (optional) custom check functions defined in Python files that can be used in the quality checks.
 - `reference_tables`: (optional) reference tables that can be used in the quality checks.
 
 Example of the configuration file (relevant fields only):
 ```yaml
   serverless_clusters: true          # default is true, set to false to use standard clusters
-  profiler_max_parallelism: 4        # <- max parallelism for profiling multiple tables
-  quality_checker_max_parallelism: 4 # <- max parallelism for quality checking multiple tables
+  profiler_max_parallelism: 4        # max parallelism for profiling multiple tables
+  quality_checker_max_parallelism: 4 # max parallelism for quality checking multiple tables
+  llm_config:                        # configuration for the llm-assisted features
+    model:
+      model_name: "databricks/databricks-claude-sonnet-4-5"
+      api_key: xxx                  # optional API key for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
+      api_base: xxx                 # optional API base for the model as secret in the format: secret_scope/secret_key. Not required by foundational models
   run_configs:
   - name: default
     checks_location: catalog.table.checks  # can be a table or file
@@ -764,10 +778,15 @@ Example of the configuration file (relevant fields only):
       #checkpointLocation: /Volumes/catalog/schema/volume/checkpoint  # only applicable if input_config.is_streaming is enabled
       #trigger: # streaming trigger, only applicable if input_config.is_streaming is enabled
       #  availableNow: true
+    metrics_config: # optional - summary metrics storage
+      format: delta
+      location: main.nytaxi.dq_metrics
+      mode: append
     profiler_config:
       limit: 1000
       sample_fraction: 0.3
       summary_stats_file: profile_summary_stats.yml
+    checks_user_requirements: "business rules description" # optional user input for the llm-assisted features
     custom_check_functions:  # optional
       my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
       my_other: /Workspace/Shared/MyApp/my_funcs.py       # or absolute workspace path
@@ -777,11 +796,81 @@ Example of the configuration file (relevant fields only):
         input_config:
           format: delta
           location: main.nytaxi.ref
+  # Global custom metrics for summary statistics (optional)
+  custom_metrics:
+    - "sum(array_size(_warnings)) as total_warnings"
+    - "sum(array_size(_errors)) as total_errors"
 ```
 
-## Quality checking results
+## Summary Metrics
 
-Quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data.
+DQX can capture and store summary metrics for your data quality checks in a centralized Delta table.
+These metrics can complement row-level quality checks stored in output DataFrames or be stored independently.
+
+When enabled, the system collects both default summary metrics (input row count, error row count, warning row count, valid row count) and any custom summary metrics you define.
+Metrics can be configured programmatically or via a configuration file when installing DQX as a tool in the workspace.
+
+### Enabling summary metrics programmatically
+
+To enable summary metrics programmatically, create and pass a `DQMetricsObserver` when initializing the `DQEngine`:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+    from databricks.sdk import WorkspaceClient
+
+    # Create the engine with the optional observer
+    dq_observer = DQMetricsObserver()
+    dq_engine = DQEngine(WorkspaceClient(), observer=dq_observer)
+
+    # Option 1: apply quality checks, provide a single result DataFrame, and return a metrics observation
+    valid_and_invalid_df, metrics_observation = dq_engine.apply_checks(input_df, checks)
+    valid_and_invalid_df.count()  # Trigger an action to populate metrics (e.g. count, save to a table), otherwise accessing them will result in a stall
+    print(metrics_observation.get)
+    # save the metrics to a table
+    engine.save_summary_metrics(observed_metrics=metrics_observation.get, metrics_config=OutputConfig(location="catalog.schema.metrics"))
+
+    # Option 2: apply quality checks on the DataFrame, provide valid and invalid (quarantined) DataFrames, and return a metrics observation
+    valid_df, invalid_df, metrics_observation = dq_engine.apply_checks_and_split(input_df, checks)
+    invalid_df.count()  # Trigger an action to populate metrics (e.g. count, save to a table), otherwise accessing them will result in a stall
+    print(metrics_observation.get)
+    # save the metrics to a table
+    engine.save_summary_metrics(observed_metrics=metrics_observation.get, metrics_config=OutputConfig(location="catalog.schema.metrics"))
+
+    # Option 3 End-to-End approach: apply quality checks to a table, save results to valid and invalid (quarantined) tables, and save metrics to a metrics table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.valid"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        metrics_config=OutputConfig(location="catalog.schema.metrics"),
+    )
+
+    # Option 4 End-to-End approach: apply quality checks to a table, save results to an output table, and save metrics to a metrics table
+    dq_engine.apply_checks_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.output"),
+        metrics_config=OutputConfig(location="catalog.schema.metrics"),
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+### Enabling summary metrics in DQX workflows
+
+Summary metrics can also be enabled in DQX workflows. Metrics are configured:
+
+1. **During installation for default run config**: When prompted, choose to store summary metrics and configure the default metrics table location.
+2. **Configuration file**: Add `custom_metrics` and `metrics_config` to the [configuration file](/docs/installation/#configuration-file).
+
+For detailed information about summary metrics, including examples and best practices, see the [Summary Metrics Guide](/docs/guide/summary_metrics).
+
+## Detailed quality checking results
+
+Detailed row-level quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data.
 The result columns are named `_error` and `_warning` by default, but you can customize them as described in the [additional configuration](/docs/guide/additional_configuration) section.
 
 The result columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
@@ -795,20 +884,22 @@ Below is a sample output of a check stored in a result column (error or warning)
     "columns": ["city"],
     "filter": "country = 'Poland'",
     "function": "is_not_null",
-    "run_time": "2025-01-01 14:31:21",
+    "run_time": "2025-10-29T15:09:41.174Z",
+    "run_id": "2f9120cf-e9f2-446a-8278-12d508b00639"
     "user_metadata": {"key1": "value1", "key2": "value2"},
   },
 ]
 ```
 
 The structure of the result columns is an array of struct containing the following fields
-(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.9.3/src/databricks/labs/dqx/schema/dq_result_schema.py)):
+(see the exact structure [here](https://github.com/databrickslabs/dqx/blob/v0.10.0/src/databricks/labs/dqx/schema/dq_result_schema.py)):
 - `name`: name of the check (string type).
 - `message`: message describing the quality issue (string type).
 - `columns`: name of the column(s) where the quality issue was found (string type).
 - `filter`: filter applied to if any (string type).
 - `function`: rule/check function applied (string type).
 - `run_time`: timestamp when the check was executed (timestamp type).
+- `run_id`: unique run ID recorded in the detailed quality checking results as well as summary metrics to enable cross-referencing. When reusing the same `DQEngine` and observer instances, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance. It is only changed when new engine and observer (if using one) is created.
 - `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
 
 The below example demonstrates how to extract the results from a result columns in PySpark:
@@ -829,18 +920,25 @@ The below example demonstrates how to extract the results from a result columns 
     results_df = invalid_df.select(
       F.explode(F.col("_warnings")).alias("result"),
     ).select(F.expr("result.*"))
+
+    results_df.show()
+
+    # If using summary metrics, you can drill down to detailed quality results
+    run_id = spark.table(metrics_table_name).collect()[0]["run_id"]  # fetch any run_id as an example
+    filtered_results_df = results_df.filter(F.col("run_id") == run_id)  # use run_id for filtering
+    filtered_results_df.show()
     ```
   </TabItem>
 </Tabs>
 
 The `results_df` will contain the following columns:
 ```python
-+------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
-| name             | message               | columns  | filter             | function    | run_time            | user_metadata  |
-+------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
-| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-01-01 14:31:21 | {}             |
-| ...              | ...                   | ...      | ...                | ...         | ...                 | ...            |
-+------------------+-----------------------+----------+--------------------+-------------+---------------------+----------------+
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
+| name             | message               | columns  | filter             | function    | run_time                      | run_id                               | user_metadata  |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
+| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29T15:11:51.354+00:00 | 2f9120cf-e9f2-446a-8278-12d508b00639 | {}             |
+| ...              | ...                   | ...      | ...                | ...         | ...                           | ...                                  |                |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
 ```
 
 An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.

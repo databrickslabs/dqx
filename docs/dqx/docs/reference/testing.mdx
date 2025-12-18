@@ -59,12 +59,15 @@ Below is an example test.
 
 If you want to run the tests from your local machine in the terminal, you need to set up the following environment variables:
 ```shell
-export DATABRICKS_HOST=https://<workspace-url>
+export DATABRICKS_HOST=<workspace-url>
 export DATABRICKS_CLUSTER_ID=<cluster-id>
 
 # Authenticate to Databricks using OAuth generated for a service principal (recommended)
 export DATABRICKS_CLIENT_ID=<oauth-client-id>
 export DATABRICKS_CLIENT_SECRET=<oauth-client-secret>
+
+# Specify Default Warehouse HTTP path for local testing of dbt demo 
+export TEST_DEFAULT_WAREHOUSE_HTTP_PATH=/sql/1.0/warehouses/<warehouse-id>
 
 # Optionally enable serverless compute to be used for the tests
 export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
@@ -87,7 +90,7 @@ Create the `~/.databricks/debug-env.json` with the following content, replacing 
   "ws": {
     "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
     "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
-    "DATABRICKS_HOST": "https://<workspace-url>",
+    "DATABRICKS_HOST": "<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>"
   }
 }
@@ -106,7 +109,7 @@ To run the integration tests on serverless compute, add the `DATABRICKS_SERVERLE
   "ws": {
     "DATABRICKS_CLIENT_ID": "<oauth-client-id>",
     "DATABRICKS_CLIENT_SECRET": "<oauth-client-secret>",
-    "DATABRICKS_HOST": "https://<workspace-url>",
+    "DATABRICKS_HOST": "<workspace-url>",
     "DATABRICKS_CLUSTER_ID": "<databricks-cluster-id>",
     "DATABRICKS_SERVERLESS_COMPUTE_ID": "auto"
   }
