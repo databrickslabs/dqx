@@ -134,12 +134,12 @@ def _auto_discover_from_profiler(
     )
 
     # Limit to max 10 columns
-    MAX_COLUMNS = 10
-    candidates_list = candidates_df.limit(MAX_COLUMNS + 50).collect()  # Get extra for counting
+    max_columns = 10
+    candidates_list = candidates_df.limit(max_columns + 50).collect()  # Get extra for counting
 
     recommended_columns = []
     column_types = {}
-    for row in candidates_list[:MAX_COLUMNS]:
+    for row in candidates_list[:max_columns]:
         col_name = row["column_name"]
         _col_type = row["type"]
         priority = row["priority"]
@@ -159,9 +159,9 @@ def _auto_discover_from_profiler(
         recommended_columns.append(col_name)
         column_types[col_name] = category
 
-    if len(candidates_list) > MAX_COLUMNS:
+    if len(candidates_list) > max_columns:
         warnings.append(
-            f"Found {len(candidates_list)} suitable columns, selected top {MAX_COLUMNS} by priority. "
+            f"Found {len(candidates_list)} suitable columns, selected top {max_columns} by priority. "
             f"Priority: numeric > boolean > low-card categorical > datetime. "
             f"Manually specify columns to override."
         )
@@ -334,14 +334,14 @@ def _auto_discover_heuristic(
     candidates.sort(key=lambda x: (x[0], x[1]))  # Sort by priority, then name
 
     # Select top 10 columns
-    MAX_COLUMNS = 10
-    for priority, col_name, col_type_str, cardinality, null_rate in candidates[:MAX_COLUMNS]:
+    max_columns = 10
+    for _priority, col_name, col_type_str, _cardinality, _null_rate in candidates[:max_columns]:
         recommended_columns.append(col_name)
         column_types[col_name] = col_type_str
 
-    if len(candidates) > MAX_COLUMNS:
+    if len(candidates) > max_columns:
         warnings.append(
-            f"Found {len(candidates)} suitable columns, selected top {MAX_COLUMNS} by priority. "
+            f"Found {len(candidates)} suitable columns, selected top {max_columns} by priority. "
             f"Priority: numeric > boolean > low-card categorical > datetime. "
             f"Manually specify columns to override."
         )

@@ -17,6 +17,8 @@ from pyspark.sql import types as T
 from pyspark.sql.functions import col, when, lit, coalesce, hour, dayofweek, month, sin, cos, pi, count, to_timestamp
 from pyspark.sql.types import DoubleType, TimestampType
 
+from databricks.labs.dqx.errors import InvalidParameterError
+
 
 @dataclass
 class ColumnTypeInfo:
@@ -97,8 +99,6 @@ class ColumnTypeClassifier:
         Returns:
             Tuple of (column_type_infos, warnings)
         """
-        from databricks.labs.dqx.errors import InvalidParameterError
-
         # Check max columns limit
         if len(columns) > self.max_input_columns:
             raise InvalidParameterError(

@@ -286,6 +286,7 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: str):
     # Query registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
     record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    assert record is not None
 
     # Verify key metadata is present
     assert record["model_name"] == full_model_name

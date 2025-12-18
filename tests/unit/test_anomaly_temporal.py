@@ -32,7 +32,9 @@ def test_extract_day_of_week_feature(spark: SparkSession):
     result = extract_temporal_features(df, "timestamp", features=["day_of_week"])
 
     assert "temporal_day_of_week" in result.columns
-    day_of_week = result.first()["temporal_day_of_week"]
+    row = result.first()
+    assert row is not None
+    day_of_week = row["temporal_day_of_week"]
     assert day_of_week == 2  # Monday is 2 in Spark
 
 
@@ -51,6 +53,7 @@ def test_extract_multiple_features(spark: SparkSession):
     assert "temporal_quarter" in result.columns
 
     row = result.first()
+    assert row is not None
     assert row["temporal_hour"] == 14
     assert row["temporal_month"] == 3
     assert row["temporal_quarter"] == 1
