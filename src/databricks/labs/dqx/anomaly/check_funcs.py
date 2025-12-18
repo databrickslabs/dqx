@@ -109,6 +109,7 @@ def _score_segmented(
                 )
 
         # Score this segment with optional SHAP (computed in single UDF pass)
+        assert segment_model.feature_metadata is not None, f"Model {segment_model.model_name} missing feature_metadata"
         segment_scored = _score_with_sklearn_model(
             segment_model.model_uri,
             segment_df,
@@ -440,13 +441,14 @@ def has_no_anomalies(
                         )
 
                 if columns is None:
-                    columns = record_for_discovery.columns
+                    # Registry returns list[str], cast to match function signature
+                    columns = list(record_for_discovery.columns)
                 if segment_by is None:
                     segment_by = record_for_discovery.segment_by
 
         # Now normalize columns (we know columns is not None at this point)
         assert columns is not None, "columns should be set by now"
-        normalized_columns = [get_column_name_or_alias(c) for c in columns]
+        normalized_columns: list[str] = [get_column_name_or_alias(c) for c in columns]
 
         registry = registry_table or _derive_registry_table(df)
 
@@ -489,6 +491,7 @@ def has_no_anomalies(
             if all_segments:
                 # Auto-detect segmentation and use segmented scoring
                 first_segment = all_segments[0]
+                assert first_segment.segment_by is not None, "Segment model must have segment_by"
                 return _score_segmented(
                     df,
                     first_segment.segment_by,
@@ -564,6 +567,7 @@ def has_no_anomalies(
             for i, uri in enumerate(model_uris):
                 # Only compute SHAP for first model in ensemble (if requested)
                 compute_shap_for_this = include_contributions and i == 0
+                assert record.feature_metadata is not None, f"Model {record.model_name} missing feature_metadata"
                 temp_scored = _score_with_sklearn_model(
                     uri,
                     df_filtered,
@@ -600,6 +604,7 @@ def has_no_anomalies(
                 scored_df = scored_df.drop(col)
         else:
             # Single model (distributed scoring via pandas UDF with optional SHAP)
+            assert record.feature_metadata is not None, f"Model {record.model_name} missing feature_metadata"
             scored_df = _score_with_sklearn_model(
                 record.model_uri,
                 df_filtered,

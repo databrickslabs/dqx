@@ -385,7 +385,11 @@ def apply_feature_engineering(
                     expr = expr.when(condition, lit(frequency))
 
             # Default for unknown values
-            expr = expr.otherwise(lit(0.0))
+            if expr is not None:
+                expr = expr.otherwise(lit(0.0))
+            else:
+                # Empty freq_map - use 0.0 for all values
+                expr = lit(0.0)
 
             transformed_df = transformed_df.withColumn(feature_name, expr)
             engineered_features.append(feature_name)

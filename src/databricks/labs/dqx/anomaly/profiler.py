@@ -258,14 +258,14 @@ def _auto_discover_heuristic(
     """
     from pyspark.sql.types import BooleanType, DateType, TimestampType, TimestampNTZType
 
-    recommended_columns = []
-    recommended_segments = []
-    column_stats = {}
-    column_types = {}
-    unsupported_columns = []
+    recommended_columns: list[str] = []
+    recommended_segments: list[str] = []
+    column_stats: dict[str, dict] = {}
+    column_types: dict[str, str] = {}
+    unsupported_columns: list[str] = []
 
     # Priority order: numeric > boolean > low-card categorical > datetime > high-card categorical
-    candidates = []  # List of (priority, col_name, col_type, cardinality, null_rate)
+    candidates: list[tuple] = []  # List of (priority, col_name, col_type, cardinality, null_rate)
 
     # Filter out ID/timestamp patterns
     id_pattern = re.compile(r"(?i)(id|key)$")
@@ -335,9 +335,9 @@ def _auto_discover_heuristic(
 
     # Select top 10 columns
     MAX_COLUMNS = 10
-    for priority, col_name, col_type, cardinality, null_rate in candidates[:MAX_COLUMNS]:
+    for priority, col_name, col_type_str, cardinality, null_rate in candidates[:MAX_COLUMNS]:
         recommended_columns.append(col_name)
-        column_types[col_name] = col_type
+        column_types[col_name] = col_type_str
 
     if len(candidates) > MAX_COLUMNS:
         warnings.append(
@@ -380,8 +380,7 @@ def _auto_discover_heuristic(
 
         # Check segment criteria
         # Exclude ID-like columns (e.g., rep_id, customer_id, etc.)
-        id_pattern = r"(?i)(id|key)$"
-        is_id_column = re.search(id_pattern, col_name) is not None
+        is_id_column = id_pattern.search(col_name) is not None
 
         if 2 <= distinct_count <= 50 and null_rate < 0.1 and not is_id_column:
             # Validate minimum segment size
