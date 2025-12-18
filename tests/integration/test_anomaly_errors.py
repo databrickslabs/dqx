@@ -25,7 +25,8 @@ def test_missing_model_error(spark: SparkSession, mock_workspace_client):
     # Should raise clear error about missing model
     # Model name gets normalized to full catalog.schema.model format
     with pytest.raises(InvalidParameterError, match="Model 'main.default.nonexistent_model' not found"):
-        condition_col, apply_fn = has_no_anomalies(
+        _, apply_fn = has_no_anomalies(
+            merge_columns=["transaction_id"],
             columns=["amount", "quantity"],
             model="nonexistent_model",
             registry_table="main.default.nonexistent_registry",
@@ -58,7 +59,8 @@ def test_column_mismatch_error(spark: SparkSession, mock_workspace_client):
 
     # Should raise error about column mismatch
     with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
-        condition_col, apply_fn = has_no_anomalies(
+        _, apply_fn = has_no_anomalies(
+            merge_columns=["transaction_id"],
             columns=["amount", "discount"],
             model="test_col_mismatch",
             registry_table="main.default.test_col_mismatch_registry",

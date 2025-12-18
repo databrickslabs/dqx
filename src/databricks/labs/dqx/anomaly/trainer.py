@@ -577,11 +577,11 @@ def _derive_registry_table(df: DataFrame) -> str:
             current_catalog = catalog_row[0]
             current_schema = schema_row[0]
             return f"{current_catalog}.{current_schema}.dqx_anomaly_models"
-        except Exception:
+        except Exception as exc:
             raise InvalidParameterError(
                 "Cannot infer registry table name from DataFrame and no current catalog/schema set. "
                 "Provide registry_table explicitly (e.g., 'catalog.schema.dqx_anomaly_models')."
-            )
+            ) from exc
     parts = input_table.split(".")
     if len(parts) == 3:
         catalog, schema, _ = parts
@@ -710,11 +710,14 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
         from sklearn.ensemble import IsolationForest
         from sklearn.preprocessing import RobustScaler
         from sklearn.pipeline import Pipeline
-        import pandas as pd  # noqa: F401
-        import numpy as np  # noqa: F401
+
+        # Dependency check - these are used by sklearn and pandas UDFs
+        import pandas  # noqa: F401
+        import numpy  # noqa: F401
     except ImportError as e:
         raise InvalidParameterError(
-            "IsolationForest requires scikit-learn. Install with: pip install 'databricks-labs-dqx[anomaly]'"
+            "IsolationForest requires scikit-learn, pandas, and numpy. "
+            "Install with: pip install 'databricks-labs-dqx[anomaly]'"
         ) from e
 
     from databricks.labs.dqx.anomaly.transformers import ColumnTypeClassifier, apply_feature_engineering
@@ -812,7 +815,7 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
 
     # Apply feature engineering in Spark (distributed)
     # Use pre-computed frequency maps from training
-    engineered_df, _ = apply_feature_engineering(
+    _engineered_df, _ = apply_feature_engineering(
         df,
         column_infos,
         categorical_cardinality_threshold=20,  # Use same threshold as training
@@ -846,12 +849,12 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
         model_local = cloudpickle.loads(model_bytes)
 
         # Convert input columns to DataFrame
-        X = pd.concat(cols, axis=1)
-        X.columns = engineered_feature_cols
+        features_df = pd.concat(cols, axis=1)
+        features_df.columns = engineered_feature_cols
 
         # Pipeline handles scaling and prediction (no custom transformers)
-        predictions = model_local.predict(X)
-        scores = -model_local.score_samples(X)  # Negate to make higher = more anomalous
+        predictions = model_local.predict(features_df)
+        scores = -model_local.score_samples(features_df)  # Negate to make higher = more anomalous
 
         # Convert sklearn labels -1/1 to 0/1
         predictions = np.where(predictions == -1, 1, 0)
@@ -929,21 +932,23 @@ def _compute_validation_metrics(
         pred_df = labeled_df.withColumn("pred_label", F.when(F.col("score") >= F.lit(threshold), 1).otherwise(0))
 
         # Confusion matrix
-        tp = pred_df.filter((F.col("pred_label") == 1) & (F.col("true_label") == 1)).count()
-        fp = pred_df.filter((F.col("pred_label") == 1) & (F.col("true_label") == 0)).count()
-        _tn = pred_df.filter((F.col("pred_label") == 0) & (F.col("true_label") == 0)).count()
-        fn = pred_df.filter((F.col("pred_label") == 0) & (F.col("true_label") == 1)).count()
+        true_positives = pred_df.filter((F.col("pred_label") == 1) & (F.col("true_label") == 1)).count()
+        false_positives = pred_df.filter((F.col("pred_label") == 1) & (F.col("true_label") == 0)).count()
+        _true_negatives = pred_df.filter((F.col("pred_label") == 0) & (F.col("true_label") == 0)).count()
+        false_negatives = pred_df.filter((F.col("pred_label") == 0) & (F.col("true_label") == 1)).count()
 
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+        precision = (
+            true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.0
+        )
+        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0.0
+        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
 
         threshold_metrics[f"threshold_{int(threshold*100)}_precision"] = precision
         threshold_metrics[f"threshold_{int(threshold*100)}_recall"] = recall
-        threshold_metrics[f"threshold_{int(threshold*100)}_f1"] = f1
+        threshold_metrics[f"threshold_{int(threshold*100)}_f1"] = f1_score
 
-        if f1 > best_f1:
-            best_f1 = f1
+        if f1_score > best_f1:
+            best_f1 = f1_score
             best_threshold = threshold
 
     # Estimated contamination (percentage of scores above best threshold)

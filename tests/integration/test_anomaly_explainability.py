@@ -206,7 +206,7 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model):
     valid_contribs = {k: v for k, v in contribs.items() if v is not None}
 
     # Find top contributor
-    top_feature = max(valid_contribs, key=valid_contribs.get)
+    top_feature = max(valid_contribs, key=lambda k: valid_contribs[k])
 
     # Amount should likely be the top contributor (or at least significant)
     # Since amount is the most anomalous feature
