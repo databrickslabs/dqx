@@ -23,6 +23,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.config import AnomalyConfig, AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
+from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 from pyspark.sql import types as T
 
@@ -212,7 +213,7 @@ def _train_global(
             run_id = run.info.run_id
     
     # Compute baseline statistics for drift detection (distributed on Spark)
-    baseline_stats = _compute_baseline_statistics(train_df)
+    baseline_stats = _compute_baseline_statistics(train_df, columns)
     
     # Compute feature importance for explainability (distributed on Spark, use first model if ensemble)
     if ensemble_size > 1:
@@ -424,7 +425,7 @@ def _train_single_segment(
         run_id = run.info.run_id
     
     # Compute baseline statistics for drift detection
-    baseline_stats = _compute_baseline_statistics(train_df)
+    baseline_stats = _compute_baseline_statistics(train_df, columns)
     
     # Compute feature importance for explainability
     feature_importance = _compute_feature_importance(model, val_df, columns, feature_metadata)
@@ -548,14 +549,34 @@ def _derive_registry_table(df: DataFrame) -> str:
 
 def _get_input_table(df: DataFrame) -> str | None:
     """
-    Attempt to get the input table name from DataFrame.
+    Attempt to get the input table name from DataFrame by analyzing the Spark execution plan.
     
-    Returns None if table name cannot be inferred (e.g., temporary DataFrames, Spark Connect).
+    Returns None if table name cannot be inferred (e.g., in-memory DataFrames, programmatically created).
     """
     if df.isStreaming:
         raise InvalidParameterError("Streaming DataFrames are not supported for training.")
-    # Note: Spark Connect doesn't support sql_ctx, so we can't reliably get table name
-    # Return None for DataFrames created programmatically
+    
+    try:
+        # Get the execution plan and extract table names
+        from io import StringIO
+        import sys
+        
+        # Capture explain output
+        old_stdout = sys.stdout
+        sys.stdout = buffer = StringIO()
+        df.explain(extended=True)
+        sys.stdout = old_stdout
+        plan_str = buffer.getvalue()
+        
+        # Extract tables from the plan
+        tables = get_tables_from_spark_plan(plan_str)
+        if tables:
+            # Return the first table found (typically there's only one input table)
+            return next(iter(tables))
+    except Exception:
+        # If anything fails, fall back to None
+        pass
+    
     return None
 
 
@@ -894,22 +915,44 @@ def _compute_validation_metrics(
     return metrics
 
 
-def _compute_baseline_statistics(train_df: DataFrame) -> dict[str, dict[str, float]]:
+def _compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict[str, dict[str, float]]:
     """
-    Compute baseline distribution statistics for each column in training data.
+    Compute baseline distribution statistics for feature columns in training data.
     Used later for drift detection.
+    
+    Args:
+        train_df: Training DataFrame
+        columns: Feature columns to compute statistics for
+    
+    Returns:
+        Dictionary mapping column names to their baseline statistics
     """
     baseline_stats = {}
+    col_types = dict(train_df.dtypes)
     
-    for col_name in train_df.columns:
+    for col_name in columns:
+        # Get column data type
+        col_type = col_types.get(col_name)
+        if not col_type:
+            continue
+        
+        # Only compute stats for numeric-compatible types
+        # Skip date, timestamp, and string types that can't be cast to numeric
+        numeric_compatible_types = ["int", "long", "float", "double", "short", "byte", "boolean", "decimal"]
+        if not any(t in col_type.lower() for t in numeric_compatible_types):
+            continue
+        
+        # Cast boolean to double for statistics computation
+        col_expr = F.col(col_name).cast("double") if col_type == "boolean" else F.col(col_name)
+        
         col_stats = train_df.select(
-            F.mean(col_name).alias("mean"),
-            F.stddev(col_name).alias("std"),
-            F.min(col_name).alias("min"),
-            F.max(col_name).alias("max"),
+            F.mean(col_expr).alias("mean"),
+            F.stddev(col_expr).alias("std"),
+            F.min(col_expr).alias("min"),
+            F.max(col_expr).alias("max"),
         ).first()
         
-        quantiles = train_df.approxQuantile(col_name, [0.25, 0.5, 0.75], 0.01)
+        quantiles = train_df.select(col_expr.alias(col_name)).approxQuantile(col_name, [0.25, 0.5, 0.75], 0.01)
         
         baseline_stats[col_name] = {
             "mean": col_stats["mean"],
