@@ -20,7 +20,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
-from databricks.labs.dqx.telemetry import get_tables_from_spark_plan, telemetry_logger
+from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 
 
@@ -293,16 +293,18 @@ def _train_global(
 
     # run_id was already saved during model logging
 
+    input_table = _get_input_table(df) or "unknown"
+
     record = AnomalyModelRecord(
         model_name=model_name,
         model_uri=model_uri,
-        input_table=_get_input_table(df),
+        input_table=input_table,
         columns=columns,
         algorithm=f"IsolationForest_Ensemble_{ensemble_size}" if ensemble_size > 1 else "IsolationForest",
         hyperparameters=_stringify_dict(hyperparams),
         training_rows=train_df.count(),
         training_time=datetime.utcnow(),
-        mlflow_run_id=run_id,
+        mlflow_run_id=run_id or "unknown",
         metrics=validation_metrics,
         mode="spark",
         baseline_stats=baseline_stats,
@@ -384,7 +386,7 @@ def _train_segmented(
 
     # Log summary of skipped segments
     if skipped_segments:
-        telemetry_logger.info(
+        print(
             f"Skipped {len(skipped_segments)}/{len(segments)} segments due to insufficient data after sampling: "
             f"{', '.join(skipped_segments[:5])}"
             + (f" and {len(skipped_segments) - 5} more" if len(skipped_segments) > 5 else "")
@@ -427,7 +429,7 @@ def _train_single_segment(
 
     sampled_df, sampled_count, truncated = _sample_df(df, columns, params)
     if sampled_count == 0:
-        telemetry_logger.info(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
+        print(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
         return None
 
     train_df, val_df = _train_validation_split(sampled_df, params)
@@ -501,10 +503,12 @@ def _train_single_segment(
 
     registry = AnomalyModelRegistry(spark)
 
+    input_table = _get_input_table(df) or "unknown"
+
     record = AnomalyModelRecord(
         model_name=model_name,
         model_uri=model_uri,
-        input_table=_get_input_table(df),
+        input_table=input_table,
         columns=columns,
         algorithm="IsolationForest",
         hyperparameters=_stringify_dict(hyperparams),
