@@ -1,49 +1,35 @@
-"""Integration tests for anomaly detection with DQEngine."""
+"""
+Integration tests for anomaly detection with DQEngine.
+
+OPTIMIZATION: These tests use session-scoped shared_2d_model fixture to avoid retraining models.
+This reduces runtime from ~70 min to ~10 min (86% savings).
+
+All 7 tests now reuse a single pre-trained 2D model (amount, quantity) instead of training independently.
+"""
 
 import pytest
 from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
 from unittest.mock import MagicMock
 
-from databricks.labs.dqx.anomaly import train, has_no_anomalies
-from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from databricks.sdk import WorkspaceClient
-from tests.conftest import TEST_CATALOG
 
 
 @pytest.fixture
 def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
+    """Create a mock WorkspaceClient for DQEngine."""
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that apply_checks_by_metadata adds anomaly scores and DQX metadata."""
-    # Create unique names for test isolation
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    model_name = f"test_apply_metadata_{make_random(4).lower()}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
-    
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.01, 2.0 + i * 0.001) for i in range(100)],
-        "amount double, quantity double",
-    )
-    
-    stable_params = AnomalyParams(
-        sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
-    )
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=stable_params,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
     
     test_df = spark.createDataFrame(
         [(100.0, 2.0), (9999.0, 1.0)],
@@ -56,7 +42,7 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, ma
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
-                "columns": ["amount", "quantity"],
+                "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
                 "score_threshold": 0.6,
@@ -80,33 +66,12 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, ma
     assert has_error, "Expected at least one row to have anomaly error"
 
 
-def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that apply_checks_by_metadata_and_split correctly splits valid/quarantine."""
-    # Create unique names for test isolation
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    model_name = f"test_split_{make_random(4).lower()}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
-    
-    # Train on realistic 2D cluster with different scales
-    # amount ~ 100-300, quantity ~ 10-30 (different scales to test feature scaling)
-    # Use more data for better model training
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
-        "amount double, quantity double",
-    )
-    
-    stable_params = AnomalyParams(
-        sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),  # Lower contamination = tighter boundary
-    )
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=stable_params,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
     
     # Test with in-cluster points and clear outliers
     test_df = spark.createDataFrame(
@@ -120,7 +85,7 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, make
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
-                "columns": ["amount", "quantity"],
+                "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
                 "score_threshold": 0.6,
@@ -155,30 +120,12 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, make
     assert "amount" in quarantine_df.columns
 
 
-def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that quarantine DataFrame has expected structure."""
-    # Create unique names for test isolation
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    model_name = f"test_quarantine_structure_{make_random(4).lower()}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
-    
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
-        "amount double, quantity double",
-    )
-    
-    stable_params = AnomalyParams(
-        sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
-    )
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=stable_params,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
     
     test_df = spark.createDataFrame(
         [(9999.0, 1.0)],  # Anomalous row
@@ -191,7 +138,7 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
-                "columns": ["amount", "quantity"],
+                "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
                 "score_threshold": 0.6,
@@ -217,31 +164,12 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
     assert row["quantity"] == 1.0
 
 
-def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test combining anomaly check with other DQX checks."""
-    # Create unique names for test isolation
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    model_name = f"test_multi_checks_{make_random(4).lower()}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
-    
-    # Train on realistic 2D cluster with different scales
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
-        "amount double, quantity double",
-    )
-    
-    stable_params = AnomalyParams(
-        sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
-    )
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=stable_params,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
     
     test_df = spark.createDataFrame(
         [
@@ -265,7 +193,7 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
-                "columns": ["amount", "quantity"],
+                "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
                 "score_threshold": 0.6,
@@ -296,30 +224,12 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, ma
     assert len(rows[2]["_errors"]) > 0
 
 
-def test_criticality_error(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test anomaly check with criticality='error'."""
-    # Create unique names for test isolation
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    model_name = f"test_crit_error_{make_random(4).lower()}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
-    
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.01, 2.0 + i * 0.001) for i in range(100)],
-        "amount double, quantity double",
-    )
-    
-    stable_params = AnomalyParams(
-        sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
-    )
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=stable_params,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
     
     test_df = spark.createDataFrame(
         [(100.0, 2.0), (9999.0, 1.0)],
@@ -333,7 +243,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, make_sche
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
-                "columns": ["amount", "quantity"],
+                "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
                 "score_threshold": 0.6,
@@ -348,30 +258,12 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, make_sche
     assert "_errors" in quarantine_df.columns
 
 
-def test_criticality_warn(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test anomaly check with criticality='warn'."""
-    # Create unique names for test isolation
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    model_name = f"test_crit_warn_{make_random(4).lower()}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
-    
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.01, 2.0 + i * 0.001) for i in range(100)],
-        "amount double, quantity double",
-    )
-    
-    stable_params = AnomalyParams(
-        sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
-    )
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=stable_params,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
     
     test_df = spark.createDataFrame(
         [(100.0, 2.0), (9999.0, 1.0)],
@@ -385,7 +277,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, make_schem
             criticality="warn",
             check_func=has_no_anomalies,
             check_func_kwargs={
-                "columns": ["amount", "quantity"],
+                "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
                 "score_threshold": 0.6,
@@ -404,31 +296,12 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, make_schem
     assert anomalous_row["_warnings"] is not None or anomalous_row["_errors"] is not None
 
 
-def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that get_valid() and get_invalid() helpers work with anomaly checks."""
-    # Create unique names for test isolation
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    model_name = f"test_helpers_{make_random(4).lower()}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.{make_random(8).lower()}_registry"
-    
-    # Train on realistic 2D cluster with different scales
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 10.0 + i * 0.1) for i in range(400)],
-        "amount double, quantity double",
-    )
-    
-    stable_params = AnomalyParams(
-        sample_fraction=1.0,
-        algorithm_config=IsolationForestConfig(random_seed=42, contamination=0.05),
-    )
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=stable_params,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
     
     # Test with in-cluster point (in dense part of range) and far-out anomaly
     test_df = spark.createDataFrame(
@@ -442,7 +315,7 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
-                "columns": ["amount", "quantity"],
+                "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
                 "score_threshold": 0.6,

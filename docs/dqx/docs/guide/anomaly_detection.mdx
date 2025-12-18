@@ -54,6 +54,40 @@ run_configs:
     anomaly_config: {}  # Empty = auto-discovery
 ```
 
+### Two Discovery Modes
+
+DQX offers two auto-discovery modes:
+
+**1. Heuristic Mode** (default - analyzes DataFrame on-the-fly):
+```python
+# Computes statistics during training
+train(df=spark.table("orders"))
+```
+- **When to use**: Small-to-medium datasets, first-time exploration
+- **Performance**: Analyzes schema and computes statistics during training
+- **Benefit**: No setup required, works immediately
+
+**2. Profiler Mode** (reuses DQX profiler results):
+```python
+# First, run DQX profiler once (optional, for large datasets)
+from databricks.labs.dqx.profiler import profile
+profile(df, output_table="catalog.schema.profiler_output")
+
+# Then, anomaly training reuses cached statistics
+train(
+    df=df,
+    profiler_table="catalog.schema.profiler_output"  # Faster!
+)
+```
+- **When to use**: Large datasets (>1B rows), multiple model training runs
+- **Performance**: Reuses pre-computed statistics (no re-computation)
+- **Benefit**: Consistent stats across models, faster discovery
+
+**Both modes support the same multi-type discovery:**
+- Numeric, categorical, datetime, boolean columns
+- Priority-based selection (numeric first, then boolean, categorical, datetime)
+- Max 10 columns with intelligent ranking
+
 **What gets auto-discovered**:
 - **Columns** (max 10, prioritized by type):
   1. Numeric columns with variance (stddev > 0, null_rate < 50%)

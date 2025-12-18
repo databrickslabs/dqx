@@ -104,20 +104,83 @@ def _auto_discover_from_profiler(
         # Extract table name from metadata if present
         pass
 
-    # Select numeric columns suitable for anomaly detection
-    numeric_candidates = profile_df.filter(
-        (F.col("type").isin(["int", "long", "float", "double", "decimal"]))
+    # Select columns with multi-type support and priority system
+    # Priority: 1=numeric, 2=boolean, 3=low-card categorical, 4=datetime, 5=high-card categorical
+    
+    # Filter out ID/timestamp patterns
+    id_pattern = "(?i)(id|key)$"
+    
+    # Add priority column based on type
+    candidates_df = profile_df.filter(
+        (~F.col("column_name").rlike(id_pattern))
         & (F.col("null_rate") < 0.5)
-        & (F.col("stddev") > 0)
-        & (~F.col("column_name").rlike("(?i)(id|key|timestamp|date|time)$"))
+    ).withColumn(
+        "priority",
+        F.when(
+            F.col("type").isin(["int", "long", "float", "double", "decimal"]) 
+            & (F.col("stddev") > 0),
+            1  # Numeric with variance
+        ).when(
+            F.col("type") == "boolean",
+            2  # Boolean
+        ).when(
+            (F.col("type") == "string") & (F.col("distinct_count") <= 20),
+            3  # Low-cardinality categorical
+        ).when(
+            F.col("type").isin(["date", "timestamp", "timestampNTZ"]),
+            4  # Datetime
+        ).when(
+            (F.col("type") == "string") & (F.col("distinct_count").between(21, 100)),
+            5  # High-cardinality categorical
+        ).otherwise(999)  # Unsupported/filtered
+    ).filter(
+        F.col("priority") < 999
+    ).orderBy(
+        "priority", "column_name"
     )
-
-    recommended_columns = [row["column_name"] for row in numeric_candidates.collect()]
-
+    
+    # Limit to max 10 columns
+    MAX_COLUMNS = 10
+    candidates_list = candidates_df.limit(MAX_COLUMNS + 50).collect()  # Get extra for counting
+    
+    recommended_columns = []
+    column_types = {}
+    for row in candidates_list[:MAX_COLUMNS]:
+        col_name = row["column_name"]
+        col_type = row["type"]
+        priority = row["priority"]
+        
+        # Map profiler type to category
+        if priority == 1:
+            category = "numeric"
+        elif priority == 2:
+            category = "boolean"
+        elif priority in [3, 5]:
+            category = "categorical"
+        elif priority == 4:
+            category = "datetime"
+        else:
+            continue
+        
+        recommended_columns.append(col_name)
+        column_types[col_name] = category
+    
+    if len(candidates_list) > MAX_COLUMNS:
+        warnings.append(
+            f"Found {len(candidates_list)} suitable columns, selected top {MAX_COLUMNS} by priority. "
+            f"Priority: numeric > boolean > low-card categorical > datetime. "
+            f"Manually specify columns to override."
+        )
+    
     if not recommended_columns:
-        warnings.append("No suitable numeric columns found for anomaly detection. Provide columns explicitly.")
+        warnings.append(
+            "No suitable columns found for anomaly detection. "
+            "Supported types: numeric, categorical (string), datetime, boolean. "
+            "Provide columns explicitly."
+        )
 
     # Select categorical columns suitable for segmentation
+    # Skip if already selected as a numeric column (numbers shouldn't be segments)
     categorical_candidates = profile_df.filter(
         (F.col("type").isin(["string", "int"]))
         & (F.col("distinct_count").between(2, 50))
@@ -128,6 +191,11 @@ def _auto_discover_from_profiler(
     recommended_segments = []
     for row in categorical_candidates.collect():
         col = row["column_name"]
+        
+        # Skip if already selected as a numeric column
+        if col in recommended_columns and column_types.get(col) == 'numeric':
+            continue
+        
         distinct_count = row["distinct_count"]
 
         # Check minimum segment size
@@ -178,8 +246,8 @@ def _auto_discover_from_profiler(
         segment_count=segment_count,
         column_stats=column_stats,
         warnings=warnings,
-        column_types={},  # TODO: Extract from profiler
-        unsupported_columns=[],
+        column_types=column_types,  # Now populated from profiler
+        unsupported_columns=[],  # Profiler doesn't track these explicitly
     )
 
 
