@@ -9,17 +9,16 @@ from uuid import uuid4
 from datetime import datetime
 from typing import Any
 
-import mlflow.sklearn
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.functions import pandas_udf, PandasUDFType, struct, col
 import pyspark.sql.functions as F
 from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
 
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
-from databricks.labs.dqx.anomaly.trainer import _derive_model_name, _derive_registry_table, _ensure_full_model_name
+from databricks.labs.dqx.anomaly.trainer import _derive_registry_table, _ensure_full_model_name
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.explainer import compute_feature_contributions
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.utils import get_column_name_or_alias
@@ -37,11 +36,15 @@ def _score_segmented(
     drift_threshold_value: float,
     include_contributions: bool,
     include_confidence: bool,
-    merge_columns: list[str] | None,
+    merge_columns: list[str],
     condition_col: str,
     registry_client: AnomalyModelRegistry,
 ) -> DataFrame:
-    """Score DataFrame using segment-specific models."""
+    """Score DataFrame using segment-specific models.
+    
+    Args:
+        merge_columns: Required primary key columns for joining results back.
+    """
     # Get all segment models
     all_segments = registry_client.get_all_segment_models(registry_table, base_model_name)
     
@@ -101,13 +104,16 @@ def _score_segmented(
                     stacklevel=4,
                 )
         
-        # Score this segment
-        segment_scored = _score_with_sklearn_model(segment_model.model_uri, segment_df, columns, segment_model.feature_metadata)
+        # Score this segment with optional SHAP (computed in single UDF pass)
+        segment_scored = _score_with_sklearn_model(
+            segment_model.model_uri, 
+            segment_df, 
+            columns, 
+            segment_model.feature_metadata,
+            merge_columns,
+            include_contributions=include_contributions  # SHAP computed in same UDF pass
+        )
         segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
-        
-        # Add feature contributions if requested (using TreeSHAP)
-        if include_contributions:
-            segment_scored = compute_feature_contributions(segment_model.model_uri, segment_scored, columns)
         
         scored_dfs.append(segment_scored)
     
@@ -130,9 +136,6 @@ def _score_segmented(
     
     # If row_filter was used, join scored results back to original DataFrame
     if row_filter:
-        # Determine which columns to use for joining
-        join_cols = merge_columns if merge_columns else df.columns
-        
         # Get score columns to join
         score_cols_to_join = ["anomaly_score"]
         if include_confidence:
@@ -140,8 +143,8 @@ def _score_segmented(
         if include_contributions:
             score_cols_to_join.append("anomaly_contributions")
         
-        # Select only join columns + score columns from scored DataFrame
-        scored_subset = result.select(*join_cols, *score_cols_to_join)
+        # Select only merge columns + score columns from scored DataFrame
+        scored_subset = result.select(*merge_columns, *score_cols_to_join)
         
         # Take distinct rows to avoid duplicates
         agg_exprs = []
@@ -150,10 +153,10 @@ def _score_segmented(
                 agg_exprs.append(F.first(col).alias(col))
             else:
                 agg_exprs.append(F.max(col).alias(col))
-        scored_subset_unique = scored_subset.groupBy(*join_cols).agg(*agg_exprs)
+        scored_subset_unique = scored_subset.groupBy(*merge_columns).agg(*agg_exprs)
         
-        # Left join back to original DataFrame
-        result = df.join(scored_subset_unique, on=join_cols, how="left")
+        # Left join back to original DataFrame using merge columns
+        result = df.join(scored_subset_unique, on=merge_columns, how="left")
     
     # Add condition column
     condition = F.when(F.col("anomaly_score").isNull(), F.lit(False)).otherwise(
@@ -168,13 +171,14 @@ def _score_with_sklearn_model(
     df: DataFrame, 
     feature_cols: list[str], 
     feature_metadata_json: str,
-    merge_columns: list[str]
+    merge_columns: list[str],
+    include_contributions: bool = False
 ) -> DataFrame:
     """
     Score DataFrame using scikit-learn model with distributed pandas UDF.
     
     Feature engineering is applied in Spark before the pandas UDF.
-    The pandas UDF only handles standard sklearn components (RobustScaler + IsolationForest).
+    The pandas UDF handles sklearn components (RobustScaler + IsolationForest) and optionally SHAP.
     
     Args:
         model_uri: MLflow model URI
@@ -183,15 +187,19 @@ def _score_with_sklearn_model(
         feature_metadata_json: JSON string with feature engineering metadata (from registry)
         merge_columns: Columns to use for joining results back (e.g., primary keys or row IDs).
             Must be provided by caller to ensure correct row alignment.
+        include_contributions: If True, compute SHAP feature contributions in the same UDF pass.
     
     Returns:
-        DataFrame with anomaly_score and prediction columns added
+        DataFrame with anomaly_score, prediction, and optionally anomaly_contributions columns added
     """
     import cloudpickle
     import pandas as pd
     import numpy as np
     from pyspark.sql import types as T
     from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo, SparkFeatureMetadata, apply_feature_engineering
+    
+    # Lazy import to avoid circular import issues with MLflow
+    import mlflow.sklearn
     
     # Load model
     sklearn_model = mlflow.sklearn.load_model(model_uri)
@@ -215,13 +223,18 @@ def _score_with_sklearn_model(
     join_cols = merge_columns
     cols_to_preserve = merge_columns
     
+    # Deduplicate columns to avoid duplicate column errors if merge_columns overlap with feature_cols
+    # Preserve order: feature_cols first, then any merge_columns not in feature_cols
+    cols_to_select = list(dict.fromkeys([*feature_cols, *cols_to_preserve]))
+    
     # Apply feature engineering in Spark (distributed), preserving join columns
-    # Use pre-computed frequency maps from training
+    # Use pre-computed frequency maps and OneHot categories from training
     engineered_df, _ = apply_feature_engineering(
-        df.select(*feature_cols, *cols_to_preserve),
+        df.select(*cols_to_select),
         column_infos,
         categorical_cardinality_threshold=20,  # Use same threshold as training
         frequency_maps=feature_metadata.categorical_frequency_maps,
+        onehot_categories=feature_metadata.onehot_categories,
     )
     
     # Get engineered feature names
@@ -232,14 +245,18 @@ def _score_with_sklearn_model(
     model_bytes = cloudpickle.dumps(sklearn_model)
     
     # Define schema for UDF output (nullable=True to match pandas behavior)
-    schema = StructType([
+    from pyspark.sql.types import MapType, StringType
+    schema_fields = [
         StructField("anomaly_score", DoubleType(), True),
         StructField("prediction", IntegerType(), True),
-    ])
+    ]
+    if include_contributions:
+        schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
+    schema = StructType(schema_fields)
     
     @pandas_udf(schema, PandasUDFType.SCALAR)
-    def predict_udf(*cols):
-        """Pandas UDF for distributed scoring (Spark Connect compatible)."""
+    def predict_with_shap_udf(*cols):
+        """Pandas UDF for distributed scoring with optional SHAP (Spark Connect compatible)."""
         import pandas as pd
         import numpy as np
         import cloudpickle
@@ -247,30 +264,93 @@ def _score_with_sklearn_model(
         # Deserialize model (only standard sklearn components)
         model_local = cloudpickle.loads(model_bytes)
         
+        # Extract components for SHAP (if needed)
+        if include_contributions:
+            try:
+                import shap
+                from sklearn.pipeline import Pipeline
+            except ImportError as e:
+                raise ImportError(
+                    "To use feature contributions (include_contributions=True), install 'shap>=0.42.0,<0.46' on your cluster.\n"
+                    "Cluster -> Libraries -> Install New -> PyPI -> 'shap>=0.42.0,<0.46'"
+                ) from e
+            
+            # Extract scaler and tree model from pipeline
+            if isinstance(model_local, Pipeline):
+                scaler = model_local.named_steps.get('scaler')
+                tree_model = model_local.named_steps['model']
+                needs_scaling = scaler is not None
+            else:
+                scaler = None
+                tree_model = model_local
+                needs_scaling = False
+            
+            # Create TreeExplainer once per batch
+            explainer = shap.TreeExplainer(tree_model)
+        
         # Convert input columns to DataFrame
         X = pd.concat(cols, axis=1)
         X.columns = engineered_feature_cols
         
-        # Pipeline handles scaling and prediction (no custom transformers)
+        # 1. SCORE (using full pipeline)
         predictions = model_local.predict(X)
         scores = -model_local.score_samples(X)  # Negate to make higher = more anomalous
-        
-        # Convert sklearn labels -1/1 to 0/1
         predictions = np.where(predictions == -1, 1, 0)
         
-        return pd.DataFrame({
+        # 2. SHAP (if requested)
+        contributions_list = []
+        if include_contributions:
+            # Prepare data for SHAP (scale if needed)
+            X_for_shap = scaler.transform(X) if needs_scaling else X.values
+            
+            # Compute SHAP for each row
+            for i in range(len(X_for_shap)):
+                # Check for NaN values
+                if pd.isna(X_for_shap[i]).any():
+                    contributions_list.append({col: None for col in engineered_feature_cols})
+                else:
+                    # Compute SHAP values (one per engineered feature)
+                    shap_values = explainer.shap_values(X_for_shap[i:i+1])[0]
+                    
+                    # Convert to absolute contributions normalized to sum to 1.0
+                    abs_shap = np.abs(shap_values)
+                    total = abs_shap.sum()
+                    
+                    if total > 0:
+                        normalized = abs_shap / total
+                        # Map SHAP values to engineered feature names (not original features)
+                        contributions = {col: float(normalized[j]) for j, col in enumerate(engineered_feature_cols)}
+                    else:
+                        # Equal contributions if all SHAP values are 0
+                        contributions = {col: 1.0 / len(engineered_feature_cols) for col in engineered_feature_cols}
+                    
+                    contributions_list.append(contributions)
+        
+        # Build result DataFrame
+        result = {
             "anomaly_score": scores,
-            "prediction": predictions
-        })
+            "prediction": predictions,
+        }
+        if include_contributions:
+            result["anomaly_contributions"] = contributions_list
+        
+        return pd.DataFrame(result)
     
     # Apply UDF to all engineered feature columns
     # The join columns are preserved in engineered_df
-    scored_df = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
+    scored_df = engineered_df.withColumn("_scores", predict_with_shap_udf(*[col(c) for c in engineered_feature_cols]))
     
-    # Join scores back to original DataFrame using the join columns
-    # This ensures anomaly scores align correctly with original rows
+    # Select columns to join back
+    # Note: Include join_cols + new anomaly columns for the join
+    # Spark's join(on=...) automatically deduplicates the join key columns
+    cols_to_select = [*join_cols, "_scores.anomaly_score", "_scores.prediction"]
+    if include_contributions:
+        cols_to_select.append("_scores.anomaly_contributions")
+    
+    # Join scores back to original DataFrame using ONLY the merge columns
+    # Result will have all columns from df + anomaly columns, no duplicates
     result = df.join(
-        scored_df.select(*join_cols, "_scores.anomaly_score", "_scores.prediction"),
+        scored_df.select(*cols_to_select),
         on=join_cols,
         how="left"
     )
@@ -301,16 +381,15 @@ def has_no_anomalies(
     Args:
         columns: Columns to check for anomalies (auto-inferred if omitted).
         segment_by: Segment columns (auto-inferred from model if omitted).
-        model: Model name (auto-derived if omitted).
+        model: Model name (REQUIRED). Provide the base model name returned from train().
         registry_table: Registry table (auto-derived if omitted).
         score_threshold: Anomaly score threshold (default 0.5).
         row_filter: Optional SQL expression to filter rows before scoring.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
         include_contributions: Include anomaly_contributions column (default False).
         include_confidence: Include anomaly_score_std column for ensembles (default False).
-        merge_columns: Columns to use for joining scored results back to original DataFrame.
-            If None, uses all original columns (can be slow for wide DataFrames).
-            Recommend providing primary key columns for better performance.
+        merge_columns: Primary key columns (e.g., ["activity_id"]) for joining scored results 
+            back to original DataFrame (REQUIRED). Must uniquely identify rows.
 
     Returns:
         Tuple of condition expression and apply function.
@@ -320,6 +399,10 @@ def has_no_anomalies(
     drift_threshold_value = drift_threshold if drift_threshold is not None else 3.0
 
     def apply(df: DataFrame) -> DataFrame:
+        # Validate merge_columns is provided (required for joining results back)
+        if not merge_columns:
+            raise MissingParameterError("merge_columns is not provided.")
+        
         registry_client = AnomalyModelRegistry(df.sparkSession)
         
         # Auto-infer columns and segment_by from registry if not provided
@@ -342,11 +425,19 @@ def has_no_anomalies(
             if model_name_local:
                 model_name_local = _ensure_full_model_name(model_name_local, registry_local)
                 record_for_discovery = registry_client.get_active_model(registry_local, model_name_local)
+                
+                # If exact match not found, check for segmented models with this base name
                 if not record_for_discovery:
-                    raise InvalidParameterError(
-                        f"Model '{model_name_local}' not found in '{registry_local}'. "
-                        "Train first using anomaly.train(...)."
-                    )
+                    # Check if there are segmented models matching this base name
+                    all_segments = registry_client.get_all_segment_models(registry_local, model_name_local)
+                    if all_segments:
+                        # Use the first segment to get configuration
+                        record_for_discovery = all_segments[0]
+                    else:
+                        raise InvalidParameterError(
+                            f"Model '{model_name_local}' not found in '{registry_local}'. "
+                            "Train first using anomaly.train(...)."
+                        )
                 
                 if columns is None:
                     columns = record_for_discovery.columns
@@ -358,13 +449,17 @@ def has_no_anomalies(
         
         registry = registry_table or _derive_registry_table(df)
         
+        # Validate model is provided
+        if not model:
+            raise InvalidParameterError(
+                "model parameter is required. Provide the model name returned from train(). "
+                "Example: has_no_anomalies(model='my_model', ...)"
+            )
+        
         # Normalize model_name to full catalog.schema.model format
-        if model:
-            model_name = _ensure_full_model_name(model, registry)
-        else:
-            model_name = _derive_model_name(df, normalized_columns, registry)
+        model_name = _ensure_full_model_name(model, registry)
 
-        # Check if segmented model
+        # Check if segmented model (either explicit segment_by or detected from registry)
         if segment_by:
             # Segment-aware scoring
             return _score_segmented(
@@ -374,12 +469,25 @@ def has_no_anomalies(
                 condition_col, registry_client
             )
         
-        # Global model scoring (existing logic)
+        # Try global model scoring first
         record = registry_client.get_active_model(registry, model_name)
+        
+        # If not found, check if it's a segmented model (base name provided)
         if not record:
-            raise InvalidParameterError(
-                f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
-            )
+            all_segments = registry_client.get_all_segment_models(registry, model_name)
+            if all_segments:
+                # Auto-detect segmentation and use segmented scoring
+                first_segment = all_segments[0]
+                return _score_segmented(
+                    df, first_segment.segment_by, normalized_columns, model_name, registry,
+                    score_threshold, row_filter, drift_threshold, drift_threshold_value,
+                    include_contributions, include_confidence, merge_columns,
+                    condition_col, registry_client
+                )
+            else:
+                raise InvalidParameterError(
+                    f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
+                )
 
         if set(normalized_columns) != set(record.columns):
             raise InvalidParameterError(
@@ -393,7 +501,7 @@ def has_no_anomalies(
                 warnings.warn(
                     f"Model '{model_name}' is {age_days} days old. Consider retraining.",
                     UserWarning,
-                    stacklevel=3,
+                    stacklevel=2
                 )
 
         # Check for data drift
@@ -412,43 +520,51 @@ def has_no_anomalies(
                     f"columns={normalized_columns}, model_name='{model_name}')"
                 )
                 warnings.warn(
-                    f"Data drift detected in columns: {drifted_cols_str} "
+                    f"DATA DRIFT DETECTED in columns: {drifted_cols_str} "
                     f"(drift score: {drift_result.drift_score:.2f}). "
                     f"Model may be stale. Consider retraining: {retrain_cmd}",
                     UserWarning,
-                    stacklevel=3,
+                    stacklevel=2
                 )
 
-        # Add temporary row ID for alignment (since we control this scoring context)
-        from pyspark.sql.window import Window
-        from pyspark.sql.functions import row_number, monotonically_increasing_id
-        
-        window_spec = Window.orderBy(monotonically_increasing_id())
-        df_with_id = df.withColumn("__dqx_temp_id__", row_number().over(window_spec))
+        # Use merge_columns for joining (required parameter)
+        join_cols_for_scoring = merge_columns
         
         # Filter rows if row_filter is provided
         if row_filter:
-            df_filtered = df_with_id.filter(F.expr(row_filter))
+            df_filtered = df.filter(F.expr(row_filter))
         else:
-            df_filtered = df_with_id
+            df_filtered = df
 
         # Check if ensemble model (multiple URIs separated by comma)
         model_uris = record.model_uri.split(",")
         
         if len(model_uris) > 1:
             # Ensemble: score with all models (distributed) and average scores
+            # For ensembles, we can optionally compute SHAP on the first model only
             scored_dfs = []
             for i, uri in enumerate(model_uris):
-                temp_scored = _score_with_sklearn_model(uri, df_filtered, normalized_columns, record.feature_metadata, ["__dqx_temp_id__"])
+                # Only compute SHAP for first model in ensemble (if requested)
+                compute_shap_for_this = include_contributions and i == 0
+                temp_scored = _score_with_sklearn_model(
+                    uri, df_filtered, normalized_columns, record.feature_metadata, 
+                    join_cols_for_scoring, 
+                    include_contributions=compute_shap_for_this
+                )
                 temp_scored = temp_scored.withColumn(f"_score_{i}", F.col("anomaly_score"))
-                scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score", "prediction"))
+                
+                # Keep SHAP from first model, drop from others
+                if compute_shap_for_this:
+                    scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score", "prediction"))
+                else:
+                    scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score", "prediction", "anomaly_contributions"))
             
-            # Merge all scored DataFrames using temp ID
+            # Merge all scored DataFrames using join columns
             scored_df = scored_dfs[0]
             for i in range(1, len(scored_dfs)):
                 scored_df = scored_df.join(
-                    scored_dfs[i].select("__dqx_temp_id__", f"_score_{i}"),
-                    on="__dqx_temp_id__",
+                    scored_dfs[i].select(*join_cols_for_scoring, f"_score_{i}"),
+                    on=join_cols_for_scoring,
                     how="inner"
                 )
             
@@ -468,28 +584,21 @@ def has_no_anomalies(
             for col in score_cols:
                 scored_df = scored_df.drop(col)
         else:
-            # Single model (distributed scoring via pandas UDF)
-            scored_df = _score_with_sklearn_model(record.model_uri, df_filtered, normalized_columns, record.feature_metadata, ["__dqx_temp_id__"])
+            # Single model (distributed scoring via pandas UDF with optional SHAP)
+            scored_df = _score_with_sklearn_model(
+                record.model_uri, df_filtered, normalized_columns, record.feature_metadata, 
+                join_cols_for_scoring,
+                include_contributions=include_contributions  # SHAP computed in same UDF pass
+            )
             scored_df = scored_df.withColumn("anomaly_score_std", F.lit(0.0))
-
-        # Add feature contributions if requested (using TreeSHAP, distributed)
-        if include_contributions:
-            sklearn_model_uri = model_uris[0].strip() if len(model_uris) > 1 else record.model_uri
-            scored_df = compute_feature_contributions(sklearn_model_uri, scored_df, normalized_columns)
 
         # Drop confidence column if not requested
         if not include_confidence:
             scored_df = scored_df.drop("anomaly_score_std")
-
-        # Drop the temporary ID before returning
-        scored_df = scored_df.drop("__dqx_temp_id__")
         
         # If row_filter was used, join scored results back to original DataFrame
         # This preserves all rows (non-filtered rows will have null anomaly_score)
         if row_filter:
-            # Use merge_columns if provided, otherwise use all original columns
-            join_cols = merge_columns if merge_columns else [c for c in df.columns]
-            
             # Get score columns to join
             score_cols_to_join = ["anomaly_score"]
             if include_confidence:
@@ -498,7 +607,7 @@ def has_no_anomalies(
                 score_cols_to_join.append("anomaly_contributions")
             
             # Select only join columns + score columns from scored DataFrame
-            scored_subset = scored_df.select(*join_cols, *score_cols_to_join)
+            scored_subset = scored_df.select(*join_cols_for_scoring, *score_cols_to_join)
             
             # Take distinct rows to avoid duplicates (similar to sql_query pattern)
             # In case of duplicates, take max anomaly_score (most conservative)
@@ -510,10 +619,10 @@ def has_no_anomalies(
                 else:
                     # For numeric columns, use max() (most conservative for anomaly scores)
                     agg_exprs.append(F.max(col).alias(col))
-            scored_subset_unique = scored_subset.groupBy(*join_cols).agg(*agg_exprs)
+            scored_subset_unique = scored_subset.groupBy(*join_cols_for_scoring).agg(*agg_exprs)
             
             # Left join back to original DataFrame (preserves all rows)
-            scored_df = df.join(scored_subset_unique, on=join_cols, how="left")
+            scored_df = df.join(scored_subset_unique, on=join_cols_for_scoring, how="left")
         
         # Note: Anomaly rate can be computed from the output DataFrame:
         # anomaly_rate = scored_df.filter(F.col("anomaly_score") > threshold).count() / scored_df.count()

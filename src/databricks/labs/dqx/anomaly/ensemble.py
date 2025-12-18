@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import mlflow.spark
 from pyspark.ml import Transformer
 from pyspark.ml.param.shared import HasInputCol, HasOutputCol, Param, Params
 from pyspark.ml.util import DefaultParamsReadable, DefaultParamsWritable
@@ -48,6 +47,8 @@ class EnsembleAnomalyTransformer(Transformer, HasInputCol, HasOutputCol, Default
     def _load_models(self):
         """Lazy load all models."""
         if self._models is None:
+            # Lazy import to avoid circular import issues with MLflow
+            import mlflow.spark
             self._models = [mlflow.spark.load_model(uri) for uri in self.getModelUris()]
         return self._models
 

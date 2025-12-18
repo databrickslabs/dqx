@@ -15,7 +15,6 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Iterable
 
-import mlflow
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import pandas_udf, PandasUDFType
 import pyspark.sql.functions as F
@@ -23,7 +22,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.config import AnomalyConfig, AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
-from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
+from databricks.labs.dqx.telemetry import get_tables_from_spark_plan, telemetry_logger
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 from pyspark.sql import types as T
 
@@ -35,12 +34,13 @@ DEFAULT_TRAIN_RATIO = 0.8
 
 def train(
     df: DataFrame,
+    model_name: str,
     columns: list[str] | None = None,
     segment_by: list[str] | None = None,
-    model_name: str | None = None,
     registry_table: str | None = None,
     params: AnomalyParams | None = None,
     profiler_table: str | None = None,
+    exclude_columns: list[str] | None = None,
 ) -> str:
     """
     Train anomaly detection model(s) with intelligent auto-discovery.
@@ -55,22 +55,81 @@ def train(
 
     Args:
         df: Input DataFrame containing historical \"normal\" data.
+        model_name: Model name (REQUIRED). Provide a descriptive name like 'field_force_anomaly'.
+                   Can be simple name ('my_model') or full path ('catalog.schema.my_model').
+                   If simple name provided, catalog.schema will be derived from registry_table.
         columns: Columns to use for anomaly detection (auto-discovered if omitted).
         segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
-        model_name: Optional model name; auto-derived if not provided.
         registry_table: Optional registry table; auto-derived if not provided.
         params: Optional tuning parameters; defaults applied if omitted.
         profiler_table: DQX profiler output table for smarter auto-discovery.
+        exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
+                        Useful with auto-discovery to filter out unwanted columns without
+                        specifying all desired columns manually.
 
     Returns:
-        model_uri logged in MLflow (comma-separated for segmented models).
+        Base model name (e.g., 'catalog.schema.model_name'). For segmented models,
+        individual segments are stored with suffixes like '__seg_region=APAC', but
+        the base name is returned for simplified API usage.
+    
+    Examples:
+        # Simple global model with auto-discovery
+        model_name = train(df, model_name="my_anomaly_model")
+        
+        # Auto-discovery but exclude ID and ground truth columns
+        model_name = train(df, model_name="my_model", 
+                          exclude_columns=["id", "label", "ground_truth"])
+        
+        # Segmented by region
+        model_name = train(df, model_name="regional_model", segment_by=["region"])
+        
+        # With explicit columns
+        model_name = train(df, model_name="sales_monitor", 
+                          columns=["revenue", "transactions", "avg_order_value"])
     """
     spark = df.sparkSession
     _validate_spark_version(spark)
+    
+    # Validate model_name is provided
+    if not model_name:
+        raise InvalidParameterError(
+            "model_name is required. Provide a descriptive name like 'field_force_anomaly' or "
+            "'sales_rep_monitor'. The full catalog.schema.model path will be constructed automatically."
+        )
+
+    # Process exclude_columns
+    exclude_columns = exclude_columns or []
+    if exclude_columns:
+        # Validate that exclude_columns exist in DataFrame
+        df_columns = set(df.columns)
+        invalid_excludes = [col for col in exclude_columns if col not in df_columns]
+        if invalid_excludes:
+            raise InvalidParameterError(
+                f"exclude_columns contains columns not in DataFrame: {invalid_excludes}"
+            )
+        
+        # If columns are explicitly provided, validate they don't overlap with exclude_columns
+        if columns is not None:
+            overlap = set(columns) & set(exclude_columns)
+            if overlap:
+                raise InvalidParameterError(
+                    f"columns and exclude_columns overlap: {overlap}. "
+                    "Remove overlapping columns from either list."
+                )
+        
+        # Filter DataFrame for auto-discovery (exclude unwanted columns)
+        if columns is None:
+            remaining_columns = [col for col in df.columns if col not in exclude_columns]
+            df_filtered = df.select(*remaining_columns)
+            print(f"Excluding {len(exclude_columns)} columns from auto-discovery: {exclude_columns}")
+        else:
+            df_filtered = df  # No need to filter if columns explicitly provided
+    else:
+        df_filtered = df
 
     # Auto-discovery
     if columns is None:
-        profile = auto_discover(df, profiler_output_table=profiler_table)
+        profile = auto_discover(df_filtered, profiler_output_table=profiler_table)
         columns = profile.recommended_columns
         
         # Auto-detect segments ONLY if segment_by also not provided
@@ -99,12 +158,18 @@ def train(
 
     derived_registry_table = registry_table or _derive_registry_table(df)
     
-    # Derive model_name and ensure it has full three-level catalog.schema.model format
+    # Ensure model_name has full three-level catalog.schema.model format
     # by extracting catalog.schema from registry_table
-    if model_name:
-        derived_model_name = _ensure_full_model_name(model_name, derived_registry_table)
-    else:
-        derived_model_name = _derive_model_name(df, columns, derived_registry_table)
+    derived_model_name = _ensure_full_model_name(model_name, derived_registry_table)
+    
+    # Check if model already exists in Unity Catalog and warn
+    if _model_exists_in_uc(spark, derived_model_name):
+        warnings.warn(
+            f"Model '{derived_model_name}' already exists. Creating a new version. "
+            f"Previous versions remain available.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     # Segment-based training
     if segment_by:
@@ -125,6 +190,9 @@ def _train_global(
     params: AnomalyParams | None,
 ) -> str:
     """Train a single global model (no segmentation)."""
+    # Lazy import to avoid circular import issues with MLflow
+    import mlflow
+    
     spark = df.sparkSession
     params = params or AnomalyParams()
 
@@ -190,6 +258,7 @@ def _train_global(
                 column_infos_reconstructed,
                 categorical_cardinality_threshold=20,
                 frequency_maps=feature_metadata.categorical_frequency_maps,
+                onehot_categories=feature_metadata.onehot_categories,
             )
             train_pandas = engineered_train_df.toPandas()
             predictions = model.predict(train_pandas)
@@ -255,7 +324,11 @@ def _train_global(
     )
     registry.save_model(record, registry_table)
 
-    return model_uri
+    print(f"   Model trained: {model_name}")
+    print(f"   Model URI: {model_uri}")
+    print(f"   Registry: {registry_table}")
+
+    return model_name
 
 
 def _train_segmented(
@@ -322,7 +395,7 @@ def _train_segmented(
     
     # Log summary of skipped segments
     if skipped_segments:
-        logger.info(
+        telemetry_logger.info(
             f"Skipped {len(skipped_segments)}/{len(segments)} segments due to insufficient data after sampling: "
             f"{', '.join(skipped_segments[:5])}"
             + (f" and {len(skipped_segments) - 5} more" if len(skipped_segments) > 5 else "")
@@ -335,8 +408,12 @@ def _train_segmented(
             f"Consider increasing sample_fraction (current: {params.sample_fraction}) or checking segment definitions."
         )
     
-    # Return comma-separated model URIs
-    return ",".join(model_uris)
+    trained_count = len(model_uris)
+    print(f"   Trained {trained_count}/{len(segments)} segment models for: {base_model_name}")
+    print(f"   Registry: {registry_table}")
+    
+    # Return base model name (user doesn't need to deal with individual segment URIs)
+    return base_model_name
 
 
 def _train_single_segment(
@@ -354,11 +431,14 @@ def _train_single_segment(
     Returns:
         Model URI on success, None if segment has insufficient data after sampling.
     """
+    # Lazy import to avoid circular import issues with MLflow
+    import mlflow
+    
     spark = df.sparkSession
 
     sampled_df, sampled_count, truncated = _sample_df(df, columns, params)
     if sampled_count == 0:
-        logger.info(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
+        telemetry_logger.info(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
         return None
 
     train_df, val_df = _train_validation_split(sampled_df, params)
@@ -402,6 +482,7 @@ def _train_single_segment(
             column_infos_reconstructed,
             categorical_cardinality_threshold=20,
             frequency_maps=feature_metadata.categorical_frequency_maps,
+            onehot_categories=feature_metadata.onehot_categories,
         )
         train_pandas = engineered_train_df.toPandas()
         predictions = model.predict(train_pandas)
@@ -489,33 +570,6 @@ def _validate_columns(df: DataFrame, columns: Iterable[str], params: AnomalyPara
     column_infos, warnings_list = classifier.analyze_columns(df, list(columns))
     
     return warnings_list
-
-
-def _derive_model_name(df: DataFrame, columns: list[str], registry_table: str) -> str:
-    """
-    Derive a model name with full three-level catalog.schema.model format.
-    Uses catalog and schema from registry_table.
-    """
-    # Extract catalog.schema from registry_table
-    parts = registry_table.split(".")
-    if len(parts) >= 2:
-        catalog, schema = parts[0], parts[1]
-    else:
-        raise InvalidParameterError(
-            f"registry_table must have at least catalog.schema format, got: {registry_table}"
-        )
-    
-    # Generate base model name
-    input_table = _get_input_table(df)
-    if input_table:
-        base = input_table.split(".")[-1]
-    else:
-        # Fallback when input table name cannot be inferred
-        base = "unknown_table"
-    col_hash = hashlib.md5(",".join(sorted(columns)).encode("utf-8")).hexdigest()[:8]
-    model_name = f"{base}__{col_hash}__anomaly"
-    
-    return f"{catalog}.{schema}.{model_name}"
 
 
 def _derive_registry_table(df: DataFrame) -> str:
@@ -607,6 +661,28 @@ def _ensure_full_model_name(model_name: str, registry_table: str) -> str:
     
     # No dots, add catalog.schema.model
     return f"{catalog}.{schema}.{model_name}"
+
+
+def _model_exists_in_uc(spark: SparkSession, model_name: str) -> bool:
+    """
+    Check if a model exists in Unity Catalog using MLflow API.
+    
+    Args:
+        spark: SparkSession (unused, kept for consistency)
+        model_name: Full model name (catalog.schema.model)
+    
+    Returns:
+        True if model exists, False otherwise
+    """
+    try:
+        from mlflow.tracking import MlflowClient
+        client = MlflowClient()
+        # Try to get the latest version - if model doesn't exist, this will raise
+        client.get_latest_versions(model_name, stages=None)
+        return True
+    except Exception:
+        # Model doesn't exist or MLflow API error
+        return False
 
 
 def _sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple[DataFrame, int, bool]:
@@ -753,6 +829,7 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
         column_infos,
         categorical_cardinality_threshold=20,  # Use same threshold as training
         frequency_maps=feature_metadata.categorical_frequency_maps,
+        onehot_categories=feature_metadata.onehot_categories,
     )
     
     # Get engineered feature names
@@ -808,6 +885,7 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
         column_infos,
         categorical_cardinality_threshold=20,
         frequency_maps=feature_metadata.categorical_frequency_maps,
+        onehot_categories=feature_metadata.onehot_categories,
     )
     
     # Apply UDF to all engineered feature columns
@@ -1024,6 +1102,9 @@ def _train_ensemble(
         Tuple of (model_uris, hyperparams, aggregated_metrics, feature_metadata).
         feature_metadata is from the first ensemble member (all members use same features).
     """
+    # Lazy import to avoid circular import issues with MLflow
+    import mlflow
+    
     model_uris = []
     all_metrics = []
     first_feature_metadata = None  # Capture from first ensemble member
