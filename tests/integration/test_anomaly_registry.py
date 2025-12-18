@@ -4,12 +4,10 @@ import pytest
 import warnings
 from datetime import datetime, timedelta
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,
@@ -29,21 +27,21 @@ def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_r
         [(100.0 + i, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"my_custom_model_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     model_uri = train(
         df=df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Verify model URI is returned
     assert model_uri is not None
-    
+
     # Verify model can be loaded with explicit name - call directly to get anomaly_score column
     condition_col, apply_fn = has_no_anomalies(
         columns=["amount", "quantity"],
@@ -51,9 +49,9 @@ def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_r
         registry_table=registry_table,
         score_threshold=0.5,
     )
-    
+
     result_df = apply_fn(df)
-    
+
     assert "anomaly_score" in result_df.columns
 
 
@@ -63,33 +61,33 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
     registry_table = f"main.default.{unique_id}_registry"
     model_a = f"model_a_{make_random(4).lower()}"
     model_b = f"model_b_{make_random(4).lower()}"
-    
+
     # Train first model
     df1 = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     train(
         df=df1,
         columns=["amount", "quantity"],
         model_name=model_a,
         registry_table=registry_table,
     )
-    
+
     # Train second model with different columns
     df2 = spark.createDataFrame(
         [(0.1 + i * 0.01, 50.0) for i in range(50)],
         "discount double, weight double",
     )
-    
+
     train(
         df=df2,
         columns=["discount", "weight"],
         model_name=model_b,
         registry_table=registry_table,
     )
-    
+
     # Verify both models exist in registry
     registry_df = spark.table(registry_table)
     model_names = [row["model_name"] for row in registry_df.select("model_name").distinct().collect()]
@@ -97,9 +95,9 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
     # Models are stored with full three-level names
     assert f"main.default.{model_a}" in model_names
     assert f"main.default.{model_b}" in model_names
-    
+
     # Verify correct model is loaded for each check - call directly
-    
+
     # Score with model_a
     condition_a, apply_fn_a = has_no_anomalies(
         columns=["amount", "quantity"],
@@ -107,10 +105,10 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
         registry_table=registry_table,
         score_threshold=0.5,
     )
-    
+
     result_a = apply_fn_a(df1)
     assert "anomaly_score" in result_a.columns
-    
+
     # Score with model_b
     condition_b, apply_fn_b = has_no_anomalies(
         columns=["discount", "weight"],
@@ -118,7 +116,7 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
         registry_table=registry_table,
         score_threshold=0.5,
     )
-    
+
     result_b = apply_fn_b(df2)
     assert "anomaly_score" in result_b.columns
 
@@ -128,12 +126,12 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str):
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_active_{make_random(4).lower()}"
-    
+
     df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     # Train first version
     train(
         df=df,
@@ -141,7 +139,7 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str):
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Get active model (use full three-level name)
     registry = AnomalyModelRegistry(spark)
     full_model_name = f"main.default.{model_name}"
@@ -151,7 +149,7 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str):
     assert model_v1.model_name == full_model_name
     assert model_v1.status == "active"
     v1_training_time = model_v1.training_time
-    
+
     # Train second version (should archive first)
     train(
         df=df,
@@ -167,12 +165,10 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str):
     assert model_v2.model_name == full_model_name
     assert model_v2.status == "active"
     assert model_v2.training_time > v1_training_time
-    
+
     # Verify first model is archived
     archived_count = (
-        spark.table(registry_table)
-        .filter(f"model_name = '{full_model_name}' AND status = 'archived'")
-        .count()
+        spark.table(registry_table).filter(f"model_name = '{full_model_name}' AND status = 'archived'").count()
     )
     assert archived_count == 1
 
@@ -184,11 +180,11 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
         get_standard_2d_training_data(),
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"test_stale_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Train model
     train(
         df=df,
@@ -196,7 +192,7 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Mock old training_time in registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
     old_time = datetime.utcnow() - timedelta(days=35)
@@ -205,7 +201,7 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
         f"SET training_time = timestamp('{old_time.strftime('%Y-%m-%d %H:%M:%S')}') "
         f"WHERE model_name = '{full_model_name}'"
     )
-    
+
     # Score with old model (should issue warning) - call directly
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
@@ -217,7 +213,7 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
         )
         result_df = apply_fn(df)
         result_df.collect()  # Force evaluation
-        
+
         # Check that staleness warning was issued
         stale_warnings = [warning for warning in w if "days old" in str(warning.message)]
         assert len(stale_warnings) > 0
@@ -230,18 +226,18 @@ def test_registry_table_schema(spark: SparkSession, make_random: str):
         [(100.0 + i * 0.5, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_schema_{make_random(4).lower()}"
-    
+
     train(
         df=df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Verify all expected columns exist
     registry_df = spark.table(registry_table)
     expected_columns = [
@@ -261,9 +257,9 @@ def test_registry_table_schema(spark: SparkSession, make_random: str):
         "feature_importance",
         "temporal_config",
     ]
-    
+
     actual_columns = registry_df.columns
-    
+
     for col in expected_columns:
         assert col in actual_columns, f"Missing column: {col}"
 
@@ -275,18 +271,18 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: str):
         get_standard_3d_training_data(),
         "amount double, quantity double, discount double",
     )
-    
+
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_metadata_{make_random(4).lower()}"
-    
+
     train(
         df=df,
         columns=["amount", "quantity", "discount"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Query registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
     record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
@@ -298,15 +294,15 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: str):
     assert record["status"] == "active"
     assert record["training_time"] is not None
     assert record["columns"] == ["amount", "quantity", "discount"]
-    
+
     # Verify baseline_stats exists
     assert record["baseline_stats"] is not None
     assert len(record["baseline_stats"]) == 3  # Three columns
-    
+
     # Verify feature_importance exists
     assert record["feature_importance"] is not None
     assert len(record["feature_importance"]) == 3  # Three features
-    
+
     # Verify metrics exist
     assert record["metrics"] is not None
     assert "recommended_threshold" in record["metrics"]
@@ -315,12 +311,9 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: str):
 def test_nonexistent_registry_returns_none(spark: SparkSession):
     """Test that get_active_model returns None for non-existent registry."""
     registry = AnomalyModelRegistry(spark)
-    
-    model = registry.get_active_model(
-        "main.default.nonexistent_registry",
-        "nonexistent_model"
-    )
-    
+
+    model = registry.get_active_model("main.default.nonexistent_registry", "nonexistent_model")
+
     assert model is None
 
 
@@ -330,11 +323,11 @@ def test_nonexistent_model_returns_none(spark: SparkSession, make_random: str):
         [(100.0 + i * 0.5, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     existing_model = f"existing_model_{make_random(4).lower()}"
-    
+
     # Train a model
     train(
         df=df,
@@ -342,10 +335,9 @@ def test_nonexistent_model_returns_none(spark: SparkSession, make_random: str):
         model_name=existing_model,
         registry_table=registry_table,
     )
-    
+
     # Try to get non-existent model
     registry = AnomalyModelRegistry(spark)
     model = registry.get_active_model(registry_table, "nonexistent_model")
-    
-    assert model is None
 
+    assert model is None

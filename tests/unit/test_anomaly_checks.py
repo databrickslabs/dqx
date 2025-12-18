@@ -14,6 +14,7 @@ def test_has_no_anomalies_missing_model_raises(spark, monkeypatch):
     monkeypatch.setattr(model_registry.AnomalyModelRegistry, "get_active_model", fake_get_active_model)
 
     condition, apply_fn = has_no_anomalies(
+        merge_columns=["a"],  # Required parameter
         columns=["a", "b"],
         model="orders_anomaly",
         registry_table="catalog.schema.dqx_anomaly_models",
@@ -21,4 +22,3 @@ def test_has_no_anomalies_missing_model_raises(spark, monkeypatch):
 
     with pytest.raises(InvalidParameterError, match="Model 'orders_anomaly' not found"):
         apply_fn(df)
-

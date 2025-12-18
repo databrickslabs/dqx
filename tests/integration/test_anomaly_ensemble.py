@@ -9,15 +9,17 @@ from databricks.sdk import WorkspaceClient
 from unittest.mock import MagicMock
 
 # Check if IsolationForest is available (only in Databricks Runtime)
+ISOLATION_FOREST_AVAILABLE = False
 try:
-    from pyspark.ml.classification import IsolationForest
-    ISOLATION_FOREST_AVAILABLE = True
+    import pyspark.ml.classification as pyspark_ml_classification
+
+    if hasattr(pyspark_ml_classification, 'IsolationForest'):
+        ISOLATION_FOREST_AVAILABLE = True
 except ImportError:
-    ISOLATION_FOREST_AVAILABLE = False
+    pass
 
 pytestmark = pytest.mark.skipif(
-    not ISOLATION_FOREST_AVAILABLE,
-    reason="IsolationForest only available in Databricks Runtime (DBR >= 15.4)"
+    not ISOLATION_FOREST_AVAILABLE, reason="IsolationForest only available in Databricks Runtime (DBR >= 15.4)"
 )
 
 
@@ -33,14 +35,14 @@ def test_ensemble_training(spark: SparkSession):
         [(100.0 + i, 2.0) for i in range(100)],
         "amount double, quantity double",
     )
-    
+
     # Train ensemble with 3 models
     params = anomaly.AnomalyParams(
         sample_fraction=1.0,
         max_rows=100,
         ensemble_size=3,
     )
-    
+
     model_uri = anomaly.train(
         df=df,
         columns=["amount", "quantity"],
@@ -48,7 +50,7 @@ def test_ensemble_training(spark: SparkSession):
         registry_table="main.default.test_anomaly_ensemble_registry",
         params=params,
     )
-    
+
     # Check that multiple URIs are returned
     assert "," in model_uri
     uris = model_uri.split(",")
@@ -62,14 +64,14 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
         [(100.0 + i, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     # Train ensemble
     params = anomaly.AnomalyParams(
         sample_fraction=1.0,
         max_rows=50,
         ensemble_size=2,
     )
-    
+
     anomaly.train(
         df=train_df,
         columns=["amount", "quantity"],
@@ -77,13 +79,13 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
         registry_table="main.default.test_anomaly_ensemble_scoring_registry",
         params=params,
     )
-    
+
     # Test data
     test_df = spark.createDataFrame(
         [(100.0, 2.0), (500.0, 1.0)],  # One normal, one anomaly
         "amount double, quantity double",
     )
-    
+
     # Apply check with confidence
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
@@ -95,12 +97,12 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
             include_confidence=True,
         )
     ]
-    
+
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    
+
     # Check that confidence column exists
     assert "anomaly_score_std" in result_df.columns
-    
+
     # Check that scores vary (std > 0 for some rows)
     std_values = [row["anomaly_score_std"] for row in result_df.collect()]
     assert any(std > 0 for std in std_values)
@@ -112,13 +114,13 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
         [(100.0, 2.0, 0.1) for i in range(30)],
         "amount double, quantity double, discount double",
     )
-    
+
     params = anomaly.AnomalyParams(
         sample_fraction=1.0,
         max_rows=30,
         ensemble_size=2,
     )
-    
+
     anomaly.train(
         df=train_df,
         columns=["amount", "quantity", "discount"],
@@ -126,12 +128,12 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
         registry_table="main.default.test_ensemble_contrib_registry",
         params=params,
     )
-    
+
     test_df = spark.createDataFrame(
         [(100.0, 2.0, 0.1), (9999.0, 1.0, 0.95)],
         "amount double, quantity double, discount double",
     )
-    
+
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
         anomaly.has_no_anomalies(
@@ -143,10 +145,9 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
             include_confidence=True,
         )
     ]
-    
+
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    
+
     # Check both confidence and contributions exist
     assert "anomaly_score_std" in result_df.columns
     assert "anomaly_contributions" in result_df.columns
-

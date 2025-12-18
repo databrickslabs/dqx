@@ -20,7 +20,6 @@ from pyspark.sql.types import (
     DoubleType,
     DecimalType,
     StringType,
-    NumericType,
 )
 
 logger = logging.getLogger(__name__)
@@ -35,8 +34,8 @@ class AnomalyProfile:
     segment_count: int
     column_stats: dict[str, dict]
     warnings: list[str]
-    column_types: dict[str, str] = None  # NEW: maps column -> type category
-    unsupported_columns: list[str] = None  # NEW: columns that cannot be used
+    column_types: dict[str, str] | None = None  # NEW: maps column -> type category
+    unsupported_columns: list[str] | None = None  # NEW: columns that cannot be used
 
 
 def auto_discover(
@@ -68,7 +67,7 @@ def auto_discover(
     Returns:
         AnomalyProfile with recommendations and warnings.
     """
-    warnings = []
+    warnings: list[str] = []
 
     if profiler_output_table:
         try:
@@ -76,7 +75,9 @@ def auto_discover(
             profile_df = df.sparkSession.table(profiler_output_table)
             return _auto_discover_from_profiler(df, profile_df, warnings)
         except Exception as e:
-            logger.warning(f"Failed to read profiler output table {profiler_output_table}: {e}. Falling back to heuristics.")
+            logger.warning(
+                f"Failed to read profiler output table {profiler_output_table}: {e}. Falling back to heuristics."
+            )
 
     # Fallback to on-the-fly heuristics
     return _auto_discover_heuristic(df, warnings)
@@ -106,50 +107,43 @@ def _auto_discover_from_profiler(
 
     # Select columns with multi-type support and priority system
     # Priority: 1=numeric, 2=boolean, 3=low-card categorical, 4=datetime, 5=high-card categorical
-    
+
     # Filter out ID/timestamp patterns
     id_pattern = "(?i)(id|key)$"
-    
+
     # Add priority column based on type
-    candidates_df = profile_df.filter(
-        (~F.col("column_name").rlike(id_pattern))
-        & (F.col("null_rate") < 0.5)
-    ).withColumn(
-        "priority",
-        F.when(
-            F.col("type").isin(["int", "long", "float", "double", "decimal"]) 
-            & (F.col("stddev") > 0),
-            1  # Numeric with variance
-        ).when(
-            F.col("type") == "boolean",
-            2  # Boolean
-        ).when(
-            (F.col("type") == "string") & (F.col("distinct_count") <= 20),
-            3  # Low-cardinality categorical
-        ).when(
-            F.col("type").isin(["date", "timestamp", "timestampNTZ"]),
-            4  # Datetime
-        ).when(
-            (F.col("type") == "string") & (F.col("distinct_count").between(21, 100)),
-            5  # High-cardinality categorical
-        ).otherwise(999)  # Unsupported/filtered
-    ).filter(
-        F.col("priority") < 999
-    ).orderBy(
-        "priority", "column_name"
+    candidates_df = (
+        profile_df.filter((~F.col("column_name").rlike(id_pattern)) & (F.col("null_rate") < 0.5))
+        .withColumn(
+            "priority",
+            F.when(
+                F.col("type").isin(["int", "long", "float", "double", "decimal"]) & (F.col("stddev") > 0),
+                1,  # Numeric with variance
+            )
+            .when(F.col("type") == "boolean", 2)  # Boolean
+            .when((F.col("type") == "string") & (F.col("distinct_count") <= 20), 3)  # Low-cardinality categorical
+            .when(F.col("type").isin(["date", "timestamp", "timestampNTZ"]), 4)  # Datetime
+            .when(
+                (F.col("type") == "string") & (F.col("distinct_count").between(21, 100)),
+                5,  # High-cardinality categorical
+            )
+            .otherwise(999),  # Unsupported/filtered
+        )
+        .filter(F.col("priority") < 999)
+        .orderBy("priority", "column_name")
     )
-    
+
     # Limit to max 10 columns
     MAX_COLUMNS = 10
     candidates_list = candidates_df.limit(MAX_COLUMNS + 50).collect()  # Get extra for counting
-    
+
     recommended_columns = []
     column_types = {}
     for row in candidates_list[:MAX_COLUMNS]:
         col_name = row["column_name"]
-        col_type = row["type"]
+        _col_type = row["type"]
         priority = row["priority"]
-        
+
         # Map profiler type to category
         if priority == 1:
             category = "numeric"
@@ -161,17 +155,17 @@ def _auto_discover_from_profiler(
             category = "datetime"
         else:
             continue
-        
+
         recommended_columns.append(col_name)
         column_types[col_name] = category
-    
+
     if len(candidates_list) > MAX_COLUMNS:
         warnings.append(
             f"Found {len(candidates_list)} suitable columns, selected top {MAX_COLUMNS} by priority. "
             f"Priority: numeric > boolean > low-card categorical > datetime. "
             f"Manually specify columns to override."
         )
-    
+
     if not recommended_columns:
         warnings.append(
             "No suitable columns found for anomaly detection. "
@@ -193,20 +187,15 @@ def _auto_discover_from_profiler(
     recommended_segments = []
     for row in categorical_candidates.collect():
         col = row["column_name"]
-        
+
         # Skip if already selected as a numeric column
         if col in recommended_columns and column_types.get(col) == 'numeric':
             continue
-        
+
         distinct_count = row["distinct_count"]
 
         # Check minimum segment size
-        min_segment_size_row = (
-            df.groupBy(col)
-            .count()
-            .select(F.min("count").alias("min_count"))
-            .first()
-        )
+        min_segment_size_row = df.groupBy(col).count().select(F.min("count").alias("min_count")).first()
 
         if min_segment_size_row:
             min_segment_size = min_segment_size_row["min_count"]
@@ -268,59 +257,63 @@ def _auto_discover_heuristic(
         AnomalyProfile with recommendations (max 10 columns).
     """
     from pyspark.sql.types import BooleanType, DateType, TimestampType, TimestampNTZType
-    
+
     recommended_columns = []
     recommended_segments = []
     column_stats = {}
     column_types = {}
     unsupported_columns = []
-    
+
     # Priority order: numeric > boolean > low-card categorical > datetime > high-card categorical
     candidates = []  # List of (priority, col_name, col_type, cardinality, null_rate)
-    
+
     # Filter out ID/timestamp patterns
     id_pattern = re.compile(r"(?i)(id|key)$")
-    
+
     total_count = df.count()
-    
+
     for field in df.schema.fields:
         col_name = field.name
         col_type = field.dataType
-        
+
         # Skip ID columns
         if id_pattern.search(col_name):
             continue
-        
+
         # Count nulls
         null_count_row = df.select(F.count(F.when(F.col(col_name).isNull(), 1)).alias("null_count")).first()
+        assert null_count_row is not None, "Failed to compute null count"
         null_rate = null_count_row["null_count"] / total_count if total_count > 0 else 1.0
-        
+
         # Numeric columns
         if isinstance(col_type, (IntegerType, LongType, FloatType, DoubleType, DecimalType)):
             stats_row = df.select(
                 F.mean(col_name).alias("mean"),
                 F.stddev(col_name).alias("std"),
             ).first()
-            
+
+            assert stats_row is not None, f"Failed to compute stats for {col_name}"
             std = stats_row["std"] or 0.0
             if null_rate < 0.5 and std > 0:
                 candidates.append((1, col_name, 'numeric', None, null_rate))  # Priority 1 (highest)
                 column_stats[col_name] = {"mean": stats_row["mean"], "std": std}
-        
+
         # Boolean columns
         elif isinstance(col_type, BooleanType):
             if null_rate < 0.5:
                 candidates.append((2, col_name, 'boolean', None, null_rate))  # Priority 2
-        
+
         # Datetime columns
         elif isinstance(col_type, (DateType, TimestampType, TimestampNTZType)):
             if null_rate < 0.5:
                 candidates.append((4, col_name, 'datetime', None, null_rate))  # Priority 4
-        
+
         # String (categorical) columns
         elif isinstance(col_type, StringType):
-            cardinality = df.select(F.countDistinct(col_name)).first()[0]
-            
+            cardinality_row = df.select(F.countDistinct(col_name)).first()
+            assert cardinality_row is not None, f"Failed to compute cardinality for {col_name}"
+            cardinality = cardinality_row[0]
+
             if cardinality <= 20 and null_rate < 0.5:
                 # Low cardinality categorical
                 candidates.append((3, col_name, 'categorical', cardinality, null_rate))  # Priority 3
@@ -332,27 +325,27 @@ def _auto_discover_heuristic(
                     f"Column '{col_name}' has {cardinality} distinct values (>100), "
                     "excluding from auto-selection (too high cardinality)."
                 )
-        
+
         # Unsupported types
         else:
             unsupported_columns.append(col_name)
-    
+
     # Sort by priority (lower number = higher priority)
     candidates.sort(key=lambda x: (x[0], x[1]))  # Sort by priority, then name
-    
+
     # Select top 10 columns
     MAX_COLUMNS = 10
     for priority, col_name, col_type, cardinality, null_rate in candidates[:MAX_COLUMNS]:
         recommended_columns.append(col_name)
         column_types[col_name] = col_type
-    
+
     if len(candidates) > MAX_COLUMNS:
         warnings.append(
             f"Found {len(candidates)} suitable columns, selected top {MAX_COLUMNS} by priority. "
             f"Priority: numeric > boolean > low-card categorical > datetime. "
             f"Manually specify columns to override."
         )
-    
+
     if not recommended_columns:
         warnings.append(
             "No suitable columns found for anomaly detection. "
@@ -389,15 +382,10 @@ def _auto_discover_heuristic(
         # Exclude ID-like columns (e.g., rep_id, customer_id, etc.)
         id_pattern = r"(?i)(id|key)$"
         is_id_column = re.search(id_pattern, col_name) is not None
-        
+
         if 2 <= distinct_count <= 50 and null_rate < 0.1 and not is_id_column:
             # Validate minimum segment size
-            min_segment_size_row = (
-                df.groupBy(col_name)
-                .count()
-                .select(F.min("count").alias("min_count"))
-                .first()
-            )
+            min_segment_size_row = df.groupBy(col_name).count().select(F.min("count").alias("min_count")).first()
 
             if min_segment_size_row:
                 min_segment_size = min_segment_size_row["min_count"]
@@ -427,7 +415,7 @@ def _auto_discover_heuristic(
                 f"Detected {segment_count} total segments, training may be slow. "
                 "Consider filtering or using coarser segmentation."
             )
-    
+
     # Remove segment columns from feature columns (they would be constant within each segment)
     if recommended_segments:
         recommended_columns = [col for col in recommended_columns if col not in recommended_segments]
@@ -441,4 +429,3 @@ def _auto_discover_heuristic(
         column_types=column_types,
         unsupported_columns=unsupported_columns,
     )
-

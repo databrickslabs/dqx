@@ -55,8 +55,7 @@ def extract_temporal_features(
             result = result.withColumn("temporal_week_of_year", F.weekofyear(timestamp_column))
         elif feature == "is_weekend":
             result = result.withColumn(
-                "temporal_is_weekend",
-                F.when(F.dayofweek(timestamp_column).isin([1, 7]), 1.0).otherwise(0.0)
+                "temporal_is_weekend", F.when(F.dayofweek(timestamp_column).isin([1, 7]), 1.0).otherwise(0.0)
             )
         else:
             raise ValueError(f"Unknown temporal feature: {feature}")
@@ -88,4 +87,3 @@ def get_temporal_column_names(features: list[str] | None = None) -> list[str]:
     }
 
     return [mapping[f] for f in features if f in mapping]
-

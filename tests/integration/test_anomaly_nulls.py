@@ -5,8 +5,6 @@ from pyspark.sql import SparkSession
 from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
 
 
@@ -23,11 +21,11 @@ def test_training_filters_nulls(spark: SparkSession, make_random: str):
         [(100.0, 2.0), (101.0, 2.0), (None, 2.0), (100.0, None), (102.0, 2.0)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"main.default.test_train_nulls_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Train (should filter nulls automatically)
     model_uri = train(
         df=df,
@@ -35,10 +33,10 @@ def test_training_filters_nulls(spark: SparkSession, make_random: str):
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Verify model was trained successfully
     assert model_uri is not None
-    
+
     # Check registry records training_rows (should be 3, not 5)
     record = spark.table(registry_table).filter(f"model_name = '{model_name}'").first()
     assert record["training_rows"] > 0
@@ -52,37 +50,24 @@ def test_nulls_are_skipped_not_flagged(spark: SparkSession, mock_workspace_clien
         [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"main.default.test_nulls_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Score data with nulls
     test_df = spark.createDataFrame(
         [(110.0, 2.1), (None, 2.0), (100.0, None), (None, None)],
         "amount double, quantity double",
     )
-    
-    dq_engine = DQEngine(mock_workspace_client)
-    checks = [
-        DQDatasetRule(
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "columns": ["amount", "quantity"],
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.5,
-            }
-        )
-    ]
-    
+
     # Call apply function directly to get anomaly_score column
     condition_col, apply_fn = has_no_anomalies(
         columns=["amount", "quantity"],
@@ -113,18 +98,18 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
         [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(50)],
         "amount double, quantity double, discount double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"main.default.test_partial_nulls_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity", "discount"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Test data with partial nulls
     test_df = spark.createDataFrame(
         [
@@ -135,7 +120,7 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
         ],
         "amount double, quantity double, discount double",
     )
-    
+
     # Call apply function directly to get anomaly_score column
     condition_col, apply_fn = has_no_anomalies(
         columns=["amount", "quantity", "discount"],
@@ -161,24 +146,24 @@ def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: 
         [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"main.default.test_all_nulls_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Test data with all nulls
     test_df = spark.createDataFrame(
         [(112.0, 2.1), (None, None)],
         "amount double, quantity double",
     )
-    
+
     # Call apply function directly to get anomaly_score column
     condition_col, apply_fn = has_no_anomalies(
         columns=["amount", "quantity"],
@@ -202,18 +187,18 @@ def test_mixed_null_and_anomaly(spark: SparkSession, mock_workspace_client, make
         [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"main.default.test_mixed_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Test data: normal, null, anomaly
     test_df = spark.createDataFrame(
         [
@@ -223,7 +208,7 @@ def test_mixed_null_and_anomaly(spark: SparkSession, mock_workspace_client, make
         ],
         "amount double, quantity double",
     )
-    
+
     # Call apply function directly to get anomaly_score column
     condition_col, apply_fn = has_no_anomalies(
         columns=["amount", "quantity"],
@@ -242,4 +227,3 @@ def test_mixed_null_and_anomaly(spark: SparkSession, mock_workspace_client, make
 
     # Anomaly row: has score
     assert rows[2]["anomaly_score"] is not None
-
