@@ -23,18 +23,18 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
         [(100.0 + i * 0.5, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Define checks in YAML format
     checks_yaml = f"""
     - criticality: error
@@ -46,21 +46,21 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
           registry_table: {registry_table}
           score_threshold: 0.5
     """
-    
+
     checks = yaml.safe_load(checks_yaml)
-    
+
     test_df = spark.createDataFrame(
         [(100.0, 2.0), (9999.0, 1.0)],
         "amount double, quantity double",
     )
-    
+
     dq_engine = DQEngine(mock_workspace_client)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    
+
     # Verify DQX metadata columns are added
     assert "_errors" in result_df.columns
     assert "_warnings" in result_df.columns
-    
+
     # Verify errors are added for anomalies
     rows = result_df.collect()
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
@@ -104,7 +104,11 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
     checks = yaml.safe_load(checks_yaml)
 
     test_df = spark.createDataFrame(
-        [(150.0, 3.0), (None, 3.0), (9999.0, 1.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
+        [
+            (150.0, 3.0),
+            (None, 3.0),
+            (9999.0, 1.0),
+        ],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
         "amount double, quantity double",
     )
 
@@ -132,18 +136,18 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
         [(100.0 + i * 0.5, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_threshold_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Define check with custom threshold
     checks_yaml = f"""
     - criticality: error
@@ -155,17 +159,17 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
           registry_table: {registry_table}
           score_threshold: 0.9
     """
-    
+
     checks = yaml.safe_load(checks_yaml)
-    
+
     test_df = spark.createDataFrame(
         [(100.0, 2.0), (150.0, 1.8)],  # Slightly unusual but not extreme
         "amount double, quantity double",
     )
-    
+
     dq_engine = DQEngine(mock_workspace_client)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    
+
     # With high threshold (0.9), slightly unusual data should pass
     assert "_errors" in result_df.columns
     rows = result_df.collect()
@@ -180,18 +184,18 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
         [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(30)],
         "amount double, quantity double, discount double",
     )
-    
+
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_contrib_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity", "discount"],
         model_name=model_name,
         registry_table=registry_table,
     )
-    
+
     # Define check with contributions
     checks_yaml = f"""
     - criticality: error
@@ -204,17 +208,17 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
           score_threshold: 0.5
           include_contributions: true
     """
-    
+
     checks = yaml.safe_load(checks_yaml)
-    
+
     test_df = spark.createDataFrame(
         [(9999.0, 1.0, 0.95)],
         "amount double, quantity double, discount double",
     )
-    
+
     dq_engine = DQEngine(mock_workspace_client)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    
+
     # Verify DQX metadata is added (contributions are not added by metadata API)
     assert "_errors" in result_df.columns
     rows = result_df.collect()
@@ -259,10 +263,10 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
         [(150.0, 3.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
         "amount double, quantity double",
     )
-    
+
     dq_engine = DQEngine(mock_workspace_client)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    
+
     # Should succeed without errors (drift detection is configured)
     assert "_errors" in result_df.columns
     rows = result_df.collect()
@@ -307,13 +311,13 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_
         [(150.0, 3.0), (9999.0, 1.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
         "amount double, quantity double",
     )
-    
+
     dq_engine = DQEngine(mock_workspace_client)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-    
+
     # With warn criticality, anomalies should be in warnings
     rows = result_df.collect()
-    
+
     # Anomalous row should have warnings or errors
     assert rows[1]["_warnings"] is not None or rows[1]["_errors"] is not None
 
@@ -330,18 +334,18 @@ def test_yaml_parsing_validation(spark: SparkSession):
           model: test_missing_args
           score_threshold: 0.5
     """
-    
+
     checks = yaml.safe_load(checks_yaml)
-    
+
     # This should fail when trying to apply the check
     # (Either at parse time or at runtime)
     test_df = spark.createDataFrame(
         [(100.0, 2.0)],
         "amount double, quantity double",
     )
-    
+
     dq_engine = DQEngine(MagicMock(spec=WorkspaceClient))
-    
+
     # Should raise error about missing columns
     with pytest.raises(Exception):  # May be TypeError or InvalidParameterError
         result_df = dq_engine.apply_checks_by_metadata(test_df, checks)

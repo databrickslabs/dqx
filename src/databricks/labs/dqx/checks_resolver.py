@@ -23,12 +23,14 @@ logger = logging.getLogger(__name__)
 anomaly_check_funcs = None
 ANOMALY_ENABLED = False
 
+
 def _load_anomaly_check_funcs():
     """Lazy-load anomaly check functions to avoid circular import issues."""
     global anomaly_check_funcs, ANOMALY_ENABLED
     if anomaly_check_funcs is None and not ANOMALY_ENABLED:
         try:
             import databricks.labs.dqx.anomaly.check_funcs as acf
+
             anomaly_check_funcs = acf
             ANOMALY_ENABLED = True
             logger.debug("Anomaly detection enabled")

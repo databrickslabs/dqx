@@ -2,12 +2,10 @@
 
 import pytest
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
-from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
 
 
@@ -23,9 +21,7 @@ def test_missing_model_error(spark: SparkSession, mock_workspace_client):
         [(100.0, 2.0)],
         "amount double, quantity double",
     )
-    
-    dq_engine = DQEngine(mock_workspace_client)
-    
+
     # Should raise clear error about missing model
     # Model name gets normalized to full catalog.schema.model format
     with pytest.raises(InvalidParameterError, match="Model 'main.default.nonexistent_model' not found"):
@@ -46,20 +42,20 @@ def test_column_mismatch_error(spark: SparkSession, mock_workspace_client):
         [(100.0, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_col_mismatch",
         registry_table="main.default.test_col_mismatch_registry",
     )
-    
+
     # Try to score with [amount, discount] (different columns)
     test_df = spark.createDataFrame(
         [(100.0, 0.1)],
         "amount double, discount double",
     )
-    
+
     # Should raise error about column mismatch
     with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
         condition_col, apply_fn = has_no_anomalies(
@@ -79,20 +75,20 @@ def test_column_count_mismatch_error(spark: SparkSession, mock_workspace_client)
         [(100.0, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_count_mismatch",
         registry_table="main.default.test_count_mismatch_registry",
     )
-    
+
     # Try to score with 3 columns
     test_df = spark.createDataFrame(
         [(100.0, 2.0, 0.1)],
         "amount double, quantity double, discount double",
     )
-    
+
     # Should raise error about column mismatch
     with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
         condition_col, apply_fn = has_no_anomalies(
@@ -112,20 +108,20 @@ def test_column_order_independence(spark: SparkSession, mock_workspace_client):
         [(100.0, 2.0) for i in range(50)],
         "amount double, quantity double",
     )
-    
+
     train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_col_order",
         registry_table="main.default.test_col_order_registry",
     )
-    
+
     # Score with [quantity, amount] (reversed order)
     test_df = spark.createDataFrame(
         [(2.0, 100.0)],
         "quantity double, amount double",
     )
-    
+
     # Should NOT raise error (column sets are the same)
     condition_col, apply_fn = has_no_anomalies(
         columns=["quantity", "amount"],  # Different order
@@ -140,7 +136,7 @@ def test_column_order_independence(spark: SparkSession, mock_workspace_client):
 def test_empty_dataframe_error(spark: SparkSession):
     """Test error when training on empty DataFrame."""
     df = spark.createDataFrame([], "amount double, quantity double")
-    
+
     # Should raise error about empty data
     with pytest.raises(InvalidParameterError, match="Sampling produced 0 rows"):
         train(
@@ -157,7 +153,7 @@ def test_nonexistent_column_error(spark: SparkSession):
         [(100.0, 2.0)],
         "amount double, quantity double",
     )
-    
+
     # Try to train on non-existent column
     with pytest.raises(Exception):  # Should raise AnalysisException
         train(
@@ -174,7 +170,7 @@ def test_non_numeric_column_error(spark: SparkSession):
         [(100.0, "text")],
         "amount double, description string",
     )
-    
+
     # Try to train on string column (not numeric)
     with pytest.raises(Exception):  # Should raise error during VectorAssembler
         train(
@@ -191,7 +187,7 @@ def test_missing_registry_table_for_scoring_error(spark: SparkSession, mock_work
         [(100.0, 2.0)],
         "amount double, quantity double",
     )
-    
+
     # Should raise error about missing model/registry
     with pytest.raises(InvalidParameterError, match="Model .* not found"):
         condition_col, apply_fn = has_no_anomalies(
@@ -202,4 +198,3 @@ def test_missing_registry_table_for_scoring_error(spark: SparkSession, mock_work
         )
         result_df = apply_fn(df)
         result_df.collect()
-

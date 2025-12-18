@@ -44,7 +44,7 @@ def configure_mlflow_tracking():
     """Configure MLflow to use a temporary directory for tracking during tests."""
     import tempfile
     import mlflow
-    
+
     # Use temporary directory for MLflow tracking to avoid polluting repo with mlruns/
     with tempfile.TemporaryDirectory() as tmpdir:
         mlflow.set_tracking_uri(f"file:{tmpdir}/mlruns")
@@ -112,8 +112,6 @@ def skip_if_runtime_not_geo_compatible(ws, debug_env):
 
     if not valid:
         pytest.skip("This test requires a cluster with runtime 17.1 or above")
-
-
 
 
 class CommonUtils:

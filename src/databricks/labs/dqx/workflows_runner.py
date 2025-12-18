@@ -54,7 +54,7 @@ class WorkflowsRunner:
             spark_conf=config.quality_checker_spark_conf,
             override_clusters=config.quality_checker_override_clusters,
         )
-        
+
         # Conditionally add anomaly trainer if dependencies are installed
         workflows = [profiler, quality_checker]
         if ANOMALY_ENABLED:
@@ -63,7 +63,7 @@ class WorkflowsRunner:
                 override_clusters=config.quality_checker_override_clusters,
             )
             workflows.append(anomaly_trainer)
-        
+
         e2e = EndToEndWorkflow(
             profiler,
             quality_checker,

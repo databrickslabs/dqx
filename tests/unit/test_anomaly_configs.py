@@ -21,4 +21,3 @@ def test_anomaly_config_accepts_params():
     cfg = AnomalyConfig(columns=["a", "b"], params=params)
     assert cfg.columns == ["a", "b"]
     assert cfg.params.sample_fraction == 0.5
-

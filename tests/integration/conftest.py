@@ -23,13 +23,6 @@ from tests.conftest import TEST_CATALOG
 # Import shared session-scoped fixtures for anomaly detection tests
 # These fixtures train models ONCE per session, reducing test suite runtime significantly.
 # All anomaly-specific fixtures are defined in test_anomaly_fixtures.py for better organization.
-from tests.integration.test_anomaly_fixtures import (
-    spark_session,
-    shared_2d_model,
-    shared_3d_model,
-    shared_4d_model,
-    shared_segmented_model,
-)
 
 
 logging.getLogger("tests").setLevel("DEBUG")

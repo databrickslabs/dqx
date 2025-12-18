@@ -64,8 +64,9 @@ def compute_drift_score(
         # Z-score for mean shift
         baseline_mean = baseline["mean"]
         baseline_std = baseline["std"]
-        
+
         # Handle None values (can occur with single row or all identical values)
+        assert current_stats is not None, f"Failed to compute stats for column {col}"
         current_mean = current_stats["mean"] if current_stats["mean"] is not None else baseline_mean
         current_std = current_stats["std"] if current_stats["std"] is not None else 0.0
 
@@ -130,9 +131,7 @@ def compute_ks_statistic(df: DataFrame, col: str, baseline_stats: dict[str, floa
     baseline_quantiles = [baseline_stats["p25"], baseline_stats["p50"], baseline_stats["p75"]]
 
     # Compute max absolute difference (simplified KS statistic)
-    differences = [
-        abs(current - baseline) for current, baseline in zip(current_quantiles, baseline_quantiles)
-    ]
+    differences = [abs(current - baseline) for current, baseline in zip(current_quantiles, baseline_quantiles)]
 
     # Normalize by baseline range to get a 0-1 score
     baseline_range = baseline_stats["max"] - baseline_stats["min"]
@@ -142,4 +141,3 @@ def compute_ks_statistic(df: DataFrame, col: str, baseline_stats: dict[str, floa
         ks_score = 0.0
 
     return min(ks_score, 1.0)  # Cap at 1.0
-

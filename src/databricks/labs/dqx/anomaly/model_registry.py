@@ -77,11 +77,11 @@ class AnomalyModelRegistry:
         """Convert a registry record into a DataFrame."""
         # Convert record to dict and handle Decimal values for PyArrow compatibility
         record_dict = record.__dict__.copy()
-        
+
         # Convert Decimals in nested structures (baseline_stats, metrics, etc.)
         for key, value in record_dict.items():
             record_dict[key] = AnomalyModelRegistry._convert_decimals(value)
-        
+
         return spark.createDataFrame([record_dict], schema=ANOMALY_MODEL_TABLE_SCHEMA)
 
     def save_model(self, record: AnomalyModelRecord, table: str) -> None:
@@ -124,9 +124,7 @@ class AnomalyModelRegistry:
 
         return self.get_active_model(table, segment_model_name)
 
-    def get_all_segment_models(
-        self, table: str, base_model_name: str
-    ) -> list[AnomalyModelRecord]:
+    def get_all_segment_models(self, table: str, base_model_name: str) -> list[AnomalyModelRecord]:
         """Fetch all segment models for a base name."""
         if not self._table_exists(table):
             return []
@@ -134,10 +132,7 @@ class AnomalyModelRegistry:
         # Get all active models that start with base_model_name__seg_
         rows = (
             self.spark.table(table)
-            .filter(
-                (F.col("model_name").startswith(f"{base_model_name}__seg_"))
-                & (F.col("status") == "active")
-            )
+            .filter((F.col("model_name").startswith(f"{base_model_name}__seg_")) & (F.col("status") == "active"))
             .orderBy(F.col("training_time").desc())
             .collect()
         )
@@ -155,7 +150,5 @@ class AnomalyModelRegistry:
         if not self._table_exists(table):
             return
         self.spark.sql(
-            f"UPDATE {table} SET status = 'archived' "
-            f"WHERE model_name = '{model_name}' AND status = 'active'"
+            f"UPDATE {table} SET status = 'archived' " f"WHERE model_name = '{model_name}' AND status = 'active'"
         )
-

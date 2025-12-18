@@ -250,11 +250,11 @@ class ChecksValidator:
 
         if origin:
             return isinstance(value, origin)
-        
+
         # Handle special typing constructs that cannot be used with isinstance()
         if expected_type is Any:
             return True  # Any type is always valid
-        
+
         try:
             return isinstance(value, expected_type)
         except TypeError:

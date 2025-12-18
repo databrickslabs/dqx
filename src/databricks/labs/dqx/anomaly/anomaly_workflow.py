@@ -25,6 +25,12 @@ class AnomalyTrainerWorkflow(Workflow):
         if not anomaly_config:
             raise InvalidConfigError("anomaly_config is required to run the anomaly trainer workflow.")
 
+        if not run_config.input_config:
+            raise InvalidConfigError("input_config is required to run the anomaly trainer workflow.")
+
+        if not anomaly_config.model_name:
+            raise InvalidConfigError("model_name is required in anomaly_config.")
+
         df = read_input_data(ctx.spark, run_config.input_config)
         train(
             df=df,
@@ -35,4 +41,3 @@ class AnomalyTrainerWorkflow(Workflow):
             params=anomaly_config.params,
             profiler_table=anomaly_config.profiler_table,
         )
-
