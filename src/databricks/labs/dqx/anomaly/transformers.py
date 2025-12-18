@@ -40,11 +40,13 @@ class SparkFeatureMetadata:
     
     Stores everything needed to apply the same transformations:
     - Column types and encoding strategies
-    - Frequency maps for categorical encoding
+    - Frequency maps for categorical encoding (high cardinality)
+    - OneHot distinct values (low cardinality)
     - Engineered feature names (in order)
     """
     column_infos: list[dict[str, Any]]  # Serializable version of ColumnTypeInfo
     categorical_frequency_maps: dict[str, dict[str, float]]  # {col_name: {value: frequency}}
+    onehot_categories: dict[str, list[str]]  # {col_name: [distinct_values]} for OneHot encoding
     engineered_feature_names: list[str]  # Final feature names after engineering
     
     def to_json(self) -> str:
@@ -52,6 +54,7 @@ class SparkFeatureMetadata:
         return json.dumps({
             "column_infos": self.column_infos,
             "categorical_frequency_maps": self.categorical_frequency_maps,
+            "onehot_categories": self.onehot_categories,
             "engineered_feature_names": self.engineered_feature_names,
         })
     
@@ -59,6 +62,9 @@ class SparkFeatureMetadata:
     def from_json(cls, json_str: str) -> "SparkFeatureMetadata":
         """Deserialize from JSON."""
         data = json.loads(json_str)
+        # Backwards compatibility: old models won't have onehot_categories
+        if "onehot_categories" not in data:
+            data["onehot_categories"] = {}
         return cls(**data)
 
 
@@ -286,6 +292,7 @@ def apply_feature_engineering(
     column_infos: list[ColumnTypeInfo],
     categorical_cardinality_threshold: int = 20,
     frequency_maps: dict[str, dict[str, float]] | None = None,
+    onehot_categories: dict[str, list[str]] | None = None,
 ) -> tuple[DataFrame, SparkFeatureMetadata]:
     """
     Apply feature engineering transformations in Spark (distributed).
@@ -307,10 +314,13 @@ def apply_feature_engineering(
         column_infos: Column type information from ColumnTypeClassifier
         categorical_cardinality_threshold: Threshold for OneHot vs Frequency encoding
         frequency_maps: Pre-computed frequency maps (for scoring). If None, compute from df (for training).
+        onehot_categories: Pre-computed OneHot distinct values (for scoring). If None, compute from df (for training).
     """
     is_training = frequency_maps is None
     if frequency_maps is None:
         frequency_maps = {}
+    if onehot_categories is None:
+        onehot_categories = {}
     
     transformed_df = df
     engineered_features = []
@@ -345,12 +355,25 @@ def apply_feature_engineering(
         # Encode based on cardinality
         if card <= categorical_cardinality_threshold:
             # OneHot encoding (low cardinality)
-            distinct_values = [row[0] for row in df.select(col_name).distinct().collect()]
-            distinct_values = [v for v in distinct_values if v is not None]
-            
-            # Drop one category if binary (to avoid redundancy)
-            if len(distinct_values) == 2:
-                distinct_values = distinct_values[:1]
+            if is_training:
+                # Training: Compute distinct values from training data
+                distinct_values = [row[0] for row in df.select(col_name).distinct().collect()]
+                distinct_values = [v for v in distinct_values if v is not None]
+                
+                # Drop one category if binary (to avoid redundancy)
+                if len(distinct_values) == 2:
+                    distinct_values = distinct_values[:1]
+                
+                # Store for scoring
+                onehot_categories[col_name] = distinct_values
+            else:
+                # Scoring: Use stored distinct values from training
+                distinct_values = onehot_categories.get(col_name, [])
+                if not distinct_values:
+                    raise ValueError(
+                        f"OneHot categories for column '{col_name}' not found in metadata. "
+                        "Model may be from an older version without OneHot category storage."
+                    )
             
             for value in distinct_values:
                 feature_name = f"{col_name}_{value}"
@@ -508,6 +531,7 @@ def apply_feature_engineering(
             "null_count": c.null_count,
         } for c in column_infos],
         categorical_frequency_maps=frequency_maps,
+        onehot_categories=onehot_categories,
         engineered_feature_names=engineered_features,
     )
     
