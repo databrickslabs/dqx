@@ -181,10 +181,12 @@ def _auto_discover_from_profiler(
 
     # Select categorical columns suitable for segmentation
     # Skip if already selected as a numeric column (numbers shouldn't be segments)
+    # Also exclude ID-like columns (they shouldn't be segments)
     categorical_candidates = profile_df.filter(
         (F.col("type").isin(["string", "int"]))
         & (F.col("distinct_count").between(2, 50))
         & (F.col("null_rate") < 0.1)
+        & (~F.col("column_name").rlike(id_pattern))  # Exclude ID columns
     )
 
     # Validate minimum rows per segment
@@ -384,7 +386,11 @@ def _auto_discover_heuristic(
         null_rate = stats_row["null_count"] / total_count if total_count > 0 else 1.0
 
         # Check segment criteria
-        if 2 <= distinct_count <= 50 and null_rate < 0.1:
+        # Exclude ID-like columns (e.g., rep_id, customer_id, etc.)
+        id_pattern = r"(?i)(id|key)$"
+        is_id_column = re.search(id_pattern, col_name) is not None
+        
+        if 2 <= distinct_count <= 50 and null_rate < 0.1 and not is_id_column:
             # Validate minimum segment size
             min_segment_size_row = (
                 df.groupBy(col_name)

@@ -51,10 +51,14 @@ def compute_drift_score(
 
         baseline = baseline_stats[col]
 
+        # Get column data type and cast boolean to numeric for statistics
+        col_type = dict(df.dtypes)[col]
+        col_expr = F.col(col).cast("double") if col_type == "boolean" else F.col(col)
+
         # Compute current statistics
         current_stats = df.select(
-            F.mean(col).alias("mean"),
-            F.stddev(col).alias("std"),
+            F.mean(col_expr).alias("mean"),
+            F.stddev(col_expr).alias("std"),
         ).first()
 
         # Z-score for mean shift
