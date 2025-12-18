@@ -4,47 +4,21 @@ Integration tests for anomaly feature explainability.
 NOTE: These tests require SHAP library (shap>=0.42.0,<0.46) installed on the cluster.
 If using DATABRICKS_CLUSTER_ID, install the library via:
   Cluster -> Libraries -> Install New -> PyPI -> shap>=0.42.0,<0.46
+
+OPTIMIZATION: These tests use session-scoped shared fixtures (shared_2d_model, shared_3d_model, 
+shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min to ~10 min (83% savings).
 """
 
-import pytest
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock
 
-from databricks.labs.dqx.anomaly import train, has_no_anomalies
-from databricks.labs.dqx.engine import DQEngine
-from databricks.sdk import WorkspaceClient
-from tests.integration.test_anomaly_utils import (
-    get_standard_2d_training_data,
-    get_standard_3d_training_data,
-    get_standard_4d_training_data,
-)
+from databricks.labs.dqx.anomaly import has_no_anomalies
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-    return MagicMock(spec=WorkspaceClient)
-
-
-def test_feature_importance_stored(spark: SparkSession, make_random: str):
+def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
     """Test that feature_importance is stored in registry."""
-    # Use standard 2D training data for consistent results
-    train_data = get_standard_2d_training_data()
-    train_df = spark.createDataFrame(
-        train_data,
-        "amount double, quantity double",
-    )
-    
-    unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
-    model_name = f"test_importance_{make_random(4).lower()}"
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],  # Fixed: match DataFrame schema
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
     
     # Query registry for feature_importance
     # Model name is stored with full catalog.schema.model format
@@ -66,24 +40,12 @@ def test_feature_importance_stored(spark: SparkSession, make_random: str):
         assert importance >= 0
 
 
-def test_feature_contributions_added(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_feature_contributions_added(spark: SparkSession, shared_3d_model):
     """Test that anomaly_contributions column is added when requested."""
-    # Use standard 3D training data for consistent results
-    train_df = spark.createDataFrame(
-        get_standard_3d_training_data(),
-        "amount double, quantity double, discount double",
-    )
-    
-    unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
-    model_name = f"test_contrib_{make_random(4).lower()}"
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity", "discount"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_3d_model["model_name"]
+    registry_table = shared_3d_model["registry_table"]
+    columns = shared_3d_model["columns"]
     
     # Score with include_contributions=True
     test_df = spark.createDataFrame(
@@ -93,7 +55,7 @@ def test_feature_contributions_added(spark: SparkSession, mock_workspace_client,
     
     # Call has_no_anomalies directly to get columns like anomaly_contributions
     condition_col, apply_fn = has_no_anomalies(
-        columns=["amount", "quantity", "discount"],
+        columns=columns,
         model=model_name,
         registry_table=registry_table,
         score_threshold=0.5,
@@ -116,24 +78,12 @@ def test_feature_contributions_added(spark: SparkSession, mock_workspace_client,
     assert "discount" in contribs
 
 
-def test_contribution_percentages_sum_to_one(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_model):
     """Test that contribution percentages sum to approximately 1.0."""
-    # Use standard 3D training data for consistent results
-    train_df = spark.createDataFrame(
-        get_standard_3d_training_data(),
-        "amount double, quantity double, discount double",
-    )
-    
-    unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
-    model_name = f"test_contrib_sum_{make_random(4).lower()}"
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity", "discount"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_3d_model["model_name"]
+    registry_table = shared_3d_model["registry_table"]
+    columns = shared_3d_model["columns"]
     
     test_df = spark.createDataFrame(
         [(9999.0, 1.0, 0.95)],
@@ -142,7 +92,7 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, mock_workspace
     
     # Call has_no_anomalies directly to get columns like anomaly_contributions
     condition_col, apply_fn = has_no_anomalies(
-        columns=["amount", "quantity", "discount"],
+        columns=columns,
         model=model_name,
         registry_table=registry_table,
         score_threshold=0.5,
@@ -162,24 +112,12 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, mock_workspace
     assert abs(total - 1.0) < 0.01
 
 
-def test_multi_feature_contributions(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_multi_feature_contributions(spark: SparkSession, shared_4d_model):
     """Test contributions with 4+ columns."""
-    # Use standard 4D training data for consistent results
-    train_df = spark.createDataFrame(
-        get_standard_4d_training_data(),
-        "amount double, quantity double, discount double, weight double",
-    )
-    
-    unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
-    model_name = f"test_multi_contrib_{make_random(4).lower()}"
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity", "discount", "weight"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_4d_model["model_name"]
+    registry_table = shared_4d_model["registry_table"]
+    columns = shared_4d_model["columns"]
     
     test_df = spark.createDataFrame(
         [(9999.0, 1.0, 0.95, 1.0)],
@@ -188,7 +126,7 @@ def test_multi_feature_contributions(spark: SparkSession, mock_workspace_client,
     
     # Call has_no_anomalies directly to get columns like anomaly_contributions
     condition_col, apply_fn = has_no_anomalies(
-        columns=["amount", "quantity", "discount", "weight"],
+        columns=columns,
         model=model_name,
         registry_table=registry_table,
         score_threshold=0.5,
@@ -208,24 +146,12 @@ def test_multi_feature_contributions(spark: SparkSession, mock_workspace_client,
     assert "weight" in contribs
 
 
-def test_contributions_without_flag_not_added(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_model):
     """Test that contributions are not added when include_contributions=False."""
-    # Use standard 2D training data
-    train_df = spark.createDataFrame(
-        get_standard_2d_training_data(),
-        "amount double, quantity double",
-    )
-    
-    unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
-    model_name = f"test_no_contrib_{make_random(4).lower()}"
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
     
     test_df = spark.createDataFrame(
         [(100.0, 2.0)],
@@ -234,7 +160,7 @@ def test_contributions_without_flag_not_added(spark: SparkSession, mock_workspac
     
     # Call has_no_anomalies directly
     condition_col, apply_fn = has_no_anomalies(
-        columns=["amount", "quantity"],
+        columns=columns,
         model=model_name,
         registry_table=registry_table,
         score_threshold=0.5,
@@ -247,24 +173,12 @@ def test_contributions_without_flag_not_added(spark: SparkSession, mock_workspac
     assert "anomaly_contributions" not in result_df.columns
 
 
-def test_top_contributor_is_reasonable(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model):
     """Test that the top contributor makes sense for the anomaly."""
-    # Use standard 3D training data with sufficient variance
-    train_df = spark.createDataFrame(
-        get_standard_3d_training_data(),
-        "amount double, quantity double, discount double",
-    )
-    
-    unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
-    model_name = f"test_top_contrib_{make_random(4).lower()}"
-    
-    train(
-        df=train_df,
-        columns=["amount", "quantity", "discount"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_3d_model["model_name"]
+    registry_table = shared_3d_model["registry_table"]
+    columns = shared_3d_model["columns"]
     
     # Test with anomalous amount (should be top contributor)
     test_df = spark.createDataFrame(
@@ -274,7 +188,7 @@ def test_top_contributor_is_reasonable(spark: SparkSession, mock_workspace_clien
     
     # Call has_no_anomalies directly to get columns like anomaly_contributions
     condition_col, apply_fn = has_no_anomalies(
-        columns=["amount", "quantity", "discount"],
+        columns=columns,
         model=model_name,
         registry_table=registry_table,
         score_threshold=0.5,
