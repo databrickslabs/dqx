@@ -259,8 +259,6 @@ class DQGenerator(DQEngineBase):
 
         def _same_family(value_a, value_b):
             # numeric with numeric OR temporal with temporal
-            if value_a is None or value_b is None:
-                return True
             return any(
                 [
                     _is_num(value_a) and _is_num(value_b),
