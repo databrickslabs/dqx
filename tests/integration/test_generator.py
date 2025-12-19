@@ -19,13 +19,13 @@ test_rules = [
     DQProfile(
         name="min_max",
         column="product_launch_date",
-        parameters={"min": datetime.date(2020, 1, 1), "max": None},
+        parameters={"min": datetime.date(2020, 1, 2), "max": None},
         description="Real min/max values were used",
     ),
     DQProfile(
         name="min_max",
         column="product_expiry_ts",
-        parameters={"min": None, "max": datetime.datetime(2020, 1, 1)},
+        parameters={"min": None, "max": datetime.datetime(2020, 1, 2, 3, 4, 5)},
         description="Real min/max values were used",
     ),
     DQProfile(name="is_random", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
@@ -74,7 +74,7 @@ def test_generate_dq_rules(ws, spark):
         {
             "check": {
                 "function": "is_not_less_than",
-                "arguments": {"column": "product_launch_date", "limit": datetime.date(2020, 1, 1)},
+                "arguments": {"column": "product_launch_date", "limit": "2020-01-02"},
             },
             "name": "product_launch_date_not_less_than",
             "criticality": "error",
@@ -82,7 +82,7 @@ def test_generate_dq_rules(ws, spark):
         {
             "check": {
                 "function": "is_not_greater_than",
-                "arguments": {"column": "product_expiry_ts", "limit": datetime.datetime(2020, 1, 1)},
+                "arguments": {"column": "product_expiry_ts", "limit": "2020-01-02T03:04:05.000000"},
             },
             "name": "product_expiry_ts_not_greater_than",
             "criticality": "error",
@@ -135,7 +135,7 @@ def test_generate_dq_rules_warn(ws, spark):
         {
             "check": {
                 "function": "is_not_less_than",
-                "arguments": {"column": "product_launch_date", "limit": datetime.date(2020, 1, 1)},
+                "arguments": {"column": "product_launch_date", "limit": "2020-01-02"},
             },
             "name": "product_launch_date_not_less_than",
             "criticality": "warn",
@@ -143,7 +143,7 @@ def test_generate_dq_rules_warn(ws, spark):
         {
             "check": {
                 "function": "is_not_greater_than",
-                "arguments": {"column": "product_expiry_ts", "limit": datetime.datetime(2020, 1, 1)},
+                "arguments": {"column": "product_expiry_ts", "limit": "2020-01-02T03:04:05.000000"},
             },
             "name": "product_expiry_ts_not_greater_than",
             "criticality": "warn",

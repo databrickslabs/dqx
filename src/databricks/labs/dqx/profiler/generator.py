@@ -10,6 +10,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import MissingParameterError
@@ -273,9 +274,10 @@ class DQGenerator(DQEngineBase):
                     "function": "is_in_range",
                     "arguments": {
                         "column": column,
-                        # pass through Python numeric types (int, float, Decimal) or temporal types (datetime/date) without stringification
-                        "min_limit": min_limit,
-                        "max_limit": max_limit,
+                        # pass through Python numeric types (int, float) without stringification
+                        # except for temporal types (datetime/date) which are not Json serializable
+                        "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
+                        "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
                     },
                 },
                 "name": f"{column}_isnt_in_range",
@@ -285,7 +287,10 @@ class DQGenerator(DQEngineBase):
         # Only max
         if max_limit is not None and (_is_num(max_limit) or _is_temporal(max_limit)):
             return {
-                "check": {"function": "is_not_greater_than", "arguments": {"column": column, "limit": max_limit}},
+                "check": {
+                    "function": "is_not_greater_than",
+                    "arguments": {"column": column, "limit": val_maybe_to_str(max_limit, include_sql_quotes=False)},
+                },
                 "name": f"{column}_not_greater_than",
                 "criticality": criticality,
             }
@@ -293,7 +298,10 @@ class DQGenerator(DQEngineBase):
         # Only min
         if min_limit is not None and (_is_num(min_limit) or _is_temporal(min_limit)):
             return {
-                "check": {"function": "is_not_less_than", "arguments": {"column": column, "limit": min_limit}},
+                "check": {
+                    "function": "is_not_less_than",
+                    "arguments": {"column": column, "limit": val_maybe_to_str(min_limit, include_sql_quotes=False)},
+                },
                 "name": f"{column}_not_less_than",
                 "criticality": criticality,
             }
