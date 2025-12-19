@@ -224,6 +224,10 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
     (null values are allowed). Can optionally perform a case-insensitive comparison.
     This check is not suited for `MapType` or `StructType` columns.
 
+    Note:
+        This check is not suited for `MapType` or `StructType` columns. For best performance with large
+        lists, use the `foreign_key` check function.
+
     Args:
         column: column to check; can be a string column name or a column expression
         allowed: list of allowed values (actual values or Column objects)
@@ -276,7 +280,10 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are NOT present in the list of forbidden values
     (null values are allowed). Can optionally perform a case-insensitive comparison.
-    This check is not suited for `MapType` or `StructType` columns.
+
+    Note:
+        This check is not suited for `MapType` or `StructType` columns. For best performance with large
+        lists, use the `foreign_key` check function with the `negate` parameter set to `True`.
 
     Args:
         column: column to check; can be a string column name or a column expression

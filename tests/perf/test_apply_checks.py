@@ -232,6 +232,48 @@ def test_benchmark_foreach_is_in_list(benchmark, ws, generated_integer_df):
     assert result == EXPECTED_ROWS
 
 
+@pytest.mark.parametrize("column", ["col1", "col2", "col3"])
+@pytest.mark.benchmark(group="test_benchmark_is_not_in_list")
+def test_benchmark_is_not_in_list(benchmark, ws, generated_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_not_in_list",
+            criticality="warn",
+            check_func=check_funcs.is_not_in_list,
+            check_func_kwargs={"forbidden": [1, 2, 3, 5, 6, 7, 8, 9, 10]},
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_integer_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_not_in_list")
+def test_benchmark_foreach_is_not_in_list(benchmark, ws, generated_integer_df):
+    columns, df, n_rows = generated_integer_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_not_in_list,
+            columns=columns,
+            criticality="warn",
+            check_func_kwargs={"forbidden": [1, 2, 3, 5, 6, 7, 8, 9, 10]},
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize("column", ["col1", "col2", "col3", "col5", "col6"])
 @pytest.mark.benchmark(group="test_benchmark_sql_expression")
 def test_benchmark_sql_expression(benchmark, ws, generated_df, column):
