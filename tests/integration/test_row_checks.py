@@ -421,54 +421,59 @@ def test_is_not_in_list(spark):
     expected = spark.createDataFrame(
         [
             # Row 1: "active" - all pass (not in forbidden lists)
+            # d = ["read", "write"], try_element_at(d, 1) = "read" (1-based: first element)
             [None, None, None, None, None, None, None, None, None],
-            # Row 2: "banned" - fails where "banned" is forbidden
+            # Row 2: "banned" - fails where "banned" is forbidden  
+            # d = [None, "admin"], try_element_at(d, 1) = None (1-based: first element)
             [
                 "Value 'banned' in Column 'a' is in the forbidden list: [banned, suspended, deleted]",
                 None,
                 "Value 'banned' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [banned, error]",
-                "Value 'admin' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin, root]",
+                None,  # try_element_at returns None, which passes
                 "Value 'banned' in Column 'a' is in the forbidden list: [banned, suspended]",
                 None,
-                "Value 'admin' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin]",
+                None,  # try_element_at returns None, which passes
                 None,
                 None,
             ],
             # Row 3: "suspended" - fails where "suspended" is forbidden
+            # d = [None, "read"], try_element_at(d, 1) = None (1-based: first element)
             [
                 "Value 'suspended' in Column 'a' is in the forbidden list: [banned, suspended, deleted]",
                 None,
                 None,
-                None,
+                None,  # try_element_at returns None, which passes
                 "Value 'suspended' in Column 'a' is in the forbidden list: [banned, suspended]",
                 None,
-                None,
+                None,  # try_element_at returns None, which passes
                 None,
                 None,
             ],
             # Row 4: "BANNED" - case sensitive tests
+            # d = ["ADMIN", "write"], try_element_at(d, 1) = "ADMIN" (1-based: first element)
             [
                 None,  # case sensitive: "BANNED" != "banned"
                 None,
                 None,
-                "Value 'ADMIN' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin, root]",
+                None,  # case sensitive: "ADMIN" not in ["admin", "root"]
                 "Value 'BANNED' in Column 'a' is in the forbidden list: [banned, suspended]",  # case insensitive
                 "Value 'OK' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [ok]",  # case insensitive
-                "Value 'ADMIN' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin]",  # case insensitive
+                "Value 'ADMIN' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin]",  # case insensitive: "ADMIN" in ["admin"]
                 None,
                 None,
             ],
             # Row 5: "normal", but "error" status and "DELETE" in array
+            # d = ["read", "DELETE"], try_element_at(d, 1) = "read" (1-based: first element)
             [
                 None,
                 None,
                 "Value 'error' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [banned, error]",
+                None,  # case sensitive: "read" not in ["admin", "root"]
                 None,
                 None,
-                None,
-                None,
-                "Value '[read, DELETE]' in Column 'd' is in the forbidden list: [[admin, root], [DELETE, write]]",
-                "Value '[read, DELETE]' in Column 'd' is in the forbidden list: [[admin, root], [DELETE, write]]",
+                None,  # case insensitive: "read" not in ["admin"]
+                None,  # ["read", "DELETE"] != ["admin", "root"] and != ["DELETE", "write"] (different order)
+                None,  # ["read", "DELETE"] != ["admin", "root"] and != ["DELETE", "write"] (case insensitive, still different order)
             ],
         ],
         checked_schema,
