@@ -1,8 +1,9 @@
 """Integration tests for temporal features in anomaly detection."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
@@ -45,7 +46,8 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     )
 
     # Call apply function directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
         model="test_temporal",
         registry_table="main.default.test_temporal_registry",
@@ -94,7 +96,8 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client):
     )
 
     # Call apply function directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=[
             "amount",
             "temporal_hour",
@@ -142,7 +145,8 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client):
     )
 
     # Call apply function directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "temporal_hour"],
         model="test_temporal_pattern",
         registry_table="main.default.test_temporal_pattern_registry",
@@ -194,7 +198,8 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client):
     assert row["temporal_is_weekend"] == 1.0
 
     # Score (call apply function directly to get anomaly_score column)
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "temporal_is_weekend"],
         model="test_weekend",
         registry_table="main.default.test_weekend_registry",

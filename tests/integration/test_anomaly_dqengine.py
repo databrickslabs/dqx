@@ -7,9 +7,10 @@ This reduces runtime from ~70 min to ~10 min (86% savings).
 All 7 tests now reuse a single pre-trained 2D model (amount, quantity) instead of training independently.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine

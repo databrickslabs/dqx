@@ -1,8 +1,9 @@
 """Integration tests for null handling in anomaly detection."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.sdk import WorkspaceClient
@@ -70,7 +71,8 @@ def test_nulls_are_skipped_not_flagged(spark: SparkSession, mock_workspace_clien
     )
 
     # Call apply function directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "quantity"],
         model=model_name,
         registry_table=registry_table,
@@ -123,7 +125,8 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
     )
 
     # Call apply function directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "quantity", "discount"],
         model=model_name,
         registry_table=registry_table,
@@ -166,7 +169,8 @@ def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: 
     )
 
     # Call apply function directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "quantity"],
         model=model_name,
         registry_table=registry_table,
@@ -211,7 +215,8 @@ def test_mixed_null_and_anomaly(spark: SparkSession, mock_workspace_client, make
     )
 
     # Call apply function directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "quantity"],
         model=model_name,
         registry_table=registry_table,

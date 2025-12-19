@@ -79,12 +79,12 @@ class EnsembleAnomalyTransformer(Transformer, HasInputCol, HasOutputCol, Default
         score_cols = [f"_score_{i}" for i in range(len(models))]
 
         # Mean score
-        result = result.withColumn("anomaly_score", sum([F.col(col) for col in score_cols]) / F.lit(len(models)))
+        result = result.withColumn("anomaly_score", sum(F.col(col) for col in score_cols) / F.lit(len(models)))
 
         # Standard deviation (confidence)
         if len(models) > 1:
             mean_col = F.col("anomaly_score")
-            variance = sum([(F.col(col) - mean_col) ** 2 for col in score_cols]) / F.lit(len(models) - 1)
+            variance = sum((F.col(col) - mean_col) ** 2 for col in score_cols) / F.lit(len(models) - 1)
             result = result.withColumn("anomaly_score_std", F.sqrt(variance))
         else:
             result = result.withColumn("anomaly_score_std", F.lit(0.0))

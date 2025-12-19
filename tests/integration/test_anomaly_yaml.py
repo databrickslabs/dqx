@@ -1,9 +1,10 @@
 """Integration tests for YAML-based anomaly detection configuration."""
 
+from unittest.mock import MagicMock
+
 import pytest
 import yaml
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train
 from databricks.labs.dqx.engine import DQEngine

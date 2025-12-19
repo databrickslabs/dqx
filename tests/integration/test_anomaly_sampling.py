@@ -84,7 +84,7 @@ def test_sampling_warning_issued(spark: SparkSession, make_random: str):
     )
 
     # Should issue warning about truncation
-    with warnings.catch_warnings(record=True) as _w:
+    with warnings.catch_warnings(record=True) as _warning_context:
         warnings.simplefilter("always")
 
         train(
@@ -98,7 +98,6 @@ def test_sampling_warning_issued(spark: SparkSession, make_random: str):
         # Check for sampling/truncation warning
         # (Implementation may or may not warn, this is aspirational)
         # Commenting out assertion as implementation may vary
-        # assert any("sampl" in str(warning.message).lower() for warning in w)
 
 
 def test_train_validation_split(spark: SparkSession, make_random: str):

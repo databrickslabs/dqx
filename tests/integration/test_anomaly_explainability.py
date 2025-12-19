@@ -55,7 +55,8 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model):
     )
 
     # Call has_no_anomalies directly to get columns like anomaly_contributions
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=columns,
         model=model_name,
         registry_table=registry_table,
@@ -92,7 +93,8 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
     )
 
     # Call has_no_anomalies directly to get columns like anomaly_contributions
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=columns,
         model=model_name,
         registry_table=registry_table,
@@ -126,7 +128,8 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model):
     )
 
     # Call has_no_anomalies directly to get columns like anomaly_contributions
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=columns,
         model=model_name,
         registry_table=registry_table,
@@ -160,7 +163,8 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
     )
 
     # Call has_no_anomalies directly
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=columns,
         model=model_name,
         registry_table=registry_table,
@@ -188,7 +192,8 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model):
     )
 
     # Call has_no_anomalies directly to get columns like anomaly_contributions
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=columns,
         model=model_name,
         registry_table=registry_table,

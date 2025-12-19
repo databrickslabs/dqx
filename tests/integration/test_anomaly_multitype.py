@@ -4,8 +4,9 @@ Integration tests for multi-type anomaly detection.
 Tests end-to-end workflows with categorical, datetime, boolean, and numeric columns.
 """
 
-import pytest
 from datetime import datetime, timedelta
+
+import pytest
 
 from databricks.labs.dqx.anomaly import train
 from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
@@ -149,7 +150,8 @@ class TestMultiTypeScoring:
         # Score new data
         test_df = mixed_type_df.filter("id >= 500")
 
-        check_rule, apply_func = has_no_anomalies(
+        _, apply_func = has_no_anomalies(
+            merge_columns=["id"],
             columns=["value", "category"],
             model=f"{catalog}.{schema}.test_score_cat",
             registry_table=registry_table,
@@ -180,7 +182,8 @@ class TestMultiTypeScoring:
         # Score with unknown category C
         test_df = spark.createDataFrame([(1.0, "A"), (2.0, "C")], "value double, category string")  # C is unknown
 
-        check_rule, apply_func = has_no_anomalies(
+        _, apply_func = has_no_anomalies(
+            merge_columns=["row_id"],
             columns=["value", "category"],
             model=f"{catalog}.{schema}.test_unknown_cat",
             registry_table=registry_table,
@@ -293,7 +296,6 @@ class TestAutoDiscovery:
         # Auto-discover columns (should prioritize numeric, then boolean, then categorical)
         model_uri = train(
             df=mixed_type_df,
-            # columns=None,  # Auto-discover
             model_name=f"{catalog}.{schema}.test_autodiscover",
             registry_table=f"{catalog}.{schema}.test_multitype_models",
             params=AnomalyParams(sample_fraction=0.5, max_rows=500),

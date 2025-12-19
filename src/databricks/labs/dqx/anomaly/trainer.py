@@ -170,8 +170,8 @@ def train(
     # Segment-based training
     if segment_by:
         return _train_segmented(df, columns, segment_by, derived_model_name, derived_registry_table, params)
-    else:
-        return _train_global(df, columns, derived_model_name, derived_registry_table, params)
+
+    return _train_global(df, columns, derived_model_name, derived_registry_table, params)
 
 
 def _train_global(

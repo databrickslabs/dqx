@@ -1,12 +1,13 @@
 """Integration tests for ensemble anomaly detection."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx import anomaly
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from unittest.mock import MagicMock
 
 # Check if IsolationForest is available (only in Databricks Runtime)
 ISOLATION_FOREST_AVAILABLE = False
@@ -90,6 +91,7 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
         anomaly.has_no_anomalies(
+            merge_columns=["transaction_id"],
             columns=["amount", "quantity"],
             model="test_ensemble_scoring",
             registry_table="main.default.test_anomaly_ensemble_scoring_registry",
@@ -137,6 +139,7 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
         anomaly.has_no_anomalies(
+            merge_columns=["transaction_id"],
             columns=["amount", "quantity", "discount"],
             model="test_ensemble_contributions",
             registry_table="main.default.test_ensemble_contrib_registry",
