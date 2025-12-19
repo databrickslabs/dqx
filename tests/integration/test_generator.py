@@ -1,5 +1,5 @@
+import logging
 import datetime
-from decimal import Decimal
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
@@ -19,13 +19,13 @@ test_rules = [
     DQProfile(
         name="min_max",
         column="product_launch_date",
-        parameters={"min": datetime.date(2020, 1, 1), "max": None},
+        parameters={"min": datetime.date(2020, 1, 2), "max": None},
         description="Real min/max values were used",
     ),
     DQProfile(
         name="min_max",
         column="product_expiry_ts",
-        parameters={"min": None, "max": datetime.datetime(2020, 1, 1)},
+        parameters={"min": None, "max": datetime.datetime(2020, 1, 2, 3, 4, 5)},
         description="Real min/max values were used",
     ),
     DQProfile(name="is_random", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
@@ -33,13 +33,13 @@ test_rules = [
         name='min_max',
         column='d1',
         description='Real min/max values were used',
-        parameters={'max': Decimal('333323.00'), 'min': Decimal('1.23')},
+        parameters={'max': 333323.00, 'min': 1.23},
     ),
 ]
 
 
-def test_generate_dq_rules(ws):
-    generator = DQGenerator(ws)
+def test_generate_dq_rules(ws, spark):
+    generator = DQGenerator(ws, spark)
     expectations = generator.generate_dq_rules(test_rules)
     expected = [
         {
@@ -71,12 +71,36 @@ def test_generate_dq_rules(ws):
             "name": "rate_code_id_isnt_in_range",
             "criticality": "error",
         },
+        {
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "product_launch_date", "limit": "2020-01-02"},
+            },
+            "name": "product_launch_date_not_less_than",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"column": "product_expiry_ts", "limit": "2020-01-02T03:04:05.000000"},
+            },
+            "name": "product_expiry_ts_not_greater_than",
+            "criticality": "error",
+        },
+        {
+            "check": {
+                "function": "is_in_range",
+                "arguments": {"column": "d1", "min_limit": 1.23, "max_limit": 333323.00},
+            },
+            "name": "d1_isnt_in_range",
+            "criticality": "error",
+        },
     ]
-    assert expectations == expected
+    assert expectations == expected, f"Actual expectations: {expectations}"
 
 
-def test_generate_dq_rules_warn(ws):
-    generator = DQGenerator(ws)
+def test_generate_dq_rules_warn(ws, spark):
+    generator = DQGenerator(ws, spark)
     expectations = generator.generate_dq_rules(test_rules, criticality="warn")
     expected = [
         {
@@ -108,24 +132,54 @@ def test_generate_dq_rules_warn(ws):
             "name": "rate_code_id_isnt_in_range",
             "criticality": "warn",
         },
+        {
+            "check": {
+                "function": "is_not_less_than",
+                "arguments": {"column": "product_launch_date", "limit": "2020-01-02"},
+            },
+            "name": "product_launch_date_not_less_than",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "is_not_greater_than",
+                "arguments": {"column": "product_expiry_ts", "limit": "2020-01-02T03:04:05.000000"},
+            },
+            "name": "product_expiry_ts_not_greater_than",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "is_in_range",
+                "arguments": {"column": "d1", "min_limit": 1.23, "max_limit": 333323.00},
+            },
+            "name": "d1_isnt_in_range",
+            "criticality": "warn",
+        },
     ]
-    assert expectations == expected
+    assert expectations == expected, f"Actual expectations: {expectations}"
 
 
-def test_generate_dq_rules_logging(ws, caplog):
-    generator = DQGenerator(ws)
-    generator.generate_dq_rules(test_rules)
+def test_generate_dq_rules_logging(ws, spark, caplog):
+    # capture INFO from the generator module where the skip log is emitted
+    caplog.set_level(logging.INFO, logger="databricks.labs.dqx.profiler.generator")
+
+    generator = DQGenerator(ws, spark)
+    # add an unknown rule to trigger the "skipping..." log
+    unknown_rule = DQProfile(name="is_random", column="vendor_id")
+    generator.generate_dq_rules(test_rules + [unknown_rule])
+
     assert "No rule 'is_random' for column 'vendor_id'. skipping..." in caplog.text
 
 
-def test_generate_dq_no_rules(ws):
-    generator = DQGenerator(ws)
+def test_generate_dq_no_rules(ws, spark):
+    generator = DQGenerator(ws, spark)
     expectations = generator.generate_dq_rules(None, criticality="warn")
     assert not expectations
 
 
-def test_generate_dq_rules_dataframe_filter(ws):
-    generator = DQGenerator(ws)
+def test_generate_dq_rules_dataframe_filter(ws, spark):
+    generator = DQGenerator(ws, spark)
     test_rules_filter = [
         DQProfile(
             name="is_not_null",
@@ -198,8 +252,8 @@ def test_generate_dq_rules_dataframe_filter(ws):
     assert expectations == expected
 
 
-def test_generate_dq_rules_dataframe_filter_none(ws):
-    generator = DQGenerator(ws)
+def test_generate_dq_rules_dataframe_filter_none(ws, spark):
+    generator = DQGenerator(ws, spark)
     test_rules_no_filter = [
         DQProfile(
             name="is_not_null",

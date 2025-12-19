@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
+import datetime
 import json
 from collections.abc import Callable
-
 from pyspark.sql import SparkSession
-
 from databricks.sdk import WorkspaceClient
+
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -239,25 +239,43 @@ class DQGenerator(DQEngineBase):
         Generates a data quality rule to check if a column's value is within a specified range.
 
         Args:
-                column: The name of the column to check.
-                criticality: The criticality of the rule as "warn" or "error"  (default is "error").
-                params: Additional parameters, including the minimum and maximum values.
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error"  (default is "error").
+            params: Additional parameters, including the minimum and maximum values.
 
         Returns:
-                A dictionary representing the data quality rule, or None if no limits are provided.
+            A dictionary representing the data quality rule, or None if no limits are provided.
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
 
-        if not isinstance(min_limit, int) or not isinstance(max_limit, int):
-            return None  # TODO handle timestamp and dates: https://github.com/databrickslabs/dqx/issues/71
+        if min_limit is None and max_limit is None:
+            return None
 
-        if min_limit is not None and max_limit is not None:
+        def _is_num(value):
+            return isinstance(value, (int, float))
+
+        def _is_temporal(value):
+            return isinstance(value, (datetime.date, datetime.datetime))
+
+        def _same_family(value_a, value_b):
+            # numeric with numeric OR temporal with temporal
+            return any(
+                [
+                    _is_num(value_a) and _is_num(value_b),
+                    _is_temporal(value_a) and _is_temporal(value_b),
+                ]
+            )
+
+        # Both bounds
+        if min_limit is not None and max_limit is not None and _same_family(min_limit, max_limit):
             return {
                 "check": {
                     "function": "is_in_range",
                     "arguments": {
                         "column": column,
+                        # pass through Python numeric types (int, float) without stringification
+                        # except for temporal types (datetime/date) which are not Json serializable
                         "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
                         "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
                     },
@@ -266,7 +284,8 @@ class DQGenerator(DQEngineBase):
                 "criticality": criticality,
             }
 
-        if max_limit is not None:
+        # Only max
+        if max_limit is not None and (_is_num(max_limit) or _is_temporal(max_limit)):
             return {
                 "check": {
                     "function": "is_not_greater_than",
@@ -276,7 +295,8 @@ class DQGenerator(DQEngineBase):
                 "criticality": criticality,
             }
 
-        if min_limit is not None:
+        # Only min
+        if min_limit is not None and (_is_num(min_limit) or _is_temporal(min_limit)):
             return {
                 "check": {
                     "function": "is_not_less_than",
