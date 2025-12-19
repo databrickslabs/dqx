@@ -1,10 +1,11 @@
 """Integration tests for anomaly model registry management."""
 
-import pytest
-import warnings
 from datetime import datetime, timedelta
-from pyspark.sql import SparkSession
 from unittest.mock import MagicMock
+import warnings
+
+import pytest
+from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
@@ -43,7 +44,8 @@ def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_r
     assert model_uri is not None
 
     # Verify model can be loaded with explicit name - call directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "quantity"],
         model=model_name,
         registry_table=registry_table,
@@ -99,7 +101,8 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
     # Verify correct model is loaded for each check - call directly
 
     # Score with model_a
-    condition_a, apply_fn_a = has_no_anomalies(
+    _, apply_fn_a = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "quantity"],
         model=model_a,
         registry_table=registry_table,
@@ -110,7 +113,8 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
     assert "anomaly_score" in result_a.columns
 
     # Score with model_b
-    condition_b, apply_fn_b = has_no_anomalies(
+    _, apply_fn_b = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["discount", "weight"],
         model=model_b,
         registry_table=registry_table,
@@ -205,7 +209,8 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
     # Score with old model (should issue warning) - call directly
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        condition_col, apply_fn = has_no_anomalies(
+        _, apply_fn = has_no_anomalies(
+            merge_columns=["transaction_id"],
             columns=["amount", "quantity"],
             model=model_name,
             registry_table=registry_table,

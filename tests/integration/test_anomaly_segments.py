@@ -100,6 +100,7 @@ def test_segment_scoring(
     dq_engine = DQEngine(mock_workspace_client)
     check = DQDatasetRule(
         has_no_anomalies(
+            merge_columns=["row_id"],
             columns=["amount"],
             segment_by=["region"],
             model=f"test_score_segments_{suffix}",
@@ -188,6 +189,7 @@ def test_unknown_segment_handling(
     dq_engine = DQEngine(mock_workspace_client)
     check = DQDatasetRule(
         has_no_anomalies(
+            merge_columns=["row_id"],
             columns=["amount"],
             segment_by=["region"],
             model=f"test_unknown_segments_{suffix}",

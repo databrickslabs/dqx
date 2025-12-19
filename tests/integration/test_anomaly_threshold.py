@@ -1,9 +1,10 @@
 """Integration tests for anomaly threshold selection."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
-from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
@@ -152,7 +153,8 @@ def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client,
     )
 
     # Call directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "quantity"],
         model=model_name,
         registry_table=registry_table,
@@ -315,7 +317,8 @@ def test_threshold_consistency(spark: SparkSession, mock_workspace_client, make_
     )
 
     # Call directly to get anomaly_score column
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["amount", "quantity"],
         model=model_name,
         registry_table=registry_table,
@@ -331,9 +334,9 @@ def test_threshold_consistency(spark: SparkSession, mock_workspace_client, make_
     scores2 = [row["anomaly_score"] for row in result2.collect()]
 
     # Scores should be identical (deterministic)
-    for s1, s2 in zip(scores1, scores2):
-        if s1 is not None and s2 is not None:
-            assert abs(s1 - s2) < 0.001  # Allow small floating point error
+    for score1, score2 in zip(scores1, scores2):
+        if score1 is not None and score2 is not None:
+            assert abs(score1 - score2) < 0.001  # Allow small floating point error
 
 
 def test_validation_metrics_in_registry(spark: SparkSession, make_random: str):

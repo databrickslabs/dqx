@@ -134,7 +134,7 @@ class ColumnTypeClassifier:
             )
 
         # Check estimated feature count
-        estimated_features = self._estimate_feature_count(column_infos, df)
+        estimated_features = self._estimate_feature_count(column_infos)
         if estimated_features > self.max_engineered_features:
             breakdown = self._get_feature_breakdown(column_infos)
             raise InvalidParameterError(
@@ -183,7 +183,7 @@ class ColumnTypeClassifier:
                 encoding_strategy='cyclical',
             )
 
-        # String (categorical)
+        # Handle string columns as categorical features
         if isinstance(col_type, T.StringType):
             cardinality_row = df.select(F.countDistinct(col_name)).first()
             assert cardinality_row is not None, "Failed to compute cardinality"
@@ -207,7 +207,7 @@ class ColumnTypeClassifier:
         # Unsupported types
         return ColumnTypeInfo(name=col_name, spark_type=col_type, category='unsupported', null_count=null_count)
 
-    def _estimate_feature_count(self, column_infos: list[ColumnTypeInfo], df: DataFrame) -> int:
+    def _estimate_feature_count(self, column_infos: list[ColumnTypeInfo]) -> int:
         """Estimate total engineered features."""
         total = 0
         null_indicators = 0

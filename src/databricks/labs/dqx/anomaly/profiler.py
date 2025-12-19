@@ -149,7 +149,7 @@ def _auto_discover_from_profiler(
             category = "numeric"
         elif priority == 2:
             category = "boolean"
-        elif priority in [3, 5]:
+        elif priority in {3, 5}:
             category = "categorical"
         elif priority == 4:
             category = "datetime"

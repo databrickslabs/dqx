@@ -1,14 +1,15 @@
 """Integration tests for drift detection."""
 
-import pytest
+from unittest.mock import MagicMock
 import warnings
+
+import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx import anomaly
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
-from unittest.mock import MagicMock
 
 
 @pytest.fixture

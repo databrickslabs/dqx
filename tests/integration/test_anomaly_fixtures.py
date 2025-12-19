@@ -12,8 +12,10 @@ Usage:
 
 import logging
 import os
-import pytest
 from uuid import uuid4
+
+import pytest
+
 from databricks.labs.dqx.anomaly.trainer import train
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,

@@ -41,14 +41,14 @@ def compute_feature_contributions(
     return_schema = StructType([StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)])
 
     @pandas_udf(return_schema, PandasUDFType.SCALAR)
-    def compute_shap_udf(s):
+    def compute_shap_udf(feature_struct):
         """Compute SHAP values for each row using TreeExplainer.
 
         Args:
-            s: Pandas Series containing struct with all feature columns
+            feature_struct (pd.Series): Pandas Series containing struct with all feature columns
 
         Returns:
-            Series containing map of anomaly_contributions
+            pd.Series: Series containing map of anomaly_contributions
         """
         # Import SHAP inside UDF so it only loads on cluster executors, not locally
         try:
@@ -79,27 +79,27 @@ def compute_feature_contributions(
         # Create TreeExplainer (fast for tree-based models)
         explainer = shap.TreeExplainer(tree_model)
 
-        # s is already a DataFrame with struct fields as columns
-        X = s.values
+        # feature_struct is already a DataFrame with struct fields as columns
+        feature_matrix = feature_struct.values
 
         # Scale the data if the model uses a scaler
         # SHAP values are computed in the scaled space to match how the model was trained
         if needs_scaling:
-            X = scaler.transform(X)
+            feature_matrix = scaler.transform(feature_matrix)
 
         # Handle NaN values (SHAP can't process them)
-        has_nan = pd.isna(X).any(axis=1)
+        has_nan = pd.isna(feature_matrix).any(axis=1)
 
         # Initialize output
         contributions_list = []
 
-        for i in range(len(X)):
+        for i in range(len(feature_matrix)):
             if has_nan[i]:
                 # Null contributions for rows with NaN
                 contributions_list.append({col: None for col in columns})
             else:
                 # Compute SHAP values for this row
-                shap_values = explainer.shap_values(X[i : i + 1])[0]
+                shap_values = explainer.shap_values(feature_matrix[i : i + 1])[0]
 
                 # Convert to absolute contributions normalized to sum to 1.0
                 abs_shap = np.abs(shap_values)

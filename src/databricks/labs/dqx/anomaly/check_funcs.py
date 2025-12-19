@@ -66,8 +66,8 @@ def _score_segmented(
         # Build filter expression for this segment
         segment_filter_exprs = []
         if segment_model.segment_values:
-            for k, v in segment_model.segment_values.items():
-                segment_filter_exprs.append(F.col(k) == F.lit(v))
+            for seg_key, seg_value in segment_model.segment_values.items():
+                segment_filter_exprs.append(F.col(seg_key) == F.lit(seg_value))
 
         if not segment_filter_exprs:
             continue
@@ -294,28 +294,28 @@ def _score_with_sklearn_model(
             explainer = shap.TreeExplainer(tree_model)
 
         # Convert input columns to DataFrame
-        X = pd.concat(cols, axis=1)
-        X.columns = engineered_feature_cols
+        feature_matrix = pd.concat(cols, axis=1)
+        feature_matrix.columns = engineered_feature_cols
 
         # 1. SCORE (using full pipeline)
-        predictions = model_local.predict(X)
-        scores = -model_local.score_samples(X)  # Negate to make higher = more anomalous
+        predictions = model_local.predict(feature_matrix)
+        scores = -model_local.score_samples(feature_matrix)  # Negate to make higher = more anomalous
         predictions = np.where(predictions == -1, 1, 0)
 
         # 2. SHAP (if requested)
         contributions_list = []
         if include_contributions:
             # Prepare data for SHAP (scale if needed)
-            X_for_shap = scaler.transform(X) if needs_scaling else X.values
+            shap_feature_matrix = scaler.transform(feature_matrix) if needs_scaling else feature_matrix.values
 
             # Compute SHAP for each row
-            for i in range(len(X_for_shap)):
+            for i, row_data in enumerate(shap_feature_matrix):
                 # Check for NaN values
-                if pd.isna(X_for_shap[i]).any():
+                if pd.isna(row_data).any():
                     contributions_list.append({col: None for col in engineered_feature_cols})
                 else:
                     # Compute SHAP values (one per engineered feature)
-                    shap_values = explainer.shap_values(X_for_shap[i : i + 1])[0]
+                    shap_values = explainer.shap_values(shap_feature_matrix[i : i + 1])[0]
 
                     # Convert to absolute contributions normalized to sum to 1.0
                     abs_shap = np.abs(shap_values)
@@ -508,10 +508,10 @@ def has_no_anomalies(
                     condition_col,
                     registry_client,
                 )
-            else:
-                raise InvalidParameterError(
-                    f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
-                )
+
+            raise InvalidParameterError(
+                f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
+            )
 
         if set(normalized_columns) != set(record.columns):
             raise InvalidParameterError(
@@ -591,12 +591,12 @@ def has_no_anomalies(
             # Compute mean and std (distributed on Spark)
             score_cols = [f"_score_{i}" for i in range(len(model_uris))]
             scored_df = scored_df.withColumn(
-                "anomaly_score", sum([F.col(col) for col in score_cols]) / F.lit(len(model_uris))
+                "anomaly_score", sum(F.col(col) for col in score_cols) / F.lit(len(model_uris))
             )
 
             # Standard deviation (confidence)
             mean_col = F.col("anomaly_score")
-            variance = sum([(F.col(col) - mean_col) ** 2 for col in score_cols]) / F.lit(len(model_uris) - 1)
+            variance = sum((F.col(col) - mean_col) ** 2 for col in score_cols) / F.lit(len(model_uris) - 1)
             scored_df = scored_df.withColumn("anomaly_score_std", F.sqrt(variance))
 
             # Drop intermediate columns
@@ -646,10 +646,6 @@ def has_no_anomalies(
 
             # Left join back to original DataFrame (preserves all rows)
             scored_df = df.join(scored_subset_unique, on=join_cols_for_scoring, how="left")
-
-        # Note: Anomaly rate can be computed from the output DataFrame:
-        # anomaly_rate = scored_df.filter(F.col("anomaly_score") > threshold).count() / scored_df.count()
-        # For tracking over time, use DQX metrics observer with dataset-level aggregations
 
         condition = F.when(F.col("anomaly_score").isNull(), F.lit(False)).otherwise(
             F.col("anomaly_score") > F.lit(score_threshold)

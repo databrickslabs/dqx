@@ -1,8 +1,9 @@
 """Integration tests for anomaly detection end-to-end flow."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine

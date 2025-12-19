@@ -1,8 +1,9 @@
 """Integration tests for anomaly detection error cases."""
 
+from unittest.mock import MagicMock
+
 import pytest
 from pyspark.sql import SparkSession
-from unittest.mock import MagicMock
 
 from databricks.labs.dqx.anomaly import train, has_no_anomalies
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -93,7 +94,8 @@ def test_column_count_mismatch_error(spark: SparkSession, mock_workspace_client)
 
     # Should raise error about column mismatch
     with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
-        condition_col, apply_fn = has_no_anomalies(
+        _, apply_fn = has_no_anomalies(
+            merge_columns=["transaction_id"],
             columns=["amount", "quantity", "discount"],
             model="test_count_mismatch",
             registry_table="main.default.test_count_mismatch_registry",
@@ -125,7 +127,8 @@ def test_column_order_independence(spark: SparkSession, mock_workspace_client):
     )
 
     # Should NOT raise error (column sets are the same)
-    condition_col, apply_fn = has_no_anomalies(
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
         columns=["quantity", "amount"],  # Different order
         model="test_col_order",
         registry_table="main.default.test_col_order_registry",
@@ -192,7 +195,8 @@ def test_missing_registry_table_for_scoring_error(spark: SparkSession, mock_work
 
     # Should raise error about missing model/registry
     with pytest.raises(InvalidParameterError, match="Model .* not found"):
-        condition_col, apply_fn = has_no_anomalies(
+        _, apply_fn = has_no_anomalies(
+            merge_columns=["transaction_id"],
             columns=["amount", "quantity"],
             model="test_missing_registry",
             registry_table="main.default.completely_nonexistent_registry",
