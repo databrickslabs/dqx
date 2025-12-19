@@ -423,7 +423,7 @@ def test_is_not_in_list(spark):
             # Row 1: "active" - all pass (not in forbidden lists)
             # d = ["read", "write"], try_element_at(d, 1) = "read" (1-based: first element)
             [None, None, None, None, None, None, None, None, None],
-            # Row 2: "banned" - fails where "banned" is forbidden  
+            # Row 2: "banned" - fails where "banned" is forbidden
             # d = [None, "admin"], try_element_at(d, 1) = None (1-based: first element)
             [
                 "Value 'banned' in Column 'a' is in the forbidden list: [banned, suspended, deleted]",
