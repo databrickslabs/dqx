@@ -41,9 +41,9 @@
     arguments:
       column: col2
       forbidden:
-      - 1
-      - 2
-      - 3
+      - 1000
+      - 2000
+      - 3000
 
 # is_not_null_and_is_in_list check
 - criticality: error
