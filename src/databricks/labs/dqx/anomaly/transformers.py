@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql.functions import col, when, lit, coalesce, hour, dayofweek, month, sin, cos, pi, count, to_timestamp
 from pyspark.sql.types import DoubleType, TimestampType
@@ -150,8 +151,6 @@ class ColumnTypeClassifier:
 
     def _classify_column(self, df: DataFrame, col_name: str, col_type: T.DataType) -> ColumnTypeInfo:
         """Classify a single column."""
-        import pyspark.sql.functions as F
-
         # Count nulls
         null_count = df.filter(F.col(col_name).isNull()).count()
 
@@ -234,18 +233,13 @@ class ColumnTypeClassifier:
     def _get_feature_breakdown(self, column_infos: list[ColumnTypeInfo]) -> str:
         """Generate feature count breakdown for error message."""
         counts = {'datetime': 0, 'categorical': 0, 'numeric': 0, 'boolean': 0, 'nulls': 0}
-
         cat_features = 0
 
+        # Count columns by type
         for info in column_infos:
-            if info.category == 'numeric':
-                counts['numeric'] += 1
-            elif info.category == 'boolean':
-                counts['boolean'] += 1
-            elif info.category == 'datetime':
-                counts['datetime'] += 1
-            elif info.category == 'categorical':
-                counts['categorical'] += 1
+            counts[info.category] = counts.get(info.category, 0) + 1
+
+            if info.category == 'categorical':
                 if info.encoding_strategy == 'onehot':
                     cat_features += (info.cardinality or 0) + 1
                 else:
@@ -254,6 +248,7 @@ class ColumnTypeClassifier:
             if info.null_count and info.null_count > 0:
                 counts['nulls'] += 1
 
+        # Build breakdown lines
         breakdown = []
         if counts['datetime'] > 0:
             breakdown.append(f"  - {counts['datetime']} datetime → {counts['datetime'] * 5} features")
@@ -267,6 +262,208 @@ class ColumnTypeClassifier:
             breakdown.append(f"  - {counts['nulls']} null indicators → {counts['nulls']} features")
 
         return "\n".join(breakdown)
+
+
+def _add_null_indicator(
+    transformed_df: DataFrame,
+    col_name: str,
+    null_count: int | None,
+    engineered_features: list[str],
+) -> DataFrame:
+    """Add null indicator column if column has nulls."""
+    has_nulls = (null_count or 0) > 0
+    if has_nulls:
+        null_indicator_col = f"{col_name}_is_null"
+        transformed_df = transformed_df.withColumn(null_indicator_col, when(col(col_name).isNull(), 1.0).otherwise(0.0))
+        engineered_features.append(null_indicator_col)
+    return transformed_df
+
+
+def _apply_onehot_encoding(
+    df: DataFrame,
+    transformed_df: DataFrame,
+    col_name: str,
+    is_training: bool,
+    onehot_categories: dict[str, list[str]],
+    engineered_features: list[str],
+) -> DataFrame:
+    """Apply OneHot encoding to a categorical column."""
+    if is_training:
+        distinct_values = [row[0] for row in df.select(col_name).distinct().collect()]
+        distinct_values = [v for v in distinct_values if v is not None]
+        if len(distinct_values) == 2:
+            distinct_values = distinct_values[:1]
+        onehot_categories[col_name] = distinct_values
+    else:
+        distinct_values = onehot_categories.get(col_name, [])
+        if not distinct_values:
+            raise ValueError(
+                f"OneHot categories for column '{col_name}' not found in metadata. "
+                "Model may be from an older version without OneHot category storage."
+            )
+
+    for value in distinct_values:
+        feature_name = f"{col_name}_{value}"
+        transformed_df = transformed_df.withColumn(feature_name, when(col(col_name) == value, 1.0).otherwise(0.0))
+        engineered_features.append(feature_name)
+
+    return transformed_df
+
+
+def _apply_frequency_encoding(
+    df: DataFrame,
+    transformed_df: DataFrame,
+    col_name: str,
+    is_training: bool,
+    frequency_maps: dict[str, dict[str, float]],
+    engineered_features: list[str],
+) -> DataFrame:
+    """Apply Frequency encoding to a categorical column."""
+    if is_training:
+        total_count = df.count()
+        freq_map = {}
+        for row in df.groupBy(col_name).agg(count("*").alias("cnt")).collect():
+            value = row[col_name]
+            cnt = row["cnt"]
+            freq_map[value] = float(cnt) / total_count
+        frequency_maps[col_name] = freq_map
+
+    freq_map = frequency_maps[col_name]
+    feature_name = f"{col_name}_freq"
+
+    expr = None
+    for value, frequency in freq_map.items():
+        condition = col(col_name) == lit(value)
+        if expr is None:
+            expr = when(condition, lit(frequency))
+        else:
+            expr = expr.when(condition, lit(frequency))
+
+    expr = expr.otherwise(lit(0.0)) if expr is not None else lit(0.0)
+
+    transformed_df = transformed_df.withColumn(feature_name, expr)
+    engineered_features.append(feature_name)
+
+    return transformed_df
+
+
+def _process_categorical_columns(
+    df: DataFrame,
+    transformed_df: DataFrame,
+    categorical_cols: list[ColumnTypeInfo],
+    categorical_cardinality_threshold: int,
+    is_training: bool,
+    frequency_maps: dict[str, dict[str, float]],
+    onehot_categories: dict[str, list[str]],
+    engineered_features: list[str],
+) -> DataFrame:
+    """Process categorical columns with OneHot or Frequency encoding."""
+    for col_info in categorical_cols:
+        col_name = col_info.name
+        card = col_info.cardinality or 0
+
+        # Add null indicator and impute nulls
+        transformed_df = _add_null_indicator(transformed_df, col_name, col_info.null_count, engineered_features)
+        transformed_df = transformed_df.withColumn(col_name, coalesce(col(col_name), lit("MISSING")))
+
+        # Encode based on cardinality
+        if card <= categorical_cardinality_threshold:
+            transformed_df = _apply_onehot_encoding(
+                df, transformed_df, col_name, is_training, onehot_categories, engineered_features
+            )
+        else:
+            transformed_df = _apply_frequency_encoding(
+                df, transformed_df, col_name, is_training, frequency_maps, engineered_features
+            )
+
+    return transformed_df
+
+
+def _process_datetime_columns(
+    transformed_df: DataFrame,
+    datetime_cols: list[ColumnTypeInfo],
+    engineered_features: list[str],
+) -> DataFrame:
+    """Process datetime columns with cyclical encoding."""
+    for col_info in datetime_cols:
+        col_name = col_info.name
+
+        # Add null indicator if needed
+        transformed_df = _add_null_indicator(transformed_df, col_name, col_info.null_count, engineered_features)
+
+        # Impute nulls with epoch
+        transformed_df = transformed_df.withColumn(
+            col_name, coalesce(col(col_name).cast(TimestampType()), to_timestamp(lit("1970-01-01 00:00:00")))
+        )
+
+        # Extract cyclical features
+        transformed_df = transformed_df.withColumn(f"{col_name}_hour_sin", sin(hour(col(col_name)) * 2 * pi() / 24))
+        transformed_df = transformed_df.withColumn(f"{col_name}_hour_cos", cos(hour(col(col_name)) * 2 * pi() / 24))
+        engineered_features.extend([f"{col_name}_hour_sin", f"{col_name}_hour_cos"])
+
+        transformed_df = transformed_df.withColumn(
+            f"{col_name}_dow_sin", sin((dayofweek(col(col_name)) - 1) * 2 * pi() / 7)
+        )
+        transformed_df = transformed_df.withColumn(
+            f"{col_name}_dow_cos", cos((dayofweek(col(col_name)) - 1) * 2 * pi() / 7)
+        )
+        engineered_features.extend([f"{col_name}_dow_sin", f"{col_name}_dow_cos"])
+
+        transformed_df = transformed_df.withColumn(
+            f"{col_name}_month_sin", sin((month(col(col_name)) - 1) * 2 * pi() / 12)
+        )
+        transformed_df = transformed_df.withColumn(
+            f"{col_name}_month_cos", cos((month(col(col_name)) - 1) * 2 * pi() / 12)
+        )
+        engineered_features.extend([f"{col_name}_month_sin", f"{col_name}_month_cos"])
+
+        transformed_df = transformed_df.withColumn(
+            f"{col_name}_is_weekend",
+            when((dayofweek(col(col_name)) == 1) | (dayofweek(col(col_name)) == 7), 1.0).otherwise(0.0),
+        )
+        engineered_features.append(f"{col_name}_is_weekend")
+
+    return transformed_df
+
+
+def _process_boolean_columns(
+    transformed_df: DataFrame,
+    boolean_cols: list[ColumnTypeInfo],
+    engineered_features: list[str],
+) -> DataFrame:
+    """Process boolean columns by mapping to 0/1."""
+    for col_info in boolean_cols:
+        col_name = col_info.name
+
+        # Add null indicator if needed
+        transformed_df = _add_null_indicator(transformed_df, col_name, col_info.null_count, engineered_features)
+
+        # Map to 0/1 (nulls -> 0)
+        transformed_df = transformed_df.withColumn(
+            f"{col_name}_bool", when(col(col_name).isNull(), 0.0).when(col(col_name), 1.0).otherwise(0.0)
+        )
+        engineered_features.append(f"{col_name}_bool")
+
+    return transformed_df
+
+
+def _process_numeric_columns(
+    transformed_df: DataFrame,
+    numeric_cols: list[ColumnTypeInfo],
+    engineered_features: list[str],
+) -> DataFrame:
+    """Process numeric columns with null imputation."""
+    for col_info in numeric_cols:
+        col_name = col_info.name
+
+        # Add null indicator if needed
+        transformed_df = _add_null_indicator(transformed_df, col_name, col_info.null_count, engineered_features)
+
+        # Impute nulls with 0
+        transformed_df = transformed_df.withColumn(col_name, coalesce(col(col_name).cast(DoubleType()), lit(0.0)))
+        engineered_features.append(col_name)
+
+    return transformed_df
 
 
 def apply_feature_engineering(
@@ -305,7 +502,7 @@ def apply_feature_engineering(
         onehot_categories = {}
 
     transformed_df = df
-    engineered_features = []
+    engineered_features: list[str] = []
 
     # Group columns by type
     categorical_cols = [c for c in column_infos if c.category == "categorical"]
@@ -313,171 +510,23 @@ def apply_feature_engineering(
     boolean_cols = [c for c in column_infos if c.category == "boolean"]
     numeric_cols = [c for c in column_infos if c.category == "numeric"]
 
-    # 1. Process categorical columns
-    for col_info in categorical_cols:
-        col_name = col_info.name
-        card = col_info.cardinality or 0
+    # Process each column type with dedicated helper functions
+    transformed_df = _process_categorical_columns(
+        df,
+        transformed_df,
+        categorical_cols,
+        categorical_cardinality_threshold,
+        is_training,
+        frequency_maps,
+        onehot_categories,
+        engineered_features,
+    )
 
-        # Add null indicator if needed
-        has_nulls = (col_info.null_count or 0) > 0
-        if has_nulls:
-            null_indicator_col = f"{col_name}_is_null"
-            transformed_df = transformed_df.withColumn(
-                null_indicator_col, when(col(col_name).isNull(), 1.0).otherwise(0.0)
-            )
-            engineered_features.append(null_indicator_col)
+    transformed_df = _process_datetime_columns(transformed_df, datetime_cols, engineered_features)
 
-        # Impute nulls with "MISSING"
-        transformed_df = transformed_df.withColumn(col_name, coalesce(col(col_name), lit("MISSING")))
+    transformed_df = _process_boolean_columns(transformed_df, boolean_cols, engineered_features)
 
-        # Encode based on cardinality
-        if card <= categorical_cardinality_threshold:
-            # OneHot encoding (low cardinality)
-            if is_training:
-                # Training: Compute distinct values from training data
-                distinct_values = [row[0] for row in df.select(col_name).distinct().collect()]
-                distinct_values = [v for v in distinct_values if v is not None]
-
-                # Drop one category if binary (to avoid redundancy)
-                if len(distinct_values) == 2:
-                    distinct_values = distinct_values[:1]
-
-                # Store for scoring
-                onehot_categories[col_name] = distinct_values
-            else:
-                # Scoring: Use stored distinct values from training
-                distinct_values = onehot_categories.get(col_name, [])
-                if not distinct_values:
-                    raise ValueError(
-                        f"OneHot categories for column '{col_name}' not found in metadata. "
-                        "Model may be from an older version without OneHot category storage."
-                    )
-
-            for value in distinct_values:
-                feature_name = f"{col_name}_{value}"
-                transformed_df = transformed_df.withColumn(
-                    feature_name, when(col(col_name) == value, 1.0).otherwise(0.0)
-                )
-                engineered_features.append(feature_name)
-        else:
-            # Frequency encoding (high cardinality)
-            if is_training:
-                # Compute frequency map
-                total_count = df.count()
-                freq_map = {}
-                for row in df.groupBy(col_name).agg(count("*").alias("cnt")).collect():
-                    value = row[col_name]
-                    cnt = row["cnt"]
-                    freq_map[value] = float(cnt) / total_count
-                frequency_maps[col_name] = freq_map
-
-            # Apply frequency encoding
-            freq_map = frequency_maps[col_name]
-            feature_name = f"{col_name}_freq"
-
-            # Build CASE WHEN expression
-            expr = None
-            for value, frequency in freq_map.items():
-                condition = col(col_name) == lit(value)
-                if expr is None:
-                    expr = when(condition, lit(frequency))
-                else:
-                    expr = expr.when(condition, lit(frequency))
-
-            # Default for unknown values
-            if expr is not None:
-                expr = expr.otherwise(lit(0.0))
-            else:
-                # Empty freq_map - use 0.0 for all values
-                expr = lit(0.0)
-
-            transformed_df = transformed_df.withColumn(feature_name, expr)
-            engineered_features.append(feature_name)
-
-    # 2. Process datetime columns
-    for col_info in datetime_cols:
-        col_name = col_info.name
-
-        # Add null indicator if needed
-        has_nulls = (col_info.null_count or 0) > 0
-        if has_nulls:
-            null_indicator_col = f"{col_name}_is_null"
-            transformed_df = transformed_df.withColumn(
-                null_indicator_col, when(col(col_name).isNull(), 1.0).otherwise(0.0)
-            )
-            engineered_features.append(null_indicator_col)
-
-        # Impute nulls with epoch (1970-01-01)
-        transformed_df = transformed_df.withColumn(
-            col_name, coalesce(col(col_name).cast(TimestampType()), to_timestamp(lit("1970-01-01 00:00:00")))
-        )
-
-        # Extract cyclical features
-        # Hour (0-23) -> sin/cos
-        transformed_df = transformed_df.withColumn(f"{col_name}_hour_sin", sin(hour(col(col_name)) * 2 * pi() / 24))
-        transformed_df = transformed_df.withColumn(f"{col_name}_hour_cos", cos(hour(col(col_name)) * 2 * pi() / 24))
-        engineered_features.extend([f"{col_name}_hour_sin", f"{col_name}_hour_cos"])
-
-        # Day of week (1-7 in Spark) -> sin/cos
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_dow_sin", sin((dayofweek(col(col_name)) - 1) * 2 * pi() / 7)
-        )
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_dow_cos", cos((dayofweek(col(col_name)) - 1) * 2 * pi() / 7)
-        )
-        engineered_features.extend([f"{col_name}_dow_sin", f"{col_name}_dow_cos"])
-
-        # Month (1-12) -> sin/cos
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_month_sin", sin((month(col(col_name)) - 1) * 2 * pi() / 12)
-        )
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_month_cos", cos((month(col(col_name)) - 1) * 2 * pi() / 12)
-        )
-        engineered_features.extend([f"{col_name}_month_sin", f"{col_name}_month_cos"])
-
-        # Is weekend (Saturday=7, Sunday=1 in Spark)
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_is_weekend",
-            when((dayofweek(col(col_name)) == 1) | (dayofweek(col(col_name)) == 7), 1.0).otherwise(0.0),
-        )
-        engineered_features.append(f"{col_name}_is_weekend")
-
-    # 3. Process boolean columns
-    for col_info in boolean_cols:
-        col_name = col_info.name
-
-        # Add null indicator if needed
-        has_nulls = (col_info.null_count or 0) > 0
-        if has_nulls:
-            null_indicator_col = f"{col_name}_is_null"
-            transformed_df = transformed_df.withColumn(
-                null_indicator_col, when(col(col_name).isNull(), 1.0).otherwise(0.0)
-            )
-            engineered_features.append(null_indicator_col)
-
-        # Map to 0/1 (nulls -> 0)
-        transformed_df = transformed_df.withColumn(
-            f"{col_name}_bool", when(col(col_name).isNull(), 0.0).when(col(col_name), 1.0).otherwise(0.0)
-        )
-        engineered_features.append(f"{col_name}_bool")
-
-    # 4. Process numeric columns
-    for col_info in numeric_cols:
-        col_name = col_info.name
-
-        # Add null indicator if needed
-        has_nulls = (col_info.null_count or 0) > 0
-        if has_nulls:
-            null_indicator_col = f"{col_name}_is_null"
-            transformed_df = transformed_df.withColumn(
-                null_indicator_col, when(col(col_name).isNull(), 1.0).otherwise(0.0)
-            )
-            engineered_features.append(null_indicator_col)
-
-        # Impute nulls with 0
-        transformed_df = transformed_df.withColumn(col_name, coalesce(col(col_name).cast(DoubleType()), lit(0.0)))
-        engineered_features.append(col_name)
+    transformed_df = _process_numeric_columns(transformed_df, numeric_cols, engineered_features)
 
     # Select engineered features + preserve any extra columns not in column_infos
     # (e.g., __dqx_row_id__ for joining results back)

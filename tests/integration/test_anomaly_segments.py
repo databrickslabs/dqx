@@ -99,14 +99,16 @@ def test_segment_scoring(
 
     dq_engine = DQEngine(mock_workspace_client)
     check = DQDatasetRule(
-        has_no_anomalies(
-            merge_columns=["row_id"],
-            columns=["amount"],
-            segment_by=["region"],
-            model=f"test_score_segments_{suffix}",
-            registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
-            score_threshold=0.7,
-        )
+        criticality="error",
+        check_func=has_no_anomalies,
+        check_func_kwargs={
+            "merge_columns": ["row_id"],
+            "columns": ["amount"],
+            "segment_by": ["region"],
+            "model": f"test_score_segments_{suffix}",
+            "registry_table": f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+            "score_threshold": 0.7,
+        },
     )
 
     result = dq_engine.apply_checks(test_df, [check])
@@ -188,13 +190,15 @@ def test_unknown_segment_handling(
 
     dq_engine = DQEngine(mock_workspace_client)
     check = DQDatasetRule(
-        has_no_anomalies(
-            merge_columns=["row_id"],
-            columns=["amount"],
-            segment_by=["region"],
-            model=f"test_unknown_segments_{suffix}",
-            registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
-        )
+        criticality="error",
+        check_func=has_no_anomalies,
+        check_func_kwargs={
+            "merge_columns": ["row_id"],
+            "columns": ["amount"],
+            "segment_by": ["region"],
+            "model": f"test_unknown_segments_{suffix}",
+            "registry_table": f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        },
     )
 
     result = dq_engine.apply_checks(test_df, [check])

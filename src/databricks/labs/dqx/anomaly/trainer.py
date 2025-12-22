@@ -5,28 +5,153 @@ Architecture:
 - Training: scikit-learn on driver (efficient for sampled data ≤1M rows)
 - Scoring: Distributed across Spark cluster via pandas UDFs
 - Everything else: Distributed on Spark (sampling, splits, metrics, drift detection)
+
+Note: All imports are at module-level since DQX is installed as a wheel on all cluster nodes.
 """
 
 from __future__ import annotations
 
+import collections.abc
+from copy import deepcopy
 import warnings
 from datetime import datetime
-from typing import Any, Iterable
+from io import StringIO
+import sys
+from typing import Any, cast
 
+import cloudpickle
+import mlflow
+from mlflow.models import infer_signature
+from mlflow.tracking import MlflowClient
+import numpy as np
+import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import PandasUDFType
+from pyspark.sql import types as T
+from pyspark.sql.functions import PandasUDFType, pandas_udf, col
+from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
 import pyspark.sql.functions as F
+from sklearn.ensemble import IsolationForest
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import RobustScaler
 
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
 from databricks.labs.dqx.anomaly.profiler import auto_discover
+from databricks.labs.dqx.anomaly.transformers import ColumnTypeClassifier, ColumnTypeInfo, apply_feature_engineering
 
 
 DEFAULT_SAMPLE_FRACTION = 0.3
 DEFAULT_MAX_ROWS = 1_000_000
 DEFAULT_TRAIN_RATIO = 0.8
+
+
+def _process_exclude_columns(
+    df: DataFrame,
+    columns: list[str] | None,
+    exclude_columns: list[str] | None,
+) -> tuple[DataFrame, list[str]]:
+    """
+    Process exclude_columns parameter and return filtered DataFrame.
+
+    Returns:
+        Tuple of (filtered_df, exclude_columns_list)
+    """
+    exclude_list = exclude_columns or []
+
+    if not exclude_list:
+        return df, []
+
+    # Validate that exclude_columns exist in DataFrame
+    df_columns = set(df.columns)
+    invalid_excludes = [col for col in exclude_list if col not in df_columns]
+    if invalid_excludes:
+        raise InvalidParameterError(f"exclude_columns contains columns not in DataFrame: {invalid_excludes}")
+
+    # If columns are explicitly provided, validate they don't overlap
+    if columns is not None:
+        overlap = set(columns) & set(exclude_list)
+        if overlap:
+            raise InvalidParameterError(
+                f"columns and exclude_columns overlap: {overlap}. Remove overlapping columns from either list."
+            )
+
+    # Filter DataFrame for auto-discovery (exclude unwanted columns)
+    if columns is None:
+        remaining_columns = [col for col in df.columns if col not in exclude_list]
+        df_filtered = df.select(*remaining_columns)
+        print(f"Excluding {len(exclude_list)} columns from auto-discovery: {exclude_list}")
+        return df_filtered, exclude_list
+
+    # No need to filter if columns explicitly provided
+    return df, exclude_list
+
+
+def _perform_auto_discovery(
+    df_filtered: DataFrame,
+    profiler_table: str | None,
+    columns: list[str] | None,
+    segment_by: list[str] | None,
+) -> tuple[list[str] | None, list[str] | None, list[str]]:
+    """
+    Perform auto-discovery of columns and segments.
+
+    Returns:
+        Tuple of (columns, segment_by, warnings)
+    """
+    discover_warnings: list[str] = []
+
+    if columns is not None:
+        # No auto-discovery needed
+        return columns, segment_by, discover_warnings
+
+    # Auto-discover columns
+    profile = auto_discover(df_filtered, profiler_output_table=profiler_table)
+    discovered_columns = profile.recommended_columns
+    discovered_segments = segment_by
+
+    # Auto-detect segments ONLY if segment_by also not provided
+    if segment_by is None:
+        discovered_segments = profile.recommended_segments
+
+    # Print what was discovered
+    print(f"Auto-selected {len(discovered_columns)} columns: {discovered_columns}")
+    if discovered_segments:
+        print(
+            f"Auto-detected {len(discovered_segments)} segment columns: {discovered_segments} "
+            f"({profile.segment_count} total segments)"
+        )
+
+    return discovered_columns, discovered_segments, profile.warnings
+
+
+def _prepare_training_config(
+    model_name: str,
+    registry_table: str | None,
+    df: DataFrame,
+) -> tuple[str, str]:
+    """
+    Derive registry table and full model name, check if model exists.
+
+    Returns:
+        Tuple of (derived_model_name, derived_registry_table)
+    """
+    derived_registry_table = registry_table or _derive_registry_table(df)
+
+    # Ensure model_name has full three-level catalog.schema.model format
+    derived_model_name = _ensure_full_model_name(model_name, derived_registry_table)
+
+    # Check if model already exists in Unity Catalog and warn
+    if _model_exists_in_uc(derived_model_name):
+        warnings.warn(
+            f"Model '{derived_model_name}' already exists. Creating a new version. "
+            f"Previous versions remain available.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+    return derived_model_name, derived_registry_table
 
 
 def train(
@@ -95,52 +220,14 @@ def train(
         )
 
     # Process exclude_columns
-    exclude_columns = exclude_columns or []
-    if exclude_columns:
-        # Validate that exclude_columns exist in DataFrame
-        df_columns = set(df.columns)
-        invalid_excludes = [col for col in exclude_columns if col not in df_columns]
-        if invalid_excludes:
-            raise InvalidParameterError(f"exclude_columns contains columns not in DataFrame: {invalid_excludes}")
-
-        # If columns are explicitly provided, validate they don't overlap with exclude_columns
-        if columns is not None:
-            overlap = set(columns) & set(exclude_columns)
-            if overlap:
-                raise InvalidParameterError(
-                    f"columns and exclude_columns overlap: {overlap}. " "Remove overlapping columns from either list."
-                )
-
-        # Filter DataFrame for auto-discovery (exclude unwanted columns)
-        if columns is None:
-            remaining_columns = [col for col in df.columns if col not in exclude_columns]
-            df_filtered = df.select(*remaining_columns)
-            print(f"Excluding {len(exclude_columns)} columns from auto-discovery: {exclude_columns}")
-        else:
-            df_filtered = df  # No need to filter if columns explicitly provided
-    else:
-        df_filtered = df
+    df_filtered, _exclude_list = _process_exclude_columns(df, columns, exclude_columns)
 
     # Auto-discovery
-    if columns is None:
-        profile = auto_discover(df_filtered, profiler_output_table=profiler_table)
-        columns = profile.recommended_columns
+    columns, segment_by, discovery_warnings = _perform_auto_discovery(df_filtered, profiler_table, columns, segment_by)
 
-        # Auto-detect segments ONLY if segment_by also not provided
-        if segment_by is None:
-            segment_by = profile.recommended_segments
-
-        # Print what was discovered
-        print(f"Auto-selected {len(columns)} columns: {columns}")
-        if segment_by:
-            print(
-                f"Auto-detected {len(segment_by)} segment columns: {segment_by} "
-                f"({profile.segment_count} total segments)"
-            )
-
-        # Show warnings
-        for warning in profile.warnings:
-            warnings.warn(warning, UserWarning, stacklevel=2)
+    # Show auto-discovery warnings
+    for warning in discovery_warnings:
+        warnings.warn(warning, UserWarning, stacklevel=2)
 
     # Validate columns
     if not columns:
@@ -152,26 +239,82 @@ def train(
     for warning in validation_warnings:
         warnings.warn(warning, UserWarning, stacklevel=2)
 
-    derived_registry_table = registry_table or _derive_registry_table(df)
-
-    # Ensure model_name has full three-level catalog.schema.model format
-    # by extracting catalog.schema from registry_table
-    derived_model_name = _ensure_full_model_name(model_name, derived_registry_table)
-
-    # Check if model already exists in Unity Catalog and warn
-    if _model_exists_in_uc(spark, derived_model_name):
-        warnings.warn(
-            f"Model '{derived_model_name}' already exists. Creating a new version. "
-            f"Previous versions remain available.",
-            UserWarning,
-            stacklevel=2,
-        )
+    # Prepare training configuration
+    derived_model_name, derived_registry_table = _prepare_training_config(model_name, registry_table, df)
 
     # Segment-based training
     if segment_by:
         return _train_segmented(df, columns, segment_by, derived_model_name, derived_registry_table, params)
 
     return _train_global(df, columns, derived_model_name, derived_registry_table, params)
+
+
+def _register_single_model_to_mlflow(
+    model: Any,
+    train_df: DataFrame,
+    feature_metadata: Any,
+    model_name: str,
+    hyperparams: dict[str, Any],
+    validation_metrics: dict[str, float],
+) -> tuple[str, str]:
+    """
+    Register a single sklearn model to MLflow/Unity Catalog.
+
+    Returns:
+        Tuple of (model_uri, run_id)
+    """
+    # Note: When running outside Databricks (e.g., local Spark Connect), you may see a warning:
+    # "Unable to get model version source run's workspace ID from request headers"
+    # This is expected and informational only - the model will register successfully
+    mlflow.set_registry_uri("databricks-uc")
+
+    # Ensure any previous runs are closed (defensive cleanup)
+    try:
+        mlflow.end_run()
+    except Exception:
+        pass
+
+    with mlflow.start_run() as run:
+        # Infer model signature for Unity Catalog (required)
+        # Get engineered features for signature
+        column_infos_reconstructed = [
+            ColumnTypeInfo(
+                name=info["name"],
+                spark_type=T.StringType(),  # Type not used in scoring
+                category=info["category"],
+                cardinality=info.get("cardinality"),
+                null_count=info.get("null_count"),
+            )
+            for info in feature_metadata.column_infos
+        ]
+
+        engineered_train_df, _ = apply_feature_engineering(
+            train_df,
+            column_infos_reconstructed,
+            categorical_cardinality_threshold=20,
+            frequency_maps=feature_metadata.categorical_frequency_maps,
+            onehot_categories=feature_metadata.onehot_categories,
+        )
+        train_pandas = engineered_train_df.toPandas()
+        predictions = model.predict(train_pandas)
+        signature = infer_signature(train_pandas, predictions)
+
+        # Log scikit-learn model with signature
+        model_info = mlflow.sklearn.log_model(
+            sk_model=model,
+            artifact_path="model",
+            registered_model_name=model_name,
+            signature=signature,
+        )
+
+        # Note: feature_metadata is saved in the model registry table, not as MLflow artifact
+        mlflow.log_params(_flatten_hyperparams(hyperparams))
+        mlflow.log_metrics(validation_metrics)
+
+        # Use explicit version-based URI format
+        # model_name already has full catalog.schema.model format from train() setup
+        model_uri = f"models:/{model_name}/{model_info.registered_model_version}"
+        return model_uri, run.info.run_id
 
 
 def _train_global(
@@ -182,14 +325,11 @@ def _train_global(
     params: AnomalyParams | None,
 ) -> str:
     """Train a single global model (no segmentation)."""
-    # Lazy import to avoid circular import issues with MLflow
-    import mlflow
-
     spark = df.sparkSession
     params = params or AnomalyParams()
 
-    sampled_df, sampled_count, truncated = _sample_df(df, columns, params)
-    if sampled_count == 0:
+    sampled_df, _, truncated = _sample_df(df, columns, params)
+    if not sampled_df.head(1):
         raise InvalidParameterError("Sampling produced 0 rows; provide more data or adjust params.")
 
     train_df, val_df = _train_validation_split(sampled_df, params)
@@ -214,73 +354,16 @@ def _train_global(
         validation_metrics = _compute_validation_metrics(model, val_df, columns, contamination, feature_metadata)
 
         # Register model to Unity Catalog
-        # Note: When running outside Databricks (e.g., local Spark Connect), you may see a warning:
-        # "Unable to get model version source run's workspace ID from request headers"
-        # This is expected and informational only - the model will register successfully
-        mlflow.set_registry_uri("databricks-uc")
-
-        # Ensure any previous runs are closed (defensive cleanup)
-        try:
-            mlflow.end_run()
-        except Exception:
-            pass
-
-        with mlflow.start_run() as run:
-            # Infer model signature for Unity Catalog (required)
-            from mlflow.models import infer_signature
-
-            # Get engineered features for signature
-            from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo, apply_feature_engineering
-            from pyspark.sql import types as T
-
-            column_infos_reconstructed = [
-                ColumnTypeInfo(
-                    name=info["name"],
-                    spark_type=T.StringType(),  # Type not used in scoring
-                    category=info["category"],
-                    cardinality=info.get("cardinality"),
-                    null_count=info.get("null_count"),
-                )
-                for info in feature_metadata.column_infos
-            ]
-
-            engineered_train_df, _ = apply_feature_engineering(
-                train_df,
-                column_infos_reconstructed,
-                categorical_cardinality_threshold=20,
-                frequency_maps=feature_metadata.categorical_frequency_maps,
-                onehot_categories=feature_metadata.onehot_categories,
-            )
-            train_pandas = engineered_train_df.toPandas()
-            predictions = model.predict(train_pandas)
-            signature = infer_signature(train_pandas, predictions)
-
-            # Log scikit-learn model with signature
-            model_info = mlflow.sklearn.log_model(
-                sk_model=model,
-                artifact_path="model",
-                registered_model_name=model_name,
-                signature=signature,
-            )
-
-            # Note: feature_metadata is saved in the model registry table, not as MLflow artifact
-            mlflow.log_params(_flatten_hyperparams(hyperparams))
-            mlflow.log_metrics(validation_metrics)
-
-            # Use explicit version-based URI format
-            # model_name already has full catalog.schema.model format from train() setup
-            model_uri = f"models:/{model_name}/{model_info.registered_model_version}"
-            run_id = run.info.run_id
+        model_uri, run_id = _register_single_model_to_mlflow(
+            model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
+        )
 
     # Compute baseline statistics for drift detection (distributed on Spark)
     baseline_stats = _compute_baseline_statistics(train_df, columns)
 
     # Compute feature importance for explainability (distributed on Spark, use first model if ensemble)
-    if ensemble_size > 1:
-        first_model = mlflow.sklearn.load_model(model_uris[0])
-        feature_importance = _compute_feature_importance(first_model, val_df, columns, feature_metadata)
-    else:
-        feature_importance = _compute_feature_importance(model, val_df, columns, feature_metadata)
+    model_for_importance = mlflow.sklearn.load_model(model_uris[0]) if ensemble_size > 1 else model
+    feature_importance = _compute_feature_importance(model_for_importance, val_df, columns, feature_metadata)
 
     if truncated:
         warnings.warn(
@@ -293,12 +376,10 @@ def _train_global(
 
     # run_id was already saved during model logging
 
-    input_table = _get_input_table(df) or "unknown"
-
     record = AnomalyModelRecord(
         model_name=model_name,
         model_uri=model_uri,
-        input_table=input_table,
+        input_table=_get_input_table(df) or "unknown",
         columns=columns,
         algorithm=f"IsolationForest_Ensemble_{ensemble_size}" if ensemble_size > 1 else "IsolationForest",
         hyperparameters=_stringify_dict(hyperparams),
@@ -359,8 +440,8 @@ def _train_segmented(
 
         # Filter to this segment
         segment_df = df
-        for col, val in segment_vals.items():
-            segment_df = segment_df.filter(F.col(col) == val)
+        for col_name, val in segment_vals.items():
+            segment_df = segment_df.filter(F.col(col_name) == val)
 
         # Validate segment size
         segment_size = segment_df.count()
@@ -422,12 +503,9 @@ def _train_single_segment(
     Returns:
         Model URI on success, None if segment has insufficient data after sampling.
     """
-    # Lazy import to avoid circular import issues with MLflow
-    import mlflow
-
     spark = df.sparkSession
 
-    sampled_df, sampled_count, truncated = _sample_df(df, columns, params)
+    sampled_df, sampled_count, _ = _sample_df(df, columns, params)
     if sampled_count == 0:
         print(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
         return None
@@ -441,59 +519,9 @@ def _train_single_segment(
     validation_metrics = _compute_validation_metrics(model, val_df, columns, contamination, feature_metadata)
 
     # Register model to Unity Catalog
-    mlflow.set_registry_uri("databricks-uc")
-
-    # Ensure any previous runs are closed (defensive cleanup)
-    try:
-        mlflow.end_run()
-    except Exception:
-        pass
-
-    with mlflow.start_run() as run:
-        # Infer model signature for Unity Catalog (required)
-        from mlflow.models import infer_signature
-        from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo, apply_feature_engineering
-        from pyspark.sql import types as T
-
-        # Get engineered features for signature
-        column_infos_reconstructed = [
-            ColumnTypeInfo(
-                name=info["name"],
-                spark_type=T.StringType(),  # Type not used in scoring
-                category=info["category"],
-                cardinality=info.get("cardinality"),
-                null_count=info.get("null_count"),
-            )
-            for info in feature_metadata.column_infos
-        ]
-
-        engineered_train_df, _ = apply_feature_engineering(
-            train_df,
-            column_infos_reconstructed,
-            categorical_cardinality_threshold=20,
-            frequency_maps=feature_metadata.categorical_frequency_maps,
-            onehot_categories=feature_metadata.onehot_categories,
-        )
-        train_pandas = engineered_train_df.toPandas()
-        predictions = model.predict(train_pandas)
-        signature = infer_signature(train_pandas, predictions)
-
-        # Log scikit-learn model with signature
-        model_info = mlflow.sklearn.log_model(
-            sk_model=model,
-            artifact_path="model",
-            registered_model_name=model_name,
-            signature=signature,
-        )
-
-        # Note: feature_metadata is saved in the model registry table, not as MLflow artifact
-        mlflow.log_params(_flatten_hyperparams(hyperparams))
-        mlflow.log_metrics(validation_metrics)
-
-        # Use explicit version-based URI format
-        # model_name already has full catalog.schema.model format from _train_segmented()
-        model_uri = f"models:/{model_name}/{model_info.registered_model_version}"
-        run_id = run.info.run_id
+    model_uri, run_id = _register_single_model_to_mlflow(
+        model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
+    )
 
     # Compute baseline statistics for drift detection
     baseline_stats = _compute_baseline_statistics(train_df, columns)
@@ -534,20 +562,19 @@ def _validate_spark_version(spark: SparkSession) -> None:
     major, minor, *_ = spark.version.split(".")
     if int(major) < 3 or (int(major) == 3 and int(minor) < 4):
         raise InvalidParameterError(
-            "Anomaly detection requires Spark >= 3.4 for SynapseML compatibility. "
-            "Found Spark {}.{}.".format(major, minor)
+            f"Anomaly detection requires Spark >= 3.4 for SynapseML compatibility. Found Spark {major}.{minor}."
         )
 
 
-def _validate_columns(df: DataFrame, columns: Iterable[str], params: AnomalyParams | None = None) -> list[str]:
+def _validate_columns(
+    df: DataFrame, columns: collections.abc.Iterable[str], params: AnomalyParams | None = None
+) -> list[str]:
     """
     Validate columns for anomaly detection with multi-type support.
 
     Returns:
         List of warnings to display to user.
     """
-    from databricks.labs.dqx.anomaly.transformers import ColumnTypeClassifier
-
     params = params or AnomalyParams()
     fe_config = params.feature_engineering
 
@@ -559,7 +586,7 @@ def _validate_columns(df: DataFrame, columns: Iterable[str], params: AnomalyPara
     )
 
     # This will raise InvalidParameterError if limits are exceeded
-    column_infos, warnings_list = classifier.analyze_columns(df, list(columns))
+    _column_infos, warnings_list = classifier.analyze_columns(df, list(columns))
 
     return warnings_list
 
@@ -594,6 +621,15 @@ def _derive_registry_table(df: DataFrame) -> str:
     return f"{catalog}.{schema}.dqx_anomaly_models"
 
 
+def _capture_explain_output(df: DataFrame) -> str:
+    """Capture DataFrame.explain() output as a string by redirecting stdout."""
+    old_stdout = sys.stdout
+    sys.stdout = buffer = StringIO()
+    df.explain(extended=True)
+    sys.stdout = old_stdout
+    return buffer.getvalue()
+
+
 def _get_input_table(df: DataFrame) -> str | None:
     """
     Attempt to get the input table name from DataFrame by analyzing the Spark execution plan.
@@ -605,17 +641,7 @@ def _get_input_table(df: DataFrame) -> str | None:
 
     try:
         # Get the execution plan and extract table names
-        from io import StringIO
-        import sys
-
-        # Capture explain output
-        old_stdout = sys.stdout
-        sys.stdout = buffer = StringIO()
-        df.explain(extended=True)
-        sys.stdout = old_stdout
-        plan_str = buffer.getvalue()
-
-        # Extract tables from the plan
+        plan_str = _capture_explain_output(df)
         tables = get_tables_from_spark_plan(plan_str)
         if tables:
             # Return the first table found (typically there's only one input table)
@@ -654,20 +680,17 @@ def _ensure_full_model_name(model_name: str, registry_table: str) -> str:
     return f"{catalog}.{schema}.{model_name}"
 
 
-def _model_exists_in_uc(spark: SparkSession, model_name: str) -> bool:
+def _model_exists_in_uc(model_name: str) -> bool:
     """
     Check if a model exists in Unity Catalog using MLflow API.
 
     Args:
-        spark: SparkSession (unused, kept for consistency)
         model_name: Full model name (catalog.schema.model)
 
     Returns:
         True if model exists, False otherwise
     """
     try:
-        from mlflow.tracking import MlflowClient
-
         client = MlflowClient()
         # Try to get the latest version - if model doesn't exist, this will raise
         client.get_latest_versions(model_name, stages=None)
@@ -706,21 +729,8 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
         - hyperparams: Model hyperparameters dict
         - feature_metadata: Spark transformation metadata for scoring
     """
-    try:
-        from sklearn.ensemble import IsolationForest
-        from sklearn.preprocessing import RobustScaler
-        from sklearn.pipeline import Pipeline
-
-        # Dependency check - these are used by sklearn and pandas UDFs
-        import pandas  # noqa: F401
-        import numpy  # noqa: F401
-    except ImportError as e:
-        raise InvalidParameterError(
-            "IsolationForest requires scikit-learn, pandas, and numpy. "
-            "Install with: pip install 'databricks-labs-dqx[anomaly]'"
-        ) from e
-
-    from databricks.labs.dqx.anomaly.transformers import ColumnTypeClassifier, apply_feature_engineering
+    # Note: sklearn/pandas/numpy imports are at module level.
+    # If not available, import will fail with clear error message.
 
     algo_cfg = params.algorithm_config or IsolationForestConfig()
     fe_config = params.feature_engineering
@@ -795,12 +805,6 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
     Returns:
         DataFrame with anomaly_score and prediction columns
     """
-    import cloudpickle
-    from pyspark.sql.functions import pandas_udf, col
-    from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
-    from pyspark.sql import types as T
-    from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo, apply_feature_engineering
-
     # Reconstruct column_infos from metadata
     column_infos = [
         ColumnTypeInfo(
@@ -815,8 +819,8 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
 
     # Apply feature engineering in Spark (distributed)
     # Use pre-computed frequency maps from training
-    _engineered_df, _ = apply_feature_engineering(
-        df,
+    engineered_df, _ = apply_feature_engineering(
+        df.select(*feature_cols),
         column_infos,
         categorical_cardinality_threshold=20,  # Use same threshold as training
         frequency_maps=feature_metadata.categorical_frequency_maps,
@@ -840,11 +844,10 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
 
     @pandas_udf(schema, PandasUDFType.SCALAR)
     def predict_udf(*cols):
-        """Pandas UDF for distributed scoring (Spark Connect compatible)."""
-        import numpy as np
-        import pandas as pd
-        import cloudpickle
+        """Pandas UDF for distributed scoring (Spark Connect compatible).
 
+        Note: All imports are at module-level since DQX is installed as a wheel on all cluster nodes.
+        """
         # Deserialize model (only standard sklearn components)
         model_local = cloudpickle.loads(model_bytes)
 
@@ -861,33 +864,49 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
 
         return pd.DataFrame({"anomaly_score": scores, "prediction": predictions})
 
-    # Use temporary row ID to preserve row order during transformation and scoring
-    from pyspark.sql.window import Window
-    from pyspark.sql.functions import row_number, monotonically_increasing_id
-
-    window_spec = Window.orderBy(monotonically_increasing_id())
-    df_with_id = df.withColumn("__dqx_row_id__", row_number().over(window_spec))
-
-    # Apply feature engineering, preserving the row ID
-    engineered_with_id, _ = apply_feature_engineering(
-        df_with_id.select(*feature_cols, "__dqx_row_id__"),
-        column_infos,
-        categorical_cardinality_threshold=20,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
-    )
-
-    # Apply UDF to all engineered feature columns
-    scored_with_id = engineered_with_id.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
-
-    # Join scores back to original DataFrame using the row ID
-    result = df_with_id.join(
-        scored_with_id.select("__dqx_row_id__", "_scores.anomaly_score", "_scores.prediction"),
-        on="__dqx_row_id__",
-        how="left",
-    ).drop("__dqx_row_id__")
+    # Apply UDF to all engineered feature columns and add scores to DataFrame
+    result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
+    result = result.select("*", "_scores.anomaly_score", "_scores.prediction").drop("_scores")
 
     return result
+
+
+def _compute_threshold_metrics(
+    labeled_df: DataFrame, test_thresholds: list[float]
+) -> tuple[dict[str, float], float, float]:
+    """
+    Compute precision/recall/F1 for multiple thresholds and find the best threshold.
+
+    Returns:
+        Tuple of (threshold_metrics_dict, best_f1, best_threshold)
+    """
+    threshold_metrics = {}
+    best_f1 = 0.0
+    best_threshold = 0.5
+
+    for threshold in test_thresholds:
+        pred_df = labeled_df.withColumn("pred_label", F.when(F.col("score") >= F.lit(threshold), 1).otherwise(0))
+
+        # Confusion matrix
+        true_positives = pred_df.filter((F.col("pred_label") == 1) & (F.col("true_label") == 1)).count()
+        false_positives = pred_df.filter((F.col("pred_label") == 1) & (F.col("true_label") == 0)).count()
+        false_negatives = pred_df.filter((F.col("pred_label") == 0) & (F.col("true_label") == 1)).count()
+
+        precision = (
+            true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.0
+        )
+        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0.0
+        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
+        threshold_metrics[f"threshold_{int(threshold*100)}_precision"] = precision
+        threshold_metrics[f"threshold_{int(threshold*100)}_recall"] = recall
+        threshold_metrics[f"threshold_{int(threshold*100)}_f1"] = f1_score
+
+        if f1_score > best_f1:
+            best_f1 = f1_score
+            best_threshold = threshold
+
+    return threshold_metrics, best_f1, best_threshold
 
 
 def _compute_validation_metrics(
@@ -924,32 +943,7 @@ def _compute_validation_metrics(
 
     # Compute precision/recall/F1 for multiple thresholds
     test_thresholds = [0.3, 0.5, 0.7, 0.9]
-    threshold_metrics = {}
-    best_f1 = 0.0
-    best_threshold = 0.5
-
-    for threshold in test_thresholds:
-        pred_df = labeled_df.withColumn("pred_label", F.when(F.col("score") >= F.lit(threshold), 1).otherwise(0))
-
-        # Confusion matrix
-        true_positives = pred_df.filter((F.col("pred_label") == 1) & (F.col("true_label") == 1)).count()
-        false_positives = pred_df.filter((F.col("pred_label") == 1) & (F.col("true_label") == 0)).count()
-        _true_negatives = pred_df.filter((F.col("pred_label") == 0) & (F.col("true_label") == 0)).count()
-        false_negatives = pred_df.filter((F.col("pred_label") == 0) & (F.col("true_label") == 1)).count()
-
-        precision = (
-            true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.0
-        )
-        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0.0
-        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-        threshold_metrics[f"threshold_{int(threshold*100)}_precision"] = precision
-        threshold_metrics[f"threshold_{int(threshold*100)}_recall"] = recall
-        threshold_metrics[f"threshold_{int(threshold*100)}_f1"] = f1_score
-
-        if f1_score > best_f1:
-            best_f1 = f1_score
-            best_threshold = threshold
+    threshold_metrics, best_f1, best_threshold = _compute_threshold_metrics(labeled_df, test_thresholds)
 
     # Estimated contamination (percentage of scores above best threshold)
     estimated_contamination = labeled_df.filter(F.col("score") >= F.lit(best_threshold)).count() / val_count
@@ -1053,19 +1047,21 @@ def _compute_feature_importance(
     importance = {}
 
     # Permutation importance: shuffle each column and measure impact (distributed on Spark)
-    for col in columns:
+    for column_name in columns:
         # Shuffle this column's values across rows
         # Use shuffle() to randomize and element_at() to access a random element
-        shuffled_df = val_df.withColumn(col, F.expr(f"element_at(shuffle(collect_list({col}) over ()), 1)"))
+        shuffled_df = val_df.withColumn(
+            column_name, F.expr(f"element_at(shuffle(collect_list({column_name}) over ()), 1)")
+        )
 
         # Compute scores with shuffled column (distributed scoring)
         shuffled_scored = _score_with_model(model, shuffled_df, columns, feature_metadata)
         shuffled_row = shuffled_scored.select(F.mean("anomaly_score")).first()
-        assert shuffled_row is not None, f"Failed to compute shuffled score for {col}"
+        assert shuffled_row is not None, f"Failed to compute shuffled score for {column_name}"
         shuffled_avg_score = shuffled_row[0]
 
         # Importance = increase in average score when feature is random
-        importance[col] = abs(shuffled_avg_score - baseline_avg_score)
+        importance[column_name] = abs(shuffled_avg_score - baseline_avg_score)
 
     # Normalize to sum to 1.0
     total = sum(importance.values())
@@ -1090,9 +1086,6 @@ def _train_ensemble(
         Tuple of (model_uris, hyperparams, aggregated_metrics, feature_metadata).
         feature_metadata is from the first ensemble member (all members use same features).
     """
-    # Lazy import to avoid circular import issues with MLflow
-    import mlflow
-
     model_uris = []
     all_metrics = []
     first_feature_metadata = None  # Capture from first ensemble member
@@ -1104,11 +1097,8 @@ def _train_ensemble(
 
     for i in range(ensemble_size):
         # Create modified params with different seed (deep copy to avoid mutation)
-        from copy import deepcopy
-
-        base_params = params or AnomalyParams()
-        modified_params = deepcopy(base_params)
-        modified_params.algorithm_config.random_seed = base_params.algorithm_config.random_seed + i
+        modified_params = deepcopy(params or AnomalyParams())
+        modified_params.algorithm_config.random_seed += i
 
         # Train model (sklearn IsolationForest on driver)
         model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, modified_params)
@@ -1125,10 +1115,8 @@ def _train_ensemble(
         # Log to MLflow
         with mlflow.start_run(run_name=f"{model_name}_ensemble_{i}"):
             # Infer model signature for Unity Catalog (required)
-            from mlflow.models import infer_signature
-
-            train_pandas = train_df.toPandas()
-            predictions = model.predict(train_pandas.values)
+            train_pandas = cast(pd.DataFrame, train_df.toPandas())
+            predictions = model.predict(train_pandas.to_numpy())
             signature = infer_signature(train_pandas, predictions)
 
             # Log scikit-learn model for this ensemble member
@@ -1151,8 +1139,7 @@ def _train_ensemble(
     # Aggregate metrics (average across ensemble)
     aggregated_metrics = {}
     if all_metrics:
-        metric_keys = all_metrics[0].keys()
-        for key in metric_keys:
+        for key in all_metrics[0].keys():
             values = [m[key] for m in all_metrics if key in m]
             if values:
                 aggregated_metrics[key] = sum(values) / len(values)
