@@ -685,7 +685,7 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
 
 
 @pytest.fixture
-def lakebase_user(ws):
+def lakebase_client_id(ws):
     """
     Get a Lakebase user.
 
