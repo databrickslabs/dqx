@@ -12,6 +12,29 @@ import pyspark.sql.functions as F
 from pyspark.sql.types import MapType, StringType, DoubleType, StructType, StructField
 from pyspark.sql.functions import pandas_udf, PandasUDFType
 
+# Optional dependencies for anomaly detection explainability
+try:
+    import pandas as pd
+    import numpy as np
+except ImportError:
+    pd = None  # type: ignore
+    np = None  # type: ignore
+
+try:
+    import shap
+except ImportError:
+    shap = None  # type: ignore
+
+try:
+    import mlflow.sklearn as mlflow_sklearn
+except ImportError:
+    mlflow_sklearn = None  # type: ignore
+
+try:
+    from sklearn.pipeline import Pipeline
+except ImportError:
+    Pipeline = None  # type: ignore
+
 
 def compute_feature_contributions(
     model_uri: str,
@@ -33,9 +56,18 @@ def compute_feature_contributions(
         DataFrame with additional 'anomaly_contributions' map column containing
         normalized SHAP values (absolute contributions summing to 1.0 per row).
     """
-    # Import pandas/numpy for UDF type hints (these are always available)
-    import pandas as pd
-    import numpy as np
+    # Validate that required dependencies are available
+    if pd is None or np is None:
+        raise ImportError(
+            "pandas and numpy are required for feature contributions. "
+            "Install with: pip install 'databricks-labs-dqx[anomaly]'"
+        )
+
+    if shap is None or mlflow_sklearn is None or Pipeline is None:
+        raise ImportError(
+            "To use feature contributions (include_contributions=True), install 'shap', 'mlflow', and 'scikit-learn'.\n"
+            "Install with: pip install 'databricks-labs-dqx[anomaly]' or manually install shap>=0.42.0,<0.46"
+        )
 
     # Define pandas UDF for distributed SHAP computation
     return_schema = StructType([StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)])
@@ -50,19 +82,8 @@ def compute_feature_contributions(
         Returns:
             pd.Series: Series containing map of anomaly_contributions
         """
-        # Import SHAP inside UDF so it only loads on cluster executors, not locally
-        try:
-            import shap
-            import mlflow.sklearn
-            from sklearn.pipeline import Pipeline
-        except ImportError as e:
-            raise ImportError(
-                "To use feature contributions (include_contributions=True), install 'shap' version 0.42.0-0.46 on your cluster.\n"
-                "Go to: Cluster -> Libraries -> Install New -> PyPI -> Enter 'shap>=0.42.0,<0.46'"
-            ) from e
-
         # Load model once per executor
-        model_local = mlflow.sklearn.load_model(model_uri)
+        model_local = mlflow_sklearn.load_model(model_uri)
 
         # If model is a Pipeline (due to feature scaling), extract components
         # SHAP's TreeExplainer only supports tree models, not pipelines

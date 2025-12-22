@@ -1,9 +1,11 @@
+import importlib
+import importlib.util
+import logging
 import os
 import sys
-import logging
 from collections.abc import Callable
-import importlib.util
 from contextlib import contextmanager
+from functools import lru_cache
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
@@ -19,24 +21,15 @@ from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
 
-# Optional anomaly detection support - use lazy import to avoid circular dependencies
-anomaly_check_funcs = None
-ANOMALY_ENABLED = False
 
-
+@lru_cache(maxsize=1)
 def _load_anomaly_check_funcs():
     """Lazy-load anomaly check functions to avoid circular import issues."""
-    global anomaly_check_funcs, ANOMALY_ENABLED
-    if anomaly_check_funcs is None and not ANOMALY_ENABLED:
-        try:
-            import databricks.labs.dqx.anomaly.check_funcs as acf
-
-            anomaly_check_funcs = acf
-            ANOMALY_ENABLED = True
-            logger.debug("Anomaly detection enabled")
-        except ImportError as e:
-            logger.debug(f"Anomaly detection disabled due to import error: {e}")
-            ANOMALY_ENABLED = False
+    try:
+        return importlib.import_module("databricks.labs.dqx.anomaly.check_funcs")
+    except ImportError as e:
+        logger.debug(f"Anomaly detection disabled due to import error: {e}")
+        return None
 
 
 def resolve_check_function(
@@ -66,9 +59,9 @@ def resolve_check_function(
         func = getattr(pii_check_funcs, function_name, None)
     if not func:
         # resolve using anomaly checks, requires anomaly extras (mlflow, scikit-learn)
-        _load_anomaly_check_funcs()  # Lazy load to avoid circular imports
-        if anomaly_check_funcs is not None:
-            func = getattr(anomaly_check_funcs, function_name, None)
+        anomaly_funcs = _load_anomaly_check_funcs()  # Lazy load to avoid circular imports
+        if anomaly_funcs is not None:
+            func = getattr(anomaly_funcs, function_name, None)
     if not func and custom_check_functions:
         func = custom_check_functions.get(function_name)  # returns None if not found
     if fail_on_missing and not func:
