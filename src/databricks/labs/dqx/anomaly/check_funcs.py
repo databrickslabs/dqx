@@ -17,7 +17,14 @@ import pandas as pd
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.functions import pandas_udf, PandasUDFType, col
 import pyspark.sql.functions as F
-from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField, MapType, StringType
+from pyspark.sql.types import (
+    DoubleType,
+    StructType,
+    StructField,
+    MapType,
+    StringType,
+    BooleanType,
+)
 
 # Optional dependencies for SHAP explainability
 try:
@@ -111,27 +118,19 @@ def _join_filtered_results_back(
     df: DataFrame,
     result: DataFrame,
     merge_columns: list[str],
-    include_confidence: bool,
-    include_contributions: bool,
 ) -> DataFrame:
     """Join scored results back to original DataFrame (for row_filter case)."""
-    # Get score columns to join
-    score_cols_to_join = ["anomaly_score"]
-    if include_confidence:
-        score_cols_to_join.append("anomaly_score_std")
-    if include_contributions:
-        score_cols_to_join.append("anomaly_contributions")
+    # Get score columns to join (only anomaly_score and _info now)
+    score_cols_to_join = ["anomaly_score", "_info"]
 
     # Select only merge columns + score columns
     scored_subset = result.select(*merge_columns, *score_cols_to_join)
 
     # Take distinct rows to avoid duplicates
-    agg_exprs = []
-    for score_col in score_cols_to_join:
-        if score_col == "anomaly_contributions":
-            agg_exprs.append(F.first(score_col).alias(score_col))
-        else:
-            agg_exprs.append(F.max(score_col).alias(score_col))
+    agg_exprs = [
+        F.max("anomaly_score").alias("anomaly_score"),
+        F.first("_info").alias("_info"),  # Struct, take first
+    ]
     scored_subset_unique = scored_subset.groupBy(*merge_columns).agg(*agg_exprs)
 
     # Left join back to original DataFrame
@@ -143,12 +142,35 @@ def _prepare_scoring_dataframe(df: DataFrame, row_filter: str | None) -> DataFra
     return df.filter(F.expr(row_filter)) if row_filter else df
 
 
-def _create_null_scored_dataframe(df: DataFrame, include_contributions: bool) -> DataFrame:
+def _create_null_scored_dataframe(
+    df: DataFrame, include_contributions: bool, include_confidence: bool = False
+) -> DataFrame:
     """Create a DataFrame with null anomaly scores (for empty segments)."""
     result = df.withColumn("anomaly_score", F.lit(None).cast(DoubleType()))
-    result = result.withColumn("anomaly_score_std", F.lit(None).cast(DoubleType()))
+    if include_confidence:
+        result = result.withColumn("anomaly_score_std", F.lit(None).cast(DoubleType()))
     if include_contributions:
         result = result.withColumn("anomaly_contributions", F.lit(None).cast(MapType(StringType(), DoubleType())))
+
+    # Add null _info column with proper schema (direct struct, not array)
+    null_anomaly_info = F.lit(None).cast(
+        StructType(
+            [
+                StructField("check_name", StringType(), True),
+                StructField("score", DoubleType(), True),
+                StructField("is_anomaly", BooleanType(), True),
+                StructField("threshold", DoubleType(), True),
+                StructField("model", StringType(), True),
+                StructField("segment", MapType(StringType(), StringType()), True),
+                StructField("contributions", MapType(StringType(), DoubleType()), True),
+                StructField("confidence_std", DoubleType(), True),
+            ]
+        )
+    )
+
+    info_struct = F.struct(null_anomaly_info.alias("anomaly"))
+    result = result.withColumn("_info", info_struct)
+
     return result
 
 
@@ -177,7 +199,19 @@ def _score_single_segment(
         config.merge_columns,
         include_contributions=config.include_contributions,
     )
-    return segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
+    segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
+
+    # Add _info column with segment values
+    segment_scored = _add_info_column(
+        segment_scored,
+        config.model_name,
+        config.score_threshold,
+        segment_values=segment_model.segment_values,
+        include_contributions=config.include_contributions,
+        include_confidence=config.include_confidence,
+    )
+
+    return segment_scored
 
 
 def _score_segmented(
@@ -226,28 +260,31 @@ def _score_segmented(
 
     # Union all scored segments
     if not scored_dfs:
-        result = _create_null_scored_dataframe(df_to_score, config.include_contributions)
+        result = _create_null_scored_dataframe(df_to_score, config.include_contributions, config.include_confidence)
     else:
         result = scored_dfs[0]
         for sdf in scored_dfs[1:]:
             result = result.union(sdf)
 
-    # Drop confidence column if not requested
-    if not config.include_confidence:
-        result = result.drop("anomaly_score_std")
+    # Drop internal columns that are now in _info (after union, before join)
+    result = result.drop("anomaly_score_std")  # Always drop (null if not ensemble)
+    if config.include_contributions:
+        result = result.drop("anomaly_contributions")  # Drop top-level, use _info instead
 
     # If row_filter was used, join scored results back to original DataFrame
     if config.row_filter:
-        result = _join_filtered_results_back(
-            df, result, config.merge_columns, config.include_confidence, config.include_contributions
-        )
+        result = _join_filtered_results_back(df, result, config.merge_columns)
 
-    # Add condition column
+    # Add condition column (using anomaly_score internally)
     condition = F.when(F.col("anomaly_score").isNull(), F.lit(False)).otherwise(
         F.col("anomaly_score") > F.lit(config.score_threshold)
     )
+    result = result.withColumn(condition_col, condition)
 
-    return result.withColumn(condition_col, condition)
+    # Drop internal anomaly_score column (use _info.anomaly[0].score instead)
+    result = result.drop("anomaly_score")
+
+    return result
 
 
 def _prepare_feature_metadata(feature_metadata_json: str) -> tuple[list[ColumnTypeInfo], SparkFeatureMetadata]:
@@ -264,7 +301,20 @@ def _apply_feature_engineering_for_scoring(
     column_infos: list[ColumnTypeInfo],
     feature_metadata: SparkFeatureMetadata,
 ) -> DataFrame:
-    """Apply feature engineering to DataFrame for scoring."""
+    """Apply feature engineering to DataFrame for scoring.
+
+    Note: merge_columns must exist in the DataFrame as they are required for
+    joining results back in row_filter cases.
+    """
+    # Validate that all merge_columns exist in the DataFrame
+    missing_cols = [c for c in merge_columns if c not in df.columns]
+    if missing_cols:
+        raise InvalidParameterError(
+            f"merge_columns {missing_cols} not found in DataFrame. "
+            f"Available columns: {df.columns}. "
+            f"merge_columns must reference actual columns (e.g., primary keys or row identifiers)."
+        )
+
     # Deduplicate columns to avoid duplicate column errors
     cols_to_select = list(dict.fromkeys([*feature_cols, *merge_columns]))
 
@@ -281,10 +331,13 @@ def _apply_feature_engineering_for_scoring(
 
 
 def _create_udf_schema(include_contributions: bool) -> StructType:
-    """Create schema for scoring UDF output."""
+    """Create schema for scoring UDF output.
+
+    Note: anomaly_score is kept for internal use and populating _info.anomaly[0].score.
+    The prediction column has been removed - users should check _info.anomaly[0].is_anomaly.
+    """
     schema_fields = [
         StructField("anomaly_score", DoubleType(), True),
-        StructField("prediction", IntegerType(), True),
     ]
     if include_contributions:
         schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
@@ -347,7 +400,6 @@ def _score_with_sklearn_model(
         feature_matrix.columns = engineered_feature_cols
 
         # Score using full pipeline
-        predictions = np.where(model_local.predict(feature_matrix) == -1, 1, 0)
         scores = -model_local.score_samples(feature_matrix)
 
         # Compute SHAP if requested
@@ -390,7 +442,7 @@ def _score_with_sklearn_model(
                 contributions_list.append(contributions)
 
         # Build result
-        result = {"anomaly_score": scores, "prediction": predictions}
+        result = {"anomaly_score": scores}
         if include_contributions:
             result["anomaly_contributions"] = contributions_list
 
@@ -403,7 +455,7 @@ def _score_with_sklearn_model(
     # Select columns to join back
     # Note: Include merge_columns + new anomaly columns for the join
     # Spark's join(on=...) automatically deduplicates the join key columns
-    cols_to_select = [*merge_columns, "_scores.anomaly_score", "_scores.prediction"]
+    cols_to_select = [*merge_columns, "_scores.anomaly_score"]
     if include_contributions:
         cols_to_select.append("_scores.anomaly_contributions")
 
@@ -566,8 +618,8 @@ def _score_ensemble_models(
         )
         temp_scored = temp_scored.withColumn(f"_score_{i}", F.col("anomaly_score"))
 
-        # Drop standard model output columns
-        scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score", "prediction"))
+        # Drop standard model output columns (keep _info)
+        scored_dfs.append(temp_scored.select("*", f"_score_{i}").drop("anomaly_score"))
 
     # Merge all scored DataFrames
     scored_df = scored_dfs[0]
@@ -605,6 +657,65 @@ def _try_segmented_scoring_fallback(
     first_segment = all_segments[0]
     assert first_segment.segment_by is not None, "Segment model must have segment_by"
     return _score_segmented(df, config, condition_col, registry_client)
+
+
+def _add_info_column(
+    df: DataFrame,
+    model_name: str,
+    score_threshold: float,
+    segment_values: dict[str, str] | None = None,
+    include_contributions: bool = False,
+    include_confidence: bool = False,
+) -> DataFrame:
+    """Add _info struct column with anomaly metadata.
+
+    Args:
+        df: Scored DataFrame with anomaly_score, prediction, etc.
+        model_name: Name of the model used for scoring.
+        score_threshold: Threshold used for anomaly detection.
+        segment_values: Segment values if model is segmented (None for global models).
+        include_contributions: Whether anomaly_contributions are available.
+        include_confidence: Whether anomaly_score_std is available.
+
+    Returns:
+        DataFrame with _info column added.
+    """
+    # Build anomaly info struct
+    anomaly_info_fields = {
+        "check_name": F.lit("has_no_anomalies"),
+        "score": F.col("anomaly_score"),
+        "is_anomaly": F.col("anomaly_score") > F.lit(score_threshold),
+        "threshold": F.lit(score_threshold),
+        "model": F.lit(model_name),
+    }
+
+    # Add segment as map (null for global models)
+    if segment_values:
+        anomaly_info_fields["segment"] = F.create_map(
+            *[F.lit(item) for pair in segment_values.items() for item in pair]
+        )
+    else:
+        anomaly_info_fields["segment"] = F.lit(None).cast(MapType(StringType(), StringType()))
+
+    # Add contributions (null if not requested or not available)
+    if include_contributions and "anomaly_contributions" in df.columns:
+        anomaly_info_fields["contributions"] = F.col("anomaly_contributions")
+    else:
+        anomaly_info_fields["contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
+
+    # Add confidence_std (null if not requested or not available)
+    if include_confidence and "anomaly_score_std" in df.columns:
+        anomaly_info_fields["confidence_std"] = F.col("anomaly_score_std")
+    else:
+        anomaly_info_fields["confidence_std"] = F.lit(None).cast(DoubleType())
+
+    # Create anomaly info struct and wrap in array
+    anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()])
+
+    # Create _info struct with anomaly (direct struct, not array - single result per row)
+    info_struct = F.struct(anomaly_info.alias("anomaly"))
+
+    return df.withColumn("_info", info_struct)
 
 
 def _score_global_model(
@@ -650,20 +761,34 @@ def _score_global_model(
         ).withColumn("anomaly_score_std", F.lit(0.0))
     )
 
-    # Post-process
-    if not config.include_confidence:
-        scored_df = scored_df.drop("anomaly_score_std")
+    # Add _info column (before dropping internal columns)
+    scored_df = _add_info_column(
+        scored_df,
+        config.model_name,
+        config.score_threshold,
+        segment_values=None,  # Global model has no segments
+        include_contributions=config.include_contributions,
+        include_confidence=config.include_confidence,
+    )
+
+    # Post-process: drop internal columns that are now in _info
+    scored_df = scored_df.drop("anomaly_score_std")  # Always drop (null if not ensemble)
+    if config.include_contributions:
+        scored_df = scored_df.drop("anomaly_contributions")  # Drop top-level, use _info instead
 
     if config.row_filter:
-        scored_df = _join_filtered_results_back(
-            df, scored_df, config.merge_columns, config.include_confidence, config.include_contributions
-        )
+        scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns)
 
-    # Add condition
+    # Add condition (using anomaly_score internally)
     condition = F.when(F.col("anomaly_score").isNull(), F.lit(False)).otherwise(
         F.col("anomaly_score") > F.lit(config.score_threshold)
     )
-    return scored_df.withColumn(condition_col, condition)
+    scored_df = scored_df.withColumn(condition_col, condition)
+
+    # Drop internal anomaly_score column (use _info.anomaly[0].score instead)
+    scored_df = scored_df.drop("anomaly_score")
+
+    return scored_df
 
 
 def has_no_anomalies(
@@ -684,6 +809,16 @@ def has_no_anomalies(
     - columns=None: Inferred from model registry
     - segment_by=None: Inferred from model registry (checks if model is segmented)
 
+    Output columns:
+    - _info: Structured metadata
+      - _info.anomaly.score: Anomaly score (0-1)
+      - _info.anomaly.is_anomaly: Boolean flag
+      - _info.anomaly.threshold: Threshold used
+      - _info.anomaly.model: Model name
+      - _info.anomaly.segment: Segment values (if segmented)
+      - _info.anomaly.contributions: SHAP values (if requested)
+      - _info.anomaly.confidence_std: Ensemble std (if requested)
+
     Args:
         merge_columns: Primary key columns (e.g., ["activity_id"]) for joining results.
         columns: Columns to check for anomalies (auto-inferred if omitted).
@@ -693,11 +828,16 @@ def has_no_anomalies(
         score_threshold: Anomaly score threshold (default 0.5).
         row_filter: Optional SQL expression to filter rows before scoring.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
-        include_contributions: Include anomaly_contributions column (default False).
-        include_confidence: Include anomaly_score_std column for ensembles (default False).
+        include_contributions: Include SHAP contributions in _info and top-level (default False).
+        include_confidence: Include ensemble confidence in _info and top-level (default False).
 
     Returns:
         Tuple of condition expression and apply function.
+
+    Example:
+        Access anomaly metadata via _info column:
+        >>> df_scored.select("_info.anomaly[0].score", "_info.anomaly[0].is_anomaly")
+        >>> df_scored.filter(col("_info.anomaly[0].is_anomaly"))
     """
     condition_col = f"__anomaly_condition_{uuid4().hex}"
 

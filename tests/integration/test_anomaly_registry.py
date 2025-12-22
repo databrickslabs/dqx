@@ -25,8 +25,8 @@ def mock_workspace_client():
 def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test training with explicit model_name and registry_table."""
     df = spark.createDataFrame(
-        [(100.0 + i, 2.0) for i in range(50)],
-        "amount double, quantity double",
+        [(i, 100.0 + i, 2.0) for i in range(50)],
+        "transaction_id int, amount double, quantity double",
     )
 
     unique_id = make_random(8).lower()
@@ -43,7 +43,7 @@ def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_r
     # Verify model URI is returned
     assert model_uri is not None
 
-    # Verify model can be loaded with explicit name - call directly to get anomaly_score column
+    # Verify model can be loaded with explicit name
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=["amount", "quantity"],
@@ -54,7 +54,8 @@ def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_r
 
     result_df = apply_fn(df)
 
-    assert "anomaly_score" in result_df.columns
+    # Verify _info column exists (anomaly_score is now internal, use _info.anomaly.score)
+    assert "_info" in result_df.columns
 
 
 def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
