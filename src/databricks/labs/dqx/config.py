@@ -274,7 +274,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     Args:
         location: Fully qualified name of the Lakebase table to store checks in the format 'database.schema.table'.
         instance_name: Name of the Lakebase instance.
-        client_id: (Optional) ID of the Databricks service principal to use for the Lakebase connection.
+        client_id: ID of the Databricks service principal to use for the Lakebase connection.
         port: The Lakebase port (default is '5432').
         run_config_name: Name of the run configuration to use for checks (default is 'default').
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
