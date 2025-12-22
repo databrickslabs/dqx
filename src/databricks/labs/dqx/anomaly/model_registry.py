@@ -30,8 +30,13 @@ ANOMALY_MODEL_TABLE_SCHEMA = (
 
 
 @dataclass
-class AnomalyModelRecord:
-    """Registry record for a trained anomaly model."""
+class AnomalyModelRecord:  # pylint: disable=too-many-instance-attributes
+    """Registry record for a trained anomaly model.
+
+    Note: This dataclass intentionally has many attributes (20) to comprehensively
+    track ML model metadata including training config, metrics, feature engineering,
+    and segmentation info. Each field serves a specific purpose for model lifecycle management.
+    """
 
     model_name: str
     model_uri: str
@@ -140,7 +145,15 @@ class AnomalyModelRegistry:
         return [AnomalyModelRecord(**row.asDict(recursive=True)) for row in rows]  # type: ignore[arg-type]
 
     def _table_exists(self, table: str) -> bool:
-        return self.spark.catalog.tableExists(table)
+        """Check if table exists (Unity Catalog compatible)."""
+        try:
+            # Try to read table schema - more reliable than catalog.tableExists()
+            # and compatible with Unity Catalog
+            self.spark.table(table).limit(0).count()
+            return True
+        except Exception:  # noqa: BLE001
+            # Table doesn't exist or no permissions
+            return False
 
     def _create_table(self, table: str) -> None:
         empty_df = self.spark.createDataFrame([], schema=ANOMALY_MODEL_TABLE_SCHEMA)

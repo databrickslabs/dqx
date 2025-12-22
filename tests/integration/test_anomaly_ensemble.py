@@ -5,14 +5,14 @@ from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx import anomaly
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.anomaly import AnomalyParams, has_no_anomalies
 from databricks.sdk import WorkspaceClient
 
 # Check if IsolationForest is available (only in Databricks Runtime)
 ISOLATION_FOREST_AVAILABLE = False
 try:
-    import pyspark.ml.classification as pyspark_ml_classification
+    import pyspark.ml.classification as pyspark_ml_classification  # pylint: disable=incompatible-with-uc
 
     if hasattr(pyspark_ml_classification, 'IsolationForest'):
         ISOLATION_FOREST_AVAILABLE = True
@@ -30,7 +30,7 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_ensemble_training(spark: SparkSession):
+def test_ensemble_training(spark: SparkSession, anomaly_engine):
     """Test training an ensemble of models."""
     df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
@@ -38,13 +38,13 @@ def test_ensemble_training(spark: SparkSession):
     )
 
     # Train ensemble with 3 models
-    params = anomaly.AnomalyParams(
+    params = AnomalyParams(
         sample_fraction=1.0,
         max_rows=100,
         ensemble_size=3,
     )
 
-    model_uri = anomaly.train(
+    model_uri = anomaly_engine.train(
         df=df,
         columns=["amount", "quantity"],
         model_name="test_ensemble",
@@ -58,7 +58,7 @@ def test_ensemble_training(spark: SparkSession):
     assert len(uris) == 3
 
 
-def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_client):
+def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test scoring with ensemble model returns confidence scores."""
     # Training data
     train_df = spark.createDataFrame(
@@ -67,13 +67,13 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     )
 
     # Train ensemble
-    params = anomaly.AnomalyParams(
+    params = AnomalyParams(
         sample_fraction=1.0,
         max_rows=50,
         ensemble_size=2,
     )
 
-    anomaly.train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_ensemble_scoring",
@@ -90,7 +90,7 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     # Apply check with confidence
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        anomaly.has_no_anomalies(
+        has_no_anomalies(
             merge_columns=["transaction_id"],
             columns=["amount", "quantity"],
             model="test_ensemble_scoring",
@@ -110,20 +110,20 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     assert any(std > 0 for std in std_values)
 
 
-def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace_client):
+def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test that ensemble works with feature contributions."""
     train_df = spark.createDataFrame(
         [(100.0, 2.0, 0.1) for i in range(30)],
         "amount double, quantity double, discount double",
     )
 
-    params = anomaly.AnomalyParams(
+    params = AnomalyParams(
         sample_fraction=1.0,
         max_rows=30,
         ensemble_size=2,
     )
 
-    anomaly.train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity", "discount"],
         model_name="test_ensemble_contributions",
@@ -138,7 +138,7 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        anomaly.has_no_anomalies(
+        has_no_anomalies(
             merge_columns=["transaction_id"],
             columns=["amount", "quantity", "discount"],
             model="test_ensemble_contributions",

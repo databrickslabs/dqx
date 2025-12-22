@@ -26,7 +26,6 @@ from mlflow.tracking import MlflowClient
 import numpy as np
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql import types as T
 from pyspark.sql.functions import PandasUDFType, pandas_udf, col
 from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
 import pyspark.sql.functions as F
@@ -34,17 +33,168 @@ from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
 
+from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
 from databricks.labs.dqx.anomaly.profiler import auto_discover
-from databricks.labs.dqx.anomaly.transformers import ColumnTypeClassifier, ColumnTypeInfo, apply_feature_engineering
+from databricks.labs.dqx.anomaly.transformers import (
+    ColumnTypeClassifier,
+    apply_feature_engineering,
+    reconstruct_column_infos,
+)
+from databricks.sdk import WorkspaceClient
 
 
 DEFAULT_SAMPLE_FRACTION = 0.3
 DEFAULT_MAX_ROWS = 1_000_000
 DEFAULT_TRAIN_RATIO = 0.8
+
+
+class AnomalyEngine(DQEngineBase):
+    """Engine for anomaly detection model lifecycle management.
+
+    This class provides methods for training, managing, and working with anomaly detection models.
+    It follows the same architectural pattern as DQProfiler, managing state like SparkSession
+    and WorkspaceClient while delegating operations to internal helper functions.
+
+    Args:
+        workspace_client: WorkspaceClient instance used to access the Databricks workspace.
+        spark: Optional SparkSession to use. If not provided, the active session is used.
+
+    Examples:
+        # Initialize engine
+        from databricks.sdk import WorkspaceClient
+        from databricks.labs.dqx.anomaly import AnomalyEngine
+
+        ws = WorkspaceClient()
+        anomaly_engine = AnomalyEngine(ws)
+
+        # Train a model with auto-discovery
+        model_name = anomaly_engine.train(df, model_name="my_anomaly_model")
+
+        # Train with specific configuration
+        model_name = anomaly_engine.train(
+            df=df,
+            model_name="regional_model",
+            columns=["revenue", "transactions"],
+            segment_by=["region"]
+        )
+    """
+
+    def __init__(
+        self,
+        workspace_client: WorkspaceClient,
+        spark: SparkSession | None = None,
+    ):
+        super().__init__(workspace_client)
+        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+
+    def train(
+        self,
+        df: DataFrame,
+        model_name: str,
+        columns: list[str] | None = None,
+        segment_by: list[str] | None = None,
+        registry_table: str | None = None,
+        params: AnomalyParams | None = None,
+        profiler_table: str | None = None,
+        exclude_columns: list[str] | None = None,
+    ) -> str:
+        """
+        Train anomaly detection model(s) with intelligent auto-discovery.
+
+        Requires Spark >= 3.4 and the 'anomaly' extras installed:
+            pip install 'databricks-labs-dqx[anomaly]'
+
+        Auto-discovery behavior:
+        - columns=None, segment_by=None: Auto-discovers both (simplest)
+        - columns specified, segment_by=None: Uses columns, no segmentation
+        - columns=None, segment_by specified: Auto-discovers columns, uses segments
+
+        Args:
+            df: Input DataFrame containing historical \"normal\" data.
+            model_name: Model name (REQUIRED). Provide a descriptive name like 'field_force_anomaly'.
+                       Can be simple name ('my_model') or full path ('catalog.schema.my_model').
+                       If simple name provided, catalog.schema will be derived from registry_table.
+            columns: Columns to use for anomaly detection (auto-discovered if omitted).
+            segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
+            registry_table: Optional registry table; auto-derived if not provided.
+            params: Optional tuning parameters; defaults applied if omitted.
+            profiler_table: DQX profiler output table for smarter auto-discovery.
+            exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
+                            Useful with auto-discovery to filter out unwanted columns without
+                            specifying all desired columns manually.
+
+        Returns:
+            Base model name (e.g., 'catalog.schema.model_name'). For segmented models,
+            individual segments are stored with suffixes like '__seg_region=APAC', but
+            the base name is returned for simplified API usage.
+
+        Examples:
+            # Simple global model with auto-discovery
+            model_name = anomaly_engine.train(df, model_name="my_anomaly_model")
+
+            # Auto-discovery but exclude ID and ground truth columns
+            model_name = anomaly_engine.train(
+                df, model_name="my_model",
+                exclude_columns=["id", "label", "ground_truth"]
+            )
+
+            # Segmented by region
+            model_name = anomaly_engine.train(
+                df, model_name="regional_model", segment_by=["region"]
+            )
+
+            # With explicit columns
+            model_name = anomaly_engine.train(
+                df, model_name="sales_monitor",
+                columns=["revenue", "transactions", "avg_order_value"]
+            )
+        """
+        _validate_spark_version(self.spark)
+
+        # Validate model_name is provided
+        if not model_name:
+            raise InvalidParameterError(
+                "model_name is required. Provide a descriptive name like 'field_force_anomaly' or "
+                "'sales_rep_monitor'. The full catalog.schema.model path will be constructed automatically."
+            )
+
+        # Process exclude_columns
+        df_filtered, _exclude_list = _process_exclude_columns(df, columns, exclude_columns)
+
+        # Auto-discovery
+        columns, segment_by, discovery_warnings = _perform_auto_discovery(
+            df_filtered, profiler_table, columns, segment_by
+        )
+
+        # Show auto-discovery warnings
+        for warning in discovery_warnings:
+            warnings.warn(warning, UserWarning, stacklevel=2)
+
+        # Validate columns
+        if not columns:
+            raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
+
+        validation_warnings = _validate_columns(df, columns, params)
+
+        # Show validation warnings
+        for warning in validation_warnings:
+            warnings.warn(warning, UserWarning, stacklevel=2)
+
+        # Prepare training configuration
+        derived_model_name, derived_registry_table = _prepare_training_config(
+            model_name, registry_table, self.spark, df
+        )
+
+        # Execute training
+        if segment_by:
+            return _train_segmented(
+                self.spark, df_filtered, columns, segment_by, derived_model_name, derived_registry_table, params
+            )
+        return _train_global(self.spark, df_filtered, columns, derived_model_name, derived_registry_table, params)
 
 
 def _process_exclude_columns(
@@ -129,6 +279,7 @@ def _perform_auto_discovery(
 def _prepare_training_config(
     model_name: str,
     registry_table: str | None,
+    spark: SparkSession,
     df: DataFrame,
 ) -> tuple[str, str]:
     """
@@ -137,7 +288,7 @@ def _prepare_training_config(
     Returns:
         Tuple of (derived_model_name, derived_registry_table)
     """
-    derived_registry_table = registry_table or _derive_registry_table(df)
+    derived_registry_table = registry_table or _derive_registry_table(spark, df)
 
     # Ensure model_name has full three-level catalog.schema.model format
     derived_model_name = _ensure_full_model_name(model_name, derived_registry_table)
@@ -152,101 +303,6 @@ def _prepare_training_config(
         )
 
     return derived_model_name, derived_registry_table
-
-
-def train(
-    df: DataFrame,
-    model_name: str,
-    columns: list[str] | None = None,
-    segment_by: list[str] | None = None,
-    registry_table: str | None = None,
-    params: AnomalyParams | None = None,
-    profiler_table: str | None = None,
-    exclude_columns: list[str] | None = None,
-) -> str:
-    """
-    Train anomaly detection model(s) with intelligent auto-discovery.
-
-    Requires Spark >= 3.4 and the 'anomaly' extras installed:
-        pip install 'databricks-labs-dqx[anomaly]'
-
-    Auto-discovery behavior:
-    - columns=None, segment_by=None: Auto-discovers both (simplest)
-    - columns specified, segment_by=None: Uses columns, no segmentation
-    - columns=None, segment_by specified: Auto-discovers columns, uses segments
-
-    Args:
-        df: Input DataFrame containing historical \"normal\" data.
-        model_name: Model name (REQUIRED). Provide a descriptive name like 'field_force_anomaly'.
-                   Can be simple name ('my_model') or full path ('catalog.schema.my_model').
-                   If simple name provided, catalog.schema will be derived from registry_table.
-        columns: Columns to use for anomaly detection (auto-discovered if omitted).
-        segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
-        registry_table: Optional registry table; auto-derived if not provided.
-        params: Optional tuning parameters; defaults applied if omitted.
-        profiler_table: DQX profiler output table for smarter auto-discovery.
-        exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
-                        Useful with auto-discovery to filter out unwanted columns without
-                        specifying all desired columns manually.
-
-    Returns:
-        Base model name (e.g., 'catalog.schema.model_name'). For segmented models,
-        individual segments are stored with suffixes like '__seg_region=APAC', but
-        the base name is returned for simplified API usage.
-
-    Examples:
-        # Simple global model with auto-discovery
-        model_name = train(df, model_name="my_anomaly_model")
-
-        # Auto-discovery but exclude ID and ground truth columns
-        model_name = train(df, model_name="my_model",
-                          exclude_columns=["id", "label", "ground_truth"])
-
-        # Segmented by region
-        model_name = train(df, model_name="regional_model", segment_by=["region"])
-
-        # With explicit columns
-        model_name = train(df, model_name="sales_monitor",
-                          columns=["revenue", "transactions", "avg_order_value"])
-    """
-    spark = df.sparkSession
-    _validate_spark_version(spark)
-
-    # Validate model_name is provided
-    if not model_name:
-        raise InvalidParameterError(
-            "model_name is required. Provide a descriptive name like 'field_force_anomaly' or "
-            "'sales_rep_monitor'. The full catalog.schema.model path will be constructed automatically."
-        )
-
-    # Process exclude_columns
-    df_filtered, _exclude_list = _process_exclude_columns(df, columns, exclude_columns)
-
-    # Auto-discovery
-    columns, segment_by, discovery_warnings = _perform_auto_discovery(df_filtered, profiler_table, columns, segment_by)
-
-    # Show auto-discovery warnings
-    for warning in discovery_warnings:
-        warnings.warn(warning, UserWarning, stacklevel=2)
-
-    # Validate columns
-    if not columns:
-        raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
-
-    validation_warnings = _validate_columns(df, columns, params)
-
-    # Show validation warnings
-    for warning in validation_warnings:
-        warnings.warn(warning, UserWarning, stacklevel=2)
-
-    # Prepare training configuration
-    derived_model_name, derived_registry_table = _prepare_training_config(model_name, registry_table, df)
-
-    # Segment-based training
-    if segment_by:
-        return _train_segmented(df, columns, segment_by, derived_model_name, derived_registry_table, params)
-
-    return _train_global(df, columns, derived_model_name, derived_registry_table, params)
 
 
 def _register_single_model_to_mlflow(
@@ -268,25 +324,10 @@ def _register_single_model_to_mlflow(
     # This is expected and informational only - the model will register successfully
     mlflow.set_registry_uri("databricks-uc")
 
-    # Ensure any previous runs are closed (defensive cleanup)
-    try:
-        mlflow.end_run()
-    except Exception:
-        pass
-
     with mlflow.start_run() as run:
         # Infer model signature for Unity Catalog (required)
         # Get engineered features for signature
-        column_infos_reconstructed = [
-            ColumnTypeInfo(
-                name=info["name"],
-                spark_type=T.StringType(),  # Type not used in scoring
-                category=info["category"],
-                cardinality=info.get("cardinality"),
-                null_count=info.get("null_count"),
-            )
-            for info in feature_metadata.column_infos
-        ]
+        column_infos_reconstructed = reconstruct_column_infos(feature_metadata)
 
         engineered_train_df, _ = apply_feature_engineering(
             train_df,
@@ -318,6 +359,7 @@ def _register_single_model_to_mlflow(
 
 
 def _train_global(
+    spark: SparkSession,
     df: DataFrame,
     columns: list[str],
     model_name: str,
@@ -325,7 +367,6 @@ def _train_global(
     params: AnomalyParams | None,
 ) -> str:
     """Train a single global model (no segmentation)."""
-    spark = df.sparkSession
     params = params or AnomalyParams()
 
     sampled_df, _, truncated = _sample_df(df, columns, params)
@@ -362,7 +403,10 @@ def _train_global(
     baseline_stats = _compute_baseline_statistics(train_df, columns)
 
     # Compute feature importance for explainability (distributed on Spark, use first model if ensemble)
-    model_for_importance = mlflow.sklearn.load_model(model_uris[0]) if ensemble_size > 1 else model
+    if ensemble_size > 1:
+        model_for_importance = mlflow.sklearn.load_model(model_uris[0])
+    else:
+        model_for_importance = model
     feature_importance = _compute_feature_importance(model_for_importance, val_df, columns, feature_metadata)
 
     if truncated:
@@ -406,6 +450,7 @@ def _train_global(
 
 
 def _train_segmented(
+    spark: SparkSession,
     df: DataFrame,
     columns: list[str],
     segment_by: list[str],
@@ -415,7 +460,6 @@ def _train_segmented(
 ) -> str:
     """Train separate models for each segment."""
     params = params or AnomalyParams()
-    _spark = df.sparkSession
 
     # Get distinct segments
     segments_df = df.select(*segment_by).distinct()
@@ -457,7 +501,7 @@ def _train_segmented(
 
         # Train model for this segment
         model_uri = _train_single_segment(
-            segment_df, columns, segment_model_name, segment_vals, segment_by, registry_table, params
+            spark, segment_df, columns, segment_model_name, segment_vals, segment_by, registry_table, params
         )
 
         if model_uri is not None:
@@ -489,6 +533,7 @@ def _train_segmented(
 
 
 def _train_single_segment(
+    spark: SparkSession,
     df: DataFrame,
     columns: list[str],
     model_name: str,
@@ -503,7 +548,6 @@ def _train_single_segment(
     Returns:
         Model URI on success, None if segment has insufficient data after sampling.
     """
-    spark = df.sparkSession
 
     sampled_df, sampled_count, _ = _sample_df(df, columns, params)
     if sampled_count == 0:
@@ -591,12 +635,11 @@ def _validate_columns(
     return warnings_list
 
 
-def _derive_registry_table(df: DataFrame) -> str:
+def _derive_registry_table(spark: SparkSession, df: DataFrame) -> str:
     input_table = _get_input_table(df)
     if not input_table:
         # Fallback to default location when table name cannot be inferred
         # Use current catalog and schema
-        spark = df.sparkSession
         try:
             catalog_row = spark.sql("SELECT current_catalog()").first()
             schema_row = spark.sql("SELECT current_schema()").first()
@@ -806,16 +849,7 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
         DataFrame with anomaly_score and prediction columns
     """
     # Reconstruct column_infos from metadata
-    column_infos = [
-        ColumnTypeInfo(
-            name=info["name"],
-            spark_type=T.StringType(),  # Type not used in scoring
-            category=info["category"],
-            cardinality=info.get("cardinality"),
-            null_count=info.get("null_count"),
-        )
-        for info in feature_metadata.column_infos
-    ]
+    column_infos = reconstruct_column_infos(feature_metadata)
 
     # Apply feature engineering in Spark (distributed)
     # Use pre-computed frequency maps from training

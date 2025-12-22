@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import train, has_no_anomalies
+from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
@@ -23,7 +23,7 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test basic training and scoring workflow."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -37,7 +37,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
         "amount double, quantity double",
     )
 
-    model_uri = train(
+    model_uri = anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -84,7 +84,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     assert second_errors is not None and len(second_errors) > 0, "Anomalous row should have errors"
 
 
-def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test that anomaly scores are added to the DataFrame."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -98,7 +98,7 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
         "amount double, quantity double",
     )
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -139,7 +139,7 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
     assert all(row["anomaly_score"] is not None for row in rows)
 
 
-def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client):
+def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test that registry_table is auto-derived when omitted."""
     # Use standard 2D training data
     train_df = spark.createDataFrame(
@@ -148,7 +148,7 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client):
     )
 
     # Train with model_name but without registry_table (auto-derived)
-    model_uri = train(
+    model_uri = anomaly_engine.train(
         df=train_df,
         model_name="test_auto_model",
         columns=["amount", "quantity"],
@@ -185,7 +185,7 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client):
     assert errors is None or len(errors) == 0, f"Expected no errors, got: {errors}"
 
 
-def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test that anomalous rows are flagged based on score_threshold."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -199,7 +199,7 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
         "amount double, quantity double",
     )
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -246,7 +246,7 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     assert anomaly_errors is not None and len(anomaly_errors) > 0, "Anomalous row should have errors"
 
 
-def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_random):
+def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test that registry table is auto-created if missing."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -263,19 +263,31 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
     # Drop table if exists
     spark.sql(f"DROP TABLE IF EXISTS {registry_table}")
 
-    # Verify table doesn't exist
-    assert not spark.catalog.tableExists(registry_table)
+    # Verify table doesn't exist (Unity Catalog compatible)
+    table_exists = False
+    try:
+        spark.table(registry_table).limit(0).count()
+        table_exists = True
+    except Exception:  # noqa: BLE001
+        pass
+    assert not table_exists
 
     # Train (should auto-create registry)
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
 
-    # Verify table now exists
-    assert spark.catalog.tableExists(registry_table)
+    # Verify table now exists (Unity Catalog compatible)
+    table_exists = False
+    try:
+        spark.table(registry_table).limit(0).count()
+        table_exists = True
+    except Exception:  # noqa: BLE001
+        pass
+    assert table_exists
 
     # Verify table has expected schema
     registry_df = spark.table(registry_table)
@@ -294,7 +306,7 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
         assert col in registry_df.columns
 
 
-def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schema, make_random):
+def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test training and scoring with multiple columns."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -308,7 +320,7 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
         "amount double, quantity double, discount double, weight double",
     )
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity", "discount", "weight"],
         model_name=model_name,

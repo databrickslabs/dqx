@@ -7,6 +7,10 @@ to reduce duplication across anomaly detection tests.
 
 from typing import Any
 
+from pyspark.sql import SparkSession
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
 
 # ============================================================================
 # Standard Training Data Patterns
@@ -214,8 +218,8 @@ def create_test_model_names(make_random_fn, prefix: str = "test") -> dict[str, s
     Create consistent naming for anomaly detection test artifacts.
 
     Args:
-        make_random_fn: The make_random fixture function
-        prefix: Prefix for model name (default: "test")
+        make_random_fn (Callable[[int], str]): The make_random fixture function
+        prefix (str): Prefix for model name (default: "test")
 
     Returns:
         Dict with "model_name" and "registry_suffix" keys
@@ -264,3 +268,148 @@ def assert_anomaly_separation(
     assert (
         anomaly_count == expected_anomaly_count
     ), f"Expected {expected_anomaly_count} anomalous rows, got {anomaly_count}"
+
+
+def create_anomaly_check_rule(
+    model_name: str,
+    registry_table: str,
+    columns: list[str],
+    score_threshold: float = 0.6,
+    criticality: str = "error",
+    merge_columns: list[str] | None = None,
+    **kwargs: Any,
+) -> DQDatasetRule:
+    """
+    Create a standard DQDatasetRule for anomaly detection.
+
+    Reduces duplication in tests that need to set up anomaly checks.
+
+    Args:
+        model_name: Name of the trained model
+        registry_table: Full path to registry table
+        columns: List of columns to check
+        score_threshold: Anomaly score threshold (default: 0.6)
+        criticality: Rule criticality (default: "error")
+        merge_columns: Columns for merging results (optional)
+        **kwargs: Additional check_func_kwargs
+
+    Returns:
+        Configured DQDatasetRule
+
+    Example:
+        check = create_anomaly_check_rule(
+            model_name="test_model",
+            registry_table="main.default.registry",
+            columns=["amount", "quantity"]
+        )
+    """
+    check_kwargs = {
+        "columns": columns,
+        "model": model_name,
+        "registry_table": registry_table,
+        "score_threshold": score_threshold,
+    }
+    if merge_columns:
+        check_kwargs["merge_columns"] = merge_columns
+    check_kwargs.update(kwargs)
+
+    return DQDatasetRule(
+        criticality=criticality,
+        check_func=has_no_anomalies,
+        check_func_kwargs=check_kwargs,
+    )
+
+
+def train_standard_2d_model(  # pylint: disable=no-spark-argument-in-function
+    anomaly_engine: Any,
+    unique_id: str,
+    columns: list[str] | None = None,
+    catalog: str = "main",
+    schema: str = "default",
+) -> dict[str, Any]:
+    """
+    Train a standard 2D anomaly model with common test parameters.
+
+    Reduces duplication in tests that need to train a simple model.
+
+    Args:
+        anomaly_engine: AnomalyEngine instance
+        unique_id: Unique identifier for model/registry naming
+        columns: Columns to train on (default: ["amount", "quantity"])
+        catalog: Catalog name (default: "main")
+        schema: Schema name (default: "default")
+
+    Returns:
+        Dict with "model_name", "registry_table", "columns" keys
+
+    Example:
+        from pyspark.sql import SparkSession
+        spark = SparkSession.builder.getOrCreate()
+        train_df = spark.createDataFrame(
+            get_standard_2d_training_data(),
+            "amount double, quantity double"
+        )
+        info = train_standard_2d_model(anomaly_engine, "test123", train_df=train_df)
+    """
+    if columns is None:
+        columns = ["amount", "quantity"]
+
+    model_name = f"test_model_{unique_id}"
+    registry_table = f"{catalog}.{schema}.{unique_id}_registry"
+
+    spark = SparkSession.builder.getOrCreate()
+    train_df = spark.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=columns,
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    return {
+        "model_name": model_name,
+        "registry_table": registry_table,
+        "columns": columns,
+    }
+
+
+def apply_anomaly_check_direct(
+    test_df: Any,
+    model_name: str,
+    registry_table: str,
+    columns: list[str] | None = None,
+    score_threshold: float = 0.5,
+    **kwargs: Any,
+) -> Any:
+    """
+    Apply anomaly detection directly (without DQEngine) to get anomaly_score column.
+
+    Helper to reduce duplication when tests need direct access to anomaly_score.
+
+    Args:
+        test_df: Test DataFrame
+        model_name: Model name
+        registry_table: Registry table path
+        columns: Columns to check
+        score_threshold: Score threshold
+        **kwargs: Additional has_no_anomalies kwargs
+
+    Returns:
+        DataFrame with anomaly_score column
+
+    Example:
+        result_df = apply_anomaly_check_direct(
+            test_df, "my_model", "main.default.registry",
+            columns=["amount", "quantity"]
+        )
+    """
+    _, apply_fn = has_no_anomalies(
+        merge_columns=["transaction_id"],
+        columns=columns,  # type: ignore[arg-type]
+        model=model_name,
+        registry_table=registry_table,
+        score_threshold=score_threshold,
+        **kwargs,
+    )
+    return apply_fn(test_df)

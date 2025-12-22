@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import train, has_no_anomalies
+from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
 from databricks.sdk import WorkspaceClient
 
@@ -16,10 +16,10 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client):
+def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test extract → train → score flow with temporal features."""
     # Create data with timestamps
-    df = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-01 09:00:00') as event_time " "FROM range(50)")
+    df = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-01 09:00:00') as event_time FROM range(50)")
 
     # Extract temporal features
     df_with_temporal = extract_temporal_features(df, timestamp_column="event_time", features=["hour", "day_of_week"])
@@ -29,7 +29,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     assert "temporal_day_of_week" in df_with_temporal.columns
 
     # Train on original + temporal features
-    train(
+    anomaly_engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
         model_name="test_temporal",
@@ -59,9 +59,9 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     assert "anomaly_score" in result_df.columns
 
 
-def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client):
+def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test training with multiple temporal features."""
-    df = spark.sql("SELECT 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time " "FROM range(50)")
+    df = spark.sql("SELECT 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time FROM range(50)")
 
     # Extract multiple temporal features
     df_with_temporal = extract_temporal_features(
@@ -75,7 +75,7 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client):
     assert "temporal_quarter" in df_with_temporal.columns
 
     # Train
-    train(
+    anomaly_engine.train(
         df=df_with_temporal,
         columns=[
             "amount",
@@ -113,7 +113,7 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client):
     assert "anomaly_score" in result_df.columns
 
 
-def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client):
+def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test that model learns time-based patterns."""
     # Create data with distinct patterns for different hours
     # 9am-5pm: amount=100, evening: amount=50
@@ -127,7 +127,7 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client):
 
     df_with_temporal = extract_temporal_features(df, timestamp_column="event_time", features=["hour"])
 
-    train(
+    anomaly_engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour"],
         model_name="test_temporal_pattern",
@@ -168,7 +168,7 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client):
     # differentiate between hours. A real use case would have varied amounts per hour.
 
 
-def test_weekend_feature(spark: SparkSession, mock_workspace_client):
+def test_weekend_feature(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test is_weekend temporal feature."""
     # Train on weekday data
     df = spark.sql(
@@ -181,7 +181,7 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client):
 
     df_with_temporal = extract_temporal_features(df, timestamp_column="event_time", features=["is_weekend"])
 
-    train(
+    anomaly_engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_is_weekend"],
         model_name="test_weekend",

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import train, has_no_anomalies
+from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 
@@ -37,7 +37,7 @@ def test_missing_model_error(spark: SparkSession, mock_workspace_client):
         result_df.collect()
 
 
-def test_column_mismatch_error(spark: SparkSession, mock_workspace_client):
+def test_column_mismatch_error(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test error when scoring columns don't match training columns."""
     # Train on [amount, quantity]
     train_df = spark.createDataFrame(
@@ -45,7 +45,7 @@ def test_column_mismatch_error(spark: SparkSession, mock_workspace_client):
         "amount double, quantity double",
     )
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_col_mismatch",
@@ -71,7 +71,7 @@ def test_column_mismatch_error(spark: SparkSession, mock_workspace_client):
         result_df.collect()
 
 
-def test_column_count_mismatch_error(spark: SparkSession, mock_workspace_client):
+def test_column_count_mismatch_error(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test error when number of columns differs."""
     # Train on 2 columns
     train_df = spark.createDataFrame(
@@ -79,7 +79,7 @@ def test_column_count_mismatch_error(spark: SparkSession, mock_workspace_client)
         "amount double, quantity double",
     )
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_count_mismatch",
@@ -105,7 +105,7 @@ def test_column_count_mismatch_error(spark: SparkSession, mock_workspace_client)
         result_df.collect()
 
 
-def test_column_order_independence(spark: SparkSession, mock_workspace_client):
+def test_column_order_independence(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test that column order doesn't matter (set comparison)."""
     # Train on [amount, quantity]
     train_df = spark.createDataFrame(
@@ -113,7 +113,7 @@ def test_column_order_independence(spark: SparkSession, mock_workspace_client):
         "amount double, quantity double",
     )
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_col_order",
@@ -138,13 +138,13 @@ def test_column_order_independence(spark: SparkSession, mock_workspace_client):
     assert "anomaly_score" in result_df.columns
 
 
-def test_empty_dataframe_error(spark: SparkSession):
+def test_empty_dataframe_error(spark: SparkSession, anomaly_engine):
     """Test error when training on empty DataFrame."""
     df = spark.createDataFrame([], "amount double, quantity double")
 
     # Should raise error about empty data
     with pytest.raises(InvalidParameterError, match="Sampling produced 0 rows"):
-        train(
+        anomaly_engine.train(
             df=df,
             columns=["amount", "quantity"],
             model_name="test_empty",
@@ -152,7 +152,7 @@ def test_empty_dataframe_error(spark: SparkSession):
         )
 
 
-def test_nonexistent_column_error(spark: SparkSession):
+def test_nonexistent_column_error(spark: SparkSession, anomaly_engine):
     """Test error when specified column doesn't exist."""
     df = spark.createDataFrame(
         [(100.0, 2.0)],
@@ -161,7 +161,7 @@ def test_nonexistent_column_error(spark: SparkSession):
 
     # Try to train on non-existent column
     with pytest.raises(Exception):  # Should raise AnalysisException
-        train(
+        anomaly_engine.train(
             df=df,
             columns=["amount", "nonexistent_column"],
             model_name="test_nonexistent_col",
@@ -169,7 +169,7 @@ def test_nonexistent_column_error(spark: SparkSession):
         )
 
 
-def test_non_numeric_column_error(spark: SparkSession):
+def test_non_numeric_column_error(spark: SparkSession, anomaly_engine):
     """Test error when specified column is not numeric."""
     df = spark.createDataFrame(
         [(100.0, "text")],
@@ -178,7 +178,7 @@ def test_non_numeric_column_error(spark: SparkSession):
 
     # Try to train on string column (not numeric)
     with pytest.raises(Exception):  # Should raise error during VectorAssembler
-        train(
+        anomaly_engine.train(
             df=df,
             columns=["amount", "description"],
             model_name="test_non_numeric",

@@ -3,26 +3,27 @@
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import train, has_no_anomalies
+from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 from tests.conftest import TEST_CATALOG
 
 
 @pytest.fixture
-def skip_if_runtime_not_anomaly_compatible(ws, debug_env):
+def skip_if_runtime_not_anomaly_compatible(ws, debug_env, spark):
     """Skip tests if runtime doesn't support anomaly detection (Spark < 3.4)."""
-    import pytest
-    from pyspark.sql import SparkSession
-
-    spark = SparkSession.builder.getOrCreate()
     major, minor, *_ = spark.version.split(".")
     if int(major) < 3 or (int(major) == 3 and int(minor) < 4):
         pytest.skip("Anomaly detection requires Spark >= 3.4")
 
 
 def test_explicit_segment_training(
-    spark: SparkSession, mock_workspace_client, make_schema, make_random, skip_if_runtime_not_anomaly_compatible
+    spark: SparkSession,
+    mock_workspace_client,  # pylint: disable=unused-argument
+    make_schema,
+    make_random,
+    skip_if_runtime_not_anomaly_compatible,
+    anomaly_engine,
 ):
     """Test explicit segment-based training."""
     # Create unique schema for test isolation
@@ -31,7 +32,7 @@ def test_explicit_segment_training(
 
     # Generate multi-region data
     data = []
-    for region in ["US", "EU", "APAC"]:
+    for region in ("US", "EU", "APAC"):
         base = 100 if region == "US" else (200 if region == "EU" else 150)
         for i in range(200):
             data.append((region, base + i * 0.5, base * 0.8 + i * 0.3))
@@ -41,7 +42,7 @@ def test_explicit_segment_training(
     df.write.saveAsTable(table_name)
 
     # Train with explicit segments
-    train(
+    anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount", "discount"],
         segment_by=["region"],
@@ -62,7 +63,12 @@ def test_explicit_segment_training(
 
 
 def test_segment_scoring(
-    spark: SparkSession, mock_workspace_client, make_schema, make_random, skip_if_runtime_not_anomaly_compatible
+    spark: SparkSession,
+    mock_workspace_client,
+    make_schema,
+    make_random,
+    skip_if_runtime_not_anomaly_compatible,
+    anomaly_engine,
 ):
     """Test that segment scoring uses correct regional models."""
     # Create unique schema for test isolation
@@ -71,7 +77,7 @@ def test_segment_scoring(
 
     # Train
     data = []
-    for region in ["US", "EU"]:
+    for region in ("US", "EU"):
         base = 100 if region == "US" else 200
         for i in range(200):
             data.append((region, base + i * 0.5))
@@ -80,7 +86,7 @@ def test_segment_scoring(
     table_name = f"{TEST_CATALOG}.{schema.name}.segment_score_test_{suffix}"
     df.write.saveAsTable(table_name)
 
-    train(
+    anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount"],
         segment_by=["region"],
@@ -120,7 +126,12 @@ def test_segment_scoring(
 
 
 def test_multi_column_segments(
-    spark: SparkSession, mock_workspace_client, make_schema, make_random, skip_if_runtime_not_anomaly_compatible
+    spark: SparkSession,
+    mock_workspace_client,  # pylint: disable=unused-argument
+    make_schema,
+    make_random,
+    skip_if_runtime_not_anomaly_compatible,
+    anomaly_engine,
 ):
     """Test segmentation with multiple segment columns."""
     # Create unique schema for test isolation
@@ -129,8 +140,8 @@ def test_multi_column_segments(
 
     # Generate data with region + product_type
     data = []
-    for region in ["US", "EU"]:
-        for product in ["A", "B"]:
+    for region in ("US", "EU"):
+        for product in ("A", "B"):
             base = 100 + (50 if region == "EU" else 0) + (25 if product == "B" else 0)
             for i in range(150):
                 data.append((region, product, base + i * 0.5))
@@ -140,7 +151,7 @@ def test_multi_column_segments(
     df.write.saveAsTable(table_name)
 
     # Train with multiple segment columns
-    train(
+    anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount"],
         segment_by=["region", "product_type"],
@@ -155,7 +166,12 @@ def test_multi_column_segments(
 
 
 def test_unknown_segment_handling(
-    spark: SparkSession, mock_workspace_client, make_schema, make_random, skip_if_runtime_not_anomaly_compatible
+    spark: SparkSession,
+    mock_workspace_client,
+    make_schema,
+    make_random,
+    skip_if_runtime_not_anomaly_compatible,
+    anomaly_engine,
 ):
     """Test scoring with unknown segment values (not in training data)."""
     # Create unique schema for test isolation
@@ -164,7 +180,7 @@ def test_unknown_segment_handling(
 
     # Train on US and EU only
     data = []
-    for region in ["US", "EU"]:
+    for region in ("US", "EU"):
         base = 100 if region == "US" else 200
         for i in range(200):
             data.append((region, base + i * 0.5))
@@ -173,7 +189,7 @@ def test_unknown_segment_handling(
     table_name = f"{TEST_CATALOG}.{schema.name}.unknown_segment_test_{suffix}"
     df.write.saveAsTable(table_name)
 
-    train(
+    anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount"],
         segment_by=["region"],

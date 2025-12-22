@@ -3,18 +3,13 @@
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import train
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 from tests.conftest import TEST_CATALOG
 
 
 @pytest.fixture
-def skip_if_runtime_not_anomaly_compatible(ws, debug_env):
+def skip_if_runtime_not_anomaly_compatible(ws, debug_env, spark):
     """Skip tests if runtime doesn't support anomaly detection (Spark < 3.4)."""
-    import pytest
-    from pyspark.sql import SparkSession
-
-    spark = SparkSession.builder.getOrCreate()
     major, minor, *_ = spark.version.split(".")
     if int(major) < 3 or (int(major) == 3 and int(minor) < 4):
         pytest.skip("Anomaly detection requires Spark >= 3.4")
@@ -46,7 +41,7 @@ def test_auto_discover_segments(spark: SparkSession, skip_if_runtime_not_anomaly
     """Test auto-discovery identifies categorical columns for segmentation."""
     # Create data with good segment candidates
     data = []
-    for region in ["US", "EU", "APAC"]:
+    for region in ("US", "EU", "APAC"):
         for i in range(1500):  # >1000 rows per segment
             data.append((region, 100.0 + i))
 
@@ -73,7 +68,9 @@ def test_auto_discover_excludes_high_cardinality(spark: SparkSession, skip_if_ru
     assert any("category" in w for w in profile.warnings)
 
 
-def test_zero_config_training(spark: SparkSession, make_schema, make_random, skip_if_runtime_not_anomaly_compatible):
+def test_zero_config_training(
+    spark: SparkSession, make_schema, make_random, skip_if_runtime_not_anomaly_compatible, anomaly_engine
+):
     """Test zero-configuration training with auto-discovery."""
     # Create unique schema for test isolation
     schema = make_schema(catalog_name=TEST_CATALOG)
@@ -81,7 +78,7 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ski
 
     # Create data with clear numeric and segment columns
     data = []
-    for region in ["US", "EU"]:
+    for region in ("US", "EU"):
         for i in range(200):
             base = 100 if region == "US" else 200
             data.append((region, base + i * 0.5, base * 0.8 + i * 0.3))
@@ -91,7 +88,7 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ski
     df.write.saveAsTable(table_name)
 
     # Train with zero config (should auto-discover columns and segments)
-    model_uri = train(
+    model_uri = anomaly_engine.train(
         df=spark.table(table_name),
         model_name=f"test_auto_{suffix}",
         registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
@@ -113,7 +110,7 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ski
 
 
 def test_explicit_columns_no_auto_segment(
-    spark: SparkSession, make_schema, make_random, skip_if_runtime_not_anomaly_compatible
+    spark: SparkSession, make_schema, make_random, skip_if_runtime_not_anomaly_compatible, anomaly_engine
 ):
     """Test that providing explicit columns disables auto-segmentation."""
     # Create unique schema for test isolation
@@ -122,7 +119,7 @@ def test_explicit_columns_no_auto_segment(
 
     # Create data with segment column
     data = []
-    for region in ["US", "EU"]:
+    for region in ("US", "EU"):
         for i in range(200):
             data.append((region, 100.0 + i))
 
@@ -131,7 +128,7 @@ def test_explicit_columns_no_auto_segment(
     df.write.saveAsTable(table_name)
 
     # Train with explicit columns (should NOT auto-segment)
-    train(
+    anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount"],  # Explicit columns provided
         model_name=f"test_explicit_{suffix}",
@@ -149,7 +146,7 @@ def test_warnings_for_small_segments(spark: SparkSession, skip_if_runtime_not_an
     """Test that warnings are issued for segments with <1000 rows."""
     # Create data with small segments
     data = []
-    for region in ["US", "EU", "APAC"]:
+    for region in ("US", "EU", "APAC"):
         for i in range(500):  # Only 500 rows per segment
             data.append((region, 100.0 + i))
 
