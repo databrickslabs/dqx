@@ -6,10 +6,9 @@ import warnings
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx import anomaly
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_utils import create_anomaly_check_rule
 
 
 @pytest.fixture
@@ -18,7 +17,7 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_workspace_client):
+def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test that drift warning is issued when data distribution shifts."""
     # Train on distribution centered at 100
     train_df = spark.createDataFrame(
@@ -26,7 +25,7 @@ def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_w
         "amount double, quantity double",
     )
 
-    anomaly.train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_drift",
@@ -41,16 +40,12 @@ def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_w
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=anomaly.has_no_anomalies,
-            check_func_kwargs={
-                "columns": ["amount", "quantity"],
-                "model": "test_drift",
-                "registry_table": "main.default.test_drift_registry",
-                "score_threshold": 0.5,
-                "drift_threshold": 3.0,
-            },
+        create_anomaly_check_rule(
+            model_name="test_drift",
+            registry_table="main.default.test_drift_registry",
+            columns=["amount", "quantity"],
+            score_threshold=0.5,
+            drift_threshold=3.0,
         )
     ]
 
@@ -70,7 +65,7 @@ def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_w
         assert "anomaly.train" in warning_message  # Retrain recommendation
 
 
-def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_workspace_client):
+def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test that no drift warning is issued when distributions are similar."""
     # Train on distribution
     train_df = spark.createDataFrame(
@@ -78,7 +73,7 @@ def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_work
         "amount double, quantity double",
     )
 
-    anomaly.train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_no_drift",
@@ -93,16 +88,12 @@ def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_work
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=anomaly.has_no_anomalies,
-            check_func_kwargs={
-                "columns": ["amount", "quantity"],
-                "model": "test_no_drift",
-                "registry_table": "main.default.test_no_drift_registry",
-                "score_threshold": 0.5,
-                "drift_threshold": 3.0,
-            },
+        create_anomaly_check_rule(
+            model_name="test_no_drift",
+            registry_table="main.default.test_no_drift_registry",
+            columns=["amount", "quantity"],
+            score_threshold=0.5,
+            drift_threshold=3.0,
         )
     ]
 
@@ -117,14 +108,14 @@ def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_work
         assert len(drift_warnings) == 0
 
 
-def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_workspace_client):
+def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_workspace_client, anomaly_engine):
     """Test that drift detection is disabled when drift_threshold=None."""
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
         "amount double, quantity double",
     )
 
-    anomaly.train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name="test_drift_disabled",
@@ -139,16 +130,12 @@ def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=anomaly.has_no_anomalies,
-            check_func_kwargs={
-                "columns": ["amount", "quantity"],
-                "model": "test_drift_disabled",
-                "registry_table": "main.default.test_drift_disabled_registry",
-                "score_threshold": 0.5,
-                "drift_threshold": None,  # Disable drift detection
-            },
+        create_anomaly_check_rule(
+            model_name="test_drift_disabled",
+            registry_table="main.default.test_drift_disabled_registry",
+            columns=["amount", "quantity"],
+            score_threshold=0.5,
+            drift_threshold=None,  # Disable drift detection
         )
     ]
 

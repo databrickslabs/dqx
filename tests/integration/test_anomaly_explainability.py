@@ -36,7 +36,7 @@ def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
     assert "quantity" in feature_importance
 
     # Verify importance values are numeric
-    for col, importance in feature_importance.items():
+    for _col, importance in feature_importance.items():
         assert isinstance(importance, (int, float))
         assert importance >= 0
 
@@ -215,5 +215,5 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model):
 
     # Amount should likely be the top contributor (or at least significant)
     # Since amount is the most anomalous feature
-    assert top_feature in ["amount", "discount", "quantity"]
+    assert top_feature in {"amount", "discount", "quantity"}
     assert valid_contribs[top_feature] > 0.2  # Should have significant contribution

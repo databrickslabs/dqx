@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from databricks.labs.dqx.anomaly import train
 from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 from databricks.labs.dqx.config import AnomalyParams, FeatureEngineeringConfig
 
@@ -52,13 +51,13 @@ def catalog_schema(spark):
 class TestMultiTypeTraining:
     """Test training with mixed column types."""
 
-    def test_train_with_categorical_and_numeric(self, spark, mixed_type_df, catalog_schema):
+    def test_train_with_categorical_and_numeric(self, spark, mixed_type_df, catalog_schema, anomaly_engine):
         """Test training with categorical and numeric columns."""
         catalog, schema = catalog_schema
         registry_table = f"{catalog}.{schema}.test_multitype_models"
 
         # Train with numeric + categorical
-        model_uri = train(
+        model_uri = anomaly_engine.train(
             df=mixed_type_df,
             columns=["value", "category", "target"],
             model_name=f"{catalog}.{schema}.test_cat_num_model",
@@ -72,13 +71,13 @@ class TestMultiTypeTraining:
         assert model_uri is not None
         assert "models:/" in model_uri
 
-    def test_train_with_datetime_features(self, spark, mixed_type_df, catalog_schema):
+    def test_train_with_datetime_features(self, spark, mixed_type_df, catalog_schema, anomaly_engine):
         """Test training with datetime columns."""
         catalog, schema = catalog_schema
         registry_table = f"{catalog}.{schema}.test_multitype_models"
 
         # Train with datetime + numeric
-        model_uri = train(
+        model_uri = anomaly_engine.train(
             df=mixed_type_df,
             columns=["value", "timestamp", "target"],
             model_name=f"{catalog}.{schema}.test_datetime_model",
@@ -91,13 +90,13 @@ class TestMultiTypeTraining:
 
         assert model_uri is not None
 
-    def test_train_with_boolean_features(self, spark, mixed_type_df, catalog_schema):
+    def test_train_with_boolean_features(self, spark, mixed_type_df, catalog_schema, anomaly_engine):
         """Test training with boolean columns."""
         catalog, schema = catalog_schema
         registry_table = f"{catalog}.{schema}.test_multitype_models"
 
         # Train with boolean + numeric
-        model_uri = train(
+        model_uri = anomaly_engine.train(
             df=mixed_type_df,
             columns=["value", "flag", "target"],
             model_name=f"{catalog}.{schema}.test_boolean_model",
@@ -110,13 +109,13 @@ class TestMultiTypeTraining:
 
         assert model_uri is not None
 
-    def test_train_with_all_types(self, spark, mixed_type_df, catalog_schema):
+    def test_train_with_all_types(self, spark, mixed_type_df, catalog_schema, anomaly_engine):
         """Test training with all supported column types."""
         catalog, schema = catalog_schema
         registry_table = f"{catalog}.{schema}.test_multitype_models"
 
         # Train with all types
-        model_uri = train(
+        model_uri = anomaly_engine.train(
             df=mixed_type_df,
             columns=["value", "category", "flag", "timestamp", "target"],
             model_name=f"{catalog}.{schema}.test_all_types_model",
@@ -133,13 +132,13 @@ class TestMultiTypeTraining:
 class TestMultiTypeScoring:
     """Test scoring with mixed column types."""
 
-    def test_score_with_categorical(self, spark, mixed_type_df, catalog_schema):
+    def test_score_with_categorical(self, spark, mixed_type_df, catalog_schema, anomaly_engine):
         """Test scoring with categorical columns."""
         catalog, schema = catalog_schema
         registry_table = f"{catalog}.{schema}.test_multitype_models"
 
         # Train
-        _model_uri = train(
+        _model_uri = anomaly_engine.train(
             df=mixed_type_df.limit(500),
             columns=["value", "category"],
             model_name=f"{catalog}.{schema}.test_score_cat",
@@ -164,7 +163,7 @@ class TestMultiTypeScoring:
         assert "anomaly_score" in scored_df.columns
         assert scored_df.count() > 0
 
-    def test_score_with_unknown_category(self, spark, catalog_schema):
+    def test_score_with_unknown_category(self, spark, catalog_schema, anomaly_engine):
         """Test that unknown categories are handled gracefully."""
         catalog, schema = catalog_schema
         registry_table = f"{catalog}.{schema}.test_multitype_models"
@@ -172,7 +171,7 @@ class TestMultiTypeScoring:
         # Train with limited categories
         train_df = spark.createDataFrame([(1.0, "A"), (2.0, "B"), (3.0, "A")], "value double, category string")
 
-        _model_uri = train(
+        _model_uri = anomaly_engine.train(
             df=train_df,
             columns=["value", "category"],
             model_name=f"{catalog}.{schema}.test_unknown_cat",
@@ -199,7 +198,7 @@ class TestMultiTypeScoring:
 class TestLimits:
     """Test that limits are enforced."""
 
-    def test_too_many_columns(self, spark, catalog_schema):
+    def test_too_many_columns(self, spark, catalog_schema, anomaly_engine):
         """Test that training fails with >10 columns."""
         catalog, schema = catalog_schema
 
@@ -209,14 +208,14 @@ class TestLimits:
         df = spark.createDataFrame(data, ", ".join(f"{c} int" for c in cols))
 
         with pytest.raises(Exception, match="max 10 columns"):
-            train(
+            anomaly_engine.train(
                 df=df,
                 columns=cols,
                 model_name=f"{catalog}.{schema}.test_too_many",
                 registry_table=f"{catalog}.{schema}.test_multitype_models",
             )
 
-    def test_too_many_features(self, spark, catalog_schema):
+    def test_too_many_features(self, spark, catalog_schema, anomaly_engine):
         """Test that training fails when engineered features exceed 50."""
         catalog, schema = catalog_schema
 
@@ -227,7 +226,7 @@ class TestLimits:
 
         # This should exceed 50 features (25 + 25 = 50 for one-hot)
         with pytest.raises(Exception, match="Feature engineering would create"):
-            train(
+            anomaly_engine.train(
                 df=df,
                 columns=["cat1", "cat2"],
                 model_name=f"{catalog}.{schema}.test_too_many_feat",
@@ -241,7 +240,7 @@ class TestLimits:
 class TestNullHandling:
     """Test null handling across different types."""
 
-    def test_null_indicators_added(self, spark, catalog_schema):
+    def test_null_indicators_added(self, spark, catalog_schema, anomaly_engine):
         """Test that null indicators are added for columns with nulls."""
         catalog, schema = catalog_schema
 
@@ -257,7 +256,7 @@ class TestNullHandling:
 
         df = df.withColumn("date", df.date_str.cast("timestamp")).drop("date_str")
 
-        model_uri = train(
+        model_uri = anomaly_engine.train(
             df=df,
             columns=["num", "cat", "flag", "date"],
             model_name=f"{catalog}.{schema}.test_nulls",
@@ -266,7 +265,7 @@ class TestNullHandling:
 
         assert model_uri is not None
 
-    def test_high_null_rate_warning(self, spark, catalog_schema):
+    def test_high_null_rate_warning(self, spark, catalog_schema, anomaly_engine):
         """Test that high null rate generates warning but doesn't fail."""
         catalog, schema = catalog_schema
 
@@ -276,7 +275,7 @@ class TestNullHandling:
 
         # Should warn but not fail
         with pytest.warns(UserWarning, match="73%|70%"):
-            model_uri = train(
+            model_uri = anomaly_engine.train(
                 df=df,
                 columns=["value"],
                 model_name=f"{catalog}.{schema}.test_high_nulls",
@@ -289,12 +288,12 @@ class TestNullHandling:
 class TestAutoDiscovery:
     """Test auto-discovery with multi-type support."""
 
-    def test_auto_discover_mixed_types(self, spark, mixed_type_df, catalog_schema):
+    def test_auto_discover_mixed_types(self, spark, mixed_type_df, catalog_schema, anomaly_engine):
         """Test that auto-discovery selects mixed column types."""
         catalog, schema = catalog_schema
 
         # Auto-discover columns (should prioritize numeric, then boolean, then categorical)
-        model_uri = train(
+        model_uri = anomaly_engine.train(
             df=mixed_type_df,
             model_name=f"{catalog}.{schema}.test_autodiscover",
             registry_table=f"{catalog}.{schema}.test_multitype_models",

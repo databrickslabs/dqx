@@ -71,6 +71,31 @@ class SparkFeatureMetadata:
         return cls(**data)
 
 
+def reconstruct_column_infos(feature_metadata: SparkFeatureMetadata) -> list[ColumnTypeInfo]:
+    """
+    Reconstruct ColumnTypeInfo objects from SparkFeatureMetadata.
+
+    Helper function to avoid code duplication when reconstructing column information
+    for feature engineering during scoring.
+
+    Args:
+        feature_metadata: SparkFeatureMetadata with column information
+
+    Returns:
+        List of ColumnTypeInfo objects
+    """
+    return [
+        ColumnTypeInfo(
+            name=info["name"],
+            spark_type=T.StringType(),  # Type not used in scoring
+            category=info["category"],
+            cardinality=info.get("cardinality"),
+            null_count=info.get("null_count"),
+        )
+        for info in feature_metadata.column_infos
+    ]
+
+
 class ColumnTypeClassifier:
     """
     Analyzes DataFrame schema and categorizes columns for feature engineering.

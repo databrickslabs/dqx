@@ -2,11 +2,12 @@
 Workflow to train anomaly detection models on Databricks.
 """
 
-from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 from databricks.labs.dqx.io import read_input_data
+from databricks.sdk import WorkspaceClient
 
 
 class AnomalyTrainerWorkflow(Workflow):
@@ -32,7 +33,10 @@ class AnomalyTrainerWorkflow(Workflow):
             raise InvalidConfigError("model_name is required in anomaly_config.")
 
         df = read_input_data(ctx.spark, run_config.input_config)
-        train(
+
+        ws = WorkspaceClient()
+        anomaly_engine = AnomalyEngine(ws, ctx.spark)
+        anomaly_engine.train(
             df=df,
             columns=anomaly_config.columns,
             segment_by=anomaly_config.segment_by,

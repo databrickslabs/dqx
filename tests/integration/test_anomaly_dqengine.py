@@ -17,6 +17,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_utils import create_anomaly_check_rule
 
 
 @pytest.fixture
@@ -39,15 +40,11 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=columns,
+            score_threshold=0.6,
         )
     ]
 
@@ -82,15 +79,11 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=columns,
+            score_threshold=0.6,
         )
     ]
 
@@ -135,19 +128,15 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=columns,
+            score_threshold=0.6,
         )
     ]
 
-    valid_df, quarantine_df = dq_engine.apply_checks_and_split(test_df, checks)
+    _valid_df, quarantine_df = dq_engine.apply_checks_and_split(test_df, checks)
 
     # Quarantine should have the anomalous row
     assert quarantine_df.count() == 1
@@ -254,7 +243,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
         )
     ]
 
-    valid_df, quarantine_df = dq_engine.apply_checks_and_split(test_df, checks)
+    _valid_df, quarantine_df = dq_engine.apply_checks_and_split(test_df, checks)
 
     # Anomalous rows should be in quarantine
     assert quarantine_df.count() >= 1
@@ -314,15 +303,11 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=columns,
+            score_threshold=0.6,
         )
     ]
 

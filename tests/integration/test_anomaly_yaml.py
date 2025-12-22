@@ -6,7 +6,6 @@ import pytest
 import yaml
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import train
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 
@@ -17,7 +16,7 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test applying anomaly checks defined in YAML."""
     # Train model first
     train_df = spark.createDataFrame(
@@ -29,7 +28,7 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
     model_name = f"test_yaml_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -67,7 +66,7 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
-def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML with multiple anomaly and standard checks."""
     train_df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
@@ -78,7 +77,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
     model_name = f"test_yaml_multi_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -131,7 +130,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
     assert len(row2_errors) > 0
 
 
-def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with custom score_threshold."""
     train_df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0) for i in range(50)],
@@ -142,7 +141,7 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
     model_name = f"test_yaml_threshold_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -179,7 +178,7 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
     assert all(count == 0 for count in error_counts) or sum(error_counts) <= 1
 
 
-def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with include_contributions flag."""
     train_df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(30)],
@@ -190,7 +189,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
     model_name = f"test_yaml_contrib_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity", "discount"],
         model_name=model_name,
@@ -227,7 +226,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
     assert len(rows[0]["_errors"]) > 0
 
 
-def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with drift_threshold."""
     train_df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
@@ -238,7 +237,7 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
     model_name = f"test_yaml_drift_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -276,7 +275,7 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
     assert len(row_errors) == 0
 
 
-def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_random: str):
+def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML with criticality='warn'."""
     train_df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
@@ -287,7 +286,7 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_
     model_name = f"test_yaml_warn_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,

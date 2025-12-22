@@ -16,7 +16,6 @@ from uuid import uuid4
 
 import pytest
 
-from databricks.labs.dqx.anomaly.trainer import train
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,
     get_standard_3d_training_data,
@@ -35,7 +34,7 @@ def spark_session():
     Directly creates a DatabricksSession from environment variables without
     depending on the function-scoped ws fixture.
     """
-    from databricks.connect import DatabricksSession
+    from databricks.connect import DatabricksSession  # pylint: disable=import-outside-toplevel
 
     cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
     serverless_cluster_id = os.environ.get("DATABRICKS_SERVERLESS_COMPUTE_ID")
@@ -50,7 +49,7 @@ def spark_session():
 
 
 @pytest.fixture(scope="session")
-def shared_2d_model(spark_session):
+def shared_2d_model(spark_session, anomaly_engine):
     """
     Shared 2D anomaly model trained once per session.
 
@@ -73,7 +72,7 @@ def shared_2d_model(spark_session):
 
     train_df = spark_session.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -89,7 +88,7 @@ def shared_2d_model(spark_session):
 
 
 @pytest.fixture(scope="session")
-def shared_3d_model(spark_session):
+def shared_3d_model(spark_session, anomaly_engine):
     """
     Shared 3D anomaly model with contributions support.
 
@@ -117,7 +116,7 @@ def shared_3d_model(spark_session):
         get_standard_3d_training_data(), "amount double, quantity double, discount double"
     )
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity", "discount"],
         model_name=model_name,
@@ -133,7 +132,7 @@ def shared_3d_model(spark_session):
 
 
 @pytest.fixture(scope="session")
-def shared_4d_model(spark_session):
+def shared_4d_model(spark_session, anomaly_engine):
     """
     Shared 4D anomaly model for multi-feature tests.
 
@@ -158,7 +157,7 @@ def shared_4d_model(spark_session):
         get_standard_4d_training_data(), "amount double, quantity double, discount double, weight double"
     )
 
-    train(
+    anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity", "discount", "weight"],
         model_name=model_name,
@@ -174,7 +173,7 @@ def shared_4d_model(spark_session):
 
 
 @pytest.fixture(scope="session")
-def shared_segmented_model(spark_session):
+def shared_segmented_model(spark_session, anomaly_engine):
     """
     Shared segmented anomaly model for segment-based tests.
 
@@ -199,7 +198,7 @@ def shared_segmented_model(spark_session):
 
     # Generate multi-region data
     data = []
-    for region in ["US", "EU", "APAC"]:
+    for region in ("US", "EU", "APAC"):
         base = 100 if region == "US" else (200 if region == "EU" else 150)
         for i in range(200):
             data.append((region, base + i * 0.5, base * 0.8 + i * 0.3))
@@ -212,7 +211,7 @@ def shared_segmented_model(spark_session):
     registry_table = f"main.default.shared_segment_reg_{suffix}"
 
     # Train with segments
-    train(
+    anomaly_engine.train(
         df=spark_session.table(table_name),
         columns=["amount", "discount"],
         segment_by=["region"],

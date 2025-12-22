@@ -15,7 +15,6 @@ import mlflow.sklearn
 import numpy as np
 import pandas as pd
 from pyspark.sql import Column, DataFrame
-from pyspark.sql import types as T
 from pyspark.sql.functions import pandas_udf, PandasUDFType, col
 import pyspark.sql.functions as F
 from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField, MapType, StringType
@@ -34,7 +33,12 @@ except ImportError:
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord
 from databricks.labs.dqx.anomaly.trainer import _derive_registry_table, _ensure_full_model_name
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
-from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo, SparkFeatureMetadata, apply_feature_engineering
+from databricks.labs.dqx.anomaly.transformers import (
+    ColumnTypeInfo,
+    SparkFeatureMetadata,
+    apply_feature_engineering,
+    reconstruct_column_infos,
+)
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition
@@ -249,18 +253,7 @@ def _score_segmented(
 def _prepare_feature_metadata(feature_metadata_json: str) -> tuple[list[ColumnTypeInfo], SparkFeatureMetadata]:
     """Load and prepare feature metadata from JSON."""
     feature_metadata = SparkFeatureMetadata.from_json(feature_metadata_json)
-
-    column_infos = [
-        ColumnTypeInfo(
-            name=info["name"],
-            spark_type=T.StringType(),  # Type not used in scoring
-            category=info["category"],
-            cardinality=info.get("cardinality"),
-            null_count=info.get("null_count"),
-        )
-        for info in feature_metadata.column_infos
-    ]
-
+    column_infos = reconstruct_column_infos(feature_metadata)
     return column_infos, feature_metadata
 
 
@@ -456,7 +449,7 @@ def _discover_model_and_config(
         Tuple of (columns, segment_by, model_name, registry)
     """
     registry_client = AnomalyModelRegistry(df.sparkSession)
-    registry = registry_table or _derive_registry_table(df)
+    registry = registry_table or _derive_registry_table(df.sparkSession, df)
 
     columns = columns_param
     segment_by = segment_by_param

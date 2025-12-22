@@ -3,10 +3,10 @@
 import warnings
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import train, AnomalyParams
+from databricks.labs.dqx.anomaly import AnomalyParams
 
 
-def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str):
+def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that sampling caps at max_rows for large datasets."""
     # Create large dataset (200K rows, which exceeds default max_rows of 1M but is manageable for tests)
     large_df = spark.range(200_000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
@@ -16,7 +16,7 @@ def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str):
     registry_table = f"main.default.{unique_id}_registry"
 
     # Train with defaults (should cap at max_rows if needed)
-    model_uri = train(
+    model_uri = anomaly_engine.train(
         df=large_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -36,7 +36,7 @@ def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str):
     assert record["training_rows"] <= 200_000
 
 
-def test_custom_sampling_parameters(spark: SparkSession, make_random: str):
+def test_custom_sampling_parameters(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that custom sample_fraction and max_rows are respected."""
     df = spark.range(1000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
 
@@ -50,7 +50,7 @@ def test_custom_sampling_parameters(spark: SparkSession, make_random: str):
         max_rows=300,
     )
 
-    train(
+    anomaly_engine.train(
         df=df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -68,7 +68,7 @@ def test_custom_sampling_parameters(spark: SparkSession, make_random: str):
     assert record["training_rows"] <= 300
 
 
-def test_sampling_warning_issued(spark: SparkSession, make_random: str):
+def test_sampling_warning_issued(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that warning is issued when data is truncated."""
     # Create dataset that will require sampling
     df = spark.range(10_000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
@@ -87,7 +87,7 @@ def test_sampling_warning_issued(spark: SparkSession, make_random: str):
     with warnings.catch_warnings(record=True) as _warning_context:
         warnings.simplefilter("always")
 
-        train(
+        anomaly_engine.train(
             df=df,
             columns=["amount", "quantity"],
             model_name=model_name,
@@ -100,7 +100,7 @@ def test_sampling_warning_issued(spark: SparkSession, make_random: str):
         # Commenting out assertion as implementation may vary
 
 
-def test_train_validation_split(spark: SparkSession, make_random: str):
+def test_train_validation_split(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that train/validation split works correctly."""
     df = spark.range(1000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
 
@@ -115,7 +115,7 @@ def test_train_validation_split(spark: SparkSession, make_random: str):
         train_ratio=0.8,  # 80/20 split
     )
 
-    train(
+    anomaly_engine.train(
         df=df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -136,7 +136,7 @@ def test_train_validation_split(spark: SparkSession, make_random: str):
     # (precision, recall, f1_score, etc.)
 
 
-def test_custom_train_ratio(spark: SparkSession, make_random: str):
+def test_custom_train_ratio(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that custom train_ratio is respected."""
     df = spark.range(1000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
 
@@ -151,7 +151,7 @@ def test_custom_train_ratio(spark: SparkSession, make_random: str):
         train_ratio=0.9,
     )
 
-    model_uri = train(
+    model_uri = anomaly_engine.train(
         df=df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -163,7 +163,7 @@ def test_custom_train_ratio(spark: SparkSession, make_random: str):
     assert model_uri is not None
 
 
-def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str):
+def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that sample_fraction=1.0 uses all data (up to max_rows)."""
     df = spark.range(500).selectExpr("cast(id as double) as amount", "2.0 as quantity")
 
@@ -176,7 +176,7 @@ def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str):
         max_rows=1000,  # Higher than dataset size
     )
 
-    train(
+    anomaly_engine.train(
         df=df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -195,7 +195,7 @@ def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str):
     assert record["training_rows"] >= 390  # At least 78% used for training
 
 
-def test_minimal_data_with_sampling(spark: SparkSession, make_random: str):
+def test_minimal_data_with_sampling(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that small datasets work with sampling."""
     # Very small dataset
     df = spark.range(20).selectExpr("cast(id as double) as amount", "2.0 as quantity")
@@ -209,7 +209,7 @@ def test_minimal_data_with_sampling(spark: SparkSession, make_random: str):
         max_rows=100,
     )
 
-    model_uri = train(
+    model_uri = anomaly_engine.train(
         df=df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -221,7 +221,7 @@ def test_minimal_data_with_sampling(spark: SparkSession, make_random: str):
     assert model_uri is not None
 
 
-def test_performance_with_many_columns(spark: SparkSession, make_random: str):
+def test_performance_with_many_columns(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that training completes in reasonable time with many columns."""
     # Create dataset with 10 columns
     df = spark.range(1000).selectExpr(
@@ -247,7 +247,7 @@ def test_performance_with_many_columns(spark: SparkSession, make_random: str):
     )
 
     # This should complete without timing out
-    model_uri = train(
+    model_uri = anomaly_engine.train(
         df=df,
         columns=[f"col{i}" for i in range(1, 11)],
         model_name=model_name,
