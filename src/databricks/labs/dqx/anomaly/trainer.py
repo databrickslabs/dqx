@@ -29,6 +29,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import PandasUDFType, pandas_udf, col
 from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
 import pyspark.sql.functions as F
+import sklearn
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
@@ -127,31 +128,25 @@ class AnomalyEngine(DQEngineBase):
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
 
+        Important Notes:
+            - Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.
+            - Choose behavioral columns, not identifiers. Good: amount, quantity. Bad: user_id.
+            - See documentation for detailed column selection best practices.
+
         Returns:
             Base model name (e.g., 'catalog.schema.model_name'). For segmented models,
             individual segments are stored with suffixes like '__seg_region=APAC', but
             the base name is returned for simplified API usage.
 
         Examples:
-            # Simple global model with auto-discovery
-            model_name = anomaly_engine.train(df, model_name="my_anomaly_model")
+            # Auto-discovery (simplest)
+            anomaly_engine.train(df, model_name="my_model")
 
-            # Auto-discovery but exclude ID and ground truth columns
-            model_name = anomaly_engine.train(
-                df, model_name="my_model",
-                exclude_columns=["id", "label", "ground_truth"]
-            )
+            # Exclude ID fields (recommended)
+            anomaly_engine.train(df, model_name="my_model", exclude_columns=["user_id", "order_id"])
 
-            # Segmented by region
-            model_name = anomaly_engine.train(
-                df, model_name="regional_model", segment_by=["region"]
-            )
-
-            # With explicit columns
-            model_name = anomaly_engine.train(
-                df, model_name="sales_monitor",
-                columns=["revenue", "transactions", "avg_order_value"]
-            )
+            # Explicit columns
+            anomaly_engine.train(df, model_name="sales_monitor", columns=["revenue", "transactions"])
         """
         _validate_spark_version(self.spark)
 
@@ -291,7 +286,7 @@ def _prepare_training_config(
     derived_registry_table = registry_table or _derive_registry_table(spark, df)
 
     # Ensure model_name has full three-level catalog.schema.model format
-    derived_model_name = _ensure_full_model_name(model_name, derived_registry_table)
+    derived_model_name = ensure_full_model_name(model_name, derived_registry_table)
 
     # Check if model already exists in Unity Catalog and warn
     if _model_exists_in_uc(derived_model_name):
@@ -439,6 +434,7 @@ def _train_global(
         segment_values=None,
         is_global_model=True,
         feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
+        sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
     )
     registry.save_model(record, registry_table)
 
@@ -447,6 +443,133 @@ def _train_global(
     print(f"   Registry: {registry_table}")
 
     return model_name
+
+
+def _train_one_segment_with_validation(
+    spark: SparkSession,
+    df: DataFrame,
+    columns: list[str],
+    segment_vals: dict[str, Any],
+    segment_by: list[str],
+    base_model_name: str,
+    registry_table: str,
+    params: AnomalyParams,
+) -> tuple[str | None, bool]:
+    """
+    Train a single segment with validation.
+
+    Returns:
+        (model_uri, skipped) where:
+        - model_uri: URI if successful, None if failed or skipped
+        - skipped: True if skipped due to insufficient data, False otherwise
+    """
+    segment_name = "_".join(f"{k}={v}" for k, v in segment_vals.items())
+
+    # Filter to this segment
+    segment_df = df
+    for col_name, val in segment_vals.items():
+        segment_df = segment_df.filter(F.col(col_name) == val)
+
+    # Validate segment size
+    segment_size = segment_df.count()
+    if segment_size < 1000:
+        warnings.warn(
+            f"Segment {segment_name} has only {segment_size} rows, " "model may be unreliable.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    # Derive segment-specific model name
+    segment_model_name = f"{base_model_name}__seg_{segment_name}"
+
+    # Train model for this segment
+    model_uri = _train_single_segment(
+        spark, segment_df, columns, segment_model_name, segment_vals, segment_by, registry_table, params
+    )
+
+    return model_uri, model_uri is None
+
+
+def _get_and_validate_segments(
+    df: DataFrame,
+    segment_by: list[str],
+) -> list[dict[str, Any]]:
+    """Get distinct segments and validate count.
+
+    Args:
+        df: Input DataFrame
+        segment_by: Columns to segment by
+
+    Returns:
+        List of segment value dictionaries
+
+    Raises:
+        Warning if segment count is too high
+    """
+    segments_df = df.select(*segment_by).distinct()
+    segments = [row.asDict() for row in segments_df.collect()]
+
+    if len(segments) > 100:
+        warnings.warn(
+            f"Training {len(segments)} segments may be slow. Consider coarser segmentation or explicit segment_by.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return segments
+
+
+def _report_training_summary(
+    model_uris: list[str],
+    skipped_segments: list[str],
+    failed_segments: list[tuple[str, str]],
+    total_segments: int,
+    base_model_name: str,
+    registry_table: str,
+    params: AnomalyParams,
+) -> None:
+    """Report training summary including skipped and failed segments.
+
+    Args:
+        model_uris: List of successfully trained model URIs
+        skipped_segments: List of segment names that were skipped
+        failed_segments: List of (segment_name, error_message) tuples
+        total_segments: Total number of segments attempted
+        base_model_name: Base model name
+        registry_table: Registry table name
+        params: Training parameters
+
+    Raises:
+        InvalidParameterError if no models were successfully trained
+    """
+    # Log skipped segments
+    if skipped_segments:
+        print(
+            f"Skipped {len(skipped_segments)}/{total_segments} segments due to insufficient data after sampling: "
+            f"{', '.join(skipped_segments[:5])}"
+            + (f" and {len(skipped_segments) - 5} more" if len(skipped_segments) > 5 else "")
+        )
+
+    # Log failed segments
+    if failed_segments:
+        print(f"\nWARNING: {len(failed_segments)}/{total_segments} segments failed during training:")
+        for seg_name, error in failed_segments[:3]:
+            print(f"  - {seg_name}: {error}")
+        if len(failed_segments) > 3:
+            print(f"  ... and {len(failed_segments) - 3} more")
+
+    # Validate that at least one segment was successfully trained
+    if not model_uris:
+        raise InvalidParameterError(
+            f"All {total_segments} segments failed ({len(skipped_segments)} insufficient data, "
+            f"{len(failed_segments)} errors). Cannot train any models. "
+            f"Consider increasing sample_fraction (current: {params.sample_fraction}) or checking segment definitions."
+        )
+
+    # Print success summary
+    trained_count = len(model_uris)
+    print(f"   Trained {trained_count}/{total_segments} segment models for: {base_model_name}")
+    print(f"   Registry: {registry_table}")
 
 
 def _train_segmented(
@@ -461,74 +584,39 @@ def _train_segmented(
     """Train separate models for each segment."""
     params = params or AnomalyParams()
 
-    # Get distinct segments
-    segments_df = df.select(*segment_by).distinct()
-    segments = [row.asDict() for row in segments_df.collect()]
-
-    # Validate segment count
-    if len(segments) > 100:
-        warnings.warn(
-            f"Training {len(segments)} segments may be slow. " "Consider coarser segmentation or explicit segment_by.",
-            UserWarning,
-            stacklevel=2,
-        )
+    # Get and validate segments
+    segments = _get_and_validate_segments(df, segment_by)
 
     model_uris = []
+    skipped_segments = []
+    failed_segments = []
 
     # Train each segment
-    skipped_segments = []
-
     for i, segment_vals in enumerate(segments):
         segment_name = "_".join(f"{k}={v}" for k, v in segment_vals.items())
         print(f"Training segment {i+1}/{len(segments)}: {segment_name}")
 
-        # Filter to this segment
-        segment_df = df
-        for col_name, val in segment_vals.items():
-            segment_df = segment_df.filter(F.col(col_name) == val)
-
-        # Validate segment size
-        segment_size = segment_df.count()
-        if segment_size < 1000:
-            warnings.warn(
-                f"Segment {segment_name} has only {segment_size} rows, " "model may be unreliable.",
-                UserWarning,
-                stacklevel=2,
+        try:
+            model_uri, was_skipped = _train_one_segment_with_validation(
+                spark, df, columns, segment_vals, segment_by, base_model_name, registry_table, params
             )
 
-        # Derive segment-specific model name
-        segment_model_name = f"{base_model_name}__seg_{segment_name}"
+            if model_uri is not None:
+                model_uris.append(model_uri)
+            elif was_skipped:
+                skipped_segments.append(segment_name)
 
-        # Train model for this segment
-        model_uri = _train_single_segment(
-            spark, segment_df, columns, segment_model_name, segment_vals, segment_by, registry_table, params
-        )
+        except Exception as e:
+            # Log error and continue with next segment
+            error_msg = f"Segment {segment_name} training failed: {type(e).__name__}: {e}"
+            warnings.warn(error_msg, UserWarning, stacklevel=2)
+            failed_segments.append((segment_name, str(e)))
 
-        if model_uri is not None:
-            model_uris.append(model_uri)
-        else:
-            skipped_segments.append(segment_name)
+    # Report summary and validate success
+    _report_training_summary(
+        model_uris, skipped_segments, failed_segments, len(segments), base_model_name, registry_table, params
+    )
 
-    # Log summary of skipped segments
-    if skipped_segments:
-        print(
-            f"Skipped {len(skipped_segments)}/{len(segments)} segments due to insufficient data after sampling: "
-            f"{', '.join(skipped_segments[:5])}"
-            + (f" and {len(skipped_segments) - 5} more" if len(skipped_segments) > 5 else "")
-        )
-
-    # Validate that at least one segment was successfully trained
-    if not model_uris:
-        raise InvalidParameterError(
-            f"All {len(segments)} segments produced 0 rows after sampling. Cannot train any models. "
-            f"Consider increasing sample_fraction (current: {params.sample_fraction}) or checking segment definitions."
-        )
-
-    trained_count = len(model_uris)
-    print(f"   Trained {trained_count}/{len(segments)} segment models for: {base_model_name}")
-    print(f"   Registry: {registry_table}")
-
-    # Return base model name (user doesn't need to deal with individual segment URIs)
     return base_model_name
 
 
@@ -596,6 +684,7 @@ def _train_single_segment(
         segment_values=_stringify_dict(segment_values),
         is_global_model=False,
         feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
+        sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
     )
     registry.save_model(record, registry_table)
 
@@ -696,13 +785,25 @@ def _get_input_table(df: DataFrame) -> str | None:
     return None
 
 
-def _ensure_full_model_name(model_name: str, registry_table: str) -> str:
+def ensure_full_model_name(model_name: str, registry_table: str) -> str:
     """
     Ensure model name has the full three-level catalog.schema.model format required by Unity Catalog.
     Uses catalog and schema from registry_table.
 
+    This is a public utility function that validates and normalizes model names for Unity Catalog.
+
     If model_name already has three levels (two dots), returns it as-is.
     Otherwise, prepends catalog and/or schema from registry_table.
+
+    Args:
+        model_name: Model name (may be partial or full)
+        registry_table: Full registry table name (catalog.schema.table)
+
+    Returns:
+        Full model name with catalog.schema.model format
+
+    Raises:
+        InvalidParameterError: If registry_table format is invalid
     """
     if model_name.count('.') >= 2:
         # Already has catalog.schema.model format

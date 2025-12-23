@@ -32,10 +32,12 @@ DQX can automatically identify which columns and segments benefit from anomaly d
 
 **Python** (zero configuration):
 ```python
-from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.anomaly import AnomalyEngine
+
+anomaly_engine = AnomalyEngine(spark)
 
 # One-liner: auto-discovers everything
-train(df=spark.table("catalog.schema.orders"))
+anomaly_engine.train(df=spark.table("catalog.schema.orders"), model_name="orders_monitor")
 
 # Prints:
 # "Auto-selected 3 columns: [amount, quantity, discount]"
@@ -61,7 +63,7 @@ DQX offers two auto-discovery modes:
 **1. Heuristic Mode** (default - analyzes DataFrame on-the-fly):
 ```python
 # Computes statistics during training
-train(df=spark.table("orders"))
+anomaly_engine.train(df=spark.table("orders"), model_name="orders_monitor")
 ```
 - **When to use**: Small-to-medium datasets, first-time exploration
 - **Performance**: Analyzes schema and computes statistics during training
@@ -74,8 +76,9 @@ from databricks.labs.dqx.profiler import profile
 profile(df, output_table="catalog.schema.profiler_output")
 
 # Then, anomaly training reuses cached statistics
-train(
+anomaly_engine.train(
     df=df,
+    model_name="orders_monitor",
     profiler_table="catalog.schema.profiler_output"  # Faster!
 )
 ```
@@ -96,10 +99,101 @@ train(
   4. Datetime columns (null_rate < 50%)
   5. High-cardinality categorical (21-100 values, null_rate < 50%)
 - **Segments**: Categorical columns with 2-50 distinct values (null_rate < 10%)
-- **Exclusions**: ID patterns (columns ending in "id" or "key"), arrays, maps, structs
+- **Exclusions**: ID patterns (columns ending in "id", "key", "uuid", or "guid"), arrays, maps, structs
 - **Naming**: Automatic based on table and selected columns
 
-**Manual overrides available** for advanced users (see examples below).
+**Manual overrides available** for advanced users (see Column Selection Best Practices below).
+
+## Column Selection Best Practices
+
+### Avoiding ID Fields
+
+**Why ID fields are problematic:**
+
+ID columns (`user_id`, `transaction_id`, `session_uuid`) have high cardinality and no meaningful patterns, leading to:
+- **Model overfitting**: Memorizes specific IDs instead of learning behavioral patterns
+- **Poor generalization**: New IDs at inference time are always flagged as anomalies
+- **Degraded model quality**: Random IDs introduce noise, reducing detection accuracy
+
+**Auto-discovery automatically excludes** columns matching these patterns (case-insensitive):
+- Ending in `id`, `key`, `uuid`, `guid`
+- Examples: `user_id`, `customer_id`, `session_key`, `request_uuid`, `document_guid`
+
+### Using exclude_columns
+
+When explicitly selecting columns, use `exclude_columns` to filter out unwanted columns:
+
+```python
+from databricks.labs.dqx.anomaly import train
+
+# Recommended: Exclude IDs and other non-behavioral columns
+train(
+    df=spark.table("catalog.schema.orders"),
+    columns=["amount", "quantity", "discount"],  # Behavioral columns only
+    exclude_columns=["user_id", "order_id", "session_uuid"]  # Filter out IDs
+)
+
+# Or let auto-discovery handle it (simplest)
+train(
+    df=spark.table("orders"),
+    exclude_columns=["user_id", "ground_truth_label"]  # Exclude specific columns from discovery
+)
+```
+
+**Benefits of exclude_columns**:
+- Works with both auto-discovery and explicit column selection
+- Prevents accidental overlap (raises error if column in both lists)
+- Clearer intent than manually listing all desired columns
+
+### Validation Warnings
+
+If you explicitly provide ID-like columns, DQX issues warnings to help catch potential issues:
+
+```python
+anomaly_engine.train(df, model_name="test", columns=["user_id", "amount"])  # ⚠️ Warning issued
+
+# UserWarning: Column 'user_id' appears to be an ID field (matches pattern 
+# '(?i)(id|key|uuid|guid)$' and has very high cardinality (>80% unique values 
+# or >1000 distinct values)). ID fields can lead to poor anomaly detection models 
+# due to overfitting. Consider using exclude_columns=['user_id'] or removing 
+# from columns list.
+```
+
+**Detection criteria** - DQX warns about columns that:
+1. Match ID naming patterns: `(?i)(id|key|uuid|guid)$`
+2. Have high cardinality: >1000 distinct values OR >80% unique values
+
+**Good vs. Bad column choices:**
+- ✅ **Good**: `transaction_amount`, `click_count`, `session_duration`, `order_quantity`, `discount_rate`
+- ❌ **Bad**: `user_id`, `session_uuid`, `customer_key`, `transaction_id`, `record_guid`
+
+### Example: Full Workflow
+
+```python
+from databricks.labs.dqx.anomaly import AnomalyEngine
+
+anomaly_engine = AnomalyEngine(spark)
+
+# Train with proper column selection
+model_name = anomaly_engine.train(
+    df=spark.table("catalog.schema.transactions"),
+    model_name="transaction_monitor",
+    columns=["amount", "quantity", "discount", "shipping_cost"],  # Behavioral
+    exclude_columns=["transaction_id", "user_id", "session_uuid"],  # IDs
+    segment_by=["region"],  # Optional segmentation
+)
+
+# Use in checks
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        merge_columns=["transaction_id"],  # Use ID for merging, not for modeling
+        columns=["amount", "quantity", "discount", "shipping_cost"],
+        score_threshold=0.5,
+    )
+]
+```
 
 ## Segment-Based Monitoring
 
@@ -107,23 +201,31 @@ Detect anomalies specific to regions, categories, or other groupings:
 
 **Automatic** (discovers segments from data):
 ```python
-from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.anomaly import AnomalyEngine
+
+anomaly_engine = AnomalyEngine(spark)
 
 # Auto-detects region, product_category as segments
-train(df=spark.table("orders"))
+anomaly_engine.train(df=spark.table("orders"), model_name="orders_monitor")
 ```
 
 **Explicit** (specify segments):
 ```python
-train(
+anomaly_engine.train(
     df=spark.table("orders"),
+    model_name="regional_monitor",
     columns=["amount", "quantity"],
     segment_by=["region"]  # Train separate model per region
 )
 
 # Scoring automatically uses correct regional model
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
 checks = [
-    has_no_anomalies(columns=["amount", "quantity"])  # Infers segment_by from model
+    has_no_anomalies(
+        merge_columns=["order_id"],
+        columns=["amount", "quantity"]
+    )  # Infers segment_by from model
 ]
 ```
 
@@ -153,17 +255,22 @@ When NOT to use
 ## Quick start (Python)
 
 ```python
-from databricks.labs.dqx.anomaly import train, has_no_anomalies
+from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 
-# Train (defaults: auto names, auto registry table, sampling caps)
-train(
+anomaly_engine = AnomalyEngine(spark)
+
+# Train with explicit columns (exclude IDs)
+anomaly_engine.train(
     df=spark.table("catalog.schema.orders"),
+    model_name="orders_monitor",
     columns=["amount", "quantity", "shipping_cost"],
+    exclude_columns=["order_id", "user_id"],  # Exclude ID fields
 )
 
 # Use in checks
 checks = [
     has_no_anomalies(
+        merge_columns=["order_id"],
         columns=["amount", "quantity", "shipping_cost"],
         score_threshold=0.5,  # higher = more anomalous
     )
@@ -235,15 +342,15 @@ DQX anomaly detection now supports **multiple data types** with automatic featur
 **Low cardinality** (≤20 distinct values): OneHot encoding
 ```python
 # Example: product_type with ["Electronics", "Clothing", "Food"]
-train(df=df, columns=["amount", "product_type"])
+anomaly_engine.train(df=df, model_name="products", columns=["amount", "product_type"])
 # Creates: amount, product_type_Electronics, product_type_Clothing, product_type_Food
 ```
 
 **High cardinality** (>20 distinct values): Frequency encoding
 ```python
-# Example: user_id with 500 distinct values
-train(df=df, columns=["amount", "user_id"])
-# Creates: amount, user_id_freq (frequency ratio: count/total)
+# Example: category with 500 distinct values
+anomaly_engine.train(df=df, model_name="categories", columns=["amount", "category"])
+# Creates: amount, category_freq (frequency ratio: count/total)
 ```
 
 **Unknown categories** during scoring: Handled gracefully
@@ -256,7 +363,7 @@ train(df=df, columns=["amount", "user_id"])
 **Cyclical encoding** preserves temporal relationships:
 ```python
 # Example: order_timestamp
-train(df=df, columns=["amount", "order_timestamp"])
+anomaly_engine.train(df=df, model_name="orders", columns=["amount", "order_timestamp"])
 # Creates 5 features:
 #   - order_timestamp_hour_sin, order_timestamp_hour_cos (daily cycle)
 #   - order_timestamp_dow_sin, order_timestamp_dow_cos (weekly cycle)
@@ -275,7 +382,7 @@ train(df=df, columns=["amount", "order_timestamp"])
 **Simple 0/1 mapping**:
 ```python
 # Example: is_premium, is_discounted
-train(df=df, columns=["amount", "is_premium", "is_discounted"])
+anomaly_engine.train(df=df, model_name="flags", columns=["amount", "is_premium", "is_discounted"])
 # Creates: amount, is_premium (0/1), is_discounted (0/1)
 ```
 
@@ -309,11 +416,14 @@ UserWarning: Column 'optional_field' has 73% nulls. Null indicator feature added
 ### Mixed Type Example
 
 ```python
-from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.anomaly import AnomalyEngine
+
+anomaly_engine = AnomalyEngine(spark)
 
 # Train with all supported types
-train(
+anomaly_engine.train(
     df=spark.table("catalog.schema.transactions"),
+    model_name="transactions_monitor",
     columns=[
         "amount",           # numeric (1 feature)
         "quantity",         # numeric (1 feature)
@@ -418,6 +528,7 @@ recommended = spark.sql("""
 # Use in checks
 checks = [
     has_no_anomalies(
+        merge_columns=["order_id"],
         columns=["amount", "quantity", "shipping_cost"],
         score_threshold=recommended,
     )
@@ -435,18 +546,34 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 
 checks = [
     has_no_anomalies(
+        merge_columns=["order_id"],
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
-        include_contributions=True,  # adds 'anomaly_contributions' map column
+        include_contributions=True,  # adds contributions to _info.anomaly.contributions
     )
 ]
 ```
 
 **Output example**:
 ```
-| amount | quantity | discount | anomaly_score | anomaly_contributions                        |
-|--------|----------|----------|---------------|----------------------------------------------|
-| 9999   | 1        | 0.95     | 0.87          | {discount: 0.60, amount: 0.25, quantity: 0.15} |
+| amount | quantity | discount | _info                                                |
+|--------|----------|----------|------------------------------------------------------|
+| 9999   | 1        | 0.95     | {anomaly: {score: 0.87, is_anomaly: true, ...}}     |
+```
+
+**Access anomaly metadata**:
+```python
+# Access score and contributions via _info column
+df_scored.select(
+    "amount", 
+    "quantity",
+    "_info.anomaly.score",
+    "_info.anomaly.is_anomaly",
+    "_info.anomaly.contributions"
+)
+
+# Filter anomalies
+df_scored.filter(F.col("_info.anomaly.is_anomaly"))
 ```
 
 Top contributors are shown as percentages summing to 1.0. Use this to:
@@ -463,10 +590,10 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 
 checks = [
     has_no_anomalies(
+        merge_columns=["order_id"],  # Use PK for fast join instead of all 50 columns
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
         row_filter="is_high_value = true",  # Score only high-value transactions
-        merge_columns=["order_id"],  # Use PK for fast join instead of all 50 columns
     )
 ]
 ```
@@ -486,6 +613,7 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 
 checks = [
     has_no_anomalies(
+        merge_columns=["order_id"],
         columns=["amount", "quantity"],
         drift_threshold=3.0,  # Z-score threshold (default)
     )
@@ -497,10 +625,13 @@ checks = [
 UserWarning: Data drift detected in columns: amount, quantity (drift score: 4.2).
 Model may be stale. Retrain using:
 
-from databricks.labs.dqx.anomaly import train
-train(df=spark.table('catalog.schema.orders'),
-      columns=['amount', 'quantity'],
-      model_name='orders__abc123__anomaly')
+from databricks.labs.dqx.anomaly import AnomalyEngine
+anomaly_engine = AnomalyEngine(spark)
+anomaly_engine.train(
+    df=spark.table('catalog.schema.orders'),
+    model_name='orders_monitor',
+    columns=['amount', 'quantity']
+)
 ```
 
 **Workflow for handling drift**:
@@ -521,8 +652,10 @@ Set `drift_threshold=None` to disable drift detection.
 For time-series data with seasonal patterns, extract temporal features before training:
 
 ```python
-from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
+
+anomaly_engine = AnomalyEngine(spark)
 
 # Extract time-based features
 df_with_temporal = extract_temporal_features(
@@ -532,8 +665,9 @@ df_with_temporal = extract_temporal_features(
 )
 
 # Train on original + temporal features
-train(
+anomaly_engine.train(
     df=df_with_temporal,
+    model_name="temporal_monitor",
     columns=[
         "amount", "quantity", "shipping_cost",
         "temporal_hour", "temporal_day_of_week", "temporal_month"
@@ -569,6 +703,7 @@ dq_engine = DQEngine(WorkspaceClient())
 
 checks = [
     has_no_anomalies(
+        merge_columns=["order_id"],
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
         include_contributions=True,
@@ -591,9 +726,13 @@ dq_engine.save_results_in_table(
 
 **Quarantine DataFrame includes**:
 - Original columns
-- `anomaly_score`
-- `anomaly_contributions` (if `include_contributions=True`)
-- DQX metadata columns (`dqx_check_name`, `dqx_error_message`, etc.)
+- `_info` column with anomaly metadata:
+  - `_info.anomaly.score`: Anomaly score (0-1)
+  - `_info.anomaly.is_anomaly`: Boolean flag
+  - `_info.anomaly.threshold`: Threshold used
+  - `_info.anomaly.contributions`: SHAP values (if `include_contributions=True`)
+  - `_info.anomaly.model`: Model name used
+- DQX metadata columns (`_errors`, `_warnings`, etc.)
 
 **Using with Delta Live Tables**:
 ```python
@@ -605,6 +744,7 @@ from databricks.sdk import WorkspaceClient
 dq_engine = DQEngine(WorkspaceClient())
 checks = [
     has_no_anomalies(
+        merge_columns=["order_id"],
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
     )
@@ -631,11 +771,14 @@ def quarantine():
 Customize feature engineering behavior via `FeatureEngineeringConfig`:
 
 ```python
-from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.config import AnomalyParams, FeatureEngineeringConfig
 
-train(
+anomaly_engine = AnomalyEngine(spark)
+
+anomaly_engine.train(
     df=df,
+    model_name="custom_config_model",
     columns=["amount", "category", "timestamp"],
     params=AnomalyParams(
         feature_engineering=FeatureEngineeringConfig(

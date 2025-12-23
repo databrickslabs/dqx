@@ -25,7 +25,8 @@ ANOMALY_MODEL_TABLE_SCHEMA = (
     "segment_values map<string,string>, "
     "is_global_model boolean, "
     "column_types map<string,string>, "
-    "feature_metadata string"  # JSON string with feature engineering metadata
+    "feature_metadata string, "  # JSON string with feature engineering metadata
+    "sklearn_version string"  # scikit-learn version used during training
 )
 
 
@@ -33,7 +34,7 @@ ANOMALY_MODEL_TABLE_SCHEMA = (
 class AnomalyModelRecord:  # pylint: disable=too-many-instance-attributes
     """Registry record for a trained anomaly model.
 
-    Note: This dataclass intentionally has many attributes (20) to comprehensively
+    Note: This dataclass intentionally has many attributes (21) to comprehensively
     track ML model metadata including training config, metrics, feature engineering,
     and segmentation info. Each field serves a specific purpose for model lifecycle management.
     """
@@ -58,6 +59,7 @@ class AnomalyModelRecord:  # pylint: disable=too-many-instance-attributes
     is_global_model: bool = True
     column_types: dict[str, str] | None = None  # Maps column name -> type category
     feature_metadata: str | None = None  # JSON string with feature engineering metadata
+    sklearn_version: str | None = None  # scikit-learn version used during training
 
 
 class AnomalyModelRegistry:
@@ -67,14 +69,18 @@ class AnomalyModelRegistry:
         self.spark = spark
 
     @staticmethod
-    def _convert_decimals(obj: Any) -> Any:
-        """Recursively convert Decimal values to float for PyArrow compatibility."""
+    def convert_decimals(obj: Any) -> Any:
+        """Recursively convert Decimal values to float for PyArrow compatibility.
+
+        This is a public utility method that can be used by tests and other code
+        to handle Decimal to float conversions for PyArrow compatibility.
+        """
         if isinstance(obj, Decimal):
             return float(obj)
         if isinstance(obj, dict):
-            return {k: AnomalyModelRegistry._convert_decimals(v) for k, v in obj.items()}
+            return {k: AnomalyModelRegistry.convert_decimals(v) for k, v in obj.items()}
         if isinstance(obj, list):
-            return [AnomalyModelRegistry._convert_decimals(item) for item in obj]
+            return [AnomalyModelRegistry.convert_decimals(item) for item in obj]
         return obj
 
     @staticmethod
@@ -85,7 +91,7 @@ class AnomalyModelRegistry:
 
         # Convert Decimals in nested structures (baseline_stats, metrics, etc.)
         for key, value in record_dict.items():
-            record_dict[key] = AnomalyModelRegistry._convert_decimals(value)
+            record_dict[key] = AnomalyModelRegistry.convert_decimals(value)
 
         return spark.createDataFrame([record_dict], schema=ANOMALY_MODEL_TABLE_SCHEMA)
 
@@ -135,12 +141,23 @@ class AnomalyModelRegistry:
             return []
 
         # Get all active models that start with base_model_name__seg_
-        rows = (
-            self.spark.table(table)
-            .filter((F.col("model_name").startswith(f"{base_model_name}__seg_")) & (F.col("status") == "active"))
-            .orderBy(F.col("training_time").desc())
-            .collect()
+        # Use window function to get only the latest version of each segment
+        from pyspark.sql.window import Window
+        
+        df = self.spark.table(table).filter(
+            (F.col("model_name").startswith(f"{base_model_name}__seg_")) & 
+            (F.col("status") == "active")
         )
+        
+        # Deduplicate by model_name (segment), taking the most recent by training_time
+        window = Window.partitionBy("model_name").orderBy(F.col("training_time").desc())
+        df_deduped = (
+            df.withColumn("row_num", F.row_number().over(window))
+            .filter(F.col("row_num") == 1)
+            .drop("row_num")
+        )
+        
+        rows = df_deduped.orderBy(F.col("training_time").desc()).collect()
 
         return [AnomalyModelRecord(**row.asDict(recursive=True)) for row in rows]  # type: ignore[arg-type]
 
@@ -162,6 +179,8 @@ class AnomalyModelRegistry:
     def _archive_previous(self, table: str, model_name: str) -> None:
         if not self._table_exists(table):
             return
+        # Use LOWER() for case-insensitive matching since Unity Catalog model names are case-insensitive
         self.spark.sql(
-            f"UPDATE {table} SET status = 'archived' " f"WHERE model_name = '{model_name}' AND status = 'active'"
+            f"UPDATE {table} SET status = 'archived' "
+            f"WHERE LOWER(model_name) = LOWER('{model_name}') AND status = 'active'"
         )

@@ -1,10 +1,5 @@
 """
 Integration tests for anomaly detection with DQEngine.
-
-OPTIMIZATION: These tests use session-scoped shared_2d_model fixture to avoid retraining models.
-This reduces runtime from ~70 min to ~10 min (86% savings).
-
-All 7 tests now reuse a single pre-trained 2D model (amount, quantity) instead of training independently.
 """
 
 from unittest.mock import MagicMock
