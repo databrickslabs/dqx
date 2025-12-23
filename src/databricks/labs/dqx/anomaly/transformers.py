@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
+from io import StringIO
 from typing import Any
 
 from pyspark.sql import DataFrame
@@ -20,6 +22,8 @@ from pyspark.sql.functions import col, when, lit, coalesce, hour, dayofweek, mon
 from pyspark.sql.types import DoubleType, TimestampType
 
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
+from databricks.labs.dqx.utils import get_table_primary_keys
 
 
 @dataclass
@@ -293,52 +297,153 @@ class ColumnTypeClassifier:
 
         return "\n".join(breakdown)
 
+    def _capture_dataframe_explain(self, df: DataFrame) -> str:
+        """Capture DataFrame.explain() output as a string."""
+        old_stdout = sys.stdout
+        sys.stdout = buffer = StringIO()
+        df.explain(extended=True)
+        sys.stdout = old_stdout
+        return buffer.getvalue()
+
+    def _get_primary_key_columns(self, df: DataFrame) -> set[str]:
+        """
+        Attempt to detect primary key columns from Unity Catalog table metadata.
+
+        For DataFrames backed by Unity Catalog tables, this retrieves primary key information
+        from table constraints/properties, which is more reliable than name pattern matching.
+
+        Uses the shared utility function from utils.py to avoid cross-module dependencies.
+
+        Args:
+            df: Input DataFrame (may or may not be from a UC table)
+
+        Returns:
+            Set of column names that are primary keys (empty if no PK or not a UC table)
+        """
+        try:
+            # Use the same approach as trainer.py: capture explain() output
+            # This avoids accessing protected JVM members
+            plan_str = self._capture_dataframe_explain(df)
+
+            # Extract table names from the plan using shared utility
+            tables = get_tables_from_spark_plan(plan_str)
+            if tables:
+                # Use the first table found (typically there's only one)
+                table_name = next(iter(tables))
+                return get_table_primary_keys(table_name, df.sparkSession)
+
+        except Exception:
+            # If we can't infer table name or access metadata, that's fine
+            # Just means this DataFrame isn't from a UC table or metadata unavailable
+            pass
+
+        return set()
+
+    def _compute_cardinality_stats(self, df: DataFrame, numeric_columns: list[str]) -> tuple[int, dict[str, int]]:
+        """
+        Compute cardinality statistics for numeric columns in a single aggregation.
+
+        Returns:
+            Tuple of (total_rows, cardinality_dict)
+        """
+        if not numeric_columns:
+            return df.count(), {}
+
+        agg_exprs = [F.count("*").alias("_total_rows")]
+        for col_name in numeric_columns:
+            # Use approx_count_distinct with 5% error (rsd=0.05) for fast cardinality estimation
+            # This is accurate enough for ID detection (>1000 or >80% thresholds)
+            agg_exprs.append(F.approx_count_distinct(col_name, rsd=0.05).alias(f"_distinct_{col_name}"))
+
+        stats_row = df.agg(*agg_exprs).first()
+        if stats_row is None:
+            # Empty DataFrame or aggregation failed
+            return 0, {col: 0 for col in numeric_columns}
+
+        total_rows = stats_row["_total_rows"]
+        cardinality_stats = {col_name: stats_row[f"_distinct_{col_name}"] for col_name in numeric_columns}
+
+        return total_rows, cardinality_stats
+
+    def _check_column_for_id_indicators(
+        self,
+        info: ColumnTypeInfo,
+        pk_columns: set[str],
+        id_pattern: re.Pattern,
+        cardinality_stats: dict[str, int],
+        total_rows: int,
+    ) -> list[str]:
+        """
+        Check a single column for ID field indicators.
+
+        Returns:
+            List of issue descriptions (empty if no issues)
+        """
+        col_name = info.name
+        issues = []
+
+        # Check 1: Primary key from Unity Catalog metadata (most reliable!)
+        if pk_columns and col_name in pk_columns:
+            issues.append("is marked as a primary key in Unity Catalog table metadata")
+
+        # Check 2: Name pattern match (with improved regex)
+        if id_pattern.search(col_name):
+            issues.append("matches ID naming pattern")
+
+        # Check 3: High cardinality (for numeric and categorical columns)
+        if info.category in {'numeric', 'categorical'} and total_rows > 0:
+            distinct_count = self._get_distinct_count(info, cardinality_stats)
+            if distinct_count and (distinct_count > 1000 or distinct_count / total_rows > 0.8):
+                issues.append("has very high cardinality (>80% unique values or >1000 distinct values)")
+
+        return issues
+
+    def _get_distinct_count(self, info: ColumnTypeInfo, cardinality_stats: dict[str, int]) -> int | None:
+        """Get distinct count for a column from cardinality stats or column info."""
+        if info.category == 'categorical' and info.cardinality:
+            return info.cardinality
+        if info.category == 'numeric':
+            return cardinality_stats.get(info.name, 0)
+        return None
+
     def _check_for_id_fields(self, df: DataFrame, column_infos: list[ColumnTypeInfo]) -> list[str]:
         """
         Check for potential ID fields that may degrade model quality.
 
         Warns about:
-        1. Columns matching ID naming patterns (e.g., ending in 'id', 'key')
-        2. High cardinality columns (>80% unique values or >1000 distinct values)
+        1. Columns marked as primary keys in Unity Catalog table metadata (most reliable)
+        2. Columns matching ID naming patterns (e.g., _id, _key suffixes)
+        3. High cardinality columns (>80% unique values or >1000 distinct values)
 
         Returns:
             List of warning messages
         """
         warnings = []
-        id_pattern = re.compile(r"(?i)(id|key|uuid|guid)$")
-        total_rows = df.count()
+
+        # First, try to detect primary keys from Unity Catalog metadata if DataFrame is from a table
+        pk_columns = self._get_primary_key_columns(df)
+
+        # Improved ID pattern: only match common ID suffixes, not words ending in "id"
+        # This avoids false positives like "liquid", "orchid", "valid", etc.
+        id_pattern = re.compile(r"(?i)(_id|_key|_uuid|_guid|^id$|^key$|^uuid$|^guid$)")
+
+        # Identify numeric columns that need cardinality checks
+        numeric_columns = [info.name for info in column_infos if info.category == 'numeric']
+
+        # Batch compute total rows + approximate distinct counts in single aggregation
+        # This is MUCH faster than multiple distinct().count() calls
+        total_rows, cardinality_stats = self._compute_cardinality_stats(df, numeric_columns)
 
         for info in column_infos:
-            col_name = info.name
-            issues = []
+            issues = self._check_column_for_id_indicators(info, pk_columns, id_pattern, cardinality_stats, total_rows)
 
-            # Check 1: Name pattern match
-            matches_id_pattern = id_pattern.search(col_name) is not None
-
-            # Check 2: High cardinality (for numeric and categorical columns)
-            high_cardinality = False
-            if info.category in {'numeric', 'categorical'}:
-                # For categorical, we already have cardinality
-                if info.category == 'categorical' and info.cardinality:
-                    distinct_count = info.cardinality
-                    high_cardinality = distinct_count > 1000 or (distinct_count / total_rows > 0.8)
-                # For numeric, compute distinct count
-                elif info.category == 'numeric' and total_rows > 0:
-                    distinct_count = df.select(col_name).distinct().count()
-                    high_cardinality = distinct_count > 1000 or (distinct_count / total_rows > 0.8)
-
-            # Generate warning if either check fails
-            if matches_id_pattern:
-                issues.append(f"matches ID pattern '{id_pattern.pattern}'")
-            if high_cardinality:
-                issues.append("has very high cardinality (>80% unique values or >1000 distinct values)")
-
+            # Generate warning if any check fails
             if issues:
                 reason = " and ".join(issues)
                 warnings.append(
-                    f"Column '{col_name}' appears to be an ID field ({reason}). "
+                    f"Column '{info.name}' appears to be an ID field ({reason}). "
                     f"ID fields can lead to poor anomaly detection models due to overfitting. "
-                    f"Consider using exclude_columns=['{col_name}'] or removing from columns list."
+                    f"Consider using exclude_columns=['{info.name}'] or removing from columns list."
                 )
 
         return warnings
