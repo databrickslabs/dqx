@@ -188,7 +188,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         instance_name = config.instance_name
 
-        def _before_connect(dialect, conn_rec, cargs, cparams) -> None:  # pylint: disable=unused-argument
+        def _before_connect(dialect, conn_rec, cargs, cparams) -> None:
             cred = self.ws.database.generate_database_credential(
                 request_id=str(uuid.uuid4()), instance_names=[instance_name]
             )
