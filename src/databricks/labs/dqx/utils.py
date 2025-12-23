@@ -462,3 +462,169 @@ def missing_required_packages(packages: list[str]) -> bool:
         True if any package is missing, False otherwise.
     """
     return not all(find_spec(spec) for spec in packages)
+
+
+def _query_table_properties(table: str, spark: Any) -> list[Any]:
+    """Query Unity Catalog table properties."""
+    pk_query = f"SHOW TBLPROPERTIES {table}"
+    pk_result = spark.sql(pk_query)
+    return pk_result.collect()
+
+
+def _extract_primary_key_from_properties(pk_rows: list[Any]) -> set[str]:
+    """Extract primary key columns from table property rows."""
+    for row in pk_rows:
+        key = getattr(row, 'key', None)
+        value = getattr(row, 'value', None)
+
+        if key and 'primary' in str(key).lower() and value:
+            # Primary key value is typically a comma-separated list of columns
+            pk_cols = [col.strip() for col in str(value).split(',')]
+            return set(pk_cols)
+
+    return set()
+
+
+def get_table_primary_keys(table: str, spark: Any) -> set[str]:
+    """
+    Retrieve primary key columns from Unity Catalog table metadata.
+
+    Queries Unity Catalog table properties to detect primary key constraints.
+    This is a shared utility used by both the LLM and anomaly modules.
+
+    Args:
+        table: Fully qualified table name (e.g., "catalog.schema.table")
+        spark: SparkSession instance
+
+    Returns:
+        Set of column names that are primary keys. Returns empty set if:
+        - Table doesn't exist
+        - No primary key is defined
+        - Metadata is not accessible
+
+    Examples:
+        >>> pk_cols = get_table_primary_keys("main.default.users", spark)
+        >>> if "user_id" in pk_cols:
+        ...     print("user_id is a primary key")
+    """
+    try:
+        pk_rows = _query_table_properties(table, spark)
+        return _extract_primary_key_from_properties(pk_rows)
+    except Exception:
+        # Silently handle errors (table not found, permissions, etc.)
+        return set()
+
+
+def _parse_fk_source_columns(fk_def: str) -> list[str]:
+    """Extract source columns from FK definition."""
+    if 'FOREIGN KEY' not in fk_def or '(' not in fk_def:
+        return []
+
+    cols_start = fk_def.index('(', fk_def.index('FOREIGN KEY')) + 1
+    cols_end = fk_def.index(')', cols_start)
+    return [col.strip() for col in fk_def[cols_start:cols_end].split(',')]
+
+
+def _parse_fk_referenced_table_and_columns(fk_def: str) -> tuple[str | None, list[str]]:
+    """Extract referenced table and columns from FK definition."""
+    if 'REFERENCES' not in fk_def:
+        return None, []
+
+    ref_part = fk_def.split('REFERENCES')[1].strip()
+    if '(' not in ref_part:
+        return ref_part.strip(), []
+
+    ref_table = ref_part[: ref_part.index('(')].strip()
+    ref_cols_start = ref_part.index('(') + 1
+    ref_cols_end = ref_part.index(')', ref_cols_start)
+    ref_cols = [col.strip() for col in ref_part[ref_cols_start:ref_cols_end].split(',')]
+
+    return ref_table, ref_cols
+
+
+def _parse_foreign_key_definition(value: str) -> dict[str, Any] | None:
+    """
+    Parse a foreign key definition string into structured components.
+
+    Expected format: "FOREIGN KEY (col1, col2) REFERENCES ref_table(ref_col1, ref_col2)"
+
+    Returns:
+        Dict with 'columns', 'referenced_table', 'referenced_columns' or None if invalid
+    """
+    fk_def = str(value).upper()
+
+    source_cols = _parse_fk_source_columns(fk_def)
+    ref_table, ref_cols = _parse_fk_referenced_table_and_columns(fk_def)
+
+    if source_cols and ref_table:
+        return {
+            "columns": source_cols,
+            "referenced_table": ref_table,
+            "referenced_columns": ref_cols,
+        }
+
+    return None
+
+
+def _extract_foreign_keys_from_properties(fk_rows: list[Any]) -> dict[str, dict[str, Any]]:
+    """Extract foreign key constraints from table property rows."""
+    foreign_keys = {}
+
+    # Look for foreign key constraints in table properties
+    # Unity Catalog stores FKs with keys like "delta.constraints.fk_name"
+    for row in fk_rows:
+        key = getattr(row, 'key', None)
+        value = getattr(row, 'value', None)
+
+        if not (key and 'foreign' in str(key).lower() and value):
+            continue
+
+        # Extract foreign key name from property key
+        # Format: "delta.constraints.fk_customer" -> "fk_customer"
+        fk_name = str(key).rsplit('.', maxsplit=1)[-1]
+
+        # Parse foreign key definition
+        try:
+            fk_metadata = _parse_foreign_key_definition(value)
+            if fk_metadata:
+                foreign_keys[fk_name] = fk_metadata
+        except Exception:
+            # Skip malformed foreign key definitions
+            continue
+
+    return foreign_keys
+
+
+def get_table_foreign_keys(table: str, spark: Any) -> dict[str, dict[str, Any]]:
+    """
+    Retrieve foreign key constraints from Unity Catalog table metadata.
+
+    Queries Unity Catalog table properties to detect foreign key relationships.
+    This is a shared utility for identifying referential integrity constraints.
+
+    Args:
+        table: Fully qualified table name (e.g., "catalog.schema.table")
+        spark: SparkSession instance
+
+    Returns:
+        Dictionary mapping foreign key names to their metadata:
+        {
+            "fk_name": {
+                "columns": ["col1", "col2"],
+                "referenced_table": "catalog.schema.ref_table",
+                "referenced_columns": ["ref_col1", "ref_col2"]
+            }
+        }
+        Returns empty dict if no foreign keys are defined or metadata unavailable.
+
+    Examples:
+        >>> fks = get_table_foreign_keys("main.default.orders", spark)
+        >>> for fk_name, fk_info in fks.items():
+        ...     print(f"{fk_name}: {fk_info['columns']} -> {fk_info['referenced_table']}")
+    """
+    try:
+        fk_rows = _query_table_properties(table, spark)
+        return _extract_foreign_keys_from_properties(fk_rows)
+    except Exception:
+        # Silently handle errors (table not found, permissions, etc.)
+        return {}
