@@ -685,15 +685,15 @@ def make_volume_invalid_check_file_as_json(ws, make_directory, checks_json_inval
 
 
 @pytest.fixture
-def lakebase_user(ws):
+def lakebase_client_id(ws):
     """
-    Get a Lakebase user.
+    Get a Lakebase client ID.
 
     This fixture reads ARM_CLIENT_ID which is set in the CI/CD pipeline.
     For local development where the ARM_CLIENT_ID is not set, the user is fetched from the workspace client.
 
     Returns:
-        The client ID or use name to use as the Lakebase user.
+        The client ID to use for Lakebase connections.
     """
     client_id = os.environ.get("ARM_CLIENT_ID")
     if not client_id:
