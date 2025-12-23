@@ -246,14 +246,20 @@ def _score_segmented(
     scored_dfs: list[DataFrame] = []
 
     # Score each segment separately
+    # Note: This loops over segments and filters each time, which means O(n*m) row reads
+    # where n=rows, m=segments. For large datasets with many segments, consider:
+    # 1. User-side caching: df.cache() before calling apply_checks()
+    # 2. Saving scored results to tables (as shown in demos)
+    # 3. Using fewer segments or global models for massive datasets
     for segment_model in all_segments:
         segment_filter = _build_segment_filter(segment_model.segment_values)
         if segment_filter is None:
             continue
 
         segment_df = df_to_score.filter(segment_filter)
-        if segment_df.count() == 0:
-            continue
+        # Note: We don't check if segment_df is empty here to avoid triggering
+        # a count() action. Empty segments result in empty DataFrames which
+        # union() handles gracefully.
 
         segment_scored = _score_single_segment(segment_df, segment_model, config)
         scored_dfs.append(segment_scored)
@@ -271,9 +277,13 @@ def _score_segmented(
     if config.include_contributions:
         result = result.drop("anomaly_contributions")  # Drop top-level, use _info instead
 
-    # If row_filter was used, join scored results back to original DataFrame
+    # Always join back to original DataFrame to include unscored rows
+    # (rows with segment combinations not seen during training will have null scores)
     if config.row_filter:
         result = _join_filtered_results_back(df, result, config.merge_columns)
+    else:
+        # Even without row_filter, join back to include all rows (including unscored segments)
+        result = _join_filtered_results_back(df_to_score, result, config.merge_columns)
 
     # Drop internal anomaly_score column (use _info.anomaly.score instead)
     result = result.drop("anomaly_score")
