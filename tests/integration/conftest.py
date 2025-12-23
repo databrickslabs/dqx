@@ -4,21 +4,30 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
+from uuid import uuid4
 
 from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame
 import pytest
-from databricks.sdk.service.workspace import ImportFormat
+from databricks.connect import DatabricksSession
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.pytester.fixtures.baseline import factory
+from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
-from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
+from databricks.labs.dqx.config import ExtraParams, InputConfig, InstallationChecksStorageConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.schema import dq_result_schema
+from databricks.labs.pytester.fixtures.baseline import factory
+from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.compute import DataSecurityMode, Kind
+from databricks.sdk.service.workspace import ImportFormat
 
 from tests.conftest import TEST_CATALOG
+from tests.integration.test_anomaly_utils import (
+    get_standard_2d_training_data,
+    get_standard_3d_training_data,
+    get_standard_4d_training_data,
+)
 
 # Import shared session-scoped fixtures for anomaly detection tests
 # These fixtures train models ONCE per session, reducing test suite runtime significantly.
@@ -444,3 +453,152 @@ def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, 
 def assert_output_df(spark, expected_output, output_config):
     checked_df = spark.table(output_config.location)
     assert_df_equality(checked_df, expected_output, ignore_nullable=True)
+
+
+# ============================================================================
+# Session-Scoped Shared Model Fixtures for Integration Tests
+# ============================================================================
+# These fixtures train models ONCE per session, reducing test runtime
+# significantly. All tests reuse the same pre-trained models.
+# ============================================================================
+
+
+@pytest.fixture(scope="session")
+def spark_session():
+    """
+    Session-scoped Spark fixture for shared model training.
+
+    Creates a Databricks Connect session once per test session for use by
+    shared model fixtures (shared_2d_model, etc.) without scope mismatch.
+    """
+    cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
+    serverless_cluster_id = os.environ.get("DATABRICKS_SERVERLESS_COMPUTE_ID")
+
+    if serverless_cluster_id:
+        logger.debug(f"Using serverless cluster id '{serverless_cluster_id}'")
+        return DatabricksSession.builder.serverless(True).getOrCreate()
+
+    logger.debug(f"Using cluster id '{cluster_id}'")
+    return DatabricksSession.builder.getOrCreate()
+
+
+@pytest.fixture(scope="session")
+def shared_2d_model(spark_session):
+    """
+    Shared 2D anomaly model trained once per session.
+
+    Used by: test_anomaly_dqengine.py, test_anomaly_explainability.py
+
+    Training data: 400 rows of (amount, quantity) with realistic variance
+    Columns: ["amount", "quantity"]
+
+    Returns:
+        dict: {
+            "model_name": str,
+            "registry_table": str,
+            "columns": list[str],
+            "training_data": list[tuple],
+        }
+    """
+    suffix = uuid4().hex[:8]
+    model_name = f"shared_2d_model_{suffix}"
+    registry_table = f"main.default.shared_2d_reg_{suffix}"
+
+    train_df = spark_session.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
+
+    engine = AnomalyEngine(WorkspaceClient(), spark_session)
+    engine.train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    return {
+        "model_name": model_name,
+        "registry_table": registry_table,
+        "columns": ["amount", "quantity"],
+        "training_data": get_standard_2d_training_data(),
+    }
+
+
+@pytest.fixture(scope="session")
+def shared_3d_model(spark_session):
+    """
+    Shared 3D anomaly model with contributions support.
+
+    Used by: test_anomaly_explainability.py
+
+    Training data: 400 rows of (amount, quantity, discount)
+    Columns: ["amount", "quantity", "discount"]
+
+    Returns:
+        dict: {
+            "model_name": str,
+            "registry_table": str,
+            "columns": list[str],
+            "training_data": list[tuple],
+        }
+    """
+    suffix = uuid4().hex[:8]
+    model_name = f"shared_3d_model_{suffix}"
+    registry_table = f"main.default.shared_3d_reg_{suffix}"
+
+    train_df = spark_session.createDataFrame(
+        get_standard_3d_training_data(), "amount double, quantity double, discount double"
+    )
+
+    engine = AnomalyEngine(WorkspaceClient(), spark_session)
+    engine.train(
+        df=train_df,
+        columns=["amount", "quantity", "discount"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    return {
+        "model_name": model_name,
+        "registry_table": registry_table,
+        "columns": ["amount", "quantity", "discount"],
+        "training_data": get_standard_3d_training_data(),
+    }
+
+
+@pytest.fixture(scope="session")
+def shared_4d_model(spark_session):
+    """
+    Shared 4D anomaly model for multi-column tests.
+
+    Training data: 400 rows of (amount, quantity, discount, weight)
+    Columns: ["amount", "quantity", "discount", "weight"]
+
+    Returns:
+        dict: {
+            "model_name": str,
+            "registry_table": str,
+            "columns": list[str],
+            "training_data": list[tuple],
+        }
+    """
+    suffix = uuid4().hex[:8]
+    model_name = f"shared_4d_model_{suffix}"
+    registry_table = f"main.default.shared_4d_reg_{suffix}"
+
+    train_df = spark_session.createDataFrame(
+        get_standard_4d_training_data(), "amount double, quantity double, discount double, weight double"
+    )
+
+    engine = AnomalyEngine(WorkspaceClient(), spark_session)
+    engine.train(
+        df=train_df,
+        columns=["amount", "quantity", "discount", "weight"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    return {
+        "model_name": model_name,
+        "registry_table": registry_table,
+        "columns": ["amount", "quantity", "discount", "weight"],
+        "training_data": get_standard_4d_training_data(),
+    }

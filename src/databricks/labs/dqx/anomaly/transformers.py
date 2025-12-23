@@ -9,6 +9,7 @@ Spark Connect compatibility (no custom Python class serialization).
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -159,6 +160,10 @@ class ColumnTypeClassifier:
                 "categorical (string), temporal (date, timestamp), boolean."
             )
 
+        # Check for potential ID fields that may lead to poor models
+        id_warnings = self._check_for_id_fields(df, column_infos)
+        warnings_list.extend(id_warnings)
+
         # Check estimated feature count
         estimated_features = self._estimate_feature_count(column_infos)
         if estimated_features > self.max_engineered_features:
@@ -287,6 +292,56 @@ class ColumnTypeClassifier:
             breakdown.append(f"  - {counts['nulls']} null indicators → {counts['nulls']} features")
 
         return "\n".join(breakdown)
+
+    def _check_for_id_fields(self, df: DataFrame, column_infos: list[ColumnTypeInfo]) -> list[str]:
+        """
+        Check for potential ID fields that may degrade model quality.
+
+        Warns about:
+        1. Columns matching ID naming patterns (e.g., ending in 'id', 'key')
+        2. High cardinality columns (>80% unique values or >1000 distinct values)
+
+        Returns:
+            List of warning messages
+        """
+        warnings = []
+        id_pattern = re.compile(r"(?i)(id|key|uuid|guid)$")
+        total_rows = df.count()
+
+        for info in column_infos:
+            col_name = info.name
+            issues = []
+
+            # Check 1: Name pattern match
+            matches_id_pattern = id_pattern.search(col_name) is not None
+
+            # Check 2: High cardinality (for numeric and categorical columns)
+            high_cardinality = False
+            if info.category in {'numeric', 'categorical'}:
+                # For categorical, we already have cardinality
+                if info.category == 'categorical' and info.cardinality:
+                    distinct_count = info.cardinality
+                    high_cardinality = distinct_count > 1000 or (distinct_count / total_rows > 0.8)
+                # For numeric, compute distinct count
+                elif info.category == 'numeric' and total_rows > 0:
+                    distinct_count = df.select(col_name).distinct().count()
+                    high_cardinality = distinct_count > 1000 or (distinct_count / total_rows > 0.8)
+
+            # Generate warning if either check fails
+            if matches_id_pattern:
+                issues.append(f"matches ID pattern '{id_pattern.pattern}'")
+            if high_cardinality:
+                issues.append("has very high cardinality (>80% unique values or >1000 distinct values)")
+
+            if issues:
+                reason = " and ".join(issues)
+                warnings.append(
+                    f"Column '{col_name}' appears to be an ID field ({reason}). "
+                    f"ID fields can lead to poor anomaly detection models due to overfitting. "
+                    f"Consider using exclude_columns=['{col_name}'] or removing from columns list."
+                )
+
+        return warnings
 
 
 def _add_null_indicator(

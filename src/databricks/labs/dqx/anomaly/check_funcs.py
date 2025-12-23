@@ -4,9 +4,9 @@ Check functions for anomaly detection.
 
 from __future__ import annotations
 
+import sys
 import warnings
 from dataclasses import dataclass
-from uuid import uuid4
 from datetime import datetime
 from typing import Any
 
@@ -25,6 +25,7 @@ from pyspark.sql.types import (
     StringType,
     BooleanType,
 )
+import sklearn
 
 # Optional dependencies for SHAP explainability
 try:
@@ -38,7 +39,7 @@ except ImportError:
     SHAP_AVAILABLE = False
 
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord
-from databricks.labs.dqx.anomaly.trainer import _derive_registry_table, _ensure_full_model_name
+from databricks.labs.dqx.anomaly.trainer import _derive_registry_table, ensure_full_model_name
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
@@ -198,6 +199,7 @@ def _score_single_segment(
         segment_model.feature_metadata,
         config.merge_columns,
         include_contributions=config.include_contributions,
+        model_record=segment_model,  # Pass model record for version validation
     )
     segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
 
@@ -217,7 +219,6 @@ def _score_single_segment(
 def _score_segmented(
     df: DataFrame,
     config: ScoringConfig,
-    condition_col: str,
     registry_client: AnomalyModelRegistry,
 ) -> DataFrame:
     """Score DataFrame using segment-specific models.
@@ -225,11 +226,10 @@ def _score_segmented(
     Args:
         df: Input DataFrame to score.
         config: Scoring configuration with all parameters.
-        condition_col: Name of output condition column.
         registry_client: Registry client for loading model metadata.
 
     Returns:
-        Scored DataFrame with anomaly scores and condition column.
+        Scored DataFrame with anomaly scores and _info column.
     """
     # Get all segment models
     all_segments = registry_client.get_all_segment_models(config.registry_table, config.model_name)
@@ -275,13 +275,7 @@ def _score_segmented(
     if config.row_filter:
         result = _join_filtered_results_back(df, result, config.merge_columns)
 
-    # Add condition column (using anomaly_score internally)
-    condition = F.when(F.col("anomaly_score").isNull(), F.lit(False)).otherwise(
-        F.col("anomaly_score") > F.lit(config.score_threshold)
-    )
-    result = result.withColumn(condition_col, condition)
-
-    # Drop internal anomaly_score column (use _info.anomaly[0].score instead)
+    # Drop internal anomaly_score column (use _info.anomaly.score instead)
     result = result.drop("anomaly_score")
 
     return result
@@ -344,47 +338,162 @@ def _create_udf_schema(include_contributions: bool) -> StructType:
     return StructType(schema_fields)
 
 
-def _score_with_sklearn_model(
-    model_uri: str,
-    df: DataFrame,
-    feature_cols: list[str],
-    feature_metadata_json: str,
-    merge_columns: list[str],
-    include_contributions: bool = False,
-) -> DataFrame:
-    """Score DataFrame using scikit-learn model with distributed pandas UDF.
+def _parse_version_tuple(version_str: str) -> tuple[int, int]:
+    """Parse version string into (major, minor) tuple."""
+    parts = version_str.split(".")
+    major = int(parts[0])
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    return major, minor
 
-    Feature engineering is applied in Spark before the pandas UDF.
-    The pandas UDF handles sklearn components (RobustScaler + IsolationForest) and optionally SHAP.
+
+def _validate_sklearn_compatibility(model_record: AnomalyModelRecord) -> None:
+    """Validate sklearn version compatibility between training and inference.
+
+    Args:
+        model_record: Model record containing sklearn_version from training
+
+    Raises:
+        Warning if minor version mismatch detected (e.g., 1.2.x vs 1.3.x)
+    """
+    if not model_record.sklearn_version:
+        # Old models without version tracking - can't validate
+        return
+
+    trained_version = model_record.sklearn_version
+    current_version = sklearn.__version__
+
+    if trained_version == current_version:
+        return  # Perfect match
+
+    # Parse versions
+    try:
+        trained_major, trained_minor = _parse_version_tuple(trained_version)
+        current_major, current_minor = _parse_version_tuple(current_version)
+
+        # Check for version mismatches
+        if trained_major != current_major or trained_minor != current_minor:
+            warnings.warn(
+                f"\nSKLEARN VERSION MISMATCH DETECTED\n"
+                f"Model Information:\n"
+                f"  - Model: {model_record.model_name}\n"
+                f"  - Trained with: sklearn {trained_version}\n"
+                f"  - Current environment: sklearn {current_version}\n"
+                f"\n"
+                f"Minor version changes (e.g., 1.2 -> 1.3) can cause pickle incompatibility errors.\n"
+                f"\n"
+                f"RECOMMENDED ACTION:\n"
+                f"Retrain the model with your current sklearn version:\n"
+                f"  anomaly_engine.train(\n"
+                f"      df=df_train,\n"
+                f"      model_name=\"{model_record.model_name}\",\n"
+                f"      registry_table=\"{model_record.input_table.rsplit('.', 1)[0]}.anomaly_model_registry\"\n"
+                f"  )\n",
+                UserWarning,
+                stacklevel=3,
+            )
+    except (ValueError, IndexError):
+        # Couldn't parse version - skip validation
+        pass
+
+
+def _load_sklearn_model_with_error_handling(model_uri: str, model_record: AnomalyModelRecord) -> Any:
+    """Load sklearn model from MLflow with graceful error handling.
 
     Args:
         model_uri: MLflow model URI
-        df: DataFrame to score (with original columns)
-        feature_cols: List of original feature column names (before engineering)
-        feature_metadata_json: JSON string with feature engineering metadata (from registry)
-        merge_columns: Columns to use for joining results back (e.g., primary keys or row IDs).
-        include_contributions: If True, compute SHAP feature contributions in the same UDF pass.
+        model_record: Model record with metadata for error messages
 
     Returns:
-        DataFrame with anomaly_score, prediction, and optionally anomaly_contributions columns added
+        Loaded sklearn model
+
+    Raises:
+        RuntimeError with actionable error message if loading fails
     """
-    # Load model
-    sklearn_model = mlflow.sklearn.load_model(model_uri)
+    try:
+        return mlflow.sklearn.load_model(model_uri)
+    except (ValueError, AttributeError, TypeError) as e:
+        # These are typical pickle incompatibility errors
+        error_msg = str(e)
 
-    # Prepare feature metadata
-    column_infos, feature_metadata = _prepare_feature_metadata(feature_metadata_json)
+        trained_version = model_record.sklearn_version or "unknown"
+        current_version = sklearn.__version__
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
 
-    # Apply feature engineering
-    engineered_df = _apply_feature_engineering_for_scoring(
-        df, feature_cols, merge_columns, column_infos, feature_metadata
-    )
+        raise RuntimeError(
+            f"\nFAILED TO LOAD ANOMALY DETECTION MODEL\n"
+            f"\n"
+            f"Model Information:\n"
+            f"  - Model: {model_record.model_name}\n"
+            f"  - Trained with: sklearn {trained_version}\n"
+            f"  - Current environment: sklearn {current_version}, Python {python_version}\n"
+            f"  - Model URI: {model_uri}\n"
+            f"\n"
+            f"Error Details:\n"
+            f"  {type(e).__name__}: {error_msg}\n"
+            f"\n"
+            f"This typically happens when scikit-learn's internal pickle format changes between versions.\n"
+            f"Common causes:\n"
+            f"  - Major/minor sklearn version mismatch (e.g., 1.2.x vs 1.3.x)\n"
+            f"  - Python version changes (e.g., 3.11 vs 3.12)\n"
+            f"  - Databricks runtime upgrades\n"
+            f"\n"
+            f"SOLUTIONS:\n"
+            f"\n"
+            f"1. Retrain the model (RECOMMENDED):\n"
+            f"   anomaly_engine.train(\n"
+            f"       df=df_train,\n"
+            f"       model_name=\"{model_record.model_name}\",\n"
+            f"       columns={model_record.columns},\n"
+            f"       registry_table=\"<your_registry_table>\"\n"
+            f"   )\n"
+            f"\n"
+            f"2. Downgrade sklearn (temporary workaround):\n"
+            f"   %pip install scikit-learn=={trained_version}\n"
+            f"   # Then restart Python kernel\n"
+            f"\n"
+            f"3. Clear registry and retrain all models:\n"
+            f"   spark.sql(\"DROP TABLE IF EXISTS <your_registry_table>\")\n"
+            f"   # Then retrain all models\n"
+        ) from e
 
-    # Get engineered feature names and serialize model
-    engineered_feature_cols = feature_metadata.engineered_feature_names
-    model_bytes = cloudpickle.dumps(sklearn_model)
 
-    # Create UDF schema
-    schema = _create_udf_schema(include_contributions)
+def _load_and_validate_model(
+    model_uri: str,
+    model_record: AnomalyModelRecord | None,
+) -> Any:
+    """Load model with validation and error handling.
+
+    Args:
+        model_uri: MLflow model URI
+        model_record: Optional model record for version validation
+
+    Returns:
+        Loaded sklearn model
+    """
+    if model_record:
+        _validate_sklearn_compatibility(model_record)
+        return _load_sklearn_model_with_error_handling(model_uri, model_record)
+    # Fallback for old code paths without model_record
+    return mlflow.sklearn.load_model(model_uri)
+
+
+def _create_scoring_udf(
+    model_bytes: bytes,
+    engineered_feature_cols: list[str],
+    include_contributions: bool,
+    schema: StructType,
+):
+    """Create pandas UDF for distributed scoring with optional SHAP.
+
+    Args:
+        model_bytes: Serialized sklearn model
+        engineered_feature_cols: List of engineered feature column names
+        include_contributions: Whether to compute SHAP contributions
+        schema: UDF output schema
+
+    Returns:
+        Pandas UDF for scoring
+    """
 
     @pandas_udf(schema, PandasUDFType.SCALAR)
     def predict_with_shap_udf(*cols):
@@ -405,41 +514,9 @@ def _score_with_sklearn_model(
         # Compute SHAP if requested
         contributions_list = []
         if include_contributions:
-            if not SHAP_AVAILABLE:
-                raise ImportError(
-                    "To use feature contributions (include_contributions=True), install 'shap>=0.42.0,<0.46' on your cluster.\n"
-                    "Cluster -> Libraries -> Install New -> PyPI -> 'shap>=0.42.0,<0.46'"
-                )
-
-            # Extract components
-            if isinstance(model_local, Pipeline):
-                scaler = model_local.named_steps.get('scaler')
-                tree_model = model_local.named_steps['model']
-            else:
-                scaler = None
-                tree_model = model_local
-
-            explainer = shap.TreeExplainer(tree_model)
-            shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
-
-            # Compute SHAP for each row
-            for i, row_vals in enumerate(shap_data):
-                if pd.isna(row_vals).any():
-                    contributions_list.append({c: None for c in engineered_feature_cols})
-                    continue
-
-                shap_vals = explainer.shap_values(shap_data[i : i + 1])[0]
-                abs_vals = np.abs(shap_vals)
-                total = abs_vals.sum()
-
-                if total > 0:
-                    normalized = abs_vals / total
-                    contributions = {c: float(normalized[j]) for j, c in enumerate(engineered_feature_cols)}
-                else:
-                    equal_contrib = 1.0 / len(engineered_feature_cols)
-                    contributions = {c: equal_contrib for c in engineered_feature_cols}
-
-                contributions_list.append(contributions)
+            contributions_list = _compute_shap_contributions_in_udf(
+                model_local, feature_matrix, engineered_feature_cols
+            )
 
         # Build result
         result = {"anomaly_score": scores}
@@ -448,19 +525,120 @@ def _score_with_sklearn_model(
 
         return pd.DataFrame(result)
 
+    return predict_with_shap_udf
+
+
+def _compute_shap_contributions_in_udf(
+    model_local: Any,
+    feature_matrix: pd.DataFrame,
+    engineered_feature_cols: list[str],
+) -> list[dict[str, float | None]]:
+    """Compute SHAP contributions for each row in the feature matrix.
+
+    Args:
+        model_local: Loaded sklearn model (Pipeline or IsolationForest)
+        feature_matrix: DataFrame with engineered features
+        engineered_feature_cols: List of feature column names
+
+    Returns:
+        List of contribution dictionaries, one per row (values can be float or None for rows with NaN)
+    """
+    if not SHAP_AVAILABLE:
+        raise ImportError(
+            "To use feature contributions (include_contributions=True), install 'shap>=0.42.0,<0.46' on your cluster.\n"
+            "Cluster -> Libraries -> Install New -> PyPI -> 'shap>=0.42.0,<0.46'"
+        )
+
+    # Extract components
+    if isinstance(model_local, Pipeline):
+        scaler = model_local.named_steps.get('scaler')
+        tree_model = model_local.named_steps['model']
+    else:
+        scaler = None
+        tree_model = model_local
+
+    explainer = shap.TreeExplainer(tree_model)
+    shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+
+    contributions_list: list[dict[str, float | None]] = []
+    # Compute SHAP for each row
+    for i, row_vals in enumerate(shap_data):
+        if pd.isna(row_vals).any():
+            contributions_list.append({c: None for c in engineered_feature_cols})
+            continue
+
+        shap_vals = explainer.shap_values(shap_data[i : i + 1])[0]
+        abs_vals = np.abs(shap_vals)
+        total = abs_vals.sum()
+
+        if total > 0:
+            normalized = abs_vals / total
+            contributions: dict[str, float | None] = {
+                c: float(normalized[j]) for j, c in enumerate(engineered_feature_cols)
+            }
+        else:
+            equal_contrib = 1.0 / len(engineered_feature_cols)
+            contributions = {c: equal_contrib for c in engineered_feature_cols}
+
+        contributions_list.append(contributions)
+
+    return contributions_list
+
+
+def _score_with_sklearn_model(
+    model_uri: str,
+    df: DataFrame,
+    feature_cols: list[str],
+    feature_metadata_json: str,
+    merge_columns: list[str],
+    include_contributions: bool = False,
+    model_record: AnomalyModelRecord | None = None,
+) -> DataFrame:
+    """Score DataFrame using scikit-learn model with distributed pandas UDF.
+
+    Feature engineering is applied in Spark before the pandas UDF.
+    The pandas UDF handles sklearn components (RobustScaler + IsolationForest) and optionally SHAP.
+
+    Args:
+        model_uri: MLflow model URI
+        df: DataFrame to score (with original columns)
+        feature_cols: List of original feature column names (before engineering)
+        feature_metadata_json: JSON string with feature engineering metadata (from registry)
+        merge_columns: Columns to use for joining results back (e.g., primary keys or row IDs).
+        include_contributions: If True, compute SHAP feature contributions in the same UDF pass.
+        model_record: Optional model record for version validation and error handling.
+
+    Returns:
+        DataFrame with anomaly_score, prediction, and optionally anomaly_contributions columns added
+    """
+    # Load and validate model
+    sklearn_model = _load_and_validate_model(model_uri, model_record)
+
+    # Prepare feature metadata
+    column_infos, feature_metadata = _prepare_feature_metadata(feature_metadata_json)
+
+    # Apply feature engineering
+    engineered_df = _apply_feature_engineering_for_scoring(
+        df, feature_cols, merge_columns, column_infos, feature_metadata
+    )
+
+    # Get engineered feature names and serialize model
+    engineered_feature_cols = feature_metadata.engineered_feature_names
+    model_bytes = cloudpickle.dumps(sklearn_model)
+
+    # Create UDF schema and scoring UDF
+    schema = _create_udf_schema(include_contributions)
+    predict_with_shap_udf = _create_scoring_udf(model_bytes, engineered_feature_cols, include_contributions, schema)
+
     # Apply UDF to all engineered feature columns
-    # The join columns are preserved in engineered_df
     scored_df = engineered_df.withColumn("_scores", predict_with_shap_udf(*[col(c) for c in engineered_feature_cols]))
 
     # Select columns to join back
-    # Note: Include merge_columns + new anomaly columns for the join
-    # Spark's join(on=...) automatically deduplicates the join key columns
     cols_to_select = [*merge_columns, "_scores.anomaly_score"]
     if include_contributions:
         cols_to_select.append("_scores.anomaly_contributions")
 
     # Join scores back to original DataFrame using ONLY the merge columns
-    # Result will have all columns from df + anomaly columns, no duplicates
     result = df.join(scored_df.select(*cols_to_select), on=merge_columns, how="left")
 
     return result
@@ -511,7 +689,7 @@ def _discover_model_and_config(
         if not model:
             raise InvalidParameterError("Either 'model' or 'columns' must be provided for auto-discovery.")
 
-        model_name_local = _ensure_full_model_name(model, registry)
+        model_name_local = ensure_full_model_name(model, registry)
         record = _get_record_for_discovery(registry_client, registry, model_name_local)
 
         if columns is None:
@@ -526,7 +704,7 @@ def _discover_model_and_config(
     if not model:
         raise InvalidParameterError("model parameter is required. Example: has_no_anomalies(model='my_model', ...)")
 
-    model_name = _ensure_full_model_name(model, registry)
+    model_name = ensure_full_model_name(model, registry)
     return normalized_columns, segment_by, model_name, registry
 
 
@@ -602,6 +780,7 @@ def _score_ensemble_models(
     feature_metadata: str,
     merge_columns: list[str],
     include_contributions: bool,
+    model_record: AnomalyModelRecord | None = None,
 ) -> DataFrame:
     """Score DataFrame with ensemble of models and compute mean/std."""
     scored_dfs = []
@@ -615,6 +794,7 @@ def _score_ensemble_models(
             feature_metadata,
             merge_columns,
             include_contributions=compute_shap_for_this,
+            model_record=model_record,  # Pass model record for version validation
         )
         temp_scored = temp_scored.withColumn(f"_score_{i}", F.col("anomaly_score"))
 
@@ -645,7 +825,6 @@ def _score_ensemble_models(
 def _try_segmented_scoring_fallback(
     df: DataFrame,
     config: ScoringConfig,
-    condition_col: str,
     registry_client: AnomalyModelRegistry,
 ) -> DataFrame | None:
     """Try to score using segmented models as fallback. Returns None if no segments found."""
@@ -656,7 +835,7 @@ def _try_segmented_scoring_fallback(
     # Auto-detect segmentation
     first_segment = all_segments[0]
     assert first_segment.segment_by is not None, "Segment model must have segment_by"
-    return _score_segmented(df, config, condition_col, registry_client)
+    return _score_segmented(df, config, registry_client)
 
 
 def _add_info_column(
@@ -722,7 +901,6 @@ def _score_global_model(
     df: DataFrame,
     record: AnomalyModelRecord,
     config: ScoringConfig,
-    condition_col: str,
 ) -> DataFrame:
     """Score using a global (non-segmented) model."""
     # Validate, check staleness, and drift
@@ -749,6 +927,7 @@ def _score_global_model(
             record.feature_metadata,
             config.merge_columns,
             config.include_contributions,
+            model_record=record,  # Pass model record for version validation
         )
         if len(model_uris) > 1
         else _score_with_sklearn_model(
@@ -758,6 +937,7 @@ def _score_global_model(
             record.feature_metadata,
             config.merge_columns,
             include_contributions=config.include_contributions,
+            model_record=record,  # Pass model record for version validation
         ).withColumn("anomaly_score_std", F.lit(0.0))
     )
 
@@ -779,13 +959,7 @@ def _score_global_model(
     if config.row_filter:
         scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns)
 
-    # Add condition (using anomaly_score internally)
-    condition = F.when(F.col("anomaly_score").isNull(), F.lit(False)).otherwise(
-        F.col("anomaly_score") > F.lit(config.score_threshold)
-    )
-    scored_df = scored_df.withColumn(condition_col, condition)
-
-    # Drop internal anomaly_score column (use _info.anomaly[0].score instead)
+    # Drop internal anomaly_score column (use _info.anomaly.score instead)
     scored_df = scored_df.drop("anomaly_score")
 
     return scored_df
@@ -836,10 +1010,9 @@ def has_no_anomalies(
 
     Example:
         Access anomaly metadata via _info column:
-        >>> df_scored.select("_info.anomaly[0].score", "_info.anomaly[0].is_anomaly")
-        >>> df_scored.filter(col("_info.anomaly[0].is_anomaly"))
+        >>> df_scored.select("_info.anomaly.score", "_info.anomaly.is_anomaly")
+        >>> df_scored.filter(col("_info.anomaly.is_anomaly"))
     """
-    condition_col = f"__anomaly_condition_{uuid4().hex}"
 
     def apply(df: DataFrame) -> DataFrame:
         if not merge_columns:
@@ -869,21 +1042,22 @@ def has_no_anomalies(
 
         # Route to segmented or global scoring
         if segment_by:
-            return _score_segmented(df, config, condition_col, registry_client)
+            return _score_segmented(df, config, registry_client)
 
         # Try global model first
         record = registry_client.get_active_model(registry, model_name)
         if not record:
             # Fallback to segmented scoring
-            result = _try_segmented_scoring_fallback(df, config, condition_col, registry_client)
+            result = _try_segmented_scoring_fallback(df, config, registry_client)
             if result is not None:
                 return result
             raise InvalidParameterError(
                 f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
             )
 
-        return _score_global_model(df, record, config, condition_col)
+        return _score_global_model(df, record, config)
 
+    # Create condition directly from _info.anomaly.is_anomaly (no intermediate column needed)
     message = F.lit(f"Anomaly score exceeded threshold {score_threshold}")
-    condition_expr = F.col(condition_col)
+    condition_expr = F.col("_info").anomaly.is_anomaly
     return make_condition(condition_expr, message, "has_anomalies"), apply

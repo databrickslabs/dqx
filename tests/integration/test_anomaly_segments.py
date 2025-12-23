@@ -1,6 +1,5 @@
 """Integration tests for segment-based anomaly detection."""
 
-import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -9,20 +8,11 @@ from databricks.labs.dqx.rule import DQDatasetRule
 from tests.conftest import TEST_CATALOG
 
 
-@pytest.fixture
-def skip_if_runtime_not_anomaly_compatible(ws, debug_env, spark):
-    """Skip tests if runtime doesn't support anomaly detection (Spark < 3.4)."""
-    major, minor, *_ = spark.version.split(".")
-    if int(major) < 3 or (int(major) == 3 and int(minor) < 4):
-        pytest.skip("Anomaly detection requires Spark >= 3.4")
-
-
 def test_explicit_segment_training(
     spark: SparkSession,
     mock_workspace_client,  # pylint: disable=unused-argument
     make_schema,
     make_random,
-    skip_if_runtime_not_anomaly_compatible,
     anomaly_engine,
 ):
     """Test explicit segment-based training."""
@@ -67,7 +57,6 @@ def test_segment_scoring(
     mock_workspace_client,
     make_schema,
     make_random,
-    skip_if_runtime_not_anomaly_compatible,
     anomaly_engine,
 ):
     """Test that segment scoring uses correct regional models."""
@@ -130,7 +119,6 @@ def test_multi_column_segments(
     mock_workspace_client,  # pylint: disable=unused-argument
     make_schema,
     make_random,
-    skip_if_runtime_not_anomaly_compatible,
     anomaly_engine,
 ):
     """Test segmentation with multiple segment columns."""
@@ -170,7 +158,6 @@ def test_unknown_segment_handling(
     mock_workspace_client,
     make_schema,
     make_random,
-    skip_if_runtime_not_anomaly_compatible,
     anomaly_engine,
 ):
     """Test scoring with unknown segment values (not in training data)."""
