@@ -24,7 +24,9 @@ def test_load_checks_when_lakebase_table_does_not_exist(
         dq_engine.load_checks(config=config)
 
 
-def test_save_and_load_checks_from_lakebase_table(ws, spark, make_lakebase_instance, lakebase_client_id, make_random):
+def test_save_and_load_checks_from_lakebase_table_with_client_id(
+    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
+):
     dq_engine = DQEngine(ws, spark)
 
     instance = make_lakebase_instance()
@@ -33,6 +35,20 @@ def test_save_and_load_checks_from_lakebase_table(ws, spark, make_lakebase_insta
     config = LakebaseChecksStorageConfig(
         location=lakebase_location, client_id=lakebase_client_id, instance_name=instance.name
     )
+
+    dq_engine.save_checks(checks=TEST_CHECKS, config=config)
+    checks = dq_engine.load_checks(config=config)
+
+    compare_checks(checks, TEST_CHECKS)
+
+
+def test_save_and_load_checks_from_lakebase_table(ws, spark, make_lakebase_instance, make_random):
+    dq_engine = DQEngine(ws, spark)
+
+    instance = make_lakebase_instance()
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(location=lakebase_location, instance_name=instance.name)
 
     dq_engine.save_checks(checks=TEST_CHECKS, config=config)
     checks = dq_engine.load_checks(config=config)
