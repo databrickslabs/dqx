@@ -479,9 +479,10 @@ Suggestions:
 
 ## Model lifecycle
 
-- Registry table auto-created; active model is stored there with metrics and hyperparameters.
-- Auto-derive names if not provided: model name from input table + columns hash; registry table from catalog.schema (`dqx_anomaly_models`).
-- Retrain periodically (workflow provided) to adapt to drift; warning if model is >30 days old.
+- **Model storage**: Models are stored in **MLflow Model Registry** with versioning support. Each training run creates a new version.
+- **Registry table**: Auto-created Delta table stores metadata (metrics, hyperparameters, feature engineering info, baseline statistics). Auto-derived from catalog.schema if not provided (default: `dqx_anomaly_models`).
+- **Model naming**: `model_name` is **required** (e.g., `'field_force_anomaly'`). Can be simple name or full path (`'catalog.schema.my_model'`).
+- **Retraining**: Retrain periodically (workflow provided) to adapt to drift; warning issued if model is >30 days old.
 
 ## Model performance and metrics
 

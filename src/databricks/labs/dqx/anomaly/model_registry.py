@@ -143,20 +143,15 @@ class AnomalyModelRegistry:
         # Get all active models that start with base_model_name__seg_
         # Use window function to get only the latest version of each segment
         from pyspark.sql.window import Window
-        
+
         df = self.spark.table(table).filter(
-            (F.col("model_name").startswith(f"{base_model_name}__seg_")) & 
-            (F.col("status") == "active")
+            (F.col("model_name").startswith(f"{base_model_name}__seg_")) & (F.col("status") == "active")
         )
-        
+
         # Deduplicate by model_name (segment), taking the most recent by training_time
         window = Window.partitionBy("model_name").orderBy(F.col("training_time").desc())
-        df_deduped = (
-            df.withColumn("row_num", F.row_number().over(window))
-            .filter(F.col("row_num") == 1)
-            .drop("row_num")
-        )
-        
+        df_deduped = df.withColumn("row_num", F.row_number().over(window)).filter(F.col("row_num") == 1).drop("row_num")
+
         rows = df_deduped.orderBy(F.col("training_time").desc()).collect()
 
         return [AnomalyModelRecord(**row.asDict(recursive=True)) for row in rows]  # type: ignore[arg-type]
