@@ -183,7 +183,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Raises:
             InvalidConfigError: If instance_name is not provided.
         """
-        if not config.instance_name or config.instance_name == "":
+        if not config.instance_name:
             raise InvalidConfigError("instance_name must be provided for Lakebase storage")
 
         instance_name = config.instance_name
@@ -209,7 +209,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine_url = self._get_connection_url(config)
         engine = create_engine(
             engine_url,
-            pool_recycle=45 * 60,
+            pool_recycle=45 * 60, # recycle connections every 45 minutes
             connect_args={'sslmode': 'require'},
             pool_size=4,
         )
