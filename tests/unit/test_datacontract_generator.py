@@ -610,6 +610,19 @@ class DataContractGeneratorTestBase:
                     'rule_type': 'explicit',
                 },
             },
+            {
+                'check': {'function': 'is_not_null_and_not_empty', 'for_each_column': ['technician_id', 'alert_email']},
+                'name': 'technician_and_email_are_mandatory_for_high_alerts',
+                'criticality': 'warn',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'explicit',
+                },
+                'filter': 'alert_level in (\'high\', \'critical\')',
+            },
         ]
 
     def create_basic_contract(
@@ -937,8 +950,8 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         )
 
         # Should only have explicit rules (no predefined rules)
-        # Sample ODCS v3.x contract has 7 explicit DQX rules (5 property-level + 2 schema-level)
-        assert len(rules) == 7
+        # Sample ODCS v3.x contract has 8 explicit DQX rules (5 property-level + 3 schema-level)
+        assert len(rules) == 8
 
         # Verify all rules are explicit
         for rule in rules:
