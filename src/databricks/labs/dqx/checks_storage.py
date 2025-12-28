@@ -188,7 +188,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         instance_name = config.instance_name
 
-        def _before_connect(dialect, conn_rec, cargs, cparams) -> None:
+        def _before_connect(_dialect, _conn_rec, _cargs, cparams) -> None:
             cred = self.ws.database.generate_database_credential(
                 request_id=str(uuid.uuid4()), instance_names=[instance_name]
             )
@@ -209,7 +209,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine_url = self._get_connection_url(config)
         engine = create_engine(
             engine_url,
-            pool_recycle=45 * 60, # recycle connections every 45 minutes
+            pool_recycle=45 * 60,  # recycle connections every 45 minutes
             connect_args={'sslmode': 'require'},
             pool_size=4,
         )
