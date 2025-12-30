@@ -126,6 +126,12 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         """
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
         rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
+        # add the two new columns to existing table (config.location) in order to avoid break code
+        df=self.spark.read.table(config.location)
+        if 'created_at' not in df.columns:
+            self.spark.sql(f"ALTER TABLE {config.location} ADD COLUMN created_at timestamp")
+        if 'rule_fingerprint' not in df.columns:
+            self.spark.sql(f"ALTER TABLE {config.location} ADD COLUMN rule_fingerprint string")
         rules_df.write.option("replaceWhere", f"run_config_name = '{config.run_config_name}'").saveAsTable(
             config.location, mode=config.mode
         )
