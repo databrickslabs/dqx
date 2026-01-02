@@ -30,8 +30,13 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_ensemble_training(spark: SparkSession, anomaly_engine):
+@pytest.mark.nightly
+def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
     """Test training an ensemble of models."""
+    unique_id = make_random(8).lower()
+    model_name = f"test_ensemble_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
         "amount double, quantity double",
@@ -47,8 +52,8 @@ def test_ensemble_training(spark: SparkSession, anomaly_engine):
     model_uri = anomaly_engine.train(
         df=df,
         columns=["amount", "quantity"],
-        model_name="test_ensemble",
-        registry_table="main.default.test_anomaly_ensemble_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
 
@@ -58,8 +63,13 @@ def test_ensemble_training(spark: SparkSession, anomaly_engine):
     assert len(uris) == 3
 
 
-def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test scoring with ensemble model returns confidence scores."""
+    unique_id = make_random(8).lower()
+    model_name = f"test_ensemble_scoring_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     # Training data
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(50)],
@@ -76,15 +86,15 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
-        model_name="test_ensemble_scoring",
-        registry_table="main.default.test_anomaly_ensemble_scoring_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
 
-    # Test data
+    # Test data - ADD transaction_id column
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (500.0, 1.0)],  # One normal, one anomaly
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 500.0, 1.0)],  # One normal, one anomaly
+        "transaction_id int, amount double, quantity double",
     )
 
     # Apply check with confidence
@@ -93,8 +103,8 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
         has_no_anomalies(
             merge_columns=["transaction_id"],
             columns=["amount", "quantity"],
-            model="test_ensemble_scoring",
-            registry_table="main.default.test_anomaly_ensemble_scoring_registry",
+            model=model_name,
+            registry_table=registry_table,
             score_threshold=0.5,
             include_confidence=True,
         )
@@ -110,8 +120,13 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     assert any(std > 0 for std in std_values)
 
 
-def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test that ensemble works with feature contributions."""
+    unique_id = make_random(8).lower()
+    model_name = f"test_ensemble_contributions_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     train_df = spark.createDataFrame(
         [(100.0, 2.0, 0.1) for i in range(30)],
         "amount double, quantity double, discount double",
@@ -126,14 +141,15 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity", "discount"],
-        model_name="test_ensemble_contributions",
-        registry_table="main.default.test_ensemble_contrib_registry",
+        model_name=model_name,
+        registry_table=registry_table,
         params=params,
     )
 
+    # Test data - ADD transaction_id column
     test_df = spark.createDataFrame(
-        [(100.0, 2.0, 0.1), (9999.0, 1.0, 0.95)],
-        "amount double, quantity double, discount double",
+        [(1, 100.0, 2.0, 0.1), (2, 9999.0, 1.0, 0.95)],
+        "transaction_id int, amount double, quantity double, discount double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -141,8 +157,8 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
         has_no_anomalies(
             merge_columns=["transaction_id"],
             columns=["amount", "quantity", "discount"],
-            model="test_ensemble_contributions",
-            registry_table="main.default.test_ensemble_contrib_registry",
+            model=model_name,
+            registry_table=registry_table,
             score_threshold=0.5,
             include_contributions=True,
             include_confidence=True,

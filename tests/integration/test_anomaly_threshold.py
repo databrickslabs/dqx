@@ -19,6 +19,7 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
+@pytest.mark.nightly
 def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that different thresholds flag different numbers of anomalies."""
     train_df = spark.createDataFrame(
@@ -40,12 +41,12 @@ def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, 
     # Test data with varying degrees of anomalousness
     test_df = spark.createDataFrame(
         [
-            (100.0, 2.0),  # Normal
-            (150.0, 1.8),  # Slightly unusual
-            (500.0, 1.0),  # Moderately unusual
-            (9999.0, 0.5),  # Highly unusual
+            (1, 100.0, 2.0),  # Normal
+            (2, 150.0, 1.8),  # Slightly unusual
+            (3, 500.0, 1.0),  # Moderately unusual
+            (4, 9999.0, 0.5),  # Highly unusual
         ],
-        "amount double, quantity double",
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -55,6 +56,7 @@ def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, 
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
+                "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -70,6 +72,7 @@ def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, 
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
+                "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -116,6 +119,7 @@ def test_recommended_threshold_stored(spark: SparkSession, make_random: str, ano
     assert 0.0 <= recommended <= 1.0
 
 
+@pytest.mark.nightly
 def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test using recommended_threshold from registry in checks."""
     train_df = spark.createDataFrame(
@@ -149,8 +153,8 @@ def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client,
 
     # Use recommended threshold in check
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     # Call directly to get anomaly_score column
@@ -162,6 +166,7 @@ def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client,
     assert "anomaly_score" in result_df.columns
 
 
+@pytest.mark.nightly
 def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that lower threshold increases recall (catches more anomalies)."""
     train_df = spark.createDataFrame(
@@ -183,11 +188,11 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
     # Test data with clear anomalies
     test_df = spark.createDataFrame(
         [
-            (100.0, 2.0),  # Normal
-            (9999.0, 0.1),  # Extreme anomaly
-            (8888.0, 0.2),  # Extreme anomaly
+            (1, 100.0, 2.0),  # Normal
+            (2, 9999.0, 0.1),  # Extreme anomaly
+            (3, 8888.0, 0.2),  # Extreme anomaly
         ],
-        "amount double, quantity double",
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -197,6 +202,7 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
+                "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -212,6 +218,7 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
+                "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -226,6 +233,7 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
     assert flagged_high_recall >= flagged_low_recall
 
 
+@pytest.mark.nightly
 def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test edge case thresholds (0.0 and 1.0)."""
     train_df = spark.createDataFrame(
@@ -245,8 +253,8 @@ def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_r
     )
 
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -256,6 +264,7 @@ def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_r
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
+                "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -274,6 +283,7 @@ def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_r
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
+                "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -288,6 +298,7 @@ def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_r
     assert flagged_one <= flagged_zero
 
 
+@pytest.mark.nightly
 def test_threshold_consistency(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that same threshold produces consistent results."""
     train_df = spark.createDataFrame(
@@ -307,8 +318,8 @@ def test_threshold_consistency(spark: SparkSession, mock_workspace_client, make_
     )
 
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     # Call directly to get anomaly_score column
@@ -330,6 +341,7 @@ def test_threshold_consistency(spark: SparkSession, mock_workspace_client, make_
             assert abs(score1 - score2) < 0.001  # Allow small floating point error
 
 
+@pytest.mark.nightly
 def test_validation_metrics_in_registry(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that validation metrics are stored in registry."""
     train_df = spark.createDataFrame(

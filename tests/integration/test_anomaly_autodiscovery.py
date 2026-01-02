@@ -1,5 +1,6 @@
 """Integration tests for auto-discovery of anomaly detection columns and segments."""
 
+import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.profiler import auto_discover
@@ -28,6 +29,7 @@ def test_auto_discover_numeric_columns(spark: SparkSession):
     assert "user_id" not in profile.recommended_columns
 
 
+@pytest.mark.nightly
 def test_auto_discover_segments(spark: SparkSession):
     """Test auto-discovery identifies categorical columns for segmentation."""
     # Create data with good segment candidates
@@ -45,6 +47,7 @@ def test_auto_discover_segments(spark: SparkSession):
     assert profile.segment_count == 3
 
 
+@pytest.mark.nightly
 def test_auto_discover_excludes_high_cardinality(spark: SparkSession):
     """Test that high-cardinality columns are excluded from segmentation."""
     # Create data with too many distinct values
@@ -59,6 +62,7 @@ def test_auto_discover_excludes_high_cardinality(spark: SparkSession):
     assert any("category" in w for w in profile.warnings)
 
 
+@pytest.mark.nightly
 def test_zero_config_training(spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test zero-configuration training with auto-discovery."""
     # Create unique schema for test isolation
@@ -98,6 +102,7 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ano
         assert set(model.columns) == {"amount", "discount"}
 
 
+@pytest.mark.nightly
 def test_explicit_columns_no_auto_segment(spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test that providing explicit columns disables auto-segmentation."""
     # Create unique schema for test isolation
@@ -129,6 +134,7 @@ def test_explicit_columns_no_auto_segment(spark: SparkSession, make_schema, make
     assert models[0].is_global_model is True
 
 
+@pytest.mark.nightly
 def test_warnings_for_small_segments(spark: SparkSession):
     """Test that warnings are issued for segments with <1000 rows."""
     # Create data with small segments

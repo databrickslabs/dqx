@@ -309,10 +309,10 @@ class ColumnTypeClassifier:
         """
         Attempt to detect primary key columns from Unity Catalog table metadata.
 
-        For DataFrames backed by Unity Catalog tables, this retrieves primary key information
-        from table constraints/properties, which is more reliable than name pattern matching.
-
-        Uses the shared utility function from utils.py to avoid cross-module dependencies.
+        This is an OPTIONAL helper for better warnings during training. If the DataFrame
+        is backed by a Unity Catalog table with primary key constraints, we can warn
+        users that they're including PK columns in their feature set (which would lead
+        to overfitting). This is purely for improving warning quality - failure is fine.
 
         Args:
             df: Input DataFrame (may or may not be from a UC table)
@@ -383,6 +383,7 @@ class ColumnTypeClassifier:
         issues = []
 
         # Check 1: Primary key from Unity Catalog metadata (most reliable!)
+        # This is optional - if we can detect PKs from table metadata, use it
         if pk_columns and col_name in pk_columns:
             issues.append("is marked as a primary key in Unity Catalog table metadata")
 
@@ -390,11 +391,22 @@ class ColumnTypeClassifier:
         if id_pattern.search(col_name):
             issues.append("matches ID naming pattern")
 
-        # Check 3: High cardinality (for numeric and categorical columns)
+        # Check 3: High cardinality (only for numeric and categorical columns)
+        # IMPORTANT: Use BOTH conditions (AND not OR) to avoid false positives:
+        # - distinct_count > 1000 alone would flag legitimate continuous numeric fields
+        #   (e.g., expenses, revenue with decimals naturally have many distinct values)
+        # - Instead, require BOTH high absolute count AND high uniqueness ratio (>80%)
+        #   This better identifies true ID fields vs. legitimate numeric features
         if info.category in {'numeric', 'categorical'} and total_rows > 0:
             distinct_count = self._get_distinct_count(info, cardinality_stats)
-            if distinct_count and (distinct_count > 1000 or distinct_count / total_rows > 0.8):
-                issues.append("has very high cardinality (>80% unique values or >1000 distinct values)")
+            if distinct_count:
+                uniqueness_ratio = distinct_count / total_rows
+                # Only warn if BOTH conditions are true (strict AND)
+                if distinct_count > 1000 and uniqueness_ratio > 0.8:
+                    issues.append(
+                        f"has very high cardinality ({distinct_count} distinct values, "
+                        f"{uniqueness_ratio:.1%} unique)"
+                    )
 
         return issues
 
@@ -410,17 +422,21 @@ class ColumnTypeClassifier:
         """
         Check for potential ID fields that may degrade model quality.
 
-        Warns about:
-        1. Columns marked as primary keys in Unity Catalog table metadata (most reliable)
+        Warns about (in priority order):
+        1. Columns marked as primary keys in Unity Catalog table metadata (most reliable!)
+           Note: This is optional/best-effort - only works if DataFrame is from a UC table
         2. Columns matching ID naming patterns (e.g., _id, _key suffixes)
-        3. High cardinality columns (>80% unique values or >1000 distinct values)
+        3. High cardinality columns (>1000 distinct values AND >80% unique ratio)
+           Note: Uses AND condition to avoid false positives on continuous numeric fields
+           like expenses, revenue that naturally have high cardinality with decimal precision
 
         Returns:
             List of warning messages
         """
         warnings = []
 
-        # First, try to detect primary keys from Unity Catalog metadata if DataFrame is from a table
+        # Try to detect primary keys from Unity Catalog metadata (optional, best-effort)
+        # This is the most reliable indicator but only works for UC tables
         pk_columns = self._get_primary_key_columns(df)
 
         # Improved ID pattern: only match common ID suffixes, not words ending in "id"

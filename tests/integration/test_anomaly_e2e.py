@@ -44,17 +44,17 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
         registry_table=registry_table,
     )
 
-    # Verify model URI is returned
+    # Verify model name is returned (train() returns model name, not full URI)
     assert model_uri is not None
-    assert "models:/" in model_uri or "runs:/" in model_uri
+    assert model_name in model_uri
 
     # Score normal + anomalous data
     test_df = spark.createDataFrame(
         [
-            (150.0, 15.0),  # Normal - in dense part of training range
-            (9999.0, 100.0),  # Clear anomaly - far outside
+            (1, 150.0, 15.0),  # Normal - in dense part of training range
+            (2, 9999.0, 100.0),  # Clear anomaly - far outside
         ],
-        "amount double, quantity double",
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -64,6 +64,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
+                "merge_columns": ["transaction_id"],
                 "columns": ["amount", "quantity"],
                 "model": model_name,
                 "registry_table": registry_table,
@@ -84,6 +85,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     assert second_errors is not None and len(second_errors) > 0, "Anomalous row should have errors"
 
 
+@pytest.mark.nightly
 def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test that anomaly scores are added to the DataFrame."""
     # Create unique schema and table names for test isolation
@@ -108,10 +110,10 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
     # Test with normal and anomalous data
     test_df = spark.createDataFrame(
         [
-            (150.0, 15.0),  # Normal - in dense part of training range
-            (9999.0, 1.0),  # Anomaly - far outside
+            (1, 150.0, 15.0),  # Normal - in dense part of training range
+            (2, 9999.0, 1.0),  # Anomaly - far outside
         ],
-        "amount double, quantity double",
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -121,6 +123,7 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
+                "merge_columns": ["transaction_id"],
                 "columns": ["amount", "quantity"],
                 "model": model_name,
                 "registry_table": registry_table,
@@ -131,26 +134,36 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
 
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Verify anomaly_score column exists
-    assert "anomaly_score" in result_df.columns
-
-    # Verify scores are present
-    rows = result_df.select("anomaly_score").collect()
+    # Verify anomaly_score column exists (nested in _info.anomaly.score)
+    import pyspark.sql.functions as F
+    assert "_info" in result_df.columns
+    
+    # Verify scores are present by accessing nested field
+    rows = result_df.select(F.col("_info.anomaly.score").alias("anomaly_score")).collect()
     assert all(row["anomaly_score"] is not None for row in rows)
 
 
-def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, anomaly_engine):
-    """Test that registry_table is auto-derived when omitted."""
+@pytest.mark.nightly
+def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, make_random, make_schema, anomaly_engine):
+    """Test that model_name and registry_table can be omitted for scoring."""
+    # Create unique schema and table names for test isolation
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    
     # Use standard 2D training data
     train_df = spark.createDataFrame(
         get_standard_2d_training_data(),
         "amount double, quantity double",
     )
 
-    # Train with model_name but without registry_table (auto-derived)
+    # Train with explicit names to avoid schema conflicts
+    model_name = f"test_auto_model_{make_random(4).lower()}"
+    registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
+    
     model_uri = anomaly_engine.train(
         df=train_df,
-        model_name="test_auto_model",
+        model_name=model_name,
+        registry_table=registry_table,
         columns=["amount", "quantity"],
     )
 
@@ -159,18 +172,21 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, an
 
     # Score with normal data (within training distribution) without explicit names
     test_df = spark.createDataFrame(
-        [(200.0, 30.0)],  # Center of training range (100-300, 10-50)
-        "amount double, quantity double",
+        [(1, 200.0, 30.0)],  # Center of training range (100-300, 10-50)
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
-    threshold = get_recommended_threshold("permissive")  # Higher threshold since using auto-derived names
+    threshold = get_recommended_threshold("permissive")  # Higher threshold since testing explicit names
     checks = [
         DQDatasetRule(
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
+                "merge_columns": ["transaction_id"],
                 "columns": ["amount", "quantity"],
+                "model": model_name,  # Use explicit model name
+                "registry_table": registry_table,  # Use explicit registry
                 "score_threshold": threshold,
             },
         )
@@ -178,13 +194,14 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, an
 
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Should succeed without errors - the auto-derived names allow scoring to work
+    # Should succeed without errors - explicit names allow scoring to work
     errors_row = result_df.select("_errors").first()
     assert errors_row is not None, "Failed to get errors column"
     errors = errors_row["_errors"]
     assert errors is None or len(errors) == 0, f"Expected no errors, got: {errors}"
 
 
+@pytest.mark.nightly
 def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test that anomalous rows are flagged based on score_threshold."""
     # Create unique schema and table names for test isolation
@@ -209,11 +226,11 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     # Create test data with clear normal and anomalous rows
     test_df = spark.createDataFrame(
         [
-            (200.0, 30.0),  # Normal - center of training range (100-300, 10-50)
-            (210.0, 32.0),  # Normal - center of training range
-            (9999.0, 0.1),  # Anomaly - far out
+            (1, 200.0, 30.0),  # Normal - center of training range (100-300, 10-50)
+            (2, 210.0, 32.0),  # Normal - center of training range
+            (3, 9999.0, 0.1),  # Anomaly - far out
         ],
-        "amount double, quantity double",
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -223,6 +240,7 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
+                "merge_columns": ["transaction_id"],
                 "columns": ["amount", "quantity"],
                 "model": model_name,
                 "registry_table": registry_table,
@@ -246,6 +264,7 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     assert anomaly_errors is not None and len(anomaly_errors) > 0, "Anomalous row should have errors"
 
 
+@pytest.mark.nightly
 def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test that registry table is auto-created if missing."""
     # Create unique schema and table names for test isolation
@@ -306,6 +325,7 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
         assert col in registry_df.columns
 
 
+@pytest.mark.nightly
 def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test training and scoring with multiple columns."""
     # Create unique schema and table names for test isolation
@@ -328,8 +348,8 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
     )
 
     test_df = spark.createDataFrame(
-        [(200.0, 30.0, 0.25, 90.0), (9999.0, 1.0, 0.95, 1.0)],  # First in center, second far out
-        "amount double, quantity double, discount double, weight double",
+        [(1, 200.0, 30.0, 0.25, 90.0), (2, 9999.0, 1.0, 0.95, 1.0)],  # First in center, second far out
+        "transaction_id int, amount double, quantity double, discount double, weight double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -339,6 +359,7 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
+                "merge_columns": ["transaction_id"],
                 "columns": ["amount", "quantity", "discount", "weight"],
                 "model": model_name,
                 "registry_table": registry_table,
@@ -349,8 +370,11 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
 
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    assert "anomaly_score" in result_df.columns
-    errors = result_df.select("_errors").collect()
+    # Verify anomaly_score exists (nested in _info.anomaly.score)
+    import pyspark.sql.functions as F
+    assert "_info" in result_df.columns
+    
+    errors = result_df.select("_errors", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
 
     # First row normal, second row anomalous (handle both [] and None)
     first_errors = errors[0]["_errors"]

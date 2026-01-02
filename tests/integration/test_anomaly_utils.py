@@ -303,14 +303,17 @@ def create_anomaly_check_rule(
             columns=["amount", "quantity"]
         )
     """
+    # If merge_columns not provided, use a default value since has_no_anomalies requires it
+    if merge_columns is None:
+        merge_columns = ["transaction_id"]
+    
     check_kwargs = {
+        "merge_columns": merge_columns,
         "columns": columns,
         "model": model_name,
         "registry_table": registry_table,
         "score_threshold": score_threshold,
     }
-    if merge_columns:
-        check_kwargs["merge_columns"] = merge_columns
     check_kwargs.update(kwargs)
 
     return DQDatasetRule(

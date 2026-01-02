@@ -38,7 +38,7 @@ except ImportError:
     Pipeline = None  # type: ignore
     SHAP_AVAILABLE = False
 
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord, compute_config_hash
 from databricks.labs.dqx.anomaly.trainer import _derive_registry_table, ensure_full_model_name
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.transformers import (
@@ -67,6 +67,7 @@ class ScoringConfig:
     drift_threshold_value: float = 3.0
     include_contributions: bool = False
     include_confidence: bool = False
+    segment_by: list[str] | None = None
 
 
 def _build_segment_filter(segment_values: dict[str, str] | None) -> Column | None:
@@ -396,7 +397,7 @@ def _validate_sklearn_compatibility(model_record: AnomalyModelRecord) -> None:
                 f"  anomaly_engine.train(\n"
                 f"      df=df_train,\n"
                 f"      model_name=\"{model_record.model_name}\",\n"
-                f"      registry_table=\"{model_record.input_table.rsplit('.', 1)[0]}.anomaly_model_registry\"\n"
+                f"      columns={model_record.columns}\n"
                 f"  )\n",
                 UserWarning,
                 stacklevel=3,
@@ -689,7 +690,7 @@ def _discover_model_and_config(
         Tuple of (columns, segment_by, model_name, registry)
     """
     registry_client = AnomalyModelRegistry(df.sparkSession)
-    registry = registry_table or _derive_registry_table(df.sparkSession, df)
+    registry = registry_table or _derive_registry_table(df.sparkSession)
 
     columns = columns_param
     segment_by = segment_by_param
@@ -723,11 +724,25 @@ def _get_and_validate_model_record(
     registry: str,
     model_name: str,
     columns: list[str],
+    segment_by: list[str] | None = None,
 ) -> "AnomalyModelRecord":
     """
     Retrieve and validate model record from registry.
 
-    Raises InvalidParameterError if model not found or columns don't match.
+    Validates that the configuration (columns + segment_by) matches the trained model.
+
+    Args:
+        registry_client: Registry client instance
+        registry: Registry table name
+        model_name: Model name to retrieve
+        columns: Columns to use for scoring
+        segment_by: Segmentation columns (optional)
+
+    Returns:
+        Validated AnomalyModelRecord
+
+    Raises:
+        InvalidParameterError: If model not found or config doesn't match
     """
     record = registry_client.get_active_model(registry, model_name)
 
@@ -736,8 +751,24 @@ def _get_and_validate_model_record(
             f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
         )
 
-    if set(columns) != set(record.columns):
-        raise InvalidParameterError(f"Columns {columns} don't match trained model columns {record.columns}")
+    # Compute expected config hash
+    expected_hash = compute_config_hash(columns, segment_by)
+
+    # Compare with stored hash (backward compatible - compute from columns if missing)
+    if record.config_hash is None:
+        record.config_hash = compute_config_hash(record.columns, record.segment_by)
+
+    if expected_hash != record.config_hash:
+        raise InvalidParameterError(
+            f"Configuration mismatch for model '{model_name}':\n"
+            f"  Expected columns: {record.columns}\n"
+            f"  Provided columns: {columns}\n"
+            f"  Expected segment_by: {record.segment_by}\n"
+            f"  Provided segment_by: {segment_by}\n\n"
+            f"This model was trained with a different configuration. Either:\n"
+            f"  1. Use the correct columns/segments that match the trained model\n"
+            f"  2. Retrain the model with the new configuration"
+        )
 
     return record
 
@@ -913,9 +944,24 @@ def _score_global_model(
     config: ScoringConfig,
 ) -> DataFrame:
     """Score using a global (non-segmented) model."""
-    # Validate, check staleness, and drift
-    if set(config.columns) != set(record.columns):
-        raise InvalidParameterError(f"Columns {config.columns} don't match trained model columns {record.columns}")
+    # Validate config hash matches
+    expected_hash = compute_config_hash(config.columns, config.segment_by)
+
+    # Backward compatibility: compute hash if missing
+    if record.config_hash is None:
+        record.config_hash = compute_config_hash(record.columns, record.segment_by)
+
+    if expected_hash != record.config_hash:
+        raise InvalidParameterError(
+            f"Configuration mismatch for model '{config.model_name}':\n"
+            f"  Expected columns: {record.columns}\n"
+            f"  Provided columns: {config.columns}\n"
+            f"  Expected segment_by: {record.segment_by}\n"
+            f"  Provided segment_by: {config.segment_by}\n\n"
+            f"This model was trained with a different configuration. Either:\n"
+            f"  1. Use the correct columns/segments that match the trained model\n"
+            f"  2. Retrain the model with the new configuration"
+        )
 
     _check_model_staleness(record, config.model_name)
     _check_and_warn_drift(
@@ -975,6 +1021,7 @@ def _score_global_model(
     return scored_df
 
 
+@register_rule("dataset")
 def has_no_anomalies(
     merge_columns: list[str],
     columns: list[str | Column] | None = None,

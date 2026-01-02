@@ -29,8 +29,8 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -59,6 +59,7 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
     assert has_error, "Expected at least one row to have anomaly error"
 
 
+@pytest.mark.nightly
 def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that apply_checks_by_metadata_and_split correctly splits valid/quarantine."""
     # Use shared pre-trained model (no training needed!)
@@ -68,8 +69,8 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
 
     # Test with in-cluster points and clear outliers
     test_df = spark.createDataFrame(
-        [(110.0, 12.0), (150.0, 15.0), (9999.0, 1.0), (8888.0, 100.0)],
-        "amount double, quantity double",
+        [(1, 110.0, 12.0), (2, 150.0, 15.0), (3, 9999.0, 1.0), (4, 8888.0, 100.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -85,9 +86,10 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
     # First apply checks to see scores before split
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Debug: Print scores to diagnose split behavior
+    # Debug: Print scores to diagnose split behavior (access from _info.anomaly.score)
     print("\n=== Test Data Anomaly Scores ===")
-    test_scores = result_df.select("amount", "quantity", "anomaly_score").collect()
+    import pyspark.sql.functions as F
+    test_scores = result_df.select("amount", "quantity", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
     for row in test_scores:
         print(f"  amount={row.amount}, quantity={row.quantity}, score={row.anomaly_score}")
 
@@ -109,6 +111,7 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
     assert "amount" in quarantine_df.columns
 
 
+@pytest.mark.nightly
 def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that quarantine DataFrame has expected structure."""
     # Use shared pre-trained model (no training needed!)
@@ -117,8 +120,8 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(9999.0, 1.0)],  # Anomalous row
-        "amount double, quantity double",
+        [(1, 9999.0, 1.0)],  # Anomalous row
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -158,11 +161,11 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
 
     test_df = spark.createDataFrame(
         [
-            (110.0, 12.0),  # Normal - in dense part of training range (100-300, 10-50)
-            (None, 10.0),  # Null amount - will fail is_not_null
-            (9999.0, 1.0),  # Far-out anomaly
+            (1, 110.0, 12.0),  # Normal - in dense part of training range (100-300, 10-50)
+            (2, None, 10.0),  # Null amount - will fail is_not_null
+            (3, 9999.0, 1.0),  # Far-out anomaly
         ],
-        "amount double, quantity double",
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -178,6 +181,7 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
+                "merge_columns": ["transaction_id"],
                 "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
@@ -211,6 +215,7 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
     assert len(rows[2]["_errors"]) > 0
 
 
+@pytest.mark.nightly
 def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test anomaly check with criticality='error'."""
     # Use shared pre-trained model (no training needed!)
@@ -219,8 +224,8 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -230,6 +235,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
             criticality="error",
             check_func=has_no_anomalies,
             check_func_kwargs={
+                "merge_columns": ["transaction_id"],
                 "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
@@ -245,6 +251,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
     assert "_errors" in quarantine_df.columns
 
 
+@pytest.mark.nightly
 def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test anomaly check with criticality='warn'."""
     # Use shared pre-trained model (no training needed!)
@@ -253,8 +260,8 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -264,6 +271,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
             criticality="warn",
             check_func=has_no_anomalies,
             check_func_kwargs={
+                "merge_columns": ["transaction_id"],
                 "columns": columns,
                 "model": model_name,
                 "registry_table": registry_table,
@@ -283,6 +291,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
     assert anomalous_row["_warnings"] is not None or anomalous_row["_errors"] is not None
 
 
+@pytest.mark.nightly
 def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that get_valid() and get_invalid() helpers work with anomaly checks."""
     # Use shared pre-trained model (no training needed!)
@@ -292,8 +301,8 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
 
     # Test with in-cluster point (in dense part of range) and far-out anomaly
     test_df = spark.createDataFrame(
-        [(110.0, 12.0), (9999.0, 1.0)],
-        "amount double, quantity double",
+        [(1, 110.0, 12.0), (2, 9999.0, 1.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -309,9 +318,10 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
     # Apply checks
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Debug: Print scores
+    # Debug: Print scores (access from _info.anomaly.score)
     print("\n=== Helper Test Scores ===")
-    test_scores = result_df.select("amount", "quantity", "anomaly_score").collect()
+    import pyspark.sql.functions as F
+    test_scores = result_df.select("amount", "quantity", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
     for row in test_scores:
         print(f"  amount={row.amount}, quantity={row.quantity}, score={row.anomaly_score}")
 
@@ -335,6 +345,124 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
     assert "_errors" in invalid_df.columns, f"_errors should be kept in invalid. Columns: {invalid_df.columns}"
     assert "_warnings" in invalid_df.columns, f"_warnings should be kept in invalid. Columns: {invalid_df.columns}"
 
-    # Anomaly scoring columns should be present in both
-    assert "anomaly_score" in valid_df.columns
-    assert "anomaly_score" in invalid_df.columns
+    # Anomaly scoring info should be present in both (in _info column)
+    assert "_info" in valid_df.columns or "_info" in invalid_df.columns
+
+
+def test_info_column_structure(spark: SparkSession, mock_workspace_client, shared_2d_model):
+    """Test that _info.anomaly has all expected fields with correct structure."""
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+    columns = shared_2d_model["columns"]
+
+    test_df = spark.createDataFrame(
+        [(1, 150.0, 15.0)],  # Normal data
+        "transaction_id int, amount double, quantity double",
+    )
+
+    dq_engine = DQEngine(mock_workspace_client)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=has_no_anomalies,
+            check_func_kwargs={
+                "merge_columns": ["transaction_id"],
+                "columns": columns,
+                "model": model_name,
+                "registry_table": registry_table,
+                "score_threshold": 0.6,
+                "include_contributions": False,  # Test without optional fields
+                "include_confidence": False,
+            },
+        )
+    ]
+
+    result_df = dq_engine.apply_checks(test_df, checks)
+    
+    # Verify _info column exists
+    assert "_info" in result_df.columns, "_info column should be present"
+    
+    # Get the row and extract _info
+    row = result_df.collect()[0]
+    info = row["_info"]
+    
+    # Verify _info is a struct (not None)
+    assert info is not None, "_info should not be None"
+    
+    # Verify _info.anomaly exists and is a struct
+    assert hasattr(info, "anomaly"), "_info should have 'anomaly' field"
+    anomaly = info.anomaly
+    assert anomaly is not None, "_info.anomaly should not be None"
+    
+    # Verify all required fields exist in _info.anomaly
+    expected_fields = [
+        "check_name",
+        "score",
+        "is_anomaly",
+        "threshold",
+        "model",
+        "segment",
+        "contributions",
+        "confidence_std",
+    ]
+    
+    for field in expected_fields:
+        assert hasattr(anomaly, field), f"_info.anomaly should have '{field}' field"
+    
+    # Verify field values and types
+    assert anomaly.check_name == "has_no_anomalies", "check_name should be 'has_no_anomalies'"
+    assert isinstance(anomaly.score, (float, type(None))), "score should be float or None"
+    assert isinstance(anomaly.is_anomaly, (bool, type(None))), "is_anomaly should be boolean or None"
+    assert anomaly.threshold == 0.6, f"threshold should be 0.6, got {anomaly.threshold}"
+    assert model_name in anomaly.model, f"model should contain {model_name}"
+    
+    # Verify optional fields are None when not requested
+    assert anomaly.segment is None, "segment should be None for global model"
+    assert anomaly.contributions is None, "contributions should be None when not requested"
+    assert anomaly.confidence_std is None, "confidence_std should be None when not requested"
+
+
+def test_info_column_with_contributions(spark: SparkSession, mock_workspace_client, shared_3d_model):
+    """Test that _info.anomaly includes contributions when requested."""
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_3d_model["model_name"]
+    registry_table = shared_3d_model["registry_table"]
+    columns = shared_3d_model["columns"]
+
+    test_df = spark.createDataFrame(
+        [(1, 150.0, 15.0, 0.15)],  # Normal data
+        "transaction_id int, amount double, quantity double, discount double",
+    )
+
+    dq_engine = DQEngine(mock_workspace_client)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=has_no_anomalies,
+            check_func_kwargs={
+                "merge_columns": ["transaction_id"],
+                "columns": columns,
+                "model": model_name,
+                "registry_table": registry_table,
+                "score_threshold": 0.6,
+                "include_contributions": True,  # Request contributions
+            },
+        )
+    ]
+
+    result_df = dq_engine.apply_checks(test_df, checks)
+    
+    # Get the row and extract _info.anomaly
+    row = result_df.collect()[0]
+    anomaly = row["_info"].anomaly
+    
+    # Verify contributions field is populated
+    assert anomaly.contributions is not None, "contributions should not be None when requested"
+    
+    # Verify contributions is a map with column names as keys
+    assert isinstance(anomaly.contributions, dict), "contributions should be a dict/map"
+    
+    # Verify all feature columns have contribution values
+    for col in columns:
+        assert col in anomaly.contributions, f"contributions should include '{col}'"

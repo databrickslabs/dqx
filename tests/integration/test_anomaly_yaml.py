@@ -41,6 +41,7 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
       check:
         function: has_no_anomalies
         arguments:
+          merge_columns: [transaction_id]
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
@@ -50,8 +51,8 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
     checks = yaml.safe_load(checks_yaml)
 
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (9999.0, 1.0)],
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -66,6 +67,7 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
+@pytest.mark.nightly
 def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML with multiple anomaly and standard checks."""
     train_df = spark.createDataFrame(
@@ -95,6 +97,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
       check:
         function: has_no_anomalies
         arguments:
+          merge_columns: [transaction_id]
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
@@ -105,11 +108,11 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
 
     test_df = spark.createDataFrame(
         [
-            (150.0, 3.0),
-            (None, 3.0),
-            (9999.0, 1.0),
+            (1, 150.0, 3.0),
+            (2, None, 3.0),
+            (3, 9999.0, 1.0),
         ],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
-        "amount double, quantity double",
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -130,6 +133,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
     assert len(row2_errors) > 0
 
 
+@pytest.mark.nightly
 def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with custom score_threshold."""
     train_df = spark.createDataFrame(
@@ -154,6 +158,7 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
       check:
         function: has_no_anomalies
         arguments:
+          merge_columns: [transaction_id]
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
@@ -163,8 +168,8 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
     checks = yaml.safe_load(checks_yaml)
 
     test_df = spark.createDataFrame(
-        [(100.0, 2.0), (150.0, 1.8)],  # Slightly unusual but not extreme
-        "amount double, quantity double",
+        [(1, 100.0, 2.0), (2, 150.0, 1.8)],  # Slightly unusual but not extreme
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -178,6 +183,7 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
     assert all(count == 0 for count in error_counts) or sum(error_counts) <= 1
 
 
+@pytest.mark.nightly
 def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with include_contributions flag."""
     train_df = spark.createDataFrame(
@@ -202,6 +208,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
       check:
         function: has_no_anomalies
         arguments:
+          merge_columns: [transaction_id]
           columns: [amount, quantity, discount]
           model: {model_name}
           registry_table: {registry_table}
@@ -212,8 +219,8 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
     checks = yaml.safe_load(checks_yaml)
 
     test_df = spark.createDataFrame(
-        [(9999.0, 1.0, 0.95)],
-        "amount double, quantity double, discount double",
+        [(1, 9999.0, 1.0, 0.95)],
+        "transaction_id int, amount double, quantity double, discount double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -226,6 +233,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
     assert len(rows[0]["_errors"]) > 0
 
 
+@pytest.mark.nightly
 def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with drift_threshold."""
     train_df = spark.createDataFrame(
@@ -250,6 +258,7 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
       check:
         function: has_no_anomalies
         arguments:
+          merge_columns: [transaction_id]
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
@@ -260,8 +269,8 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
     checks = yaml.safe_load(checks_yaml)
 
     test_df = spark.createDataFrame(
-        [(150.0, 3.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
-        "amount double, quantity double",
+        [(1, 150.0, 3.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -275,6 +284,7 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
     assert len(row_errors) == 0
 
 
+@pytest.mark.nightly
 def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML with criticality='warn'."""
     train_df = spark.createDataFrame(
@@ -299,6 +309,7 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_
       check:
         function: has_no_anomalies
         arguments:
+          merge_columns: [transaction_id]
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
@@ -308,8 +319,8 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_
     checks = yaml.safe_load(checks_yaml)
 
     test_df = spark.createDataFrame(
-        [(150.0, 3.0), (9999.0, 1.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
-        "amount double, quantity double",
+        [(1, 150.0, 3.0), (2, 9999.0, 1.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
@@ -322,6 +333,7 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_
     assert rows[1]["_warnings"] is not None or rows[1]["_errors"] is not None
 
 
+@pytest.mark.nightly
 def test_yaml_parsing_validation(spark: SparkSession):
     """Test that invalid YAML is caught."""
     # Invalid YAML (missing required argument)
