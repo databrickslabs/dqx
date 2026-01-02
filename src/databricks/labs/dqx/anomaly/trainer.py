@@ -15,8 +15,6 @@ import collections.abc
 from copy import deepcopy
 import warnings
 from datetime import datetime
-from io import StringIO
-import sys
 from typing import Any, cast
 
 import cloudpickle
@@ -37,8 +35,7 @@ from sklearn.preprocessing import RobustScaler
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
-from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry, compute_config_hash
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
@@ -181,7 +178,7 @@ class AnomalyEngine(DQEngineBase):
 
         # Prepare training configuration
         derived_model_name, derived_registry_table = _prepare_training_config(
-            model_name, registry_table, self.spark, df
+            model_name, registry_table, self.spark, columns, segment_by
         )
 
         # Execute training
@@ -275,15 +272,16 @@ def _prepare_training_config(
     model_name: str,
     registry_table: str | None,
     spark: SparkSession,
-    df: DataFrame,
+    columns: list[str],
+    segment_by: list[str] | None,
 ) -> tuple[str, str]:
     """
-    Derive registry table and full model name, check if model exists.
+    Derive registry table and full model name, check if model exists and warn about config changes.
 
     Returns:
         Tuple of (derived_model_name, derived_registry_table)
     """
-    derived_registry_table = registry_table or _derive_registry_table(spark, df)
+    derived_registry_table = registry_table or _derive_registry_table(spark)
 
     # Ensure model_name has full three-level catalog.schema.model format
     derived_model_name = ensure_full_model_name(model_name, derived_registry_table)
@@ -296,6 +294,24 @@ def _prepare_training_config(
             UserWarning,
             stacklevel=3,
         )
+
+    # Check for configuration changes in existing models
+    registry = AnomalyModelRegistry(spark)
+    existing = registry.get_active_model(derived_registry_table, derived_model_name)
+
+    if existing:
+        config_changed = set(columns) != set(existing.columns) or segment_by != existing.segment_by
+
+        if config_changed:
+            warnings.warn(
+                f"⚠️  Model '{derived_model_name}' exists with different configuration:\n"
+                f"   Existing: columns={existing.columns}, segment_by={existing.segment_by}\n"
+                f"   New: columns={columns}, segment_by={segment_by}\n"
+                f"   The old model will be archived. Consider using a different model_name "
+                f"if this is a different use case.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     return derived_model_name, derived_registry_table
 
@@ -418,7 +434,6 @@ def _train_global(
     record = AnomalyModelRecord(
         model_name=model_name,
         model_uri=model_uri,
-        input_table=_get_input_table(df) or "unknown",
         columns=columns,
         algorithm=f"IsolationForest_Ensemble_{ensemble_size}" if ensemble_size > 1 else "IsolationForest",
         hyperparameters=_stringify_dict(hyperparams),
@@ -435,6 +450,7 @@ def _train_global(
         is_global_model=True,
         feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
         sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
+        config_hash=compute_config_hash(columns, None),  # Compute config hash for collision detection
     )
     registry.save_model(record, registry_table)
 
@@ -663,12 +679,9 @@ def _train_single_segment(
 
     registry = AnomalyModelRegistry(spark)
 
-    input_table = _get_input_table(df) or "unknown"
-
     record = AnomalyModelRecord(
         model_name=model_name,
         model_uri=model_uri,
-        input_table=input_table,
         columns=columns,
         algorithm="IsolationForest",
         hyperparameters=_stringify_dict(hyperparams),
@@ -685,6 +698,7 @@ def _train_single_segment(
         is_global_model=False,
         feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
         sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
+        config_hash=compute_config_hash(columns, segment_by),  # Compute config hash for collision detection
     )
     registry.save_model(record, registry_table)
 
@@ -724,65 +738,30 @@ def _validate_columns(
     return warnings_list
 
 
-def _derive_registry_table(spark: SparkSession, df: DataFrame) -> str:
-    input_table = _get_input_table(df)
-    if not input_table:
-        # Fallback to default location when table name cannot be inferred
-        # Use current catalog and schema
-        try:
-            catalog_row = spark.sql("SELECT current_catalog()").first()
-            schema_row = spark.sql("SELECT current_schema()").first()
-            assert catalog_row is not None and schema_row is not None
-            current_catalog = catalog_row[0]
-            current_schema = schema_row[0]
-            return f"{current_catalog}.{current_schema}.dqx_anomaly_models"
-        except Exception as exc:
-            raise InvalidParameterError(
-                "Cannot infer registry table name from DataFrame and no current catalog/schema set. "
-                "Provide registry_table explicitly (e.g., 'catalog.schema.dqx_anomaly_models')."
-            ) from exc
-    parts = input_table.split(".")
-    if len(parts) == 3:
-        catalog, schema, _ = parts
-    elif len(parts) == 2:
-        raise InvalidParameterError("Cannot infer registry table without catalog. Provide registry_table explicitly.")
-    else:
-        raise InvalidParameterError(
-            "Input table must be schema.table or catalog.schema.table to derive registry_table."
-        )
-    return f"{catalog}.{schema}.dqx_anomaly_models"
+def _derive_registry_table(spark: SparkSession) -> str:
+    """Derive registry table name from current catalog and schema.
 
+    Args:
+        spark: SparkSession
 
-def _capture_explain_output(df: DataFrame) -> str:
-    """Capture DataFrame.explain() output as a string by redirecting stdout."""
-    old_stdout = sys.stdout
-    sys.stdout = buffer = StringIO()
-    df.explain(extended=True)
-    sys.stdout = old_stdout
-    return buffer.getvalue()
+    Returns:
+        Registry table name in format: catalog.schema.dqx_anomaly_models
 
-
-def _get_input_table(df: DataFrame) -> str | None:
+    Raises:
+        InvalidParameterError: If current catalog/schema cannot be determined
     """
-    Attempt to get the input table name from DataFrame by analyzing the Spark execution plan.
-
-    Returns None if table name cannot be inferred (e.g., in-memory DataFrames, programmatically created).
-    """
-    if df.isStreaming:
-        raise InvalidParameterError("Streaming DataFrames are not supported for training.")
-
     try:
-        # Get the execution plan and extract table names
-        plan_str = _capture_explain_output(df)
-        tables = get_tables_from_spark_plan(plan_str)
-        if tables:
-            # Return the first table found (typically there's only one input table)
-            return next(iter(tables))
-    except Exception:
-        # If anything fails, fall back to None
-        pass
-
-    return None
+        catalog_row = spark.sql("SELECT current_catalog()").first()
+        schema_row = spark.sql("SELECT current_schema()").first()
+        assert catalog_row is not None and schema_row is not None
+        current_catalog = catalog_row[0]
+        current_schema = schema_row[0]
+        return f"{current_catalog}.{current_schema}.dqx_anomaly_models"
+    except Exception as exc:
+        raise InvalidParameterError(
+            "Cannot infer registry table name. No current catalog/schema set. "
+            "Provide registry_table explicitly (e.g., 'catalog.schema.dqx_anomaly_models')."
+        ) from exc
 
 
 def ensure_full_model_name(model_name: str, registry_table: str) -> str:

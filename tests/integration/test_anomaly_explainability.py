@@ -9,11 +9,13 @@ OPTIMIZATION: These tests use session-scoped shared fixtures (shared_2d_model, s
 shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min to ~10 min (83% savings).
 """
 
+import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
 
 
+@pytest.mark.nightly
 def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
     """Test that feature_importance is stored in registry."""
     # Use shared pre-trained model (no training needed!)
@@ -41,6 +43,7 @@ def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
         assert importance >= 0
 
 
+@pytest.mark.nightly
 def test_feature_contributions_added(spark: SparkSession, shared_3d_model):
     """Test that anomaly_contributions column is added when requested."""
     # Use shared pre-trained model (no training needed!)
@@ -80,6 +83,7 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model):
     assert "discount" in contribs
 
 
+@pytest.mark.nightly
 def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_model):
     """Test that contribution percentages sum to approximately 1.0."""
     # Use shared pre-trained model (no training needed!)
@@ -115,6 +119,7 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
     assert abs(total - 1.0) < 0.01
 
 
+@pytest.mark.nightly
 def test_multi_feature_contributions(spark: SparkSession, shared_4d_model):
     """Test contributions with 4+ columns."""
     # Use shared pre-trained model (no training needed!)
@@ -150,6 +155,7 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model):
     assert "weight" in contribs
 
 
+@pytest.mark.nightly
 def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_model):
     """Test that contributions are not added when include_contributions=False."""
     # Use shared pre-trained model (no training needed!)
@@ -178,6 +184,7 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
     assert "anomaly_contributions" not in result_df.columns
 
 
+@pytest.mark.nightly
 def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model):
     """Test that the top contributor makes sense for the anomaly."""
     # Use shared pre-trained model (no training needed!)

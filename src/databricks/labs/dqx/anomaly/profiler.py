@@ -427,15 +427,24 @@ def _calculate_total_segments(df: DataFrame, recommended_segments: list[str], wa
     if not recommended_segments:
         return 1
 
+    total_rows = df.count()
     segment_count = 1
     for col in recommended_segments:
         distinct_count = df.select(col).distinct().count()
         segment_count *= distinct_count
 
+    # Warn if segments are too granular relative to data size
+    avg_rows_per_segment = total_rows / segment_count if segment_count > 0 else 0
+
     if segment_count > 50:
         warnings.append(
             f"Detected {segment_count} total segments, training may be slow. "
             "Consider filtering or using coarser segmentation."
+        )
+    elif avg_rows_per_segment < 100:
+        warnings.append(
+            f"Detected {segment_count} segments with only ~{int(avg_rows_per_segment)} rows per segment on average. "
+            f"Models may be unreliable. Consider reducing segmentation or using more data (total rows: {total_rows})."
         )
 
     return segment_count
@@ -450,8 +459,11 @@ def _select_segment_columns(
 ) -> tuple[list[str], int]:
     """Identify and validate segment columns."""
     recommended_segments = []
+    candidate_segments = []  # Track all viable candidates for user info
     categorical_types = (StringType, IntegerType)
     categorical_fields = [f for f in df.schema.fields if isinstance(f.dataType, categorical_types)]
+
+    total_count = df.count()
 
     for field in categorical_fields:
         col_name = field.name
@@ -470,18 +482,49 @@ def _select_segment_columns(
             continue
 
         distinct_count = stats_row["distinct_count"]
-        total_count = df.count()
         null_rate = stats_row["null_count"] / total_count if total_count > 0 else 1.0
         is_id_column = id_pattern.search(col_name) is not None
 
-        # Check segment criteria
-        meets_segment_criteria = 2 <= distinct_count <= 50 and null_rate < 0.1 and not is_id_column
+        # Check segment criteria: conservative for auto-discovery
+        # Only consider columns with 2-20 distinct values (not 50)
+        # Ensure at least 100 rows per segment on average
+        meets_segment_criteria = (
+            2 <= distinct_count <= 20  # More conservative upper bound
+            and null_rate < 0.1
+            and not is_id_column
+            and (total_count / distinct_count) >= 100  # At least 100 rows per segment
+        )
         is_high_cardinality = distinct_count > 50
 
         if meets_segment_criteria and _validate_and_add_segment_column(df, col_name, warnings):
-            recommended_segments.append(col_name)
+            candidate_segments.append((col_name, distinct_count, total_count / distinct_count))
         elif is_high_cardinality:
             _check_high_cardinality_warning(field, col_name, distinct_count, warnings)
+
+    # AUTO-DISCOVERY STRATEGY: Be conservative, prefer single segment column
+    # Sort candidates by: lowest cardinality first (fewer segments = more reliable)
+    candidate_segments.sort(key=lambda x: x[1])  # Sort by distinct_count ascending
+
+    if candidate_segments:
+        # For auto-discovery, only select the FIRST (lowest cardinality) candidate
+        selected = candidate_segments[0]
+        recommended_segments.append(selected[0])
+
+        # Log helpful info about selection and alternatives
+        logger.info(
+            f"Auto-segmentation selected 1 column: [{selected[0]}] "
+            f"({int(selected[1])} segments, ~{int(selected[2])} rows/segment)"
+        )
+
+        # Suggest additional segmentation options if available
+        if len(candidate_segments) > 1:
+            other_options = ", ".join(
+                [f"{col} ({int(dc)} segments)" for col, dc, _ in candidate_segments[1:4]]  # Show up to 3 more
+            )
+            logger.info(
+                f"Consider additional segmentation for more granularity: "
+                f"segment_by=['{selected[0]}', <column>] where <column> could be: {other_options}"
+            )
 
     # Calculate total segment combinations
     segment_count = _calculate_total_segments(df, recommended_segments, warnings)

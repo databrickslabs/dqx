@@ -16,8 +16,13 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test extract → train → score flow with temporal features."""
+    unique_id = make_random(8).lower()
+    model_name = f"test_temporal_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     # Create data with timestamps
     df = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-01 09:00:00') as event_time FROM range(50)")
 
@@ -32,8 +37,8 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     anomaly_engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
-        model_name="test_temporal",
-        registry_table="main.default.test_temporal_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Score new data with temporal features
@@ -49,8 +54,8 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
-        model="test_temporal",
-        registry_table="main.default.test_temporal_registry",
+        model=model_name,
+        registry_table=registry_table,
         score_threshold=0.5,
     )
     result_df = apply_fn(test_df_with_temporal)
@@ -59,8 +64,13 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     assert "anomaly_score" in result_df.columns
 
 
-def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test training with multiple temporal features."""
+    unique_id = make_random(8).lower()
+    model_name = f"test_multi_temporal_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     df = spark.sql("SELECT 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time FROM range(50)")
 
     # Extract multiple temporal features
@@ -84,8 +94,8 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, 
             "temporal_month",
             "temporal_quarter",
         ],
-        model_name="test_multi_temporal",
-        registry_table="main.default.test_multi_temporal_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Score
@@ -105,16 +115,21 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, 
             "temporal_month",
             "temporal_quarter",
         ],
-        model="test_multi_temporal",
-        registry_table="main.default.test_multi_temporal_registry",
+        model=model_name,
+        registry_table=registry_table,
         score_threshold=0.5,
     )
     result_df = apply_fn(test_df_with_temporal)
     assert "anomaly_score" in result_df.columns
 
 
-def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test that model learns time-based patterns."""
+    unique_id = make_random(8).lower()
+    model_name = f"test_temporal_pattern_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     # Create data with distinct patterns for different hours
     # 9am-5pm: amount=100, evening: amount=50
     df = spark.sql(
@@ -130,8 +145,8 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
     anomaly_engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour"],
-        model_name="test_temporal_pattern",
-        registry_table="main.default.test_temporal_pattern_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Test with normal hour
@@ -148,8 +163,8 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=["amount", "temporal_hour"],
-        model="test_temporal_pattern",
-        registry_table="main.default.test_temporal_pattern_registry",
+        model=model_name,
+        registry_table=registry_table,
         score_threshold=0.5,
     )
 
@@ -168,8 +183,13 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
     # differentiate between hours. A real use case would have varied amounts per hour.
 
 
-def test_weekend_feature(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_weekend_feature(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test is_weekend temporal feature."""
+    unique_id = make_random(8).lower()
+    model_name = f"test_weekend_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     # Train on weekday data
     df = spark.sql(
         """
@@ -184,8 +204,8 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client, anomaly_eng
     anomaly_engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_is_weekend"],
-        model_name="test_weekend",
-        registry_table="main.default.test_weekend_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Test on weekend
@@ -201,14 +221,15 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client, anomaly_eng
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=["amount", "temporal_is_weekend"],
-        model="test_weekend",
-        registry_table="main.default.test_weekend_registry",
+        model=model_name,
+        registry_table=registry_table,
         score_threshold=0.5,
     )
     result_df = apply_fn(test_df_with_temporal)
     assert "anomaly_score" in result_df.columns
 
 
+@pytest.mark.nightly
 def test_missing_timestamp_column_behavior(spark: SparkSession):
     """Test behavior when timestamp column doesn't exist."""
     df = spark.createDataFrame(
@@ -224,6 +245,7 @@ def test_missing_timestamp_column_behavior(spark: SparkSession):
         result_df.collect()
 
 
+@pytest.mark.nightly
 def test_temporal_features_with_nulls(spark: SparkSession):
     """Test temporal feature extraction with null timestamps."""
     df = spark.sql(

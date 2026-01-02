@@ -12,7 +12,6 @@ def test_anomaly_model_record_creation_with_defaults():
     record = AnomalyModelRecord(
         model_name="test_model",
         model_uri="models:/test_model/1",
-        input_table="catalog.schema.table",
         columns=["col1", "col2"],
         algorithm="IsolationForest",
         hyperparameters={"contamination": "0.1", "num_trees": "100"},
@@ -36,7 +35,6 @@ def test_anomaly_model_record_with_all_fields():
     record = AnomalyModelRecord(
         model_name="segmented_model",
         model_uri="models:/segmented_model/2",
-        input_table="catalog.schema.sales",
         columns=["amount", "quantity", "discount"],
         algorithm="IsolationForest",
         hyperparameters={"contamination": "0.05", "num_trees": "200", "max_depth": "10"},
@@ -176,7 +174,6 @@ def test_anomaly_model_record_to_dict():
     record = AnomalyModelRecord(
         model_name="test_model",
         model_uri="models:/test_model/1",
-        input_table="catalog.schema.table",
         columns=["col1", "col2"],
         algorithm="IsolationForest",
         hyperparameters={"contamination": "0.1"},
@@ -203,7 +200,6 @@ def test_anomaly_model_record_defaults_for_optional_fields():
     record = AnomalyModelRecord(
         model_name="minimal_model",
         model_uri="models:/minimal/1",
-        input_table="table",
         columns=["col1"],
         algorithm="IF",
         hyperparameters={},
@@ -228,7 +224,6 @@ def test_anomaly_model_record_with_empty_collections():
     record = AnomalyModelRecord(
         model_name="empty_model",
         model_uri="models:/empty/1",
-        input_table="table",
         columns=[],  # Empty list
         algorithm="IF",
         hyperparameters={},  # Empty dict

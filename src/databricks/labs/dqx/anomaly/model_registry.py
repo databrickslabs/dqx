@@ -2,6 +2,8 @@
 Model registry utilities for anomaly detection.
 """
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -14,8 +16,33 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.io import save_dataframe_as_table
 
+
+def compute_config_hash(columns: list[str], segment_by: list[str] | None) -> str:
+    """Generate stable hash of model configuration.
+
+    Args:
+        columns: List of column names used for training
+        segment_by: List of columns used for segmentation, or None
+
+    Returns:
+        16-character hex string (first 16 chars of SHA256 hash)
+
+    Note:
+        This hash uniquely identifies a model configuration based on:
+        - Sorted list of columns (order-independent)
+        - Sorted list of segment_by columns (order-independent)
+        Used for collision detection when same model_name is reused with different configs.
+    """
+    config = {
+        "columns": sorted(columns),
+        "segment_by": sorted(segment_by) if segment_by else None,
+    }
+    config_str = json.dumps(config, sort_keys=True)
+    return hashlib.sha256(config_str.encode()).hexdigest()[:16]
+
+
 ANOMALY_MODEL_TABLE_SCHEMA = (
-    "model_name string, model_uri string, input_table string, "
+    "model_name string, model_uri string, "
     "columns array<string>, algorithm string, hyperparameters map<string,string>, "
     "training_rows bigint, training_time timestamp, mlflow_run_id string, "
     "status string, metrics map<string,double>, mode string, "
@@ -27,7 +54,8 @@ ANOMALY_MODEL_TABLE_SCHEMA = (
     "is_global_model boolean, "
     "column_types map<string,string>, "
     "feature_metadata string, "  # JSON string with feature engineering metadata
-    "sklearn_version string"  # scikit-learn version used during training
+    "sklearn_version string, "  # scikit-learn version used during training
+    "config_hash string"  # SHA256 hash of {columns, segment_by} for collision detection
 )
 
 
@@ -42,7 +70,6 @@ class AnomalyModelRecord:  # pylint: disable=too-many-instance-attributes
 
     model_name: str
     model_uri: str
-    input_table: str
     columns: list[str]
     algorithm: str
     hyperparameters: dict[str, str]
@@ -61,6 +88,7 @@ class AnomalyModelRecord:  # pylint: disable=too-many-instance-attributes
     column_types: dict[str, str] | None = None  # Maps column name -> type category
     feature_metadata: str | None = None  # JSON string with feature engineering metadata
     sklearn_version: str | None = None  # scikit-learn version used during training
+    config_hash: str | None = None  # SHA256 hash of {columns, segment_by} for collision detection
 
 
 class AnomalyModelRegistry:
@@ -121,7 +149,9 @@ class AnomalyModelRegistry:
         if not row:
             return None
         values = row.asDict(recursive=True)
-        return AnomalyModelRecord(**values)  # type: ignore[arg-type]
+        record = AnomalyModelRecord(**values)  # type: ignore[arg-type]
+
+        return record
 
     def get_segment_model(
         self, table: str, base_model_name: str, segment_values: dict[str, str]

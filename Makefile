@@ -25,6 +25,9 @@ test:
 integration:
 	hatch run integration
 
+integration-all:
+	hatch run integration-all
+
 e2e:
 	hatch run e2e
 

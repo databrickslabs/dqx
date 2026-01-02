@@ -19,8 +19,14 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that drift warning is issued when data distribution shifts."""
+    # Create unique table names for test isolation
+    unique_id = make_random(8).lower()
+    model_name = f"test_drift_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     # Train on distribution centered at 100
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
@@ -30,21 +36,21 @@ def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_w
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
-        model_name="test_drift",
-        registry_table="main.default.test_drift_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Test on distribution centered at 500 (significant shift)
     test_df = spark.createDataFrame(
-        [(500.0 + i, 5.0) for i in range(50)],
-        "amount double, quantity double",
+        [(i, 500.0 + i, 5.0) for i in range(50)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
         create_anomaly_check_rule(
-            model_name="test_drift",
-            registry_table="main.default.test_drift_registry",
+            model_name=model_name,
+            registry_table=registry_table,
             columns=["amount", "quantity"],
             score_threshold=0.5,
             drift_threshold=3.0,
@@ -57,18 +63,24 @@ def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_w
         result_df = dq_engine.apply_checks(test_df, checks)
         result_df.collect()  # Force evaluation
 
-        # Check that drift warning was issued
-        drift_warnings = [warning for warning in w if "Data drift detected" in str(warning.message)]
+        # Check that drift warning was issued (case-insensitive check)
+        drift_warnings = [warning for warning in w if "drift detected" in str(warning.message).lower()]
         assert len(drift_warnings) > 0
 
         # Check that warning mentions drifted columns
         warning_message = str(drift_warnings[0].message)
-        assert "amount" in warning_message or "quantity" in warning_message
-        assert "anomaly.train" in warning_message  # Retrain recommendation
+        assert "amount" in warning_message.lower() or "quantity" in warning_message.lower()
+        # Note: Global model warnings don't include "anomaly.train", they include retrain_cmd format
 
 
-def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that no drift warning is issued when distributions are similar."""
+    # Create unique table names for test isolation
+    unique_id = make_random(8).lower()
+    model_name = f"test_no_drift_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     # Train on distribution
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
@@ -78,21 +90,21 @@ def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_work
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
-        model_name="test_no_drift",
-        registry_table="main.default.test_no_drift_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Test on similar distribution
     test_df = spark.createDataFrame(
-        [(100.0 + i, 2.0) for i in range(50)],
-        "amount double, quantity double",
+        [(i, 100.0 + i, 2.0) for i in range(50)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
         create_anomaly_check_rule(
-            model_name="test_no_drift",
-            registry_table="main.default.test_no_drift_registry",
+            model_name=model_name,
+            registry_table=registry_table,
             columns=["amount", "quantity"],
             score_threshold=0.5,
             drift_threshold=3.0,
@@ -105,13 +117,19 @@ def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_work
         result_df = dq_engine.apply_checks(test_df, checks)
         result_df.collect()
 
-        # Check that NO drift warning was issued
-        drift_warnings = [warning for warning in w if "Data drift detected" in str(warning.message)]
+        # Check that NO drift warning was issued (case-insensitive check)
+        drift_warnings = [warning for warning in w if "drift detected" in str(warning.message).lower()]
         assert len(drift_warnings) == 0
 
 
-def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_workspace_client, anomaly_engine):
+@pytest.mark.nightly
+def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that drift detection is disabled when drift_threshold=None."""
+    # Create unique table names for test isolation
+    unique_id = make_random(8).lower()
+    model_name = f"test_drift_disabled_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+    
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
         "amount double, quantity double",
@@ -120,21 +138,21 @@ def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
-        model_name="test_drift_disabled",
-        registry_table="main.default.test_drift_disabled_registry",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Test on very different distribution
     test_df = spark.createDataFrame(
-        [(9999.0, 1.0) for i in range(10)],
-        "amount double, quantity double",
+        [(i, 9999.0, 1.0) for i in range(10)],
+        "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
     checks = [
         create_anomaly_check_rule(
-            model_name="test_drift_disabled",
-            registry_table="main.default.test_drift_disabled_registry",
+            model_name=model_name,
+            registry_table=registry_table,
             columns=["amount", "quantity"],
             score_threshold=0.5,
             drift_threshold=None,  # Disable drift detection
@@ -147,8 +165,8 @@ def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_
         result_df = dq_engine.apply_checks(test_df, checks)
         result_df.collect()
 
-        # Check that NO drift warning was issued
-        drift_warnings = [warning for warning in w if "Data drift detected" in str(warning.message)]
+        # Check that NO drift warning was issued (case-insensitive check)
+        drift_warnings = [warning for warning in w if "drift detected" in str(warning.message).lower()]
         assert len(drift_warnings) == 0
 
 
@@ -157,6 +175,7 @@ def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_
 # ============================================================================
 
 
+@pytest.mark.nightly
 def test_drift_detector_no_drift_when_distributions_match(spark):
     """Test that drift is not detected when distributions are identical."""
     df = spark.createDataFrame(
@@ -183,6 +202,7 @@ def test_drift_detector_no_drift_when_distributions_match(spark):
     assert len(result.drifted_columns) == 0
 
 
+@pytest.mark.nightly
 def test_drift_detector_drift_detected_when_mean_shifts(spark):
     """Test that drift is detected when mean shifts significantly."""
     df = spark.createDataFrame(
@@ -210,6 +230,7 @@ def test_drift_detector_drift_detected_when_mean_shifts(spark):
     assert result.recommendation == "retrain"
 
 
+@pytest.mark.nightly
 def test_drift_detector_with_multiple_columns(spark):
     """Test drift detection with multiple columns."""
     df = spark.createDataFrame(

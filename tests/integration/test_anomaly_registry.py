@@ -8,7 +8,8 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, compute_config_hash
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,
@@ -58,6 +59,7 @@ def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_r
     assert "_info" in result_df.columns
 
 
+@pytest.mark.nightly
 def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test training multiple models in the same registry table."""
     unique_id = make_random(8).lower()
@@ -126,6 +128,7 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
     assert "anomaly_score" in result_b.columns
 
 
+@pytest.mark.nightly
 def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that get_active_model() returns the most recent model."""
     unique_id = make_random(8).lower()
@@ -178,6 +181,7 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
     assert archived_count == 1
 
 
+@pytest.mark.nightly
 def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that staleness warning is issued when model is >30 days old."""
     # Use standard 2D training data with sufficient variance
@@ -226,6 +230,7 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
         assert "Consider retraining" in str(stale_warnings[0].message)
 
 
+@pytest.mark.nightly
 def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that registry table has all expected columns."""
     df = spark.createDataFrame(
@@ -249,7 +254,6 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
     expected_columns = [
         "model_name",
         "model_uri",
-        "input_table",
         "columns",
         "algorithm",
         "hyperparameters",
@@ -262,6 +266,13 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
         "baseline_stats",
         "feature_importance",
         "temporal_config",
+        "segment_by",
+        "segment_values",
+        "is_global_model",
+        "column_types",
+        "feature_metadata",
+        "sklearn_version",
+        "config_hash",
     ]
 
     actual_columns = registry_df.columns
@@ -270,6 +281,7 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
         assert col in actual_columns, f"Missing column: {col}"
 
 
+@pytest.mark.nightly
 def test_registry_stores_metadata(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that registry stores comprehensive metadata."""
     # Use standard 3D training data with sufficient variance
@@ -315,6 +327,7 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: str, anomaly
     assert "recommended_threshold" in record["metrics"]
 
 
+@pytest.mark.nightly
 def test_nonexistent_registry_returns_none(spark: SparkSession):
     """Test that get_active_model returns None for non-existent registry."""
     registry = AnomalyModelRegistry(spark)
@@ -324,6 +337,7 @@ def test_nonexistent_registry_returns_none(spark: SparkSession):
     assert model is None
 
 
+@pytest.mark.nightly
 def test_nonexistent_model_returns_none(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that get_active_model returns None for non-existent model."""
     df = spark.createDataFrame(
@@ -348,3 +362,150 @@ def test_nonexistent_model_returns_none(spark: SparkSession, make_random: str, a
     model = registry.get_active_model(registry_table, "nonexistent_model")
 
     assert model is None
+
+
+@pytest.mark.nightly
+def test_config_hash_stability(spark: SparkSession):
+    """Test that config_hash is stable for same inputs."""
+    columns = ["amount", "quantity", "discount"]
+    segment_by = ["region", "category"]
+
+    # Compute hash multiple times
+    hash1 = compute_config_hash(columns, segment_by)
+    hash2 = compute_config_hash(columns, segment_by)
+
+    assert hash1 == hash2
+    assert len(hash1) == 16  # 16 hex characters
+
+
+@pytest.mark.nightly
+def test_config_hash_order_independence(spark: SparkSession):
+    """Test that config_hash is order-independent (columns are sorted internally)."""
+    # Different order should produce same hash
+    hash1 = compute_config_hash(["amount", "quantity", "discount"], ["region", "category"])
+    hash2 = compute_config_hash(["discount", "amount", "quantity"], ["category", "region"])
+
+    assert hash1 == hash2
+
+
+@pytest.mark.nightly
+def test_config_hash_differentiation(spark: SparkSession):
+    """Test that different configs produce different hashes."""
+    hash1 = compute_config_hash(["amount", "quantity"], None)
+    hash2 = compute_config_hash(["amount", "quantity", "discount"], None)
+    hash3 = compute_config_hash(["amount", "quantity"], ["region"])
+
+    assert hash1 != hash2  # Different columns
+    assert hash1 != hash3  # Different segment_by
+    assert hash2 != hash3  # Different columns and segment_by
+
+
+def test_config_hash_stored_during_training(spark: SparkSession, make_random: str, anomaly_engine):
+    """Test that config_hash is stored in registry during training."""
+    df = spark.createDataFrame(
+        [(100.0 + i * 0.5, 2.0) for i in range(50)],
+        "amount double, quantity double",
+    )
+
+    unique_id = make_random(8).lower()
+    registry_table = f"main.default.{unique_id}_registry"
+    model_name = f"test_config_hash_{make_random(4).lower()}"
+    columns = ["amount", "quantity"]
+
+    # Train model
+    anomaly_engine.train(
+        df=df,
+        columns=columns,
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    # Verify config_hash is stored
+    full_model_name = f"main.default.{model_name}"
+    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+
+    assert record is not None
+    assert record["config_hash"] is not None
+
+    # Verify hash matches expected
+    expected_hash = compute_config_hash(columns, None)
+    assert record["config_hash"] == expected_hash
+
+
+@pytest.mark.nightly
+def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_engine):
+    """Test that warning is issued when retraining with different config."""
+    df = spark.createDataFrame(
+        [(100.0 + i * 0.5, 2.0, 0.1) for i in range(50)],
+        "amount double, quantity double, discount double",
+    )
+
+    unique_id = make_random(8).lower()
+    registry_table = f"main.default.{unique_id}_registry"
+    model_name = f"test_config_warn_{make_random(4).lower()}"
+
+    # Train with initial columns
+    anomaly_engine.train(
+        df=df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    # Retrain with different columns (should warn)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+
+        anomaly_engine.train(
+            df=df,
+            columns=["amount", "quantity", "discount"],
+            model_name=model_name,
+            registry_table=registry_table,
+        )
+
+        # Check that config change warning was issued
+        config_warnings = [warning for warning in w if "different configuration" in str(warning.message)]
+        assert len(config_warnings) > 0
+        assert "will be archived" in str(config_warnings[0].message)
+
+
+@pytest.mark.nightly
+def test_scoring_validates_config_hash(spark: SparkSession, make_random: str, anomaly_engine):
+    """Test that scoring validates config hash and errors on mismatch."""
+    df_train = spark.createDataFrame(
+        [(100.0 + i * 0.5, 2.0, 0.1) for i in range(50)],
+        "amount double, quantity double, discount double",
+    )
+
+    unique_id = make_random(8).lower()
+    registry_table = f"main.default.{unique_id}_registry"
+    model_name = f"test_score_validate_{make_random(4).lower()}"
+
+    # Train with specific columns
+    anomaly_engine.train(
+        df=df_train,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    # Try to score with different columns (should error)
+    df_score = spark.createDataFrame(
+        [(100.0 + i * 0.5, 2.0, 0.1) for i in range(10)],
+        "amount double, quantity double, discount double",
+    )
+
+    with pytest.raises(InvalidParameterError) as exc_info:
+        _, apply_fn = has_no_anomalies(
+            merge_columns=["transaction_id"],
+            columns=["amount", "quantity", "discount"],  # Different columns!
+            model=model_name,
+            registry_table=registry_table,
+            score_threshold=0.5,
+        )
+        result = apply_fn(df_score)
+        result.collect()  # Force evaluation
+
+    assert "Configuration mismatch" in str(exc_info.value)
+    assert "Expected columns" in str(exc_info.value)
+

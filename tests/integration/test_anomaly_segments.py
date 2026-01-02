@@ -1,5 +1,6 @@
 """Integration tests for segment-based anomaly detection."""
 
+import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -8,6 +9,7 @@ from databricks.labs.dqx.rule import DQDatasetRule
 from tests.conftest import TEST_CATALOG
 
 
+@pytest.mark.nightly
 def test_explicit_segment_training(
     spark: SparkSession,
     mock_workspace_client,  # pylint: disable=unused-argument
@@ -52,6 +54,7 @@ def test_explicit_segment_training(
     assert any("region=APAC" in name for name in model_names)
 
 
+@pytest.mark.nightly
 def test_segment_scoring(
     spark: SparkSession,
     mock_workspace_client,
@@ -85,12 +88,12 @@ def test_segment_scoring(
 
     # Score with anomalous data
     test_data = [
-        ("US", 100.0),  # Normal
-        ("US", 500.0),  # Anomaly
-        ("EU", 200.0),  # Normal
-        ("EU", 900.0),  # Anomaly
+        (1, "US", 100.0),  # Normal
+        (2, "US", 500.0),  # Anomaly
+        (3, "EU", 200.0),  # Normal
+        (4, "EU", 900.0),  # Anomaly
     ]
-    test_df = spark.createDataFrame(test_data, "region string, amount double")
+    test_df = spark.createDataFrame(test_data, "row_id int, region string, amount double")
 
     dq_engine = DQEngine(mock_workspace_client)
     check = DQDatasetRule(
@@ -110,10 +113,14 @@ def test_segment_scoring(
 
     # Verify anomalies detected
     assert result.count() == 4
-    anomalies = [row for row in result.collect() if row.anomaly_score and row.anomaly_score > 0.7]
+    # Access anomaly_score from _info.anomaly.score (nested in DQEngine results)
+    import pyspark.sql.functions as F
+    result_with_score = result.select("*", F.col("_info.anomaly.score").alias("anomaly_score"))
+    anomalies = [row for row in result_with_score.collect() if row.anomaly_score and row.anomaly_score > 0.7]
     assert len(anomalies) == 2  # Two anomalies
 
 
+@pytest.mark.nightly
 def test_multi_column_segments(
     spark: SparkSession,
     mock_workspace_client,  # pylint: disable=unused-argument
@@ -153,6 +160,7 @@ def test_multi_column_segments(
     assert len(models) == 4
 
 
+@pytest.mark.nightly
 def test_unknown_segment_handling(
     spark: SparkSession,
     mock_workspace_client,
@@ -186,10 +194,10 @@ def test_unknown_segment_handling(
 
     # Score with unknown region "APAC"
     test_data = [
-        ("US", 100.0),
-        ("APAC", 300.0),  # Unknown segment
+        (1, "US", 100.0),
+        (2, "APAC", 300.0),  # Unknown segment
     ]
-    test_df = spark.createDataFrame(test_data, "region string, amount double")
+    test_df = spark.createDataFrame(test_data, "row_id int, region string, amount double")
 
     dq_engine = DQEngine(mock_workspace_client)
     check = DQDatasetRule(
@@ -206,6 +214,8 @@ def test_unknown_segment_handling(
 
     result = dq_engine.apply_checks(test_df, [check])
 
-    # APAC row should have null score
-    apac_row = [row for row in result.collect() if row.region == "APAC"][0]
+    # APAC row should have null score (access from _info.anomaly.score)
+    import pyspark.sql.functions as F
+    result_with_score = result.select("*", F.col("_info.anomaly.score").alias("anomaly_score"))
+    apac_row = [row for row in result_with_score.collect() if row.region == "APAC"][0]
     assert apac_row.anomaly_score is None
