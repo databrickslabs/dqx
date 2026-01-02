@@ -20,13 +20,15 @@ def mock_workspace_client():
 
 
 @pytest.mark.nightly
-def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_drift_detection_warns_on_distribution_shift(
+    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
+):
     """Test that drift warning is issued when data distribution shifts."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
     model_name = f"test_drift_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Train on distribution centered at 100
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
@@ -74,13 +76,15 @@ def test_drift_detection_warns_on_distribution_shift(spark: SparkSession, mock_w
 
 
 @pytest.mark.nightly
-def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_no_drift_warning_on_similar_distribution(
+    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
+):
     """Test that no drift warning is issued when distributions are similar."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
     model_name = f"test_no_drift_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Train on distribution
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
@@ -123,13 +127,15 @@ def test_no_drift_warning_on_similar_distribution(spark: SparkSession, mock_work
 
 
 @pytest.mark.nightly
-def test_drift_detection_disabled_when_threshold_none(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_drift_detection_disabled_when_threshold_none(
+    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
+):
     """Test that drift detection is disabled when drift_threshold=None."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
     model_name = f"test_drift_disabled_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
         "amount double, quantity double",

@@ -36,7 +36,7 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
     unique_id = make_random(8).lower()
     model_name = f"test_ensemble_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(100)],
         "amount double, quantity double",
@@ -69,7 +69,7 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     unique_id = make_random(8).lower()
     model_name = f"test_ensemble_scoring_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Training data
     train_df = spark.createDataFrame(
         [(100.0 + i, 2.0) for i in range(50)],
@@ -126,7 +126,7 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
     unique_id = make_random(8).lower()
     model_name = f"test_ensemble_contributions_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     train_df = spark.createDataFrame(
         [(100.0, 2.0, 0.1) for i in range(30)],
         "amount double, quantity double, discount double",

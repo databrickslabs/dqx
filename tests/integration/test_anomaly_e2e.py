@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -135,9 +136,9 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
     result_df = dq_engine.apply_checks(test_df, checks)
 
     # Verify anomaly_score column exists (nested in _info.anomaly.score)
-    import pyspark.sql.functions as F
+
     assert "_info" in result_df.columns
-    
+
     # Verify scores are present by accessing nested field
     rows = result_df.select(F.col("_info.anomaly.score").alias("anomaly_score")).collect()
     assert all(row["anomaly_score"] is not None for row in rows)
@@ -149,7 +150,7 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, ma
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    
+
     # Use standard 2D training data
     train_df = spark.createDataFrame(
         get_standard_2d_training_data(),
@@ -159,7 +160,7 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, ma
     # Train with explicit names to avoid schema conflicts
     model_name = f"test_auto_model_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
-    
+
     model_uri = anomaly_engine.train(
         df=train_df,
         model_name=model_name,
@@ -371,9 +372,9 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
     result_df = dq_engine.apply_checks(test_df, checks)
 
     # Verify anomaly_score exists (nested in _info.anomaly.score)
-    import pyspark.sql.functions as F
+
     assert "_info" in result_df.columns
-    
+
     errors = result_df.select("_errors", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
 
     # First row normal, second row anomalous (handle both [] and None)

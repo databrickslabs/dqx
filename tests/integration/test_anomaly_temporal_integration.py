@@ -22,7 +22,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     unique_id = make_random(8).lower()
     model_name = f"test_temporal_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Create data with timestamps
     df = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-01 09:00:00') as event_time FROM range(50)")
 
@@ -70,7 +70,7 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, 
     unique_id = make_random(8).lower()
     model_name = f"test_multi_temporal_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     df = spark.sql("SELECT 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time FROM range(50)")
 
     # Extract multiple temporal features
@@ -129,7 +129,7 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
     unique_id = make_random(8).lower()
     model_name = f"test_temporal_pattern_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Create data with distinct patterns for different hours
     # 9am-5pm: amount=100, evening: amount=50
     df = spark.sql(
@@ -189,7 +189,7 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client, make_random
     unique_id = make_random(8).lower()
     model_name = f"test_weekend_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Train on weekday data
     df = spark.sql(
         """

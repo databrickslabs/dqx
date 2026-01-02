@@ -26,7 +26,7 @@ def test_column_mismatch_error(spark: SparkSession, mock_workspace_client, make_
     unique_id = make_random(8).lower()
     model_name = f"test_col_mismatch_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Train on [amount, quantity]
     train_df = spark.createDataFrame(
         [(100.0, 2.0) for i in range(50)],
@@ -64,7 +64,7 @@ def test_column_order_independence(spark: SparkSession, mock_workspace_client, m
     unique_id = make_random(8).lower()
     model_name = f"test_col_order_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     # Train on [amount, quantity]
     train_df = spark.createDataFrame(
         [(100.0, 2.0) for i in range(50)],
@@ -102,7 +102,7 @@ def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine)
     unique_id = make_random(8).lower()
     model_name = f"test_empty_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
-    
+
     empty_df = spark.createDataFrame([], "amount double, quantity double")
 
     # Should raise clear error about empty data
@@ -120,7 +120,7 @@ def test_missing_registry_table_for_scoring_error(spark: SparkSession, mock_work
     unique_id = make_random(8).lower()
     model_name = f"test_missing_registry_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_nonexistent_registry"
-    
+
     df = spark.createDataFrame(
         [(1, 100.0, 2.0)],
         "transaction_id int, amount double, quantity double",
