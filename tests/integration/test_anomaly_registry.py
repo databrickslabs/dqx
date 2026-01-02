@@ -508,4 +508,3 @@ def test_scoring_validates_config_hash(spark: SparkSession, make_random: str, an
 
     assert "Configuration mismatch" in str(exc_info.value)
     assert "Expected columns" in str(exc_info.value)
-

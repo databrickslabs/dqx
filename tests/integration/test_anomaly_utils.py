@@ -7,6 +7,7 @@ to reduce duplication across anomaly detection tests.
 
 from typing import Any
 
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -306,7 +307,7 @@ def create_anomaly_check_rule(
     # If merge_columns not provided, use a default value since has_no_anomalies requires it
     if merge_columns is None:
         merge_columns = ["transaction_id"]
-    
+
     check_kwargs = {
         "merge_columns": merge_columns,
         "columns": columns,
@@ -381,7 +382,7 @@ def apply_anomaly_check_direct(
     test_df: Any,
     model_name: str,
     registry_table: str,
-    columns: list[str] | None = None,
+    columns: list[str],
     score_threshold: float = 0.5,
     **kwargs: Any,
 ) -> Any:
@@ -394,12 +395,12 @@ def apply_anomaly_check_direct(
         test_df: Test DataFrame
         model_name: Model name
         registry_table: Registry table path
-        columns: Columns to check
+        columns: Columns to check (required for this helper)
         score_threshold: Score threshold
         **kwargs: Additional has_no_anomalies kwargs
 
     Returns:
-        DataFrame with anomaly_score column
+        DataFrame with anomaly_score column (extracted from _info.anomaly.score)
 
     Example:
         result_df = apply_anomaly_check_direct(
@@ -409,10 +410,13 @@ def apply_anomaly_check_direct(
     """
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
-        columns=columns,  # type: ignore[arg-type]
+        columns=columns,
         model=model_name,
         registry_table=registry_table,
         score_threshold=score_threshold,
         **kwargs,
     )
-    return apply_fn(test_df)
+    result_df = apply_fn(test_df)
+
+    # Extract _info.anomaly.score as top-level anomaly_score column for test convenience
+    return result_df.withColumn("anomaly_score", F.col("_info.anomaly.score"))

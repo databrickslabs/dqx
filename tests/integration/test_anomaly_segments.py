@@ -1,6 +1,7 @@
 """Integration tests for segment-based anomaly detection."""
 
 import pytest
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -114,7 +115,7 @@ def test_segment_scoring(
     # Verify anomalies detected
     assert result.count() == 4
     # Access anomaly_score from _info.anomaly.score (nested in DQEngine results)
-    import pyspark.sql.functions as F
+
     result_with_score = result.select("*", F.col("_info.anomaly.score").alias("anomaly_score"))
     anomalies = [row for row in result_with_score.collect() if row.anomaly_score and row.anomaly_score > 0.7]
     assert len(anomalies) == 2  # Two anomalies
@@ -215,7 +216,7 @@ def test_unknown_segment_handling(
     result = dq_engine.apply_checks(test_df, [check])
 
     # APAC row should have null score (access from _info.anomaly.score)
-    import pyspark.sql.functions as F
+
     result_with_score = result.select("*", F.col("_info.anomaly.score").alias("anomaly_score"))
     apac_row = [row for row in result_with_score.collect() if row.region == "APAC"][0]
     assert apac_row.anomaly_score is None

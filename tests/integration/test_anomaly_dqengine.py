@@ -5,6 +5,7 @@ Integration tests for anomaly detection with DQEngine.
 from unittest.mock import MagicMock
 
 import pytest
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -88,7 +89,7 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
 
     # Debug: Print scores to diagnose split behavior (access from _info.anomaly.score)
     print("\n=== Test Data Anomaly Scores ===")
-    import pyspark.sql.functions as F
+
     test_scores = result_df.select("amount", "quantity", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
     for row in test_scores:
         print(f"  amount={row.amount}, quantity={row.quantity}, score={row.anomaly_score}")
@@ -320,7 +321,7 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
 
     # Debug: Print scores (access from _info.anomaly.score)
     print("\n=== Helper Test Scores ===")
-    import pyspark.sql.functions as F
+
     test_scores = result_df.select("amount", "quantity", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
     for row in test_scores:
         print(f"  amount={row.amount}, quantity={row.quantity}, score={row.anomaly_score}")
@@ -379,22 +380,22 @@ def test_info_column_structure(spark: SparkSession, mock_workspace_client, share
     ]
 
     result_df = dq_engine.apply_checks(test_df, checks)
-    
+
     # Verify _info column exists
     assert "_info" in result_df.columns, "_info column should be present"
-    
+
     # Get the row and extract _info
     row = result_df.collect()[0]
     info = row["_info"]
-    
+
     # Verify _info is a struct (not None)
     assert info is not None, "_info should not be None"
-    
+
     # Verify _info.anomaly exists and is a struct
     assert hasattr(info, "anomaly"), "_info should have 'anomaly' field"
     anomaly = info.anomaly
     assert anomaly is not None, "_info.anomaly should not be None"
-    
+
     # Verify all required fields exist in _info.anomaly
     expected_fields = [
         "check_name",
@@ -406,17 +407,17 @@ def test_info_column_structure(spark: SparkSession, mock_workspace_client, share
         "contributions",
         "confidence_std",
     ]
-    
+
     for field in expected_fields:
         assert hasattr(anomaly, field), f"_info.anomaly should have '{field}' field"
-    
+
     # Verify field values and types
     assert anomaly.check_name == "has_no_anomalies", "check_name should be 'has_no_anomalies'"
     assert isinstance(anomaly.score, (float, type(None))), "score should be float or None"
     assert isinstance(anomaly.is_anomaly, (bool, type(None))), "is_anomaly should be boolean or None"
     assert anomaly.threshold == 0.6, f"threshold should be 0.6, got {anomaly.threshold}"
     assert model_name in anomaly.model, f"model should contain {model_name}"
-    
+
     # Verify optional fields are None when not requested
     assert anomaly.segment is None, "segment should be None for global model"
     assert anomaly.contributions is None, "contributions should be None when not requested"
@@ -452,17 +453,17 @@ def test_info_column_with_contributions(spark: SparkSession, mock_workspace_clie
     ]
 
     result_df = dq_engine.apply_checks(test_df, checks)
-    
+
     # Get the row and extract _info.anomaly
     row = result_df.collect()[0]
     anomaly = row["_info"].anomaly
-    
+
     # Verify contributions field is populated
     assert anomaly.contributions is not None, "contributions should not be None when requested"
-    
+
     # Verify contributions is a map with column names as keys
     assert isinstance(anomaly.contributions, dict), "contributions should be a dict/map"
-    
+
     # Verify all feature columns have contribution values
     for col in columns:
         assert col in anomaly.contributions, f"contributions should include '{col}'"

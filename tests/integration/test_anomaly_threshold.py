@@ -6,7 +6,7 @@ import pytest
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly import has_no_anomalies, AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
@@ -56,7 +56,7 @@ def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, 
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-                "merge_columns": ["transaction_id"],
+            "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -72,7 +72,7 @@ def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, 
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-                "merge_columns": ["transaction_id"],
+            "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -98,11 +98,15 @@ def test_recommended_threshold_stored(spark: SparkSession, make_random: str, ano
     model_name = f"test_recommended_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
+    # Use sample_fraction=1.0 to ensure validation set has enough data
+    params = AnomalyParams(sample_fraction=1.0, max_rows=50)
+
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=params,
     )
 
     # Query recommended threshold from registry (use full three-level name)
@@ -131,11 +135,15 @@ def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client,
     model_name = f"test_use_recommended_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
+    # Use sample_fraction=1.0 to ensure validation set has enough data
+    params = AnomalyParams(sample_fraction=1.0, max_rows=50)
+
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=params,
     )
 
     # Query recommended threshold (use full three-level name)
@@ -202,7 +210,7 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-                "merge_columns": ["transaction_id"],
+            "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -218,7 +226,7 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-                "merge_columns": ["transaction_id"],
+            "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -264,7 +272,7 @@ def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_r
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-                "merge_columns": ["transaction_id"],
+            "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -283,7 +291,7 @@ def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_r
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-                "merge_columns": ["transaction_id"],
+            "merge_columns": ["transaction_id"],
             "columns": ["amount", "quantity"],
             "model": model_name,
             "registry_table": registry_table,
@@ -310,11 +318,15 @@ def test_threshold_consistency(spark: SparkSession, mock_workspace_client, make_
     model_name = f"test_consistency_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
+    # Use sample_fraction=1.0 for consistency
+    params = AnomalyParams(sample_fraction=1.0, max_rows=50)
+
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=params,
     )
 
     test_df = spark.createDataFrame(
@@ -353,11 +365,15 @@ def test_validation_metrics_in_registry(spark: SparkSession, make_random: str, a
     model_name = f"test_val_metrics_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
+    # Use sample_fraction=1.0 to ensure validation set has enough data
+    params = AnomalyParams(sample_fraction=1.0, max_rows=50)
+
     anomaly_engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
+        params=params,
     )
 
     # Check metrics in registry (use full three-level name)
