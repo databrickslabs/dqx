@@ -6,11 +6,14 @@ import pytest
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.anomaly import has_no_anomalies, AnomalyParams
+from databricks.labs.dqx.anomaly import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
-from tests.integration.test_anomaly_utils import apply_anomaly_check_direct
+from tests.integration.test_anomaly_utils import (
+    apply_anomaly_check_direct,
+    train_simple_2d_model,
+    create_anomaly_dataset_rule,
+)
 
 
 @pytest.fixture
@@ -22,21 +25,12 @@ def mock_workspace_client():
 @pytest.mark.nightly
 def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that different thresholds flag different numbers of anomalies."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_threshold_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model using helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Test data with varying degrees of anomalousness
     test_df = spark.createDataFrame(
@@ -52,32 +46,16 @@ def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, 
     dq_engine = DQEngine(mock_workspace_client)
 
     # Aggressive threshold (0.3) - flags more
-    rule_aggressive = DQDatasetRule(
-        criticality="error",
-        check_func=has_no_anomalies,
-        check_func_kwargs={
-            "merge_columns": ["transaction_id"],
-            "columns": ["amount", "quantity"],
-            "model": model_name,
-            "registry_table": registry_table,
-            "score_threshold": 0.3,
-        },
+    rule_aggressive = create_anomaly_dataset_rule(
+        model_name, registry_table, ["amount", "quantity"], score_threshold=0.3
     )
 
     result_aggressive = dq_engine.apply_checks(test_df, [rule_aggressive])
     errors_aggressive = result_aggressive.filter(F.size("_errors") > 0).count()
 
     # Conservative threshold (0.9) - flags less
-    rule_conservative = DQDatasetRule(
-        criticality="error",
-        check_func=has_no_anomalies,
-        check_func_kwargs={
-            "merge_columns": ["transaction_id"],
-            "columns": ["amount", "quantity"],
-            "model": model_name,
-            "registry_table": registry_table,
-            "score_threshold": 0.9,
-        },
+    rule_conservative = create_anomaly_dataset_rule(
+        model_name, registry_table, ["amount", "quantity"], score_threshold=0.9
     )
 
     result_conservative = dq_engine.apply_checks(test_df, [rule_conservative])
@@ -87,27 +65,12 @@ def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, 
     assert errors_aggressive >= errors_conservative
 
 
-def test_recommended_threshold_stored(spark: SparkSession, make_random: str, anomaly_engine):
+def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory):
     """Test that recommended_threshold is stored in registry metrics."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    unique_id = make_random(8).lower()
-    model_name = f"test_recommended_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    model_name, registry_table, _columns = quick_model_factory(spark, params=params)
 
     # Query recommended threshold from registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
@@ -124,27 +87,12 @@ def test_recommended_threshold_stored(spark: SparkSession, make_random: str, ano
 
 
 @pytest.mark.nightly
-def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick_model_factory):
     """Test using recommended_threshold from registry in checks."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    unique_id = make_random(8).lower()
-    model_name = f"test_use_recommended_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    model_name, registry_table, columns = quick_model_factory(spark, params=params)
 
     # Query recommended threshold (use full three-level name)
     full_model_name = f"main.default.{model_name}"
@@ -160,14 +108,11 @@ def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client,
     recommended_threshold = threshold_row["threshold"]
 
     # Use recommended threshold in check
-    test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
-        "transaction_id int, amount double, quantity double",
-    )
+    test_df = test_df_factory(spark)
 
     # Call directly to get anomaly_score column
     result_df = apply_anomaly_check_direct(
-        test_df, model_name, registry_table, columns=["amount", "quantity"], score_threshold=recommended_threshold
+        test_df, model_name, registry_table, columns=columns, score_threshold=recommended_threshold
     )
 
     # Should work correctly
@@ -177,21 +122,12 @@ def test_using_recommended_threshold(spark: SparkSession, mock_workspace_client,
 @pytest.mark.nightly
 def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that lower threshold increases recall (catches more anomalies)."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_precision_recall_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model using helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Test data with clear anomalies
     test_df = spark.createDataFrame(
@@ -205,33 +141,17 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
 
     dq_engine = DQEngine(mock_workspace_client)
 
-    # High threshold (low recall)
-    rule_low_recall = DQDatasetRule(
-        criticality="error",
-        check_func=has_no_anomalies,
-        check_func_kwargs={
-            "merge_columns": ["transaction_id"],
-            "columns": ["amount", "quantity"],
-            "model": model_name,
-            "registry_table": registry_table,
-            "score_threshold": 0.95,  # Very conservative
-        },
+    # High threshold (low recall) - use helper
+    rule_low_recall = create_anomaly_dataset_rule(
+        model_name, registry_table, ["amount", "quantity"], score_threshold=0.95
     )
 
     result_low_recall = dq_engine.apply_checks(test_df, [rule_low_recall])
     flagged_low_recall = result_low_recall.filter(F.size("_errors") > 0).count()
 
-    # Low threshold (high recall)
-    rule_high_recall = DQDatasetRule(
-        criticality="error",
-        check_func=has_no_anomalies,
-        check_func_kwargs={
-            "merge_columns": ["transaction_id"],
-            "columns": ["amount", "quantity"],
-            "model": model_name,
-            "registry_table": registry_table,
-            "score_threshold": 0.3,  # Very aggressive
-        },
+    # Low threshold (high recall) - use helper
+    rule_high_recall = create_anomaly_dataset_rule(
+        model_name, registry_table, ["amount", "quantity"], score_threshold=0.3
     )
 
     result_high_recall = dq_engine.apply_checks(test_df, [rule_high_recall])
@@ -242,43 +162,16 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
 
 
 @pytest.mark.nightly
-def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_threshold_edge_cases(spark, test_df_factory, mock_workspace_client, quick_model_factory):
     """Test edge case thresholds (0.0 and 1.0)."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
+    model_name, registry_table, columns = quick_model_factory(spark)
 
-    unique_id = make_random(8).lower()
-    model_name = f"test_edge_thresholds_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
-
-    test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
-        "transaction_id int, amount double, quantity double",
-    )
+    test_df = test_df_factory(spark)
 
     dq_engine = DQEngine(mock_workspace_client)
 
-    # Threshold 0.0 - flags everything
-    rule_zero = DQDatasetRule(
-        criticality="error",
-        check_func=has_no_anomalies,
-        check_func_kwargs={
-            "merge_columns": ["transaction_id"],
-            "columns": ["amount", "quantity"],
-            "model": model_name,
-            "registry_table": registry_table,
-            "score_threshold": 0.0,
-        },
-    )
+    # Threshold 0.0 - flags everything - use helper
+    rule_zero = create_anomaly_dataset_rule(model_name, registry_table, columns, score_threshold=0.0)
 
     result_zero = dq_engine.apply_checks(test_df, [rule_zero])
     flagged_zero = result_zero.filter(F.size("_errors") > 0).count()
@@ -286,18 +179,8 @@ def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_r
     # Should flag most/all rows
     assert flagged_zero >= 1
 
-    # Threshold 1.0 - flags nothing (almost impossible to exceed)
-    rule_one = DQDatasetRule(
-        criticality="error",
-        check_func=has_no_anomalies,
-        check_func_kwargs={
-            "merge_columns": ["transaction_id"],
-            "columns": ["amount", "quantity"],
-            "model": model_name,
-            "registry_table": registry_table,
-            "score_threshold": 1.0,
-        },
-    )
+    # Threshold 1.0 - flags nothing (almost impossible to exceed) - use helper
+    rule_one = create_anomaly_dataset_rule(model_name, registry_table, columns, score_threshold=1.0)
 
     result_one = dq_engine.apply_checks(test_df, [rule_one])
     flagged_one = result_one.filter(F.size("_errors") > 0).count()
@@ -307,41 +190,19 @@ def test_threshold_edge_cases(spark: SparkSession, mock_workspace_client, make_r
 
 
 @pytest.mark.nightly
-def test_threshold_consistency(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
     """Test that same threshold produces consistent results."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    unique_id = make_random(8).lower()
-    model_name = f"test_consistency_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
     # Use sample_fraction=1.0 for consistency
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    model_name, registry_table, columns = quick_model_factory(spark, params=params)
 
-    test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
-        "transaction_id int, amount double, quantity double",
-    )
+    test_df = test_df_factory(spark)
 
     # Call directly to get anomaly_score column
     # Run twice with same threshold
-    result1 = apply_anomaly_check_direct(
-        test_df, model_name, registry_table, columns=["amount", "quantity"], score_threshold=0.5
-    )
-    result2 = apply_anomaly_check_direct(
-        test_df, model_name, registry_table, columns=["amount", "quantity"], score_threshold=0.5
-    )
+    result1 = apply_anomaly_check_direct(test_df, model_name, registry_table, columns=columns, score_threshold=0.5)
+    result2 = apply_anomaly_check_direct(test_df, model_name, registry_table, columns=columns, score_threshold=0.5)
 
     # Should produce same results
     scores1 = [row["anomaly_score"] for row in result1.collect()]
@@ -354,27 +215,12 @@ def test_threshold_consistency(spark: SparkSession, mock_workspace_client, make_
 
 
 @pytest.mark.nightly
-def test_validation_metrics_in_registry(spark: SparkSession, make_random: str, anomaly_engine):
+def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory):
     """Test that validation metrics are stored in registry."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    unique_id = make_random(8).lower()
-    model_name = f"test_val_metrics_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    model_name, registry_table, _columns = quick_model_factory(spark, params=params)
 
     # Check metrics in registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"

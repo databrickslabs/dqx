@@ -14,6 +14,9 @@ from databricks.sdk import WorkspaceClient
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,
     get_standard_3d_training_data,
+    score_with_anomaly_check,
+    train_simple_2d_model,
+    train_simple_3d_model,
 )
 
 
@@ -25,72 +28,61 @@ def mock_workspace_client():
 
 def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test training with explicit model_name and registry_table."""
+    unique_id = make_random(8).lower()
+    model_name = f"my_custom_model_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+
+    # Train model - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
+
+    # Create df with transaction_id for scoring
     df = spark.createDataFrame(
         [(i, 100.0 + i, 2.0) for i in range(50)],
         "transaction_id int, amount double, quantity double",
     )
 
-    unique_id = make_random(8).lower()
-    model_name = f"my_custom_model_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    model_uri = anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
-
-    # Verify model URI is returned
-    assert model_uri is not None
-
-    # Verify model can be loaded with explicit name
-    _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=["amount", "quantity"],
-        model=model_name,
-        registry_table=registry_table,
-        score_threshold=0.5,
-    )
-
-    result_df = apply_fn(df)
+    # Verify model can be loaded with explicit name - use helper
+    result_df = score_with_anomaly_check(df, model_name, registry_table, ["amount", "quantity"])
 
     # Verify _info column exists (anomaly_score is now internal, use _info.anomaly.score)
     assert "_info" in result_df.columns
 
 
 @pytest.mark.nightly
-def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_multiple_models_in_same_registry(
+    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory, anomaly_scorer
+):
     """Test training multiple models in the same registry table."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_a = f"model_a_{make_random(4).lower()}"
     model_b = f"model_b_{make_random(4).lower()}"
 
-    # Train first model
-    df1 = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
+    # Train first model - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_a, registry_table)
+    df1 = test_df_factory(
+        spark,
+        normal_rows=[(100.0 + i * 0.5, 2.0) for i in range(50)],
+        anomaly_rows=[],
+        columns_schema="amount double, quantity double",
     )
 
-    anomaly_engine.train(
-        df=df1,
-        columns=["amount", "quantity"],
-        model_name=model_a,
-        registry_table=registry_table,
-    )
-
-    # Train second model with different columns
-    df2 = spark.createDataFrame(
+    # Train second model with different columns - custom data
+    df2_train = spark.createDataFrame(
         [(0.1 + i * 0.01, 50.0) for i in range(50)],
         "discount double, weight double",
     )
-
     anomaly_engine.train(
-        df=df2,
+        df=df2_train,
         columns=["discount", "weight"],
         model_name=model_b,
         registry_table=registry_table,
+    )
+    df2 = test_df_factory(
+        spark,
+        normal_rows=[(0.1 + i * 0.01, 50.0) for i in range(50)],
+        anomaly_rows=[],
+        columns_schema="discount double, weight double",
     )
 
     # Verify both models exist in registry
@@ -101,30 +93,18 @@ def test_multiple_models_in_same_registry(spark: SparkSession, mock_workspace_cl
     assert f"main.default.{model_a}" in model_names
     assert f"main.default.{model_b}" in model_names
 
-    # Verify correct model is loaded for each check - call directly
+    # Verify correct model is loaded for each check - use anomaly_scorer
 
     # Score with model_a
-    _, apply_fn_a = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=["amount", "quantity"],
-        model=model_a,
-        registry_table=registry_table,
-        score_threshold=0.5,
+    result_a = anomaly_scorer(
+        df1, model_name=model_a, registry_table=registry_table, columns=["amount", "quantity"], score_threshold=0.5
     )
-
-    result_a = apply_fn_a(df1)
     assert "anomaly_score" in result_a.columns
 
     # Score with model_b
-    _, apply_fn_b = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=["discount", "weight"],
-        model=model_b,
-        registry_table=registry_table,
-        score_threshold=0.5,
+    result_b = anomaly_scorer(
+        df2, model_name=model_b, registry_table=registry_table, columns=["discount", "weight"], score_threshold=0.5
     )
-
-    result_b = apply_fn_b(df2)
     assert "anomaly_score" in result_b.columns
 
 
@@ -135,18 +115,8 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_active_{make_random(4).lower()}"
 
-    df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    # Train first version
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train first version - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Get active model (use full three-level name)
     registry = AnomalyModelRegistry(spark)
@@ -158,13 +128,8 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
     assert model_v1.status == "active"
     v1_training_time = model_v1.training_time
 
-    # Train second version (should archive first)
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train second version (should archive first) - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Get active model (should be v2, use full three-level name)
     model_v2 = registry.get_active_model(registry_table, full_model_name)
@@ -182,24 +147,23 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
 
 
 @pytest.mark.nightly
-def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_model_staleness_warning(
+    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory
+):
     """Test that staleness warning is issued when model is >30 days old."""
-    # Use standard 2D training data with sufficient variance
-    df = spark.createDataFrame(
-        get_standard_2d_training_data(),
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_stale_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    # Train model
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
+    # Train model - use helper with standard training data
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_2d_training_data())
+
+    # Create df for scoring - use factory
+    df = test_df_factory(
+        spark,
+        normal_rows=get_standard_2d_training_data(),
+        anomaly_rows=[],
+        columns_schema="amount double, quantity double",
     )
 
     # Mock old training_time in registry (use full three-level name)
@@ -211,18 +175,10 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
         f"WHERE model_name = '{full_model_name}'"
     )
 
-    # Score with old model (should issue warning) - call directly
+    # Score with old model (should issue warning) - use helper
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        _, apply_fn = has_no_anomalies(
-            merge_columns=["transaction_id"],
-            columns=["amount", "quantity"],
-            model=model_name,
-            registry_table=registry_table,
-            score_threshold=0.5,
-        )
-        result_df = apply_fn(df)
-        result_df.collect()  # Force evaluation
+        _ = score_with_anomaly_check(df, model_name, registry_table, ["amount", "quantity"])
 
         # Check that staleness warning was issued
         stale_warnings = [warning for warning in w if "days old" in str(warning.message)]
@@ -233,21 +189,12 @@ def test_model_staleness_warning(spark: SparkSession, mock_workspace_client, mak
 @pytest.mark.nightly
 def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that registry table has all expected columns."""
-    df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_schema_{make_random(4).lower()}"
 
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Verify all expected columns exist
     registry_df = spark.table(registry_table)
@@ -284,22 +231,12 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
 @pytest.mark.nightly
 def test_registry_stores_metadata(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that registry stores comprehensive metadata."""
-    # Use standard 3D training data with sufficient variance
-    df = spark.createDataFrame(
-        get_standard_3d_training_data(),
-        "amount double, quantity double, discount double",
-    )
-
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_metadata_{make_random(4).lower()}"
 
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity", "discount"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model - use helper with standard 3D training data
+    train_simple_3d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_3d_training_data())
 
     # Query registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
@@ -340,22 +277,12 @@ def test_nonexistent_registry_returns_none(spark: SparkSession):
 @pytest.mark.nightly
 def test_nonexistent_model_returns_none(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that get_active_model returns None for non-existent model."""
-    df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     existing_model = f"existing_model_{make_random(4).lower()}"
 
-    # Train a model
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=existing_model,
-        registry_table=registry_table,
-    )
+    # Train a model - use helper
+    train_simple_2d_model(spark, anomaly_engine, existing_model, registry_table)
 
     # Try to get non-existent model
     registry = AnomalyModelRegistry(spark)
@@ -402,23 +329,13 @@ def test_config_hash_differentiation(spark: SparkSession):
 
 def test_config_hash_stored_during_training(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that config_hash is stored in registry during training."""
-    df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_config_hash_{make_random(4).lower()}"
     columns = ["amount", "quantity"]
 
-    # Train model
-    anomaly_engine.train(
-        df=df,
-        columns=columns,
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Verify config_hash is stored
     full_model_name = f"main.default.{model_name}"
@@ -435,21 +352,17 @@ def test_config_hash_stored_during_training(spark: SparkSession, make_random: st
 @pytest.mark.nightly
 def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that warning is issued when retraining with different config."""
-    df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0, 0.1) for i in range(50)],
-        "amount double, quantity double, discount double",
-    )
-
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_config_warn_{make_random(4).lower()}"
 
-    # Train with initial columns
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
+    # Train with initial columns (2D) - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
+
+    # Create 3D df for retraining
+    df = spark.createDataFrame(
+        [(100.0 + i * 0.5, 2.0, 0.1) for i in range(50)],
+        "amount double, quantity double, discount double",
     )
 
     # Retrain with different columns (should warn)
@@ -472,22 +385,12 @@ def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_en
 @pytest.mark.nightly
 def test_scoring_validates_config_hash(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that scoring validates config hash and errors on mismatch."""
-    df_train = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0, 0.1) for i in range(50)],
-        "amount double, quantity double, discount double",
-    )
-
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
     model_name = f"test_score_validate_{make_random(4).lower()}"
 
-    # Train with specific columns
-    anomaly_engine.train(
-        df=df_train,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train with specific columns (2D) - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Try to score with different columns (should error)
     df_score = spark.createDataFrame(

@@ -13,8 +13,9 @@ from databricks.sdk import WorkspaceClient
 from tests.conftest import TEST_CATALOG
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,
-    get_standard_4d_training_data,
     get_recommended_threshold,
+    train_simple_2d_model,
+    train_simple_4d_model,
 )
 
 
@@ -95,18 +96,8 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
     model_name = f"test_scores_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
-    # Use standard 2D training data
-    train_df = spark.createDataFrame(
-        get_standard_2d_training_data(),
-        "amount double, quantity double",
-    )
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Use standard 2D training data - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_2d_training_data())
 
     # Test with normal and anomalous data
     test_df = spark.createDataFrame(
@@ -211,18 +202,8 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     model_name = f"test_threshold_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
-    # Use standard 2D training data
-    train_df = spark.createDataFrame(
-        get_standard_2d_training_data(),
-        "amount double, quantity double",
-    )
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Use standard 2D training data - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_2d_training_data())
 
     # Create test data with clear normal and anomalous rows
     test_df = spark.createDataFrame(
@@ -274,12 +255,6 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
     model_name = f"test_auto_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
-    # Use standard 2D training data
-    train_df = spark.createDataFrame(
-        get_standard_2d_training_data(),
-        "amount double, quantity double",
-    )
-
     # Drop table if exists
     spark.sql(f"DROP TABLE IF EXISTS {registry_table}")
 
@@ -292,13 +267,8 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
         pass
     assert not table_exists
 
-    # Train (should auto-create registry)
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train (should auto-create registry) - use helper with standard 2D data
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_2d_training_data())
 
     # Verify table now exists (Unity Catalog compatible)
     table_exists = False
@@ -335,18 +305,8 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
     model_name = f"test_multi_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
-    # Use standard 4D training data
-    train_df = spark.createDataFrame(
-        get_standard_4d_training_data(),
-        "amount double, quantity double, discount double, weight double",
-    )
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity", "discount", "weight"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train 4D model - use helper with standard 4D data
+    train_simple_4d_model(spark, anomaly_engine, model_name, registry_table)
 
     test_df = spark.createDataFrame(
         [(1, 200.0, 30.0, 0.25, 90.0), (2, 9999.0, 1.0, 0.95, 1.0)],  # First in center, second far out

@@ -8,20 +8,10 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.anomaly import AnomalyParams, has_no_anomalies
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_utils import train_simple_2d_model, train_simple_3d_model
 
-# Check if IsolationForest is available (only in Databricks Runtime)
-ISOLATION_FOREST_AVAILABLE = False
-try:
-    import pyspark.ml.classification as pyspark_ml_classification  # pylint: disable=incompatible-with-uc
-
-    if hasattr(pyspark_ml_classification, 'IsolationForest'):
-        ISOLATION_FOREST_AVAILABLE = True
-except ImportError:
-    pass
-
-pytestmark = pytest.mark.skipif(
-    not ISOLATION_FOREST_AVAILABLE, reason="IsolationForest only available in Databricks Runtime (DBR >= 15.4)"
-)
+# Ensemble tests validate ensemble-specific behavior (confidence scores, multiple model URIs)
+# Ensemble mode uses sklearn.ensemble.IsolationForest (same as single models, just trains multiple)
 
 
 @pytest.fixture
@@ -37,25 +27,19 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
     model_name = f"test_ensemble_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    df = spark.createDataFrame(
-        [(100.0 + i, 2.0) for i in range(100)],
-        "amount double, quantity double",
-    )
-
-    # Train ensemble with 3 models
+    # Train ensemble with 3 models - use helper
     params = AnomalyParams(
         sample_fraction=1.0,
         max_rows=100,
         ensemble_size=3,
     )
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=100, params=params)
 
-    model_uri = anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    # Get model_uri from registry
+    full_model_name = f"main.default.{model_name}"
+    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    assert record is not None
+    model_uri = record["model_uri"]
 
     # Check that multiple URIs are returned
     assert "," in model_uri
@@ -70,26 +54,13 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     model_name = f"test_ensemble_scoring_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    # Training data
-    train_df = spark.createDataFrame(
-        [(100.0 + i, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    # Train ensemble
+    # Train ensemble - use helper
     params = AnomalyParams(
         sample_fraction=1.0,
         max_rows=50,
         ensemble_size=2,
     )
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=50, params=params)
 
     # Test data - ADD transaction_id column
     test_df = spark.createDataFrame(
@@ -127,24 +98,13 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
     model_name = f"test_ensemble_contributions_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    train_df = spark.createDataFrame(
-        [(100.0, 2.0, 0.1) for i in range(30)],
-        "amount double, quantity double, discount double",
-    )
-
+    # Train ensemble with 3D model - use helper
     params = AnomalyParams(
         sample_fraction=1.0,
         max_rows=30,
         ensemble_size=2,
     )
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity", "discount"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    train_simple_3d_model(spark, anomaly_engine, model_name, registry_table, train_size=30, params=params)
 
     # Test data - ADD transaction_id column
     test_df = spark.createDataFrame(

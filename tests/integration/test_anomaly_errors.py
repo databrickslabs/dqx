@@ -13,6 +13,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_utils import train_simple_2d_model
 
 
 @pytest.fixture
@@ -21,33 +22,27 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_column_mismatch_error(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
+def test_column_mismatch_error(
+    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory
+):
     """Test error when scoring columns don't match training columns."""
     unique_id = make_random(8).lower()
     model_name = f"test_col_mismatch_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    # Train on [amount, quantity]
-    train_df = spark.createDataFrame(
-        [(100.0, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
+    # Train on [amount, quantity] - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
-
-    # Try to score with [amount, discount] (different columns)
-    test_df = spark.createDataFrame(
-        [(1, 100.0, 0.1)],
-        "transaction_id int, amount double, discount double",
+    # Try to score with [amount, discount] (different columns) - use factory
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(100.0, 0.1)],
+        anomaly_rows=[],
+        columns_schema="amount double, discount double",
     )
 
     # Should raise error about column mismatch
-    with pytest.raises(InvalidParameterError, match="Columns .* don't match trained model"):
+    with pytest.raises(InvalidParameterError, match="Configuration mismatch for model"):
         _, apply_fn = has_no_anomalies(
             merge_columns=["transaction_id"],
             columns=["amount", "discount"],
@@ -59,40 +54,34 @@ def test_column_mismatch_error(spark: SparkSession, mock_workspace_client, make_
         result_df.collect()
 
 
-def test_column_order_independence(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
+def test_column_order_independence(
+    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_scorer
+):
     """Test that column order doesn't matter (set comparison)."""
     unique_id = make_random(8).lower()
     model_name = f"test_col_order_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    # Train on [amount, quantity]
-    train_df = spark.createDataFrame(
-        [(100.0, 2.0) for i in range(50)],
-        "amount double, quantity double",
+    # Train on [amount, quantity] - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
+
+    # Score with [quantity, amount] (different order) - note DataFrame column order
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(2.0, 100.0)],  # quantity, amount order
+        anomaly_rows=[],
+        columns_schema="quantity double, amount double",  # Different column order
     )
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
+    # Should succeed - order doesn't matter for anomaly check
+    result_df = anomaly_scorer(
+        test_df,
         model_name=model_name,
         registry_table=registry_table,
-    )
-
-    # Score with [quantity, amount] (different order)
-    test_df = spark.createDataFrame(
-        [(1, 2.0, 100.0)],
-        "transaction_id int, quantity double, amount double",
-    )
-
-    # Should succeed - order doesn't matter
-    _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=["quantity", "amount"],  # Different order
-        model=model_name,
-        registry_table=registry_table,
+        columns=["quantity", "amount"],  # Different order from training
         score_threshold=0.5,
+        extract_score=False,
     )
-    result_df = apply_fn(test_df)
     result_df.collect()
     assert True  # No error - order doesn't matter
 
@@ -115,15 +104,20 @@ def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine)
         )
 
 
-def test_missing_registry_table_for_scoring_error(spark: SparkSession, mock_workspace_client, make_random):
+def test_missing_registry_table_for_scoring_error(
+    spark: SparkSession, mock_workspace_client, make_random, test_df_factory
+):
     """Test error when registry table doesn't exist during scoring."""
     unique_id = make_random(8).lower()
     model_name = f"test_missing_registry_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_nonexistent_registry"
 
-    df = spark.createDataFrame(
-        [(1, 100.0, 2.0)],
-        "transaction_id int, amount double, quantity double",
+    # Use factory to create test DataFrame
+    df = test_df_factory(
+        spark,
+        normal_rows=[(100.0, 2.0)],
+        anomaly_rows=[],
+        columns_schema="amount double, quantity double",
     )
 
     # Try to score with non-existent registry

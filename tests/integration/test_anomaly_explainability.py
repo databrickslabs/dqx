@@ -12,8 +12,6 @@ shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min t
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
-
 
 @pytest.mark.nightly
 def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
@@ -44,30 +42,31 @@ def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
 
 
 @pytest.mark.nightly
-def test_feature_contributions_added(spark: SparkSession, shared_3d_model):
+def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):
     """Test that anomaly_contributions column is added when requested."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
     columns = shared_3d_model["columns"]
 
-    # Score with include_contributions=True
-    test_df = spark.createDataFrame(
-        [(9999.0, 1.0, 0.95)],
-        "amount double, quantity double, discount double",
+    # Use factory to create test DataFrame with transaction_id
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[],
+        anomaly_rows=[(9999.0, 1.0, 0.95)],
+        columns_schema="amount double, quantity double, discount double",
     )
 
-    # Call has_no_anomalies directly to get columns like anomaly_contributions
-    _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=columns,
-        model=model_name,
+    # Use anomaly_scorer with include_contributions
+    result_df = anomaly_scorer(
+        test_df,
+        model_name=model_name,
         registry_table=registry_table,
+        columns=columns,
         score_threshold=0.5,
         include_contributions=True,
+        extract_score=False,
     )
-
-    result_df = apply_fn(test_df)
     row = result_df.collect()[0]
 
     # Verify anomaly_contributions column exists
@@ -84,29 +83,31 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model):
 
 
 @pytest.mark.nightly
-def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_model):
+def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):
     """Test that contribution percentages sum to approximately 1.0."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
     columns = shared_3d_model["columns"]
 
-    test_df = spark.createDataFrame(
-        [(9999.0, 1.0, 0.95)],
-        "amount double, quantity double, discount double",
+    # Use factory to create test DataFrame with transaction_id
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[],
+        anomaly_rows=[(9999.0, 1.0, 0.95)],
+        columns_schema="amount double, quantity double, discount double",
     )
 
-    # Call has_no_anomalies directly to get columns like anomaly_contributions
-    _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=columns,
-        model=model_name,
+    # Use anomaly_scorer with include_contributions
+    result_df = anomaly_scorer(
+        test_df,
+        model_name=model_name,
         registry_table=registry_table,
+        columns=columns,
         score_threshold=0.5,
         include_contributions=True,
+        extract_score=False,
     )
-
-    result_df = apply_fn(test_df)
     row = result_df.collect()[0]
 
     # Extract map from Row: asDict() wraps in extra layer, so extract inner dict
@@ -120,29 +121,31 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
 
 
 @pytest.mark.nightly
-def test_multi_feature_contributions(spark: SparkSession, shared_4d_model):
+def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_df_factory, anomaly_scorer):
     """Test contributions with 4+ columns."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_4d_model["model_name"]
     registry_table = shared_4d_model["registry_table"]
     columns = shared_4d_model["columns"]
 
-    test_df = spark.createDataFrame(
-        [(9999.0, 1.0, 0.95, 1.0)],
-        "amount double, quantity double, discount double, weight double",
+    # Use factory to create test DataFrame with transaction_id
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[],
+        anomaly_rows=[(9999.0, 1.0, 0.95, 1.0)],
+        columns_schema="amount double, quantity double, discount double, weight double",
     )
 
-    # Call has_no_anomalies directly to get columns like anomaly_contributions
-    _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=columns,
-        model=model_name,
+    # Use anomaly_scorer with include_contributions
+    result_df = anomaly_scorer(
+        test_df,
+        model_name=model_name,
         registry_table=registry_table,
+        columns=columns,
         score_threshold=0.5,
         include_contributions=True,
+        extract_score=False,
     )
-
-    result_df = apply_fn(test_df)
     row = result_df.collect()[0]
 
     # Extract map from Row: asDict() wraps in extra layer, so extract inner dict
@@ -156,59 +159,62 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model):
 
 
 @pytest.mark.nightly
-def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_model):
+def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_model, test_df_factory, anomaly_scorer):
     """Test that contributions are not added when include_contributions=False."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
     columns = shared_2d_model["columns"]
 
-    test_df = spark.createDataFrame(
-        [(100.0, 2.0)],
-        "amount double, quantity double",
+    # Use factory to create test DataFrame with transaction_id
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(100.0, 2.0)],
+        anomaly_rows=[],
+        columns_schema="amount double, quantity double",
     )
 
-    # Call has_no_anomalies directly
-    _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=columns,
-        model=model_name,
+    # Use anomaly_scorer with include_contributions=False
+    result_df = anomaly_scorer(
+        test_df,
+        model_name=model_name,
         registry_table=registry_table,
+        columns=columns,
         score_threshold=0.5,
         include_contributions=False,  # Explicitly False
+        extract_score=False,
     )
-
-    result_df = apply_fn(test_df)
 
     # Verify anomaly_contributions column does NOT exist
     assert "anomaly_contributions" not in result_df.columns
 
 
 @pytest.mark.nightly
-def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model):
+def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):
     """Test that the top contributor makes sense for the anomaly."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
     columns = shared_3d_model["columns"]
 
-    # Test with anomalous amount (should be top contributor)
-    test_df = spark.createDataFrame(
-        [(9999.0, 2.0, 0.15)],  # Extreme amount
-        "amount double, quantity double, discount double",
+    # Use factory to create test DataFrame with extreme amount value
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[],
+        anomaly_rows=[(9999.0, 2.0, 0.15)],  # Extreme amount
+        columns_schema="amount double, quantity double, discount double",
     )
 
-    # Call has_no_anomalies directly to get columns like anomaly_contributions
-    _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=columns,
-        model=model_name,
+    # Use anomaly_scorer with include_contributions
+    result_df = anomaly_scorer(
+        test_df,
+        model_name=model_name,
         registry_table=registry_table,
+        columns=columns,
         score_threshold=0.5,
         include_contributions=True,
+        extract_score=False,
     )
-
-    result_df = apply_fn(test_df)
     row = result_df.collect()[0]
 
     # Extract map from Row: asDict() wraps in extra layer, so extract inner dict
