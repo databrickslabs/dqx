@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -68,7 +69,9 @@ def test_training_filters_nulls(spark: SparkSession, make_random: str, anomaly_e
     # Note: actual count may vary due to sampling, but should be <= 3
 
 
-def test_nulls_are_skipped_not_flagged(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_nulls_are_skipped_not_flagged(
+    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory
+):
     """Test that rows with nulls are skipped (not flagged as anomalies)."""
     # Train on normal data (no nulls) with variance
     train_df = spark.createDataFrame(
@@ -80,10 +83,12 @@ def test_nulls_are_skipped_not_flagged(spark: SparkSession, mock_workspace_clien
     model_name = info["model_name"]
     registry_table = info["registry_table"]
 
-    # Score data with nulls
-    test_df = spark.createDataFrame(
-        [(110.0, 2.1), (None, 2.0), (100.0, None), (None, None)],
-        "amount double, quantity double",
+    # Score data with nulls - use factory
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(110.0, 2.1)],
+        anomaly_rows=[(None, 2.0), (100.0, None), (None, None)],
+        columns_schema="amount double, quantity double",
     )
 
     # Call apply function directly to get anomaly_score column
@@ -107,7 +112,7 @@ def test_nulls_are_skipped_not_flagged(spark: SparkSession, mock_workspace_clien
 
 
 @pytest.mark.nightly
-def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory):
     """Test behavior when some columns are null, others are non-null."""
     train_df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(50)],
@@ -120,15 +125,16 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
     model_name = info["model_name"]
     registry_table = info["registry_table"]
 
-    # Test data with partial nulls
-    test_df = spark.createDataFrame(
-        [
-            (112.0, 2.1, 0.11),  # No nulls, middle values
+    # Test data with partial nulls - use factory
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(112.0, 2.1, 0.11)],  # No nulls, middle values
+        anomaly_rows=[
             (None, 2.0, 0.1),  # amount is null
             (100.0, None, 0.1),  # quantity is null
             (100.0, 2.0, None),  # discount is null
         ],
-        "amount double, quantity double, discount double",
+        columns_schema="amount double, quantity double, discount double",
     )
 
     # Call apply function directly to get anomaly_score column
@@ -140,7 +146,7 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
         score_threshold=0.5,
     )
     result_df = apply_fn(test_df)
-    rows = result_df.collect()
+    rows = result_df.select("transaction_id", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
 
     # First row (no nulls) should have a score
     assert rows[0]["anomaly_score"] is not None
@@ -152,7 +158,7 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
 
 
 @pytest.mark.nightly
-def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory):
     """Test row with all nulls in anomaly columns is skipped."""
     train_df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(50)],
@@ -163,10 +169,12 @@ def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: 
     model_name = info["model_name"]
     registry_table = info["registry_table"]
 
-    # Test data with all nulls
-    test_df = spark.createDataFrame(
-        [(112.0, 2.1), (None, None)],
-        "amount double, quantity double",
+    # Test data with all nulls - use factory
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(112.0, 2.1)],
+        anomaly_rows=[(None, None)],
+        columns_schema="amount double, quantity double",
     )
 
     # Call apply function directly to get anomaly_score column
@@ -183,7 +191,9 @@ def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: 
 
 
 @pytest.mark.nightly
-def test_mixed_null_and_anomaly(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_mixed_null_and_anomaly(
+    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory
+):
     """Test dataset with both nulls and anomalies."""
     train_df = spark.createDataFrame(
         [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(50)],
@@ -194,14 +204,15 @@ def test_mixed_null_and_anomaly(spark: SparkSession, mock_workspace_client, make
     model_name = info["model_name"]
     registry_table = info["registry_table"]
 
-    # Test data: normal, null, anomaly
-    test_df = spark.createDataFrame(
-        [
-            (112.0, 2.1),  # Normal (middle of training range)
+    # Test data: normal, null, anomaly - use factory
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(112.0, 2.1)],  # Normal (middle of training range)
+        anomaly_rows=[
             (None, 2.0),  # Null
             (9999.0, 1.0),  # Anomaly
         ],
-        "amount double, quantity double",
+        columns_schema="amount double, quantity double",
     )
 
     # Call apply function directly to get anomaly_score column

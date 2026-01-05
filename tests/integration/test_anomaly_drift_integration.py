@@ -10,7 +10,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from tests.integration.test_anomaly_utils import create_anomaly_check_rule
+from tests.integration.test_anomaly_utils import create_anomaly_check_rule, train_simple_2d_model
 
 
 @pytest.fixture
@@ -29,18 +29,8 @@ def test_drift_detection_warns_on_distribution_shift(
     model_name = f"test_drift_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    # Train on distribution centered at 100
-    train_df = spark.createDataFrame(
-        [(100.0 + i, 2.0) for i in range(100)],
-        "amount double, quantity double",
-    )
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train on distribution centered at 100 - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=100)
 
     # Test on distribution centered at 500 (significant shift)
     test_df = spark.createDataFrame(
@@ -85,18 +75,8 @@ def test_no_drift_warning_on_similar_distribution(
     model_name = f"test_no_drift_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    # Train on distribution
-    train_df = spark.createDataFrame(
-        [(100.0 + i, 2.0) for i in range(100)],
-        "amount double, quantity double",
-    )
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train on distribution - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=100)
 
     # Test on similar distribution
     test_df = spark.createDataFrame(
@@ -136,17 +116,8 @@ def test_drift_detection_disabled_when_threshold_none(
     model_name = f"test_drift_disabled_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    train_df = spark.createDataFrame(
-        [(100.0 + i, 2.0) for i in range(100)],
-        "amount double, quantity double",
-    )
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=100)
 
     # Test on very different distribution
     test_df = spark.createDataFrame(

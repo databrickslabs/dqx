@@ -43,7 +43,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
 
     # Score new data with temporal features
     test_df = spark.sql(
-        "SELECT 100.0 as amount, timestamp('2024-01-01 03:00:00') as event_time"
+        "SELECT 1 as transaction_id, 100.0 as amount, timestamp('2024-01-01 03:00:00') as event_time"
     )  # 3am might be anomalous
 
     test_df_with_temporal = extract_temporal_features(
@@ -99,7 +99,7 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, 
     )
 
     # Score
-    test_df = spark.sql("SELECT 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time")
+    test_df = spark.sql("SELECT 1 as transaction_id, 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time")
 
     test_df_with_temporal = extract_temporal_features(
         test_df, timestamp_column="event_time", features=["hour", "day_of_week", "month", "quarter"]
@@ -150,11 +150,15 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
     )
 
     # Test with normal hour
-    test_normal = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-01 10:00:00') as event_time")
+    test_normal = spark.sql(
+        "SELECT 1 as transaction_id, 100.0 as amount, timestamp('2024-01-01 10:00:00') as event_time"
+    )
     test_normal_with_temporal = extract_temporal_features(test_normal, timestamp_column="event_time", features=["hour"])
 
     # Test with unusual hour (3am)
-    test_unusual = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-01 03:00:00') as event_time")
+    test_unusual = spark.sql(
+        "SELECT 2 as transaction_id, 100.0 as amount, timestamp('2024-01-01 03:00:00') as event_time"
+    )
     test_unusual_with_temporal = extract_temporal_features(
         test_unusual, timestamp_column="event_time", features=["hour"]
     )
@@ -209,7 +213,9 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client, make_random
     )
 
     # Test on weekend
-    test_df = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-13 10:00:00') as event_time")  # Jan 13 is Saturday
+    test_df = spark.sql(
+        "SELECT 1 as transaction_id, 100.0 as amount, timestamp('2024-01-13 10:00:00') as event_time"
+    )  # Jan 13 is Saturday
 
     test_df_with_temporal = extract_temporal_features(test_df, timestamp_column="event_time", features=["is_weekend"])
 

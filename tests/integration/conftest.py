@@ -7,7 +7,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from chispa import assert_df_equality  # type: ignore
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 import pytest
 from databricks.connect import DatabricksSession
 from databricks.labs.blueprint.installation import Installation
@@ -456,8 +456,35 @@ def assert_output_df(spark, expected_output, output_config):
 
 
 # ============================================================================
-# Session-Scoped Shared Model Fixtures for Integration Tests
+# ANOMALY TEST FIXTURE USAGE GUIDE
 # ============================================================================
+#
+# Choose the right fixture for your test:
+#
+# 1. shared_2d_model / shared_3d_model / shared_4d_model (session-scoped)
+#    - Use for: Tests that only score/read existing model
+#    - Benefit: Trained ONCE per session (83% runtime savings)
+#    - Example: test_anomaly_dqengine.py, test_anomaly_explainability.py
+#
+# 2. quick_model_factory (function-scoped)
+#    - Use for: Tests needing custom training params (AnomalyParams, segment_by)
+#    - Example: test_anomaly_threshold.py tests with specific sample_fraction
+#
+# 3. test_df_factory (function-scoped)
+#    - Use for: Creating test DataFrames with transaction_id
+#    - Eliminates: [(1, 100.0, 2.0), (2, 9999.0, 1.0)] boilerplate
+#    - Usage: test_df_factory(spark, normal_rows=..., anomaly_rows=...)
+#
+# 4. anomaly_scorer (function-scoped)
+#    - Use for: Scoring DataFrames with has_no_anomalies
+#    - Eliminates: merge_columns + has_no_anomalies boilerplate
+#
+# Migration example:
+#   OLD: train → create test_df → call has_no_anomalies → score
+#   NEW: test_df_factory(spark) → anomaly_scorer(shared_2d_model)
+# ============================================================================
+#
+# Session-Scoped Shared Model Fixtures for Integration Tests
 # These fixtures train models ONCE per session, reducing test runtime
 # significantly. All tests reuse the same pre-trained models.
 # ============================================================================
@@ -487,10 +514,17 @@ def shared_2d_model(spark_session):
     """
     Shared 2D anomaly model trained once per session.
 
-    Used by: test_anomaly_dqengine.py, test_anomaly_explainability.py
+    **When to use**: Tests that only need to score/read existing model
+    **When NOT to use**: Tests that need custom training params, use quick_model_factory
+
+    Used by: test_anomaly_dqengine.py (8 tests), test_anomaly_explainability.py (2 tests)
 
     Training data: 400 rows of (amount, quantity) with realistic variance
     Columns: ["amount", "quantity"]
+
+    **Usage with new helpers**:
+        test_df = test_df_factory(spark)  # Creates [(1, 100.0, 2.0), (2, 9999.0, 1.0)]
+        result = anomaly_scorer(test_df, **shared_2d_model)  # Unpacks dict
 
     Returns:
         dict: {
@@ -527,10 +561,17 @@ def shared_3d_model(spark_session):
     """
     Shared 3D anomaly model with contributions support.
 
+    **When to use**: Tests that only need to score/read existing model with 3 columns
+    **When NOT to use**: Tests that need custom training params, use quick_model_factory
+
     Used by: test_anomaly_explainability.py
 
     Training data: 400 rows of (amount, quantity, discount)
     Columns: ["amount", "quantity", "discount"]
+
+    **Usage with new helpers**:
+        test_df = test_df_factory(spark, columns_schema="amount double, quantity double, discount double")
+        result = anomaly_scorer(test_df, **shared_3d_model, include_contributions=True)
 
     Returns:
         dict: {
@@ -569,8 +610,17 @@ def shared_4d_model(spark_session):
     """
     Shared 4D anomaly model for multi-column tests.
 
+    **When to use**: Tests that only need to score/read existing model with 4 columns
+    **When NOT to use**: Tests that need custom training params, use quick_model_factory
+
     Training data: 400 rows of (amount, quantity, discount, weight)
     Columns: ["amount", "quantity", "discount", "weight"]
+
+    **Usage with new helpers**:
+        test_df = test_df_factory(
+            spark, columns_schema="amount double, quantity double, discount double, weight double"
+        )
+        result = anomaly_scorer(test_df, **shared_4d_model)
 
     Returns:
         dict: {
@@ -602,3 +652,184 @@ def shared_4d_model(spark_session):
         "columns": ["amount", "quantity", "discount", "weight"],
         "training_data": get_standard_4d_training_data(),
     }
+
+
+# ============================================================================
+# Helper Fixtures for Test Data and Scoring
+# ============================================================================
+
+
+@pytest.fixture
+def test_df_factory():
+    """
+    Factory for creating standard test DataFrames with transaction_id.
+
+    Addresses pattern seen in test_anomaly_dqengine.py:228, test_anomaly_threshold.py:164, etc.
+
+    Returns a callable that accepts spark and data parameters.
+    """
+
+    def _create(
+        spark: SparkSession,
+        normal_rows: list[tuple] | None = None,
+        anomaly_rows: list[tuple] | None = None,
+        columns_schema: str = "amount double, quantity double",
+        id_column: str = "transaction_id",
+    ):
+        """
+        Create test DataFrame with auto-assigned IDs.
+
+        Args:
+            spark (SparkSession): SparkSession instance
+            normal_rows (list[tuple] | None): Tuples of normal data (default: [(100.0, 2.0)])
+            anomaly_rows (list[tuple] | None): Tuples of anomalous data (default: [(9999.0, 1.0)])
+            columns_schema (str): Schema for data columns (excluding ID)
+            id_column (str): Name of ID column to prepend
+
+        Returns:
+            DataFrame with schema: "{id_column} int, {columns_schema}"
+
+        Example:
+            # Creates [(1, 100.0, 2.0), (2, 9999.0, 1.0)]
+            df = test_df_factory(spark)
+        """
+        if normal_rows is None:
+            normal_rows = [(100.0, 2.0)]
+        if anomaly_rows is None:
+            anomaly_rows = [(9999.0, 1.0)]
+
+        all_rows = []
+        for idx, row in enumerate(normal_rows + anomaly_rows, start=1):
+            all_rows.append((idx,) + row)
+
+        schema = f"{id_column} int, {columns_schema}"
+        return spark.createDataFrame(all_rows, schema)
+
+    return _create
+
+
+@pytest.fixture
+def anomaly_scorer():
+    """
+    Helper to score DataFrames with anomaly check.
+
+    Eliminates boilerplate seen across test_anomaly_e2e.py, test_anomaly_threshold.py, etc.
+    """
+
+    def _score(
+        test_df,
+        model_name: str,
+        registry_table: str,
+        columns: list[str],
+        merge_columns: list[str] | None = None,
+        extract_score: bool = True,
+        **check_kwargs,
+    ):
+        """
+        Score DataFrame with has_no_anomalies check.
+
+        Args:
+            test_df (DataFrame): DataFrame to score
+            model_name: Model name from registry
+            registry_table: Registry table path
+            columns: Columns to score
+            merge_columns: Merge key columns (default: ["transaction_id"])
+            extract_score: If True, extract _info.anomaly.score to top level
+            **check_kwargs: Additional has_no_anomalies arguments
+
+        Returns:
+            Scored DataFrame with anomaly metadata
+        """
+        import pyspark.sql.functions as F  # pylint: disable=import-outside-toplevel
+        from databricks.labs.dqx.anomaly import has_no_anomalies  # pylint: disable=import-outside-toplevel
+
+        if merge_columns is None:
+            merge_columns = ["transaction_id"]
+
+        _, apply_fn = has_no_anomalies(
+            merge_columns=merge_columns,
+            columns=columns,
+            model=model_name,
+            registry_table=registry_table,
+            **check_kwargs,
+        )
+
+        result_df = apply_fn(test_df)
+
+        if extract_score:
+            return result_df.select("*", F.col("_info.anomaly.score").alias("anomaly_score"))
+        return result_df
+
+    return _score
+
+
+@pytest.fixture
+def quick_model_factory(anomaly_engine, make_random):
+    """
+    Factory for training lightweight models with custom parameters.
+
+    Use when tests need specific training params (e.g., AnomalyParams, segment_by).
+    For simple 2D scoring tests, prefer session-scoped shared_2d_model instead.
+
+    Returns a callable that accepts spark and training parameters.
+    """
+
+    def _train(
+        spark: SparkSession,
+        train_size: int = 50,
+        columns: list[str] | None = None,
+        train_data: list[tuple] | None = None,
+        params=None,
+        segment_by: list[str] | None = None,
+        catalog: str = "main",
+        schema: str = "default",
+    ):
+        """
+        Train a quick test model.
+
+        Args:
+            spark (SparkSession): SparkSession instance
+            train_size (int): Number of training rows (default: 50)
+            columns (list[str] | None): Column names (default: ["amount", "quantity"])
+            train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
+            params (AnomalyParams): AnomalyParams for custom training config
+            segment_by (list[str] | None): Segment columns for segmented models
+            catalog (str): Catalog name
+            schema (str): Schema name
+
+        Returns:
+            tuple: (model_name, registry_table, columns)
+
+        Example:
+            # Train with custom params
+            from databricks.labs.dqx.anomaly import AnomalyParams
+            model, registry, cols = quick_model_factory(
+                spark, params=AnomalyParams(sample_fraction=1.0, max_rows=100)
+            )
+        """
+        if columns is None:
+            columns = ["amount", "quantity"]
+
+        unique_id = make_random(8).lower()
+        model_name = f"test_model_{make_random(4).lower()}"
+        registry_table = f"{catalog}.{schema}.{unique_id}_registry"
+
+        if train_data is None:
+            train_data = [(100.0, 2.0) for _ in range(train_size)]
+
+        # Infer schema from columns
+        schema_str = ", ".join(f"{col} double" for col in columns)
+        train_df = spark.createDataFrame(train_data, schema_str)
+
+        anomaly_engine.train(
+            df=train_df,
+            columns=columns,
+            model_name=model_name,
+            registry_table=registry_table,
+            params=params,
+            segment_by=segment_by,
+        )
+
+        return model_name, registry_table, columns
+
+    return _train

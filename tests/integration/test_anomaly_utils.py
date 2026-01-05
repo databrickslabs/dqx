@@ -3,14 +3,80 @@ Shared utilities and test data for anomaly detection integration tests.
 
 This module provides reusable test data patterns and helper functions
 to reduce duplication across anomaly detection tests.
+
+## Helper Functions
+
+### Training Helpers
+Use these to eliminate boilerplate in test model training:
+
+1. **train_simple_2d_model()** - Standard 2D training (amount, quantity)
+   - Use for: Most basic anomaly tests
+   - Example: `train_simple_2d_model(spark, engine, "model", "registry")`
+   - Custom data: `train_simple_2d_model(..., train_data=my_data)`
+
+2. **train_simple_3d_model()** - Standard 3D training (amount, quantity, discount)
+   - Use for: Tests requiring 3 features
+   - Example: `train_simple_3d_model(spark, engine, "model", "registry")`
+
+3. **train_simple_4d_model()** - Standard 4D training (amount, quantity, discount, weight)
+   - Use for: Tests requiring 4 features
+   - Example: `train_simple_4d_model(spark, engine, "model", "registry")`
+   - Defaults to get_standard_4d_training_data()
+
+4. **train_segmented_model()** - Segmented training (by region/category)
+   - Use for: Tests with segment_by parameter
+   - Example:
+     ```python
+     data = [(region, amount, discount) for region in ["US", "EU"] for i in range(200)]
+     train_segmented_model(
+         spark, engine, "model", "registry",
+         segment_columns=["region"],
+         feature_columns=["amount", "discount"],
+         data=data,
+         schema="region string, amount double, discount double"
+     )
+     ```
+
+5. **train_large_dataset_model()** - Efficient large dataset training
+   - Use for: Sampling tests, performance tests
+   - Example: `train_large_dataset_model(spark, engine, "model", "registry", num_rows=200_000)`
+   - With params: `train_large_dataset_model(..., params=AnomalyParams(sample_fraction=0.5))`
+
+### Scoring Helpers
+6. **score_with_anomaly_check()** - Score DataFrame and collect results
+   - Use for: Tests that need to verify scoring behavior
+   - Example: `result = score_with_anomaly_check(df, "model", "registry", ["amount"])`
+
+7. **create_anomaly_dataset_rule()** - Create DQDatasetRule for anomaly checks
+   - Use for: Tests using DQEngine.apply_checks()
+   - Example: `rule = create_anomaly_dataset_rule("model", "registry", ["amount", "quantity"])`
+
+### Standard Training Data
+- **get_standard_2d_training_data()** - 400 points for amount/quantity
+- **get_standard_3d_training_data()** - 400 points for amount/quantity/discount  
+- **get_standard_4d_training_data()** - 150 points for amount/quantity/discount/weight
+
+## Usage Guidelines
+
+- **For simple tests**: Use train_simple_2d_model() for most cases
+- **For custom data**: Pass train_data parameter to any training helper
+- **For sampling tests**: Use train_large_dataset_model() with num_rows
+- **For segmented models**: Use train_segmented_model() with segment_by
+- **For scoring tests**: Use score_with_anomaly_check() to avoid manual DataFrame creation
+
+All helpers automatically handle:
+- DataFrame creation from data
+- Column specification
+- Model name and registry table parameters
+- Optional AnomalyParams configuration
 """
 
 from typing import Any
 
 import pyspark.sql.functions as F
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, DataFrame
 from databricks.labs.dqx.rule import DQDatasetRule
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly import has_no_anomalies, AnomalyParams, AnomalyEngine
 
 
 # ============================================================================
@@ -420,3 +486,310 @@ def apply_anomaly_check_direct(
 
     # Extract _info.anomaly.score as top-level anomaly_score column for test convenience
     return result_df.withColumn("anomaly_score", F.col("_info.anomaly.score"))
+
+
+def train_simple_2d_model(
+    spark: SparkSession,
+    anomaly_engine: AnomalyEngine,
+    model_name: str,
+    registry_table: str,
+    train_size: int = 50,
+    params: AnomalyParams | None = None,
+    train_data: list[tuple] | None = None,
+):
+    """
+    Helper to train a simple 2D model with standard amount/quantity columns.
+
+    Reduces duplication of training boilerplate across integration tests.
+
+    Args:
+        spark (SparkSession): SparkSession instance
+        anomaly_engine (AnomalyEngine): AnomalyEngine instance
+        model_name (str): Model name
+        registry_table (str): Registry table path
+        train_size (int): Number of training rows (default: 50, ignored if train_data provided)
+        params (AnomalyParams | None): Optional AnomalyParams
+        train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
+
+    Example:
+        train_simple_2d_model(spark, engine, "my_model", "main.default.registry")
+        train_simple_2d_model(spark, engine, "my_model", "registry", train_data=[(100, 2), (101, 2)])
+    """
+    if train_data is None:
+        train_data = [(100.0 + i * 0.5, 2.0) for i in range(train_size)]
+
+    train_df = spark.createDataFrame(train_data, "amount double, quantity double")
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+    )
+
+
+def train_simple_3d_model(
+    spark: SparkSession,
+    anomaly_engine: AnomalyEngine,
+    model_name: str,
+    registry_table: str,
+    train_size: int = 50,
+    params: AnomalyParams | None = None,
+    train_data: list[tuple] | None = None,
+):
+    """
+    Helper to train a simple 3D model with amount, quantity, discount columns.
+
+    Reduces duplication of training boilerplate across integration tests.
+
+    Args:
+        spark (SparkSession): SparkSession instance
+        anomaly_engine (AnomalyEngine): AnomalyEngine instance
+        model_name (str): Model name
+        registry_table (str): Registry table path
+        train_size (int): Number of training rows (default: 50, ignored if train_data provided)
+        params (AnomalyParams | None): Optional AnomalyParams
+        train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
+
+    Example:
+        train_simple_3d_model(spark, engine, "my_model", "main.default.registry")
+    """
+    if train_data is None:
+        train_data = [(100.0 + i * 0.5, 2.0, 0.1) for i in range(train_size)]
+
+    train_df = spark.createDataFrame(train_data, "amount double, quantity double, discount double")
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity", "discount"],
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+    )
+
+
+def train_simple_4d_model(
+    spark: SparkSession,
+    anomaly_engine: AnomalyEngine,
+    model_name: str,
+    registry_table: str,
+    params: AnomalyParams | None = None,
+    train_data: list[tuple] | None = None,
+):
+    """
+    Helper to train a simple 4D model with amount, quantity, discount, weight columns.
+
+    Reduces duplication of training boilerplate across integration tests.
+
+    Args:
+        spark (SparkSession): SparkSession instance
+        anomaly_engine (AnomalyEngine): AnomalyEngine instance
+        model_name (str): Model name
+        registry_table (str): Registry table path
+        params (AnomalyParams | None): Optional AnomalyParams
+        train_data (list[tuple] | None): Custom training data tuples (defaults to get_standard_4d_training_data())
+
+    Example:
+        train_simple_4d_model(spark, engine, "my_model", "main.default.registry")
+        train_simple_4d_model(spark, engine, "model", "registry", train_data=custom_data)
+    """
+    if train_data is None:
+        train_data = get_standard_4d_training_data()
+
+    train_df = spark.createDataFrame(train_data, "amount double, quantity double, discount double, weight double")
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity", "discount", "weight"],
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+    )
+
+
+def train_segmented_model(
+    spark: SparkSession,
+    anomaly_engine: AnomalyEngine,
+    model_name: str,
+    registry_table: str,
+    segment_columns: list[str],
+    feature_columns: list[str],
+    data: list[tuple],
+    schema: str,
+    params: AnomalyParams | None = None,
+):
+    """
+    Helper to train a segmented model with segment_by parameter.
+
+    Reduces duplication of segmented training boilerplate across integration tests.
+
+    Args:
+        spark (SparkSession): SparkSession instance
+        anomaly_engine (AnomalyEngine): AnomalyEngine instance
+        model_name (str): Model name
+        registry_table (str): Registry table path
+        segment_columns (list[str]): Columns to segment by (e.g., ["region"])
+        feature_columns (list[str]): Feature columns for training (e.g., ["amount", "discount"])
+        data (list[tuple]): Training data tuples
+        schema (str): DataFrame schema string (e.g., "region string, amount double, discount double")
+        params (AnomalyParams | None): Optional AnomalyParams
+
+    Example:
+        data = [(region, base + i * 0.5, base * 0.8) for region in ["US", "EU"] for i in range(200)]
+        train_segmented_model(
+            spark, engine, "model", "registry",
+            segment_columns=["region"],
+            feature_columns=["amount", "discount"],
+            data=data,
+            schema="region string, amount double, discount double"
+        )
+    """
+    train_df = spark.createDataFrame(data, schema)
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=feature_columns,
+        segment_by=segment_columns,
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+    )
+
+
+def train_large_dataset_model(
+    spark: SparkSession,
+    anomaly_engine: AnomalyEngine,
+    model_name: str,
+    registry_table: str,
+    num_rows: int,
+    columns: list[str] | None = None,
+    params: AnomalyParams | None = None,
+):
+    """
+    Helper to train a model on large synthetic dataset using spark.range().
+
+    Efficient for large dataset tests without materializing lists in driver memory.
+    Reduces duplication of large dataset training boilerplate across integration tests.
+
+    Args:
+        spark (SparkSession): SparkSession instance
+        anomaly_engine (AnomalyEngine): AnomalyEngine instance
+        model_name (str): Model name
+        registry_table (str): Registry table path
+        num_rows (int): Number of rows to generate
+        columns (list[str] | None): Column names (default: ["amount", "quantity"])
+        params (AnomalyParams | None): Optional AnomalyParams
+
+    Example:
+        train_large_dataset_model(spark, engine, "model", "registry", num_rows=200_000)
+        train_large_dataset_model(
+            spark, engine, "model", "registry", num_rows=10_000,
+            params=AnomalyParams(sample_fraction=0.1, max_rows=500)
+        )
+    """
+    if columns is None:
+        columns = ["amount", "quantity"]
+
+    # Generate large dataset efficiently using spark.range
+    train_df = spark.range(num_rows).selectExpr("cast(id as double) as amount", "2.0 as quantity")
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=columns,
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+    )
+
+
+def score_with_anomaly_check(
+    df: DataFrame,
+    model_name: str,
+    registry_table: str,
+    columns: list[str],
+    score_threshold: float = 0.5,
+    merge_columns: list[str] | None = None,
+):
+    """
+    Helper to score a DataFrame using has_no_anomalies and collect results.
+
+    Reduces duplication of scoring pattern across integration tests.
+
+    Args:
+        df (DataFrame): DataFrame to score
+        model_name (str): Model name
+        registry_table (str): Registry table path
+        columns (list[str]): Columns to check
+        score_threshold (float): Anomaly score threshold (default: 0.5)
+        merge_columns (list[str] | None): Merge columns (default: ["transaction_id"])
+
+    Returns:
+        Scored DataFrame with results collected
+
+    Example:
+        result = score_with_anomaly_check(
+            test_df, "my_model", "main.default.registry", ["amount", "quantity"]
+        )
+    """
+    if merge_columns is None:
+        merge_columns = ["transaction_id"]
+
+    _, apply_fn = has_no_anomalies(
+        merge_columns=merge_columns,
+        columns=columns,
+        model=model_name,
+        registry_table=registry_table,
+        score_threshold=score_threshold,
+    )
+    result_df = apply_fn(df)
+    result_df.collect()  # Force evaluation
+    return result_df
+
+
+def create_anomaly_dataset_rule(
+    model_name: str,
+    registry_table: str,
+    columns: list[str],
+    criticality: str = "error",
+    score_threshold: float = 0.5,
+    merge_columns: list[str] | None = None,
+    **kwargs,
+):
+    """
+    Helper to create DQDatasetRule for anomaly detection.
+
+    Reduces duplication of rule creation across integration tests.
+
+    Args:
+        model_name: Model name
+        registry_table: Registry table path
+        columns: Columns to check
+        criticality: Rule criticality (default: "error")
+        score_threshold: Anomaly score threshold (default: 0.5)
+        merge_columns: Merge columns (default: ["transaction_id"])
+        **kwargs: Additional has_no_anomalies arguments
+
+    Returns:
+        DQDatasetRule configured for anomaly detection
+
+    Example:
+        rule = create_anomaly_dataset_rule(
+            "my_model", "main.default.registry", ["amount", "quantity"]
+        )
+    """
+    if merge_columns is None:
+        merge_columns = ["transaction_id"]
+
+    return DQDatasetRule(
+        criticality=criticality,
+        check_func=has_no_anomalies,
+        check_func_kwargs={
+            "merge_columns": merge_columns,
+            "columns": columns,
+            "model": model_name,
+            "registry_table": registry_table,
+            "score_threshold": score_threshold,
+            **kwargs,
+        },
+    )

@@ -8,6 +8,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_utils import train_simple_2d_model, train_simple_3d_model
 
 
 @pytest.fixture
@@ -18,22 +19,12 @@ def mock_workspace_client():
 
 def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test applying anomaly checks defined in YAML."""
-    # Train model first
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model first - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Define checks in YAML format
     checks_yaml = f"""
@@ -70,21 +61,12 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
 @pytest.mark.nightly
 def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML with multiple anomaly and standard checks."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_multi_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model with more training data for stability - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=200)
 
     # Define multiple checks in YAML
     checks_yaml = f"""
@@ -136,21 +118,12 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
 @pytest.mark.nightly
 def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with custom score_threshold."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0) for i in range(50)],
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_threshold_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Define check with custom threshold
     checks_yaml = f"""
@@ -186,21 +159,12 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
 @pytest.mark.nightly
 def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with include_contributions flag."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(30)],
-        "amount double, quantity double, discount double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_contrib_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity", "discount"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train 3D model - use helper
+    train_simple_3d_model(spark, anomaly_engine, model_name, registry_table, train_size=30)
 
     # Define check with contributions
     checks_yaml = f"""
@@ -236,21 +200,12 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
 @pytest.mark.nightly
 def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with drift_threshold."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_drift_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model with more data for stability - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=200)
 
     # Define check with drift threshold
     checks_yaml = f"""
@@ -287,21 +242,12 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
 @pytest.mark.nightly
 def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML with criticality='warn'."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(200)],  # Increase training data for stability
-        "amount double, quantity double",
-    )
-
     unique_id = make_random(8).lower()
     model_name = f"test_yaml_warn_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    anomaly_engine.train(
-        df=train_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
+    # Train model with more data for stability - use helper
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=200)
 
     # Define check with warn criticality
     checks_yaml = f"""

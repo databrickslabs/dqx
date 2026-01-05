@@ -10,6 +10,7 @@ install_logger()
 logging.getLogger("databricks").setLevel(logging.INFO)
 logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
 logging.getLogger("mlflow").setLevel(logging.ERROR)
+logging.getLogger("pyspark.sql.connect.client.logging").setLevel(logging.CRITICAL)
 
 # Disable MLflow Trace UI in notebooks
 # databricks-langchain automatically enables MLflow tracing when it's imported

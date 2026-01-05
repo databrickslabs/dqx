@@ -5,28 +5,18 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import AnomalyParams
+from tests.integration.test_anomaly_utils import train_large_dataset_model
 
 
 @pytest.mark.nightly
 def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that sampling caps at max_rows for large datasets."""
-    # Create large dataset (200K rows, which exceeds default max_rows of 1M but is manageable for tests)
-    large_df = spark.range(200_000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
-
     unique_id = make_random(8).lower()
     model_name = f"test_sampling_large_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
 
-    # Train with defaults (should cap at max_rows if needed)
-    model_uri = anomaly_engine.train(
-        df=large_df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-    )
-
-    # Verify model was trained successfully
-    assert model_uri is not None
+    # Train with defaults (should cap at max_rows if needed) - use helper
+    train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=200_000)
 
     # Check registry records training_rows (should be sampled, use full three-level name)
     full_model_name = f"main.default.{model_name}"
@@ -41,8 +31,6 @@ def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str, ano
 @pytest.mark.nightly
 def test_custom_sampling_parameters(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that custom sample_fraction and max_rows are respected."""
-    df = spark.range(1000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
-
     unique_id = make_random(8).lower()
     model_name = f"test_custom_sampling_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
@@ -53,13 +41,8 @@ def test_custom_sampling_parameters(spark: SparkSession, make_random: str, anoma
         max_rows=300,
     )
 
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    # Train with custom params - use helper
+    train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
     # Check registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
@@ -74,9 +57,6 @@ def test_custom_sampling_parameters(spark: SparkSession, make_random: str, anoma
 @pytest.mark.nightly
 def test_sampling_warning_issued(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that warning is issued when data is truncated."""
-    # Create dataset that will require sampling
-    df = spark.range(10_000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
-
     unique_id = make_random(8).lower()
     model_name = f"test_sampling_warning_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
@@ -91,13 +71,8 @@ def test_sampling_warning_issued(spark: SparkSession, make_random: str, anomaly_
     with warnings.catch_warnings(record=True) as _warning_context:
         warnings.simplefilter("always")
 
-        anomaly_engine.train(
-            df=df,
-            columns=["amount", "quantity"],
-            model_name=model_name,
-            registry_table=registry_table,
-            params=params,
-        )
+        # Train with restrictive params - use helper
+        train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=10_000, params=params)
 
         # Check for sampling/truncation warning
         # (Implementation may or may not warn, this is aspirational)
@@ -107,8 +82,6 @@ def test_sampling_warning_issued(spark: SparkSession, make_random: str, anomaly_
 @pytest.mark.nightly
 def test_train_validation_split(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that train/validation split works correctly."""
-    df = spark.range(1000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
-
     unique_id = make_random(8).lower()
     model_name = f"test_train_val_split_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
@@ -120,13 +93,8 @@ def test_train_validation_split(spark: SparkSession, make_random: str, anomaly_e
         train_ratio=0.8,  # 80/20 split
     )
 
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    # Train with validation split - use helper
+    train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
     # Check that metrics exist (which indicates validation was performed, use full three-level name)
     full_model_name = f"main.default.{model_name}"
@@ -144,8 +112,6 @@ def test_train_validation_split(spark: SparkSession, make_random: str, anomaly_e
 @pytest.mark.nightly
 def test_custom_train_ratio(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that custom train_ratio is respected."""
-    df = spark.range(1000).selectExpr("cast(id as double) as amount", "2.0 as quantity")
-
     unique_id = make_random(8).lower()
     model_name = f"test_custom_train_ratio_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
@@ -157,23 +123,13 @@ def test_custom_train_ratio(spark: SparkSession, make_random: str, anomaly_engin
         train_ratio=0.9,
     )
 
-    model_uri = anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
-
-    # Model should train successfully
-    assert model_uri is not None
+    # Train with custom train ratio - use helper
+    train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
 
 @pytest.mark.nightly
 def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that sample_fraction=1.0 uses all data (up to max_rows)."""
-    df = spark.range(500).selectExpr("cast(id as double) as amount", "2.0 as quantity")
-
     unique_id = make_random(8).lower()
     model_name = f"test_no_sampling_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
@@ -183,13 +139,8 @@ def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str, a
         max_rows=1000,  # Higher than dataset size
     )
 
-    anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
+    # Train with no sampling - use helper
+    train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=500, params=params)
 
     # Use full three-level name for query
     full_model_name = f"main.default.{model_name}"
@@ -205,9 +156,6 @@ def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str, a
 @pytest.mark.nightly
 def test_minimal_data_with_sampling(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that small datasets work with sampling."""
-    # Very small dataset
-    df = spark.range(20).selectExpr("cast(id as double) as amount", "2.0 as quantity")
-
     unique_id = make_random(8).lower()
     model_name = f"test_minimal_data_{make_random(4).lower()}"
     registry_table = f"main.default.{unique_id}_registry"
@@ -217,16 +165,8 @@ def test_minimal_data_with_sampling(spark: SparkSession, make_random: str, anoma
         max_rows=100,
     )
 
-    model_uri = anomaly_engine.train(
-        df=df,
-        columns=["amount", "quantity"],
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
-
-    # Should still train successfully
-    assert model_uri is not None
+    # Train with minimal data - use helper
+    train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=20, params=params)
 
 
 @pytest.mark.nightly
