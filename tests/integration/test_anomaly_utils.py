@@ -390,8 +390,8 @@ def create_anomaly_check_rule(
     )
 
 
-def train_standard_2d_model(  # pylint: disable=no-spark-argument-in-function
-    anomaly_engine: Any,
+def train_standard_2d_model(
+    spark: SparkSession,
     unique_id: str,
     columns: list[str] | None = None,
     catalog: str = "main",
@@ -401,25 +401,25 @@ def train_standard_2d_model(  # pylint: disable=no-spark-argument-in-function
     Train a standard 2D anomaly model with common test parameters.
 
     Reduces duplication in tests that need to train a simple model.
+    Follows Databricks convention of spark as first argument.
 
     Args:
-        anomaly_engine: AnomalyEngine instance
+        spark: SparkSession instance (required first for Databricks convention)
         unique_id: Unique identifier for model/registry naming
         columns: Columns to train on (default: ["amount", "quantity"])
         catalog: Catalog name (default: "main")
         schema: Schema name (default: "default")
 
     Returns:
-        Dict with "model_name", "registry_table", "columns" keys
+        Dict with "model_name", "registry_table", "columns", "anomaly_engine" keys
 
     Example:
         from pyspark.sql import SparkSession
         spark = SparkSession.builder.getOrCreate()
-        train_df = spark.createDataFrame(
-            get_standard_2d_training_data(),
-            "amount double, quantity double"
-        )
-        info = train_standard_2d_model(anomaly_engine, "test123", train_df=train_df)
+        info = train_standard_2d_model(spark, "test123")
+        # Access trained model
+        model_name = info["model_name"]
+        anomaly_engine = info["anomaly_engine"]
     """
     if columns is None:
         columns = ["amount", "quantity"]
@@ -427,9 +427,10 @@ def train_standard_2d_model(  # pylint: disable=no-spark-argument-in-function
     model_name = f"test_model_{unique_id}"
     registry_table = f"{catalog}.{schema}.{unique_id}_registry"
 
-    spark = SparkSession.builder.getOrCreate()
     train_df = spark.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
 
+    # Create AnomalyEngine internally
+    anomaly_engine = AnomalyEngine(spark)
     anomaly_engine.train(
         df=train_df,
         columns=columns,
@@ -441,6 +442,7 @@ def train_standard_2d_model(  # pylint: disable=no-spark-argument-in-function
         "model_name": model_name,
         "registry_table": registry_table,
         "columns": columns,
+        "anomaly_engine": anomaly_engine,  # Return for convenience
     }
 
 

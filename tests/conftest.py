@@ -8,26 +8,20 @@ from collections.abc import Callable, Generator
 from dataclasses import replace, dataclass
 from functools import cached_property
 
-# Monkey patch for numba/coverage compatibility issue
-# numba 0.63.x expects attributes that changed/removed in coverage 7.4+
-try:  # pylint: disable=too-many-try-statements
-    import coverage.types  # type: ignore[import-untyped]
+# Apply compatibility patches for test dependencies
+from tests.compat import patch_numba_coverage_compat
+patch_numba_coverage_compat()
 
-    # Add missing Tracer class (was renamed to TracerCore)
-    if not hasattr(coverage.types, 'Tracer'):
-        coverage.types.Tracer = coverage.types.TracerCore  # type: ignore[attr-defined]
-
-    # Add missing type aliases that were removed in coverage 7.4
-    if not hasattr(coverage.types, 'TShouldTraceFn'):
-        coverage.types.TShouldTraceFn = Callable[[Any, Any], Any | None]  # type: ignore[attr-defined]
-    if not hasattr(coverage.types, 'TShouldStartContextFn'):
-        coverage.types.TShouldStartContextFn = Callable[[Any], str | None]  # type: ignore[attr-defined]
-    if not hasattr(coverage.types, 'TFileDisposition'):
-        coverage.types.TFileDisposition = Any  # type: ignore[misc,assignment]
-    if not hasattr(coverage.types, 'TWarnFn'):
-        coverage.types.TWarnFn = Callable[[str, str, int], None]  # type: ignore[misc,assignment]
-except (ImportError, AttributeError):
-    pass  # coverage or numba not installed
+# Optional imports for anomaly detection functionality
+try:
+    import tempfile
+    import mlflow
+    from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
+    HAS_ANOMALY_EXTRAS = True
+except ImportError:
+    HAS_ANOMALY_EXTRAS = False
+    # Create placeholders for type hints
+    AnomalyEngine = None  # type: ignore[assignment,misc]
 
 import pytest
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
@@ -63,8 +57,10 @@ def debug_env_name():
 @pytest.fixture(scope="session", autouse=True)
 def configure_mlflow_tracking():
     """Configure MLflow to use a temporary directory for tracking during tests."""
-    import tempfile  # pylint: disable=import-outside-toplevel
-    import mlflow  # pylint: disable=import-outside-toplevel
+    if not HAS_ANOMALY_EXTRAS:
+        # If anomaly extras not installed, skip MLflow configuration
+        yield
+        return
 
     # Use temporary directory for MLflow tracking to avoid polluting repo with mlruns/
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -81,7 +77,8 @@ def product_info():
 @pytest.fixture
 def anomaly_engine(spark):
     """Provide an AnomalyEngine instance for tests."""
-    from databricks.labs.dqx.anomaly.trainer import AnomalyEngine  # pylint: disable=import-outside-toplevel
+    if not HAS_ANOMALY_EXTRAS:
+        pytest.skip("Anomaly extras not installed")
 
     ws = WorkspaceClient()
     return AnomalyEngine(ws, spark)

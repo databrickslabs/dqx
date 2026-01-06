@@ -74,15 +74,15 @@ def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory):
 
     # Query recommended threshold from registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None, f"Model {full_model_name} not found in registry"
 
     # Verify recommended_threshold exists in metrics
-    assert record["metrics"] is not None
-    assert "recommended_threshold" in record["metrics"]
+    assert record["training"]["metrics"] is not None
+    assert "recommended_threshold" in record["training"]["metrics"]
 
     # Verify it's a reasonable value (between 0 and 1)
-    recommended = record["metrics"]["recommended_threshold"]
+    recommended = record["training"]["metrics"]["recommended_threshold"]
     assert 0.0 <= recommended <= 1.0
 
 
@@ -98,9 +98,9 @@ def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick
     full_model_name = f"main.default.{model_name}"
     recommended_result = spark.sql(
         f"""
-        SELECT metrics['recommended_threshold'] as threshold
+        SELECT training.metrics['recommended_threshold'] as threshold
         FROM {registry_table}
-        WHERE model_name = '{full_model_name}' AND status = 'active'
+        WHERE identity.model_name = '{full_model_name}' AND identity.status = 'active'
     """
     )
     threshold_row = recommended_result.first()
@@ -224,10 +224,10 @@ def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory
 
     # Check metrics in registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None, f"Model {full_model_name} not found in registry"
 
-    metrics = record["metrics"]
+    metrics = record["training"]["metrics"]
     assert metrics is not None
 
     # Recommended threshold should be present
