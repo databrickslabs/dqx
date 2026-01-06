@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import collections.abc
 from copy import deepcopy
-import warnings
+import logging
 from datetime import datetime
 from typing import Any, cast
 
@@ -24,7 +24,7 @@ from mlflow.tracking import MlflowClient
 import numpy as np
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import PandasUDFType, pandas_udf, col
+from pyspark.sql.functions import pandas_udf, col
 from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
 import pyspark.sql.functions as F
 import sklearn
@@ -44,6 +44,7 @@ from databricks.labs.dqx.anomaly.transformers import (
 )
 from databricks.sdk import WorkspaceClient
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_SAMPLE_FRACTION = 0.3
 DEFAULT_MAX_ROWS = 1_000_000
@@ -164,7 +165,7 @@ class AnomalyEngine(DQEngineBase):
 
         # Show auto-discovery warnings
         for warning in discovery_warnings:
-            warnings.warn(warning, UserWarning, stacklevel=2)
+            logger.warning(warning)
 
         # Validate columns
         if not columns:
@@ -174,7 +175,7 @@ class AnomalyEngine(DQEngineBase):
 
         # Show validation warnings
         for warning in validation_warnings:
-            warnings.warn(warning, UserWarning, stacklevel=2)
+            logger.warning(warning)
 
         # Prepare training configuration
         derived_model_name, derived_registry_table = _prepare_training_config(
@@ -223,7 +224,7 @@ def _process_exclude_columns(
     if columns is None:
         remaining_columns = [col for col in df.columns if col not in exclude_list]
         df_filtered = df.select(*remaining_columns)
-        print(f"Excluding {len(exclude_list)} columns from auto-discovery: {exclude_list}")
+        logger.info(f"Excluding {len(exclude_list)} columns from auto-discovery: {exclude_list}")
         return df_filtered, exclude_list
 
     # No need to filter if columns explicitly provided
@@ -258,9 +259,9 @@ def _perform_auto_discovery(
         discovered_segments = profile.recommended_segments
 
     # Print what was discovered
-    print(f"Auto-selected {len(discovered_columns)} columns: {discovered_columns}")
+    logger.info(f"Auto-selected {len(discovered_columns)} columns: {discovered_columns}")
     if discovered_segments:
-        print(
+        logger.info(
             f"Auto-detected {len(discovered_segments)} segment columns: {discovered_segments} "
             f"({profile.segment_count} total segments)"
         )
@@ -288,11 +289,9 @@ def _prepare_training_config(
 
     # Check if model already exists in Unity Catalog and warn
     if _model_exists_in_uc(derived_model_name):
-        warnings.warn(
+        logger.warning(
             f"Model '{derived_model_name}' already exists. Creating a new version. "
-            f"Previous versions remain available.",
-            UserWarning,
-            stacklevel=3,
+            f"Previous versions remain available."
         )
 
     # Check for configuration changes in existing models
@@ -303,14 +302,12 @@ def _prepare_training_config(
         config_changed = set(columns) != set(existing.columns) or segment_by != existing.segment_by
 
         if config_changed:
-            warnings.warn(
+            logger.warning(
                 f"⚠️  Model '{derived_model_name}' exists with different configuration:\n"
                 f"   Existing: columns={existing.columns}, segment_by={existing.segment_by}\n"
                 f"   New: columns={columns}, segment_by={segment_by}\n"
                 f"   The old model will be archived. Consider using a different model_name "
-                f"if this is a different use case.",
-                UserWarning,
-                stacklevel=3,
+                f"if this is a different use case."
             )
 
     return derived_model_name, derived_registry_table
@@ -421,11 +418,7 @@ def _train_global(
     feature_importance = _compute_feature_importance(model_for_importance, val_df, columns, feature_metadata)
 
     if truncated:
-        warnings.warn(
-            f"Sampling capped at {params.max_rows} rows; model trained on truncated sample.",
-            UserWarning,
-            stacklevel=2,
-        )
+        logger.warning(f"Sampling capped at {params.max_rows} rows; model trained on truncated sample.")
 
     registry = AnomalyModelRegistry(spark)
 
@@ -454,9 +447,9 @@ def _train_global(
     )
     registry.save_model(record, registry_table)
 
-    print(f"   Model trained: {model_name}")
-    print(f"   Model URI: {model_uri}")
-    print(f"   Registry: {registry_table}")
+    logger.info(f"   Model trained: {model_name}")
+    logger.info(f"   Model URI: {model_uri}")
+    logger.info(f"   Registry: {registry_table}")
 
     return model_name
 
@@ -489,11 +482,7 @@ def _train_one_segment_with_validation(
     # Validate segment size
     segment_size = segment_df.count()
     if segment_size < 1000:
-        warnings.warn(
-            f"Segment {segment_name} has only {segment_size} rows, " "model may be unreliable.",
-            UserWarning,
-            stacklevel=2,
-        )
+        logger.warning(f"Segment {segment_name} has only {segment_size} rows, model may be unreliable.")
 
     # Derive segment-specific model name
     segment_model_name = f"{base_model_name}__seg_{segment_name}"
@@ -526,10 +515,8 @@ def _get_and_validate_segments(
     segments = [row.asDict() for row in segments_df.collect()]
 
     if len(segments) > 100:
-        warnings.warn(
-            f"Training {len(segments)} segments may be slow. Consider coarser segmentation or explicit segment_by.",
-            UserWarning,
-            stacklevel=2,
+        logger.warning(
+            f"Training {len(segments)} segments may be slow. Consider coarser segmentation or explicit segment_by."
         )
 
     return segments
@@ -560,7 +547,7 @@ def _report_training_summary(
     """
     # Log skipped segments
     if skipped_segments:
-        print(
+        logger.info(
             f"Skipped {len(skipped_segments)}/{total_segments} segments due to insufficient data after sampling: "
             f"{', '.join(skipped_segments[:5])}"
             + (f" and {len(skipped_segments) - 5} more" if len(skipped_segments) > 5 else "")
@@ -568,11 +555,11 @@ def _report_training_summary(
 
     # Log failed segments
     if failed_segments:
-        print(f"\nWARNING: {len(failed_segments)}/{total_segments} segments failed during training:")
+        logger.warning(f"\nWARNING: {len(failed_segments)}/{total_segments} segments failed during training:")
         for seg_name, error in failed_segments[:3]:
-            print(f"  - {seg_name}: {error}")
+            logger.warning(f"  - {seg_name}: {error}")
         if len(failed_segments) > 3:
-            print(f"  ... and {len(failed_segments) - 3} more")
+            logger.warning(f"  ... and {len(failed_segments) - 3} more")
 
     # Validate that at least one segment was successfully trained
     if not model_uris:
@@ -584,8 +571,8 @@ def _report_training_summary(
 
     # Print success summary
     trained_count = len(model_uris)
-    print(f"   Trained {trained_count}/{total_segments} segment models for: {base_model_name}")
-    print(f"   Registry: {registry_table}")
+    logger.info(f"   Trained {trained_count}/{total_segments} segment models for: {base_model_name}")
+    logger.info(f"   Registry: {registry_table}")
 
 
 def _train_segmented(
@@ -610,7 +597,7 @@ def _train_segmented(
     # Train each segment
     for i, segment_vals in enumerate(segments):
         segment_name = "_".join(f"{k}={v}" for k, v in segment_vals.items())
-        print(f"Training segment {i+1}/{len(segments)}: {segment_name}")
+        logger.info(f"Training segment {i+1}/{len(segments)}: {segment_name}")
 
         try:
             model_uri, was_skipped = _train_one_segment_with_validation(
@@ -625,7 +612,7 @@ def _train_segmented(
         except Exception as e:
             # Log error and continue with next segment
             error_msg = f"Segment {segment_name} training failed: {type(e).__name__}: {e}"
-            warnings.warn(error_msg, UserWarning, stacklevel=2)
+            logger.warning(error_msg)
             failed_segments.append((segment_name, str(e)))
 
     # Report summary and validate success
@@ -655,7 +642,7 @@ def _train_single_segment(
 
     sampled_df, sampled_count, _ = _sample_df(df, columns, params)
     if sampled_count == 0:
-        print(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
+        logger.info(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
         return None
 
     train_df, val_df = _train_validation_split(sampled_df, params)
@@ -956,8 +943,8 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
         ]
     )
 
-    @pandas_udf(schema, PandasUDFType.SCALAR)
-    def predict_udf(*cols):
+    @pandas_udf(schema)  # type: ignore[call-overload]  # StructType is valid but mypy has incomplete stubs
+    def predict_udf(*cols: pd.Series) -> pd.DataFrame:
         """Pandas UDF for distributed scoring (Spark Connect compatible).
 
         Note: All imports are at module-level since DQX is installed as a wheel on all cluster nodes.

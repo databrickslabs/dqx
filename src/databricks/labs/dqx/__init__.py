@@ -1,5 +1,6 @@
 import logging
 import re
+import warnings
 
 import databricks.sdk.useragent as ua
 from databricks.labs.blueprint.logger import install_logger
@@ -7,10 +8,21 @@ from databricks.labs.dqx.__about__ import __version__
 
 install_logger()
 
+# Route Python warnings through logging for consistent formatting
+# (Some modules like check_funcs still use warnings.warn for backward compatibility)
+logging.captureWarnings(True)
+warnings_logger = logging.getLogger("py.warnings")
+warnings_logger.setLevel(logging.INFO)
+
+# Configure logger levels
 logging.getLogger("databricks").setLevel(logging.INFO)
 logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
-logging.getLogger("mlflow").setLevel(logging.ERROR)
 logging.getLogger("pyspark.sql.connect.client.logging").setLevel(logging.CRITICAL)
+logging.getLogger("mlflow").setLevel(logging.ERROR)
+
+# Suppress specific MLflow warnings
+warnings.filterwarnings("ignore", category=FutureWarning, message=".*get_latest_versions.*deprecated.*")
+warnings.filterwarnings("ignore", category=Warning, message=".*artifact_path.*is deprecated.*")
 
 # Disable MLflow Trace UI in notebooks
 # databricks-langchain automatically enables MLflow tracing when it's imported

@@ -5,8 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.anomaly import AnomalyParams, has_no_anomalies
+from databricks.labs.dqx.anomaly import AnomalyParams
 from databricks.sdk import WorkspaceClient
 from tests.integration.test_anomaly_utils import train_simple_2d_model, train_simple_3d_model
 
@@ -48,7 +47,9 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
 
 
 @pytest.mark.nightly
-def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
+def test_ensemble_scoring_with_confidence(
+    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_scorer
+):
     """Test scoring with ensemble model returns confidence scores."""
     unique_id = make_random(8).lower()
     model_name = f"test_ensemble_scoring_{make_random(4).lower()}"
@@ -62,37 +63,38 @@ def test_ensemble_scoring_with_confidence(spark: SparkSession, mock_workspace_cl
     )
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=50, params=params)
 
-    # Test data - ADD transaction_id column
-    test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 500.0, 1.0)],  # One normal, one anomaly
-        "transaction_id int, amount double, quantity double",
+    # Test data - use factory
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(100.0, 2.0)],
+        anomaly_rows=[(500.0, 1.0)],
+        columns_schema="amount double, quantity double",
     )
 
-    # Apply check with confidence
-    dq_engine = DQEngine(mock_workspace_client)
-    checks = [
-        has_no_anomalies(
-            merge_columns=["transaction_id"],
-            columns=["amount", "quantity"],
-            model=model_name,
-            registry_table=registry_table,
-            score_threshold=0.5,
-            include_confidence=True,
-        )
-    ]
+    # Apply check with confidence - use anomaly_scorer
+    result_df = anomaly_scorer(
+        test_df,
+        model_name=model_name,
+        registry_table=registry_table,
+        columns=["amount", "quantity"],
+        score_threshold=0.5,
+        include_confidence=True,
+        extract_score=False,
+    )
 
-    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-
-    # Check that confidence column exists
-    assert "anomaly_score_std" in result_df.columns
+    # Check that confidence column exists in _info
+    row = result_df.collect()[0]
+    assert row["_info"]["anomaly"]["confidence_std"] is not None
 
     # Check that scores vary (std > 0 for some rows)
-    std_values = [row["anomaly_score_std"] for row in result_df.collect()]
-    assert any(std > 0 for std in std_values)
+    std_values = [r["_info"]["anomaly"]["confidence_std"] for r in result_df.collect()]
+    assert any(std is not None and std > 0 for std in std_values)
 
 
 @pytest.mark.nightly
-def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
+def test_ensemble_with_feature_contributions(
+    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_scorer
+):
     """Test that ensemble works with feature contributions."""
     unique_id = make_random(8).lower()
     model_name = f"test_ensemble_contributions_{make_random(4).lower()}"
@@ -106,27 +108,27 @@ def test_ensemble_with_feature_contributions(spark: SparkSession, mock_workspace
     )
     train_simple_3d_model(spark, anomaly_engine, model_name, registry_table, train_size=30, params=params)
 
-    # Test data - ADD transaction_id column
-    test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0, 0.1), (2, 9999.0, 1.0, 0.95)],
-        "transaction_id int, amount double, quantity double, discount double",
+    # Test data - use factory
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(100.0, 2.0, 0.1)],
+        anomaly_rows=[(9999.0, 1.0, 0.95)],
+        columns_schema="amount double, quantity double, discount double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
-    checks = [
-        has_no_anomalies(
-            merge_columns=["transaction_id"],
-            columns=["amount", "quantity", "discount"],
-            model=model_name,
-            registry_table=registry_table,
-            score_threshold=0.5,
-            include_contributions=True,
-            include_confidence=True,
-        )
-    ]
+    # Apply check with confidence and contributions - use anomaly_scorer
+    result_df = anomaly_scorer(
+        test_df,
+        model_name=model_name,
+        registry_table=registry_table,
+        columns=["amount", "quantity", "discount"],
+        score_threshold=0.5,
+        include_contributions=True,
+        include_confidence=True,
+        extract_score=False,
+    )
 
-    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
-
-    # Check both confidence and contributions exist
-    assert "anomaly_score_std" in result_df.columns
-    assert "anomaly_contributions" in result_df.columns
+    # Check both confidence and contributions exist in _info
+    row = result_df.collect()[0]
+    assert row["_info"]["anomaly"]["confidence_std"] is not None
+    assert row["_info"]["anomaly"]["contributions"] is not None

@@ -1,5 +1,7 @@
 """Integration tests for segment-based anomaly detection."""
 
+from unittest.mock import MagicMock
+
 import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
@@ -7,13 +9,20 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.sdk import WorkspaceClient
 from tests.conftest import TEST_CATALOG
+
+
+@pytest.fixture
+def mock_workspace_client():
+    """Create a mock WorkspaceClient for testing."""
+    return MagicMock(spec=WorkspaceClient)
 
 
 @pytest.mark.nightly
 def test_explicit_segment_training(
     spark: SparkSession,
-    mock_workspace_client,  # pylint: disable=unused-argument
+    mock_workspace_client,
     make_schema,
     make_random,
     anomaly_engine,
@@ -124,7 +133,7 @@ def test_segment_scoring(
 @pytest.mark.nightly
 def test_multi_column_segments(
     spark: SparkSession,
-    mock_workspace_client,  # pylint: disable=unused-argument
+    mock_workspace_client,
     make_schema,
     make_random,
     anomaly_engine,

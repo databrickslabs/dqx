@@ -4,6 +4,7 @@ Check functions for anomaly detection.
 
 from __future__ import annotations
 
+import logging
 import sys
 import warnings
 from dataclasses import dataclass
@@ -15,7 +16,7 @@ import mlflow.sklearn
 import numpy as np
 import pandas as pd
 from pyspark.sql import Column, DataFrame
-from pyspark.sql.functions import pandas_udf, PandasUDFType, col
+from pyspark.sql.functions import pandas_udf, col
 import pyspark.sql.functions as F
 from pyspark.sql.types import (
     DoubleType,
@@ -51,6 +52,8 @@ from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterEr
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.utils import get_column_name_or_alias
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -506,8 +509,8 @@ def _create_scoring_udf(
         Pandas UDF for scoring
     """
 
-    @pandas_udf(schema, PandasUDFType.SCALAR)
-    def predict_with_shap_udf(*cols):
+    @pandas_udf(schema)  # type: ignore[call-overload]  # StructType is valid but mypy has incomplete stubs
+    def predict_with_shap_udf(*cols: pd.Series) -> pd.DataFrame:
         """Pandas UDF for distributed scoring with optional SHAP (Spark Connect compatible).
 
         Note: All imports are at module-level since DQX is installed as a wheel on all cluster nodes.
@@ -556,8 +559,13 @@ def _compute_shap_contributions_in_udf(
     """
     if not SHAP_AVAILABLE:
         raise ImportError(
-            "To use feature contributions (include_contributions=True), install 'shap>=0.42.0,<0.46' on your cluster.\n"
-            "Cluster -> Libraries -> Install New -> PyPI -> 'shap>=0.42.0,<0.46'"
+            "SHAP library not available in pandas UDF worker. This should have been caught earlier.\n\n"
+            "To fix:\n"
+            "  1. Install DQX with anomaly extras: %pip install 'databricks-labs-dqx[anomaly]'\n"
+            "  2. Or install SHAP separately: %pip install 'shap>=0.42.0,<0.46'\n"
+            "  3. Restart Python: dbutils.library.restartPython()\n"
+            "  4. Re-run the scoring operation\n\n"
+            "If this error persists after installation, the cluster may need to be restarted."
         )
 
     # Extract components
@@ -588,6 +596,17 @@ def _compute_shap_contributions_in_udf(
                 c: float(normalized[j]) for j, c in enumerate(engineered_feature_cols)
             }
         else:
+            # EDGE CASE: All SHAP values are 0 or extremely small
+            # This can happen when:
+            # 1. Data point is perfectly normal (all features at expected values)
+            # 2. Numerical precision limits (SHAP values < 1e-15)
+            # 3. All engineered features have identical values
+            # Fallback: Assign equal contributions to avoid division by zero
+            # Note: This is rare and may indicate the instance has very low anomaly score
+            logger.debug(
+                f"Row {i}: All SHAP values are zero (shap_vals={shap_vals}). "
+                "Using equal contributions. This typically indicates a very normal data point."
+            )
             equal_contrib = 1.0 / len(engineered_feature_cols)
             contributions = {c: equal_contrib for c in engineered_feature_cols}
 
@@ -1074,6 +1093,21 @@ def has_no_anomalies(
     def apply(df: DataFrame) -> DataFrame:
         if not merge_columns:
             raise MissingParameterError("merge_columns is not provided.")
+
+        # Validate SHAP availability early (before Spark jobs)
+        if include_contributions and not SHAP_AVAILABLE:
+            raise ImportError(
+                "Feature contributions require SHAP library (not included in base DQX installation).\n\n"
+                "To install SHAP:\n"
+                "  Option 1 - Install DQX with anomaly extras (recommended):\n"
+                "    %pip install 'databricks-labs-dqx[anomaly]'\n"
+                "    dbutils.library.restartPython()\n\n"
+                "  Option 2 - Install SHAP separately:\n"
+                "    %pip install 'shap>=0.42.0,<0.46'\n"
+                "    dbutils.library.restartPython()\n\n"
+                "  Option 3 - Use anomaly detection without explanations:\n"
+                "    has_no_anomalies(..., include_contributions=False)"
+            )
 
         # Auto-discover configuration
         nonlocal columns, segment_by
