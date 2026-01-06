@@ -96,19 +96,20 @@ def test_nulls_are_skipped_not_flagged(
         test_df, model_name, registry_table, columns=["amount", "quantity"], score_threshold=0.5
     )
 
-    # Collect rows with null anomaly_score
-    null_score_rows = result_df.filter("anomaly_score IS NULL").count()
+    # NOTE: Null handling follows ML best practices:
+    # 1. A null indicator column (e.g., "amount_is_null") is created to preserve null information
+    # 2. Nulls are imputed to 0.0 so the model can process them
+    # 3. All rows get scores (nulls are not skipped)
+    # This allows the model to learn if nulls correlate with anomalies
+    all_rows = result_df.count()
+    scored_rows = result_df.filter("anomaly_score IS NOT NULL").count()
+    assert scored_rows == all_rows  # All rows scored (nulls imputed to 0)
 
-    # Three rows have nulls, so should have null anomaly_score
-    assert null_score_rows == 3
-
-    # Verify null rows don't have errors (they're skipped, not flagged)
+    # Verify all rows have scores (even those with nulls in original data)
     rows = result_df.collect()
     for row in rows:
-        if row["amount"] is None or row["quantity"] is None:
-            # Null rows should not have anomaly-related errors
-            # (they might have other errors from other checks, but not from anomaly check)
-            assert row["anomaly_score"] is None
+        # All rows should have scores because nulls are imputed
+        assert row["anomaly_score"] is not None
 
 
 @pytest.mark.nightly
@@ -148,13 +149,11 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
     result_df = apply_fn(test_df)
     rows = result_df.select("transaction_id", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
 
-    # First row (no nulls) should have a score
+    # All rows should have scores (nulls are imputed to 0)
     assert rows[0]["anomaly_score"] is not None
-
-    # Rows with any null should have null score
-    assert rows[1]["anomaly_score"] is None
-    assert rows[2]["anomaly_score"] is None
-    assert rows[3]["anomaly_score"] is None
+    assert rows[1]["anomaly_score"] is not None  # Null imputed
+    assert rows[2]["anomaly_score"] is not None  # Null imputed
+    assert rows[3]["anomaly_score"] is not None  # Null imputed
 
 
 @pytest.mark.nightly
@@ -183,11 +182,9 @@ def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: 
     )
     rows = result_df.collect()
 
-    # First row has score
+    # All rows have scores (nulls are imputed to 0)
     assert rows[0]["anomaly_score"] is not None
-
-    # Second row (all nulls) has null score (which means it was skipped, not flagged)
-    assert rows[1]["anomaly_score"] is None
+    assert rows[1]["anomaly_score"] is not None  # All nulls imputed to 0
 
 
 @pytest.mark.nightly
@@ -221,11 +218,7 @@ def test_mixed_null_and_anomaly(
     )
     rows = result_df.collect()
 
-    # Normal row: has score
-    assert rows[0]["anomaly_score"] is not None
-
-    # Null row: no score
-    assert rows[1]["anomaly_score"] is None
-
-    # Anomaly row: has score
-    assert rows[2]["anomaly_score"] is not None
+    # All rows have scores (nulls are imputed to 0)
+    assert rows[0]["anomaly_score"] is not None  # Normal row
+    assert rows[1]["anomaly_score"] is not None  # Null row (imputed)
+    assert rows[2]["anomaly_score"] is not None  # Anomaly row

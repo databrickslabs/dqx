@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
@@ -50,7 +51,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
         test_df, timestamp_column="event_time", features=["hour", "day_of_week"]
     )
 
-    # Call apply function directly to get anomaly_score column
+    # Call apply function directly to get _info column
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
@@ -60,8 +61,10 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     )
     result_df = apply_fn(test_df_with_temporal)
 
-    # Verify scoring works
-    assert "anomaly_score" in result_df.columns
+    # Verify scoring works - check _info column exists
+    assert "_info" in result_df.columns
+    row = result_df.collect()[0]
+    assert row["_info"]["anomaly"]["score"] is not None
 
 
 @pytest.mark.nightly
@@ -105,7 +108,7 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, 
         test_df, timestamp_column="event_time", features=["hour", "day_of_week", "month", "quarter"]
     )
 
-    # Call apply function directly to get anomaly_score column
+    # Call apply function directly to get _info column
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=[
@@ -120,7 +123,9 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, 
         score_threshold=0.5,
     )
     result_df = apply_fn(test_df_with_temporal)
-    assert "anomaly_score" in result_df.columns
+    assert "_info" in result_df.columns
+    row = result_df.collect()[0]
+    assert row["_info"]["anomaly"]["score"] is not None
 
 
 @pytest.mark.nightly
@@ -163,7 +168,7 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
         test_unusual, timestamp_column="event_time", features=["hour"]
     )
 
-    # Call apply function directly to get anomaly_score column
+    # Call apply function directly to get _info column
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=["amount", "temporal_hour"],
@@ -176,9 +181,9 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
     result_normal = apply_fn(test_normal_with_temporal)
     result_unusual = apply_fn(test_unusual_with_temporal)
 
-    # Get anomaly scores
-    score_normal = result_normal.select("anomaly_score").collect()[0]["anomaly_score"]
-    score_unusual = result_unusual.select("anomaly_score").collect()[0]["anomaly_score"]
+    # Get anomaly scores from _info.anomaly.score
+    score_normal = result_normal.select(F.col("_info.anomaly.score")).collect()[0][0]
+    score_unusual = result_unusual.select(F.col("_info.anomaly.score")).collect()[0][0]
 
     # Verify both have valid scores (model learned temporal features)
     assert score_normal is not None
@@ -223,7 +228,7 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client, make_random
     row = test_df_with_temporal.collect()[0]
     assert row["temporal_is_weekend"] == 1.0
 
-    # Score (call apply function directly to get anomaly_score column)
+    # Score (call apply function directly to get _info column)
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=["amount", "temporal_is_weekend"],
@@ -232,7 +237,9 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client, make_random
         score_threshold=0.5,
     )
     result_df = apply_fn(test_df_with_temporal)
-    assert "anomaly_score" in result_df.columns
+    assert "_info" in result_df.columns
+    row = result_df.collect()[0]
+    assert row["_info"]["anomaly"]["score"] is not None
 
 
 @pytest.mark.nightly

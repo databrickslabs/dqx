@@ -7,10 +7,14 @@ contribute most to anomaly scores for individual records.
 
 from __future__ import annotations
 
+import logging
+
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 from pyspark.sql.types import MapType, StringType, DoubleType, StructType, StructField
-from pyspark.sql.functions import pandas_udf, PandasUDFType
+from pyspark.sql.functions import pandas_udf
+
+logger = logging.getLogger(__name__)
 
 # Optional dependencies for anomaly detection explainability
 try:
@@ -72,15 +76,15 @@ def compute_feature_contributions(
     # Define pandas UDF for distributed SHAP computation
     return_schema = StructType([StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)])
 
-    @pandas_udf(return_schema, PandasUDFType.SCALAR)
-    def compute_shap_udf(feature_struct):
+    @pandas_udf(return_schema)  # type: ignore[call-overload]  # StructType is valid but mypy has incomplete stubs
+    def compute_shap_udf(feature_struct: pd.Series) -> pd.DataFrame:
         """Compute SHAP values for each row using TreeExplainer.
 
         Args:
-            feature_struct (pd.Series): Pandas Series containing struct with all feature columns
+            feature_struct: Pandas Series containing struct with all feature columns
 
         Returns:
-            pd.Series: Series containing map of anomaly_contributions
+            DataFrame with anomaly_contributions column
         """
         # Load model once per executor
         model_local = mlflow_sklearn.load_model(model_uri)
@@ -111,8 +115,8 @@ def compute_feature_contributions(
         # Handle NaN values (SHAP can't process them)
         has_nan = pd.isna(feature_matrix).any(axis=1)
 
-        # Initialize output
-        contributions_list = []
+        # Initialize output - list can contain dicts with float or None values
+        contributions_list: list[dict[str, float | None]] = []
 
         for i in range(len(feature_matrix)):
             if has_nan[i]:
@@ -128,9 +132,21 @@ def compute_feature_contributions(
 
                 if total > 0:
                     normalized = abs_shap / total
-                    contributions = {col: float(normalized[j]) for j, col in enumerate(columns)}
+                    contributions: dict[str, float | None] = {
+                        col: float(normalized[j]) for j, col in enumerate(columns)
+                    }
                 else:
-                    # Equal contributions if all SHAP values are 0
+                    # EDGE CASE: All SHAP values are 0 or extremely small
+                    # This can happen when:
+                    # 1. Data point is perfectly normal (all features at expected values)
+                    # 2. Numerical precision limits (SHAP values < 1e-15)
+                    # 3. Single constant feature
+                    # Fallback: Assign equal contributions to avoid division by zero
+                    # Note: This is rare and may indicate the instance has very low anomaly score
+                    logger.debug(
+                        f"Row {i}: All SHAP values are zero (shap_values={shap_values}). "
+                        "Using equal contributions. This typically indicates a very normal data point."
+                    )
                     contributions = {col: 1.0 / len(columns) for col in columns}
 
                 contributions_list.append(contributions)
