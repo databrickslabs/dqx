@@ -56,17 +56,23 @@ def debug_env_name():
 
 @pytest.fixture(scope="session", autouse=True)
 def configure_mlflow_tracking():
-    """Configure MLflow to use a temporary directory for tracking during tests."""
+    """Configure MLflow to use Databricks workspace tracking backend for tests."""
     if not HAS_ANOMALY_EXTRAS:
         # If anomaly extras not installed, skip MLflow configuration
         yield
         return
 
-    # Use temporary directory for MLflow tracking to avoid polluting repo with mlruns/
-    with tempfile.TemporaryDirectory() as tmpdir:
-        mlflow.set_tracking_uri(f"file:{tmpdir}/mlruns")
-        yield
-        # Cleanup happens automatically when tmpdir context exits
+    # Use Databricks workspace tracking backend (works with Databricks Connect)
+    # This avoids filesystem backend deprecation warnings and uses the same
+    # backend as production Databricks environments
+    mlflow.set_tracking_uri("databricks")
+    
+    # Set a default experiment for tests (will be created in Databricks workspace)
+    # Using /Shared/ path makes it accessible to all users
+    mlflow.set_experiment("/Shared/dqx_integration_tests")
+    
+    yield
+    # No cleanup needed - Databricks manages the experiments
 
 
 @pytest.fixture
