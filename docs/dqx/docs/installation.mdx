@@ -85,7 +85,7 @@ See the [Data Contract Quality Rules Generation Guide](/docs/guide/data_contract
 
 ### Installing DQX with company-hosted PyPI mirror
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.10.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.12.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
@@ -280,10 +280,10 @@ run_configs:                        # <- list of run configurations, each run co
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
   # if wanting to store checks in lakebase table
-  # checks_location: dqx.config.checks                  # <- fully qualified Lakebase table for storing quality rules (checks)
-  # lakebase_instance_name: my-lakebase-instance        # <- the name of the lakebase instance to use for storing checks
-  # lakebase_user: 00000000-0000-0000-0000-000000000000 # <- the user to connect to the lakebase, e.g., user@domain.com or a Databricks service principal client ID
-  # lakebase_port: 5432                                 # <- optional port to connect to Lakebase, default is 5432
+  # checks_location: dqx.config.checks                        # <- fully qualified Lakebase table for storing quality rules (checks)
+  # lakebase_instance_name: my-lakebase-instance              # <- the name of the lakebase instance to use for storing checks
+  # lakebase_client_id: 00000000-0000-0000-0000-000000000000  # <- optional service principal client ID to use to connect to Lakebase, if not provided, the caller identity, i.e., user@domain.com, is used
+  # lakebase_port: 5432                                       # <- optional port to connect to Lakebase, default is 5432
 
   custom_check_functions:                               # <- optional mapping of custom check function name to Python file (module) containing check function definition
     my_func: custom_checks/my_funcs.py                  # relative workspace path (installation folder prefix applied)
@@ -306,6 +306,7 @@ run_configs:                        # <- list of run configurations, each run co
     sample_seed: 30                           # <- optional seed for reproducible sampling
     limit: 1000                               # <- limit the number of records to profile
     filter: "maintenance_type = 'preventive'" # <- generate profile in a subset of your data source
+    llm_primary_key_detection: false          # <- whether to use llm-assisted pk detection to generate uniqueness check
 
   checks_user_requirements: business rules description  # <- optional user input for AI-assisted rule generation; only supported if `serverless_clusters` is enabled
 
@@ -385,7 +386,7 @@ resources:
 
 ### Installing DQX with company-hosted PyPI mirror
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.10.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.12.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx

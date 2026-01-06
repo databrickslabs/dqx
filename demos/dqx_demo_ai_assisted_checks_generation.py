@@ -41,6 +41,7 @@ table_name = dbutils.widgets.get("table_name")
 
 import os, yaml
 from databricks.labs.dqx.profiler.generator import DQGenerator
+from databricks.labs.dqx.profiler.profiler import DQProfiler
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
@@ -98,3 +99,29 @@ print(checks)
 checks = generator.generate_dq_rules_ai_assisted(user_input=user_requirement, input_config=InputConfig(location=table_name))
 print("======== Generated checks =========")
 print(checks)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Generate DQ rules using AI-Assisted approach using summary stats generated from profiler
+# MAGIC
+
+# COMMAND ----------
+
+# Profile Samples Data
+profiler = DQProfiler(ws)
+summary_stats, profiles = profiler.profile_table(InputConfig(location=table_name))
+
+# COMMAND ----------
+
+display(summary_stats)
+
+# COMMAND ----------
+
+# No user requirement provided
+checks = generator.generate_dq_rules_ai_assisted(summary_stats=summary_stats)
+
+# COMMAND ----------
+
+# User requirement provided
+checks = generator.generate_dq_rules_ai_assisted(user_input="Market segment should always be in Upper Case" , summary_stats=summary_stats)

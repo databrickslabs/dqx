@@ -69,6 +69,9 @@ class ProfilerConfig:
     sample_seed: int | None = None  # seed for sampling
     limit: int = 1000  # limit the number of records to profile
     filter: str | None = None  # filter to apply to the data before profiling
+    llm_primary_key_detection: bool = (
+        False  # whether to use LLM for primary key detection to generate uniqueness checks
+    )
 
 
 @dataclass
@@ -96,7 +99,7 @@ class RunConfig:
 
     # Lakebase connection parameters, if wanting to store checks in lakebase database
     lakebase_instance_name: str | None = None
-    lakebase_user: str | None = None
+    lakebase_client_id: str | None = None
     lakebase_port: str | None = None
 
 
@@ -269,18 +272,18 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     Configuration class for storing checks in a Lakebase table.
 
     Args:
-        instance_name: Name of the Lakebase instance.
-        user: Name of the user for the Lakebase connection.
         location: Fully qualified name of the Lakebase table to store checks in the format 'database.schema.table'.
+        instance_name: Name of the Lakebase instance.
+        client_id: ID of the Databricks service principal to use for the Lakebase connection.
         port: The Lakebase port (default is '5432').
         run_config_name: Name of the run configuration to use for checks (default is 'default').
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
               only replaces checks for the specific run config and not all checks in the table (default is 'overwrite').
     """
 
-    instance_name: str | None = None
-    user: str | None = None
     location: str
+    instance_name: str | None = None
+    client_id: str | None = None
     port: str = "5432"
     run_config_name: str = "default"
     mode: str = "overwrite"
@@ -291,9 +294,6 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
 
         if not self.instance_name or self.instance_name == "":
             raise InvalidParameterError("Instance name must not be empty or None.")
-
-        if not self.user or self.user == "":
-            raise InvalidParameterError("User must not be empty or None.")
 
         if len(self.location.split(".")) != 3:
             raise InvalidConfigError(

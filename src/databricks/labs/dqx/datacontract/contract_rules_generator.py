@@ -812,7 +812,7 @@ class DataContractRulesGenerator(DQEngineBase):
             if quality_rule.type == 'text' and quality_rule.description:
                 logger.info(f"Processing text rule for property '{prop.name}': {quality_rule.description}")
 
-                prediction = self.llm_engine.get_business_rules_with_llm(
+                prediction = self.llm_engine.detect_business_rules_with_llm(
                     user_input=quality_rule.description, schema_info=schema_info_json
                 )
 
@@ -844,7 +844,7 @@ class DataContractRulesGenerator(DQEngineBase):
             if quality_rule.type == 'text' and quality_rule.description:
                 logger.info(f"Processing text rule for schema '{schema_name}': {quality_rule.description}")
 
-                prediction = self.llm_engine.get_business_rules_with_llm(
+                prediction = self.llm_engine.detect_business_rules_with_llm(
                     user_input=quality_rule.description, schema_info=schema_info_json
                 )
 
@@ -991,12 +991,12 @@ class DataContractRulesGenerator(DQEngineBase):
         Raises ODCSContractError if the implementation structure is invalid.
         """
         try:
-            check, name, criticality = self._extract_impl_attributes(impl, default_criticality)
+            check, name, criticality, filter_rule = self._extract_impl_attributes(impl, default_criticality)
             if check is None:
                 logger.warning("Implementation missing 'check' attribute, skipping rule")
                 return None
 
-            return self._build_rule_dict(check, name, criticality, schema_name, property_name, odcs)
+            return self._build_rule_dict(check, name, criticality, filter_rule, schema_name, property_name, odcs)
         except (AttributeError, KeyError, TypeError) as e:
             # Malformed contract structure - fail fast
             raise ODCSContractError(
@@ -1016,13 +1016,15 @@ class DataContractRulesGenerator(DQEngineBase):
         check = impl.get("check")
         name = impl.get("name", "unnamed_rule")
         criticality = impl.get("criticality", default_criticality)
-        return check, name, criticality
+        filter_rule: str | None = impl.get("filter")
+        return check, name, criticality, filter_rule
 
     def _build_rule_dict(
         self,
         check_dict: dict,
         name: str,
         criticality: str,
+        filter_rule: str | None,
         schema_name: str,
         property_name: str | None,
         odcs: OpenDataContractStandard,
@@ -1044,4 +1046,6 @@ class DataContractRulesGenerator(DQEngineBase):
             "criticality": criticality,
             "user_metadata": user_metadata,
         }
+        if filter_rule:
+            rule["filter"] = filter_rule
         return rule

@@ -22,7 +22,7 @@ class TestDataContractIntegration:
         )
 
         # Verify rules were generated
-        assert len(rules) > 35  # More than predefined + explicit rules due to text-based rules
+        assert len(rules) > 36  # More than predefined + explicit rules due to text-based rules
 
         # Verify that text-based rules were processed by LLM
         # The sample contract has a text expectation about duplicate sensor readings

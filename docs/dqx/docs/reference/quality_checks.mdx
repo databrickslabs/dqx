@@ -16,7 +16,7 @@ DQX provides a collection of predefined built-in quality rules (checks). Additio
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 All rule types, including row-level and dataset-level rules, can be defined and applied simultaneously in a single execution.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.10.0/src/databricks/labs/dqx/check_funcs.py).
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.12.0/src/databricks/labs/dqx/check_funcs.py).
 
 ## Row-level checks reference
 
@@ -30,17 +30,21 @@ You can also define your own custom checks in Python (see [Creating custom check
 | `is_not_null`                      | Checks whether the values in the input column are not null.                                                                                                                                                                                                                                                                                                                                                                       | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_not_empty`                     | Checks whether the values in the input column are not empty (but may be null).                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_not_null_and_not_empty`        | Checks whether the values in the input column are not null and not empty.                                                                                                                                                                                                                                                                                                                                                         | `column`: column to check (can be a string column name or a column expression); `trim_strings`: optional boolean flag to trim spaces from strings                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `is_in_list`                       | Checks whether the values in the input column are present in the list of allowed values (null values are allowed). This check is not suited for large lists of allowed values. In such cases, it’s recommended to use the `foreign_key` dataset-level check instead. This check is not suited for `MapType` or `StructType` columns.                                                                                              | `column`: column to check (can be a string column name or a column expression); `allowed`: list of allowed values; `case_sensitive`: optional boolean flag for case-sensitive comparison (default: True)                                                                                                                                                                                                                                                                                                                                             |
+| `is_in_list`                       | Checks whether the values in the input column are present in the list of allowed values (null values are allowed). Can optionally perform a case-insensitive comparison. This check is not suited for `MapType` or `StructType` columns. For best performance with large lists of allowed values, use the `foreign_key` dataset-level check instead.                                                                              | `column`: column to check (can be a string column name or a column expression); `allowed`: list of allowed values; `case_sensitive`: optional boolean flag for case-sensitive comparison (default: True)                                                                                                                                                                                                                                                                                                                                             |
+| `is_not_in_list`                   | Checks whether the values in the input column are NOT present in the list of forbidden values (null values are allowed). Can optionally perform a case-insensitive comparison. This check is not suited for `MapType` or `StructType` columns. For best performance with large lists of forbidden values, use the `foreign_key` dataset-level check with `negate` argument set to `True`.                                         | `column`: column to check (can be a string column name or a column expression); `forbidden`: list of forbidden values; `case_sensitive`: optional boolean flag for case-sensitive comparison (default: True)                                                                                                                                                                                                                                                                                                                                         |
 | `is_not_null_and_is_in_list`       | Checks whether the values in the input column are not null and present in the list of allowed values. This check is not suited for large lists of allowed values. In such cases, it’s recommended to use the `foreign_key` dataset-level check instead. This check is not suited for `MapType` or `StructType` columns.                                                                                                           | `column`: column to check (can be a string column name or a column expression); `allowed`: list of allowed values; `case_sensitive`: optional boolean flag for case-sensitive comparison (default: True)                                                                                                                                                                                                                                                                                                                                             |
 | `is_not_null_and_not_empty_array`  | Checks whether the values in the array input column are not null and not empty.                                                                                                                                                                                                                                                                                                                                                   | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_in_range`                      | Checks whether the values in the input column are in the provided range (inclusive of both boundaries).                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression); `min_limit`: min limit as number, date, timestamp, column name or sql expression; `max_limit`: max limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                                                                                   |
 | `is_not_in_range`                  | Checks whether the values in the input column are outside the provided range (inclusive of both boundaries).                                                                                                                                                                                                                                                                                                                      | `column`: column to check (can be a string column name or a column expression); `min_limit`: min limit as number, date, timestamp, column name or sql expression; `max_limit`: max limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                                                                                   |
-| `is_not_equal_to`                  | Checks whether the values in the input column are not equal to the provided value.                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `value`: comparison value as number, string, date, timestamp, column name, or SQL expression                                                                                                                                                                                                                                                                                                                                                                         |
-| `is_equal_to`                      | Checks whether the values in the input column are equal to the provided value.                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression); `value`: comparison value as number, string, date, timestamp, column name, or SQL expression                                                                                                                                                                                                                                                                                                                                                                         |
+| `is_not_equal_to`                  | Checks whether the values in the input column are not equal to the provided value.                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `value`: comparison value as number, string, date, timestamp, column name, or SQL expression, where string literals must be single quoted, e.g. 'string_value'                                                                                                                                                                                                                                                                                                       |
+| `is_equal_to`                      | Checks whether the values in the input column are equal to the provided value.                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression); `value`: comparison value as number, string, date, timestamp, column name, or SQL expression, where string literals must be single quoted, e.g. 'string_value'                                                                                                                                                                                                                                                                                                       |
 | `is_not_less_than`                 | Checks whether the values in the input column are not less than the provided limit.                                                                                                                                                                                                                                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `limit`: limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                                                                                                                                                                             |
 | `is_not_greater_than`              | Checks whether the values in the input column are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `limit`: limit as number, date, timestamp, column name or sql expression                                                                                                                                                                                                                                                                                                                                                                                             |
 | `is_valid_date`                    | Checks whether the values in the input column have valid date formats.                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression); `date_format`: optional date format (e.g. 'yyyy-mm-dd')                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `is_valid_timestamp`               | Checks whether the values in the input column have valid timestamp formats.                                                                                                                                                                                                                                                                                                                                                       | `column`: column to check (can be a string column name or a column expression); `timestamp_format`: optional timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')                                                                                                                                                                                                                                                                                                                                                                                           |
+| `is_valid_json`                    | Checks whether the values in the input column are valid JSON strings.                                                                                                                                                                                                                                                                                                                                                             | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `has_json_keys`                    | Checks whether the values in the input column contain specific keys in the outermost JSON object.                                                                                                                                                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `keys`: A list of JSON keys to verify within the outermost JSON object; `require_all`: optional boolean flag to require all keys to be present                                                                                                                                                                                                                                                                                                                       |
+| `has_valid_json_schema`            | Checks whether the values in the specified column, which contain JSON strings, conform to the expected schema. This check allows extra fields and type coercion. Missing keys are treated as null; to fail validation on missing keys, you must explicitly use NOT NULL in the schema definition.                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); schema: the schema as a DDL string (e.g., "id INT NOT NULL, name STRING") or `StructType`                                                                                                                                                                                                                                                                                                                                                                            |
 | `is_not_in_future`                 | Checks whether the values in the input column contain a timestamp that is not in the future, where 'future' is defined as current_timestamp + offset (in seconds).                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                   |
 | `is_not_in_near_future`            | Checks whether the values in the input column contain a timestamp that is not in the near future, where 'near future' is defined as greater than the current timestamp but less than the current_timestamp + offset (in seconds).                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression); `offset`: offset to use; `curr_timestamp`: current timestamp, if not provided current_timestamp() function is used                                                                                                                                                                                                                                                                                                                                                   |
 | `is_older_than_n_days`             | Checks whether the values in one input column are at least N days older than the values in another column.                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `days`: number of days; `curr_date`: current date, if not provided current_date() function is used; `negate`: if the condition should be negated                                                                                                                                                                                                                                                                                                                     |
@@ -66,9 +70,18 @@ You can also define your own custom checks in Python (see [Creating custom check
 | `is_geometrycollection`            | Checks whether the values in the input column are geometrycollection geometries/geographies. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                                             | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_ogc_valid`                     | Checks whether the values in the input column are valid geometries in the OGC sense. I.e a bowtie polygon is invalid because it has a self intersection. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                 | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_non_empty_geometry`            | Checks whether the values in the input column are non-empty geometries. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                                                                  | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `is_not_null_island`               | Checks whether the values in the input column are NULL island geometries (e.g. POINT(0 0), POINTZ(0 0 0), or POINTZM(0 0 0 0)). This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                          | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `has_dimension`                    | Checks whether the values in the input column are geometries of the specified dimension (2D projected dimension). This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `dimension`: dimension to check                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `has_x_coordinate_between`         | Checks whether the values in the input column are geometries with x coordinate between the provided boundaries. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                          | `column`: column to check (can be a string column name or a column expression); `min_value`: minimum value; `max_value`: maximum value                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `has_y_coordinate_between`         | Checks whether the values in the input column are geometries with y coordinate between the provided boundaries. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                                          | `column`: column to check (can be a string column name or a column expression); `min_value`: minimum value; `max_value`: maximum value                                                                                                                                                                                                                                                                                                                                                                                                               |                                                                                                                                                                                                                                                                                                                     | `column`: column to check (can be a string column name or a column expression); `min_value`: minimum value; `max_value`: maximum value                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `is_area_not_less_than`            | Checks if the areas of values in a geometry column are not less than a specified limit. By default, the 2D Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to transform the input values and compute areas with specific units of measure. This function requires Databricks serverless compute or runtime >= 17.1.                                                      | `column`: column to check (can be a string column name or a column expression); `value`: value to use in the condition as number, column name or sql expression; `srid`: optional integer SRID to use for computing the area of the geometry or geography value (default `3857`); `geodesic`: whether to use the 2D geodesic area (default `False`)                                                                                                                                                                                                  |
+| `is_area_not_greater_than`         | Checks if the areas of values in a geometry column are not greater than a specified limit. By default, the 2D Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to transform the input values and compute areas with specific units of measure. This function requires Databricks serverless compute or runtime >= 17.1.                                                   | `column`: column to check (can be a string column name or a column expression); `value`: value to use in the condition as number, column name or sql expression; `srid`: optional integer SRID to use for computing the area of the geometry or geography value (default `None`); `geodesic`: whether to use the 2D geodesic area (default `False`)                                                                                                                                                                                                  |
+| `is_area_equal_to`                 | Checks if the areas of values in a geometry or geography column are equal to a specified value. By default, the 2D Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to transform the input values and compute areas with specific units of measure. This function requires Databricks serverless compute or runtime >= 17.1.                                              | `column`: column to check (can be a string column name or a column expression); `value`: value to use in the condition as number, column name or sql expression; `srid`: optional integer SRID to use for computing the area of the geometry or geography value (default `None`); `geodesic`: whether to use the 2D geodesic area (default `False`)                                                                                                                                                                                                  |
+| `is_area_not_equal_to`             | Checks if the areas of values in a geometry column are not equal to a specified value. By default, the 2D Cartesian area in WGS84 (Pseudo-Mercator) with units of meters squared is used. An SRID can be specified to transform the input values and compute areas with specific units of measure. This function requires Databricks serverless compute or runtime >= 17.1.                                                       | `column`: column to check (can be a string column name or a column expression); `value`: value to use in the condition as number, column name or sql expression; `srid`: optional integer SRID to use for computing the area of the geometry or geography value (default `None`); `geodesic`: whether to use the 2D geodesic area (default `False`)                                                                                                                                                                                                  |
+| `is_num_points_not_less_than`      | Checks whether the values in the input column are geometries with number of coordinate pairs less than the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
+| `is_num_points_not_greater_than`   | Checks whether the values in the input column are geometries with number of coordinate pairs greater than the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                              | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
+| `is_num_points_equal_to`           | Checks whether the values in the input column are geometries with number of coordinate pairs equal to the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                               | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
+| `is_num_points_not_equal_to`       | Checks whether the values in the input column are geometries with number of coordinate pairs not equal to the specified limit. This function requires Databricks serverless compute or runtime >= 17.1.                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression); `value`: number of points value to compare against (can be a number, column name, or SQL expression)                                                                                                                                                                                                                                                                                                                                                                 |
 </details>
 
 <Admonition type="warning" title="Applicability">
@@ -116,6 +129,17 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col2
       allowed:
+      - 1
+      - 2
+      - 3
+
+# is_not_in_list check
+- criticality: error
+  check:
+    function: is_not_in_list
+    arguments:
+      column: col2
+      forbidden:
       - 1
       - 2
       - 3
@@ -373,6 +397,41 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column2: col6
       days: 2
 
+# is_valid_json check
+- criticality: error
+  check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+
+# has_json_keys check
+- criticality: error
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+        - key1
+
+- criticality: error
+  name: col_json_str_does_not_have_json_keys2
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+        - key1
+        - key2
+      require_all: False
+
+- criticality: error
+  name: col_json_str2_has_invalid_json_schema
+  check:
+    function: has_valid_json_schema
+    arguments:
+      column: col_json_str2
+      schema:  "STRUCT<a: BIGINT NOT NULL, b: BIGINT NOT NULL>"
+
 # regex_match check
 - criticality: error
   check:
@@ -534,42 +593,42 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_linestring
     arguments:
       column: linestring_geom
-      
+
 # is_polygon check
 - criticality: error
   check:
     function: is_polygon
     arguments:
       column: polygon_geom
-      
+
 # is_multipoint check
 - criticality: error
   check:
     function: is_multipoint
     arguments:
       column: multipoint_geom
-      
+
 # is_multilinestring check
 - criticality: error
   check:
     function: is_multilinestring
     arguments:
       column: multilinestring_geom
-      
+
 # is_multipolygon check
 - criticality: error
   check:
     function: is_multipolygon
     arguments:
       column: multipolygon_geom
-      
+
 # is_geometrycollection check
 - criticality: error
   check:
     function: is_geometrycollection
     arguments:
       column: geometrycollection_geom
-      
+
 # is_ogc_valid check
 - criticality: error
   check:
@@ -583,7 +642,14 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_non_empty_geometry
     arguments:
       column: point_geom
-      
+
+# is_not_null_island check
+- criticality: error
+  check:
+    function: is_not_null_island
+    arguments:
+      column: point_geom
+
 # has_dimension check
 - criticality: error
   check:
@@ -591,7 +657,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: polygon_geom
       dimension: 2
-      
+
 # has_x_coordinate_between check
 - criticality: error
   check:
@@ -600,7 +666,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: polygon_geom
       min_value: 0.0
       max_value: 10.0
-      
+
 # has_y_coordinate_between check
 - criticality: error
   check:
@@ -609,6 +675,80 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: polygon_geom
       min_value: 0.0
       max_value: 10.0
+
+# is_area_not_less_than check (geometry)
+- criticality: error
+  check:
+    function: is_area_not_less_than
+    arguments:
+      column: polygon_geom
+      value: 100.0
+
+# is_area_not_less_than check (geography with geodesic area)
+- criticality: error
+  check:
+    function: is_area_not_less_than
+    arguments:
+      column: geography_geom
+      value: 1000000.0  # 1 million square meters
+      geodesic: true
+
+# is_area_not_greater_than check (geometry with SRID)
+- criticality: error
+  check:
+    function: is_area_not_greater_than
+    arguments:
+      column: polygon_geom
+      value: 0.1
+      srid: 3857
+
+# is_area_equal_to check
+- criticality: error
+  check:
+    function: is_area_equal_to
+    arguments:
+      column: polygon_geom
+      value: 1.0
+
+# is_area_not_equal_to check
+- criticality: error
+  check:
+    function: is_area_not_equal_to
+    arguments:
+      column: polygon_geom
+      value: 0.0
+
+# is_num_points_not_less_than check
+- criticality: error
+  check:
+    function: is_num_points_not_less_than
+    arguments:
+      column: polygon_geom
+      value: 10
+
+# is_num_points_not_greater_than check
+- criticality: error
+  check:
+    function: is_num_points_not_greater_than
+    arguments:
+      column: polygon_geom
+      value: 3
+
+# is_num_points_equal_to check
+- criticality: error
+  check:
+    function: is_num_points_equal_to
+    arguments:
+      column: polygon_geom
+      value: 4
+
+# is_num_points_not_equal_to check
+- criticality: error
+  check:
+    function: is_num_points_not_equal_to
+    arguments:
+      column: polygon_geom
+      value: 1
 ```
 </details>
 
@@ -650,6 +790,14 @@ checks = [
       check_func=check_funcs.is_in_list,
       column="col2", # or as expr: F.col("col2")
       check_func_kwargs={"allowed": [1, 2, 3]} # or as expr: [F.lit(1), F.lit(2), F.lit(3)]
+    ),
+
+    # is_not_in_list check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_in_list,
+      column="col2", # or as expr: F.col("col2")
+      check_func_kwargs={"forbidden": [1, 2, 3]} # or as expr: [F.lit(1), F.lit(2), F.lit(3)]
     ),
 
     # is_not_null_and_is_in_list check
@@ -912,6 +1060,38 @@ checks = [
       check_func_kwargs={"column1": "col5", "column2": "col6", "days": 2} # or as expr: F.col("col5"), F.col("col6")
     ),
 
+    # is_valid_json check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_valid_json,
+      column="col_json_str"
+    ),
+
+    # has_json_keys check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_json_keys,
+      column="col_json_str", # or as expr: F.col("col_json_str")
+      check_func_kwargs={"keys": ["key1"]},
+      name="col_json_str_has_json_keys"
+    ),
+
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_json_keys,
+      column="col_json_str", # or as expr: F.col("col_json_str")
+      check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
+      name="col_json_str_has_json_keys"
+    ),
+
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.has_valid_json_schema,
+      column="col_json_str2", # or as expr: F.col("col_json_str")
+      check_func_kwargs={"schema": "STRUCT<a: BIGINT NOT NULL, b: BIGINT NOT NULL>"},
+      name="col_json_str2_has_valid_json_schema"
+    ),
+
     # regex_match check
     DQRowRule(
       criticality="error",
@@ -1018,7 +1198,7 @@ checks = [
       check_func=geo_check_funcs.is_multilinestring,
       column="multilinestring_geom"
     ),
-    
+
     # is_multipolygon check
     DQRowRule(
       criticality="error",
@@ -1047,6 +1227,13 @@ checks = [
       column="point_geom"
     ),
 
+    # is_not_null_island check
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_not_null_island,
+      column="point_geom"
+    ),
+
     # has_dimension check
     DQRowRule(
       criticality="error",
@@ -1069,6 +1256,78 @@ checks = [
       check_func=geo_check_funcs.has_y_coordinate_between,
       column="polygon_geom"
       check_func_kwargs={"min_value": 0.0, "max_value": 10.0}
+    ),
+
+    # is_area_not_less_than check (geometry)
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_area_not_less_than,
+      column="polygon_geom",
+      check_func_kwargs={"value": 100.0}
+    ),
+
+    # is_area_not_less_than check (geography with geodesic area)
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_area_not_less_than,
+      column="geography_geom",
+      check_func_kwargs={"value": 1000000.0, "geodesic": True}
+    ),
+
+    # is_area_not_greater_than check (geometry with SRID)
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_area_not_greater_than,
+      column="polygon_geom",
+      check_func_kwargs={"value": 0.1, "srid": 3857}
+    ),
+
+    # is_area_equal_to check
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_area_equal_to,
+      column="polygon_geom",
+      check_func_kwargs={"value": 1.0}
+    ),
+
+    # is_area_not_equal_to check
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_area_not_equal_to,
+      column="polygon_geom",
+      check_func_kwargs={"value": 0.0}
+    ),
+
+    # is_num_points_not_less_than check
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_num_points_not_less_than,
+      column="polygon_geom",
+      check_func_kwargs={"value": 10}
+    ),
+
+    # is_num_points_not_greater_than check
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_num_points_not_greater_than,
+      column="polygon_geom",
+      check_func_kwargs={"value": 3}
+    ),
+
+    # is_num_points_equal_to check
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_num_points_equal_to,
+      column="polygon_geom",
+      check_func_kwargs={"value": 4}
+    ),
+
+    # is_num_points_not_equal_to check
+    DQRowRule(
+      criticality="error",
+      check_func=geo_check_funcs.is_num_points_not_equal_to,
+      column="polygon_geom",
+      check_func_kwargs={"value": 1}
     ),
 
     # sql_expression check
@@ -1387,15 +1646,16 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | Check                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `is_unique`                        | Checks whether the values in the input column are unique and reports an issue for each row that contains a duplicate value. It supports uniqueness check for multiple columns (composite key). Null values are not considered duplicates by default, following the ANSI SQL standard.                                                                                                                                                                                                                                                                                                                                                                                                               | `columns`: columns to check (can be a list of column names or column expressions); `nulls_distinct`: controls how null values are treated, default is True, thus nulls are not duplicates, eg. (NULL, NULL) not equals (NULL, NULL) and (1, NULL) not equals (1, NULL)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `is_aggr_not_greater_than`         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `is_aggr_equal`                    | Checks whether the aggregated values over group of rows or all rows are equal to the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `is_aggr_not_equal`                | Checks whether the aggregated values over group of rows or all rows are not equal to the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression; `aggr_type`: aggregation function to use, such as "count" (default), "sum", "avg", "min", and "max"; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `is_aggr_not_greater_than`         | Checks whether the aggregated values over group of rows or all rows are not greater than the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression (string literals must be single quoted, e.g. 'string_value'); `aggr_type`: aggregation function (default: "count"), supports 20 curated functions (count, sum, avg, stddev, percentile, etc.) plus any Databricks built-in aggregate; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default); `row_filter`: (optional) SQL expression to filter rows before aggregation; `aggr_params`: (optional) dict of parameters for aggregates requiring them                                                                                                                                                                                                                                                                  |
+| `is_aggr_not_less_than`            | Checks whether the aggregated values over group of rows or all rows are not less than the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression (string literals must be single quoted, e.g. 'string_value'); `aggr_type`: aggregation function (default: "count"), supports 20 curated functions (count, sum, avg, stddev, percentile, etc.) plus any Databricks built-in aggregate; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default); `row_filter`: (optional) SQL expression to filter rows before aggregation; `aggr_params`: (optional) dict of parameters for aggregates requiring them                                                                                                                                                                                                                                                                  |
+| `is_aggr_equal`                    | Checks whether the aggregated values over group of rows or all rows are equal to the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression (string literals must be single quoted, e.g. 'string_value'); `aggr_type`: aggregation function (default: "count"), supports 20 curated functions (count, sum, avg, stddev, percentile, etc.) plus any Databricks built-in aggregate; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default); `row_filter`: (optional) SQL expression to filter rows before aggregation; `aggr_params`: (optional) dict of parameters for aggregates requiring them                                                                                                                                                                                                                                                                  |
+| `is_aggr_not_equal`                | Checks whether the aggregated values over group of rows or all rows are not equal to the provided limit.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `column`: column to check (can be a string column name or a column expression), optional for 'count' aggregation; `limit`: limit as number, column name or sql expression (string literals must be single quoted, e.g. 'string_value'); `aggr_type`: aggregation function (default: "count"), supports 20 curated functions (count, sum, avg, stddev, percentile, etc.) plus any Databricks built-in aggregate; `group_by`: (optional) list of columns or column expressions to group the rows for aggregation (no grouping by default); `row_filter`: (optional) SQL expression to filter rows before aggregation; `aggr_params`: (optional) dict of parameters for aggregates requiring them                                                                                                                                                                                                                                                                  |
 | `foreign_key` (aka is_in_list)     | Checks whether input column or columns can be found in the reference DataFrame or Table (foreign key check). It supports foreign key check on single and composite keys. This check can be used to validate whether values in the input column(s) exist in a predefined list of allowed values (stored in the reference DataFrame or Table). It serves as a scalable alternative to `is_in_list` row-level checks, when working with large lists.                                                                                                                                                                                                                                                   | `columns`: columns to check (can be a list of string column names or column expressions); `ref_columns`: columns to check for existence in the reference DataFrame or Table (can be a list string column name or a column expression); `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; negate: if True the condition is negated (i.e. the check fails when the foreign key values exist in the reference DataFrame/Table), if False the check fails when the foreign key values do not exist in the reference                                                                                |
-| `sql_query`                        | Checks whether the condition column produced by a SQL query is satisfied. The check expects the query to return a boolean condition column indicating whether a record meets the requirement (True = fail, False = pass), and one or more merge columns so that results can be joined back to the input DataFrame to preserve all original records. Important considerations: if merge columns aren't unique, multiple query rows can attach to a single input row, potentially causing false positives. Performance tip: since the check must join back to the input DataFrame to retain original records, writing a custom dataset-level rule is usually more performant than `sql_query` check.  | `query`: query string, must return all merge columns and condition column; `input_placeholder`: name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame, optional reference DataFrames are referred by the name provided in the dictionary of reference DataFrames (e.g. `{{ ref_df_key }}`, dictionary of DataFrames can be passed when applying checks); `merge_columns`: list of columns used for merging with the input DataFrame which must exist in the input DataFrame and be present in output of the sql query; `condition_column`: name of the column indicating a violation (False = pass, True = fail); `msg`: (optional) message to output; `name`: (optional) name of the resulting check (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated                                                     |
+| `sql_query`                        | Checks whether the condition column produced by a SQL query is satisfied. The check supports two modes: **Row-level validation** (when `merge_columns` is provided) - query results are joined back to the input DataFrame to mark specific rows; **Dataset-level validation** (when `merge_columns` is None or empty) - the check result applies to all rows (or filtered rows if `row_filter` is used), making it ideal for aggregate validations with custom metrics. The query must return a boolean condition column (True = fail, False = pass). For row-level checks: if merge columns aren't unique, multiple query rows can attach to a single input row, potentially causing false positives. Performance tip: for complex queries, writing a custom dataset-level rule is usually more performant than `sql_query` check.  | `query`: query string, must return condition column (and merge columns if provided); `input_placeholder`: name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame, optional reference DataFrames are referred by the name provided in the dictionary of reference DataFrames (e.g. `{{ ref_df_key }}`, dictionary of DataFrames can be passed when applying checks); `merge_columns`: (optional) list of columns used for merging with the input DataFrame which must exist in the input DataFrame and be present in output of the sql query; when not provided (None or empty list), the check result applies to all rows in the dataset (dataset-level validation); `condition_column`: name of the column indicating a violation (False = pass, True = fail); `msg`: (optional) message to output; `name`: (optional) name of the resulting check (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated                                                     |
 | `compare_datasets`                 | Compares two DataFrames at both row and column levels, providing detailed information about differences, including new or missing rows and column-level changes. Only columns present in both the source and reference DataFrames are compared. Use with caution if `check_missing_records` is enabled, as this may increase the number of rows in the output beyond the original input DataFrame. The comparison does not support Map types (any column comparison on map type is skipped automatically). Comparing datasets is valuable for validating data during migrations, detecting drift, performing regression testing, or verifying synchronization between source and target systems.    | `columns`: columns to use for row matching with the reference DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'df.columns'; `ref_columns`: list of columns in the reference DataFrame or Table to row match against the source DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'ref_df.columns'; note that `columns` are matched with `ref_columns` by position, so the order of the provided columns in both lists must be exactly aligned; `exclude_columns`: (optional) list of columns to exclude from the value comparison but not from row matching (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'); the `exclude_columns` field does not alter the list of columns used to determine row matches (columns), it only controls which columns are skipped during the value comparison; `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; `check_missing_records`: perform a FULL OUTER JOIN to identify records that are missing from source or reference DataFrames, default is False; use with caution as this may increase the number of rows in the output, as unmatched rows from both sides are included; `null_safe_row_matching`: (optional) treat NULLs as equal when matching rows using `columns` and `ref_columns` (default: True); `null_safe_column_value_matching`: (optional) treat NULLs as equal when comparing column values (default: True) |
 | `is_data_fresh_per_time_window`    | Freshness check that validates whether at least X records arrive within every Y-minute time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `column`: timestamp column (can be a string column name or a column expression); `window_minutes`: time window in minutes to check for data arrival; `min_records_per_window`: minimum number of records expected per time window; `lookback_windows`: (optional) number of time windows to look back from `curr_timestamp`, it filters records to include only those within the specified number of time windows from `curr_timestamp` (if no lookback is provided, the check is applied to the entire dataset); `curr_timestamp`: (optional) current timestamp column (if not provided, current_timestamp() function is used)                                                                                                                                                                                                                                                                              |
-| `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected.                                                                                                                                                                                              | `expected_schema`: expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected.                                                                                                                                                                                              | `expected_schema`: (optional) expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `ref_df_name`: (optional) name of the reference DataFrame to load the schema from (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name to load the schema from (e.g. "catalog.schema.table"); exactly one of `expected_schema`, `ref_df_name`, or `ref_table` must be provided; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match                                                                                                                                                                                                       |
+| `has_no_outliers`                  | Checks whether the values in the input column contain any outliers. This function implements a median absolute deviation (MAD) algorithm to find outliers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column of type numeric to check (can be a string column name or a column expression);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 **Compare datasets check**
 
@@ -1648,7 +1908,7 @@ Complex data types are supported as well.
       ref_df_name: ref_df_key
       negate: true
 
-# sql_query check
+# sql_query check with merge_columns (row-level validation)
 - criticality: error
   check:
     function: sql_query
@@ -1663,6 +1923,18 @@ Complex data types are supported as well.
       msg: sql query check failed  # optional
       name: sql_query_violation  # optional
       negate: false  # optional, default False
+
+# sql_query check without merge_columns (dataset-level validation)
+- criticality: error
+  check:
+    function: sql_query
+    arguments:
+      # sql query for dataset-level check (must return 1 record)
+      query: SELECT COUNT(*) = 0 AS condition FROM {{ input_view }}
+      input_placeholder: input_view  # name to be used in the sql query as `{{ input_view }}` to refer to the input DataFrame
+      condition_column: condition  # the check fails if this column evaluates to True
+      msg: dataset has no records  # optional
+      name: dataset_is_empty  # optional
 
 # compare_datasets check
 - criticality: error
@@ -1729,6 +2001,38 @@ Complex data types are supported as well.
         - id
         - name
 
+# has_valid_schema check using reference table
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      ref_table: "catalog1.schema1.reference_table"
+
+# has_valid_schema check using reference table with strict mode
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      ref_table: "catalog1.schema1.reference_table"
+      strict: true
+
+# has_valid_schema check using reference DataFrame
+- criticality: error
+  check:
+    function: has_valid_schema
+    arguments:
+      ref_df_name: "my_ref_df"
+
+# has_valid_schema check using reference DataFrame with specific columns
+- criticality: warn
+  check:
+    function: has_valid_schema
+    arguments:
+      ref_df_name: "my_ref_df"
+      columns:
+        - id
+        - name
+
 # apply check to multiple columns
 - criticality: error
   check:
@@ -1736,6 +2040,13 @@ Complex data types are supported as well.
     for_each_column: # apply the check for each column in the list
     - [col3, col5]
     - [col1]
+
+# has_no_outliers check
+- criticality: error
+  check:
+    function: has_no_outliers
+    arguments:
+      column: col1
 ```
 
 **Providing Reference DataFrames programmatically**
@@ -2013,7 +2324,7 @@ checks = [
         "negate": True
     },
 
-    # sql_query check
+    # sql_query check with merge_columns (row-level validation)
     DQDatasetRule(
       criticality="error",
       check_func=sql_query,
@@ -2026,7 +2337,21 @@ checks = [
         "msg": "sql query check failed",  # optional
         "name": "sql_query_violation",  # optional
         "negate": False  # optional, default False
-        },
+      },
+    ),
+
+    # sql_query check without merge_columns (dataset-level validation)
+    DQDatasetRule(
+      criticality="error",
+      check_func=sql_query,
+      check_func_kwargs={
+        # sql query for dataset-level check (must return 1 record)
+        "query": "SELECT COUNT(*) = 0 AS condition FROM {{ input_view }}",
+        "input_placeholder": "input_view",  # name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame
+        "condition_column": "condition",  # the check fails if this column evaluates to True
+        "msg": "dataset has no records",  # optional
+        "name": "dataset_is_empty",  # optional
+      },
     ),
 
     # compare_datasets check
@@ -2105,6 +2430,13 @@ checks = [
       },
     ),
 
+    # has_no_outliers check
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_no_outliers,
+      column="col1" # or as expr: F.col("col1")
+    ),
+
     # has_valid_schema check with specific columns, expected schema defined using StructType
     DQDatasetRule(
       criticality="warn",
@@ -2120,6 +2452,44 @@ checks = [
             StructField("address", StringType(), True),
           ]), True)
         ]),
+        "columns": ["id", "name"],
+      },
+    ),
+
+    # has_valid_schema check using reference table
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "ref_table": "catalog1.schema1.reference_table",
+      },
+    ),
+
+    # has_valid_schema check using reference table with strict mode
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "ref_table": "catalog1.schema1.reference_table",
+        "strict": True,
+      },
+    ),
+
+    # has_valid_schema check using reference DataFrame
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "ref_df_name": "my_ref_df",
+      },
+    ),
+
+    # has_valid_schema check using reference DataFrame with specific columns
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "ref_df_name": "my_ref_df",
         "columns": ["id", "name"],
       },
     ),
@@ -2157,6 +2527,9 @@ The reference DataFrames are used in selected Dataset-level checks:
 * `compare_datasets`: required for this check if `ref_df_name` argument is specified and not `ref_table`, e.g. `ref_df_name="ref_df_key"`.
    The value of `ref_df_name` must match the key in the `ref_dfs` dictionary.
 
+* `has_valid_schema`: required for this check if `ref_df_name` argument is specified and not `ref_table` or `expected_schema`, e.g. `ref_df_name="ref_df_key"`.
+   The value of `ref_df_name` must match the key in the `ref_dfs` dictionary. The schema from the reference DataFrame is used to validate the input DataFrame schema.
+
 * `sql_query`: the reference DataFrames are registered as temporary views and can be used in the sql query.
 
    For example, if you have a reference DataFrame named `ref_df_key`, you can use it in the SQL query as `{{ ref_df_key }}`:
@@ -2171,9 +2544,129 @@ The reference DataFrames are used in selected Dataset-level checks:
     ```
 </details>
 
+### Usage examples for aggregate checks
+
+DQX supports several curated aggregate functions for use with aggregate value checks. Use `aggr_params` when defining aggregate checks to pass additional keyword arguments to aggregate functions. To use other aggregate functions, see [using non-curated aggregate functions](#using-non-curated-aggregate-functions).
+
+<details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
+<summary>**Curated aggregate functions**</summary>
+| Function                           | Description                                                                                              | Parameters                                                                                                                                                                                                                                    |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `count`                            | Count of values                                                                                          |                                                                                                                                                                                                                                               |
+| `sum`                              | Sum of values                                                                                            |                                                                                                                                                                                                                                               |
+| `avg`                              | Arithmetic mean of values                                                                                |                                                                                                                                                                                                                                               |
+| `min`                              | Minimum value                                                                                            |                                                                                                                                                                                                                                               |
+| `max`                              | Maximum value                                                                                            |                                                                                                                                                                                                                                               |
+| `count_distinct`                   | Distinct count of values                                                                                 |                                                                                                                                                                                                                                               |
+| `approx_count_distinct`            | Approximate distinct count of values; Efficient for large datasets                                       |                                                                                                                                                                                                                                               |
+| `stddev`                           | Sample standard deviation of values                                                                      |                                                                                                                                                                                                                                               |
+| `stddev_pop`                       | Population standard deviation of values                                                                  |                                                                                                                                                                                                                                               |
+| `variance`                         | Sample variance of values                                                                                |                                                                                                                                                                                                                                               |
+| `var_pop`                          | Population variance of values                                                                            |                                                                                                                                                                                                                                               |
+| `median`                           | Median or 50th percentile value                                                                          |                                                                                                                                                                                                                                               |
+| `mode`                             | Most frequent value                                                                                      |                                                                                                                                                                                                                                               |
+| `skewness`                         | Degree of asymmetry in the distribution of values                                                        |                                                                                                                                                                                                                                               |
+| `kurtosis`                         | Degree of tailedness in the distribution of values                                                       |                                                                                                                                                                                                                                               |
+| `percentile`                       | Percentile value                                                                                         | `percentile`: Percentage of values which are less than or equal to the result value                                                                                                                                                           |
+| `approx_percentile`                | Approximate percentile value; Efficient for large datasets                                               | `percentile`: Percentage of values which are less than or equal to the result value; `accuracy`: Optional positive numeric value which controls the approximation accuracy (default 1000). The relative estimation error is *1.0 / accuracy*. |
+</details>
+
+#### Counting Distinct Values
+
+Distinct value counts can be used to guarantee uniqueness and consistency of values. This could be to guarantee referential integrity between datasets or to enforce consistency of column values.
+
+<Admonition type="warning" title="Scalable Calculation of Unique Value Counts">
+Using `count_distinct` with `group_by` performs multiple expensive operations. For large-scale datasets where uniqueness is not required, use `approx_count_distinct` for best performance.
+</Admonition>
+
+```yaml
+# Ensure only 1 country code exists per country
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: country_code
+      aggr_type: count_distinct
+      group_by:
+      - country
+      limit: 1
+```
+
+#### Detecting Statistical Anomalies
+
+Descriptive statistics are often used for process control, forecasting, and regression analysis. Variation from expected values could signal that a process has changed or that a model's features have drifted. Monitor dataset statistics (e.g. `avg`, `stddev`) to detect significant variations.
+
+```yaml
+# Detect unusually high temperature variance per machine
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: temperature
+      aggr_type: stddev
+      group_by:
+      - machine_id
+      limit: 5.0
+
+# Detect revenue variation across product lines
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: daily_revenue
+      aggr_type: variance
+      group_by:
+      - product_line
+      limit: 1000000.0
+```
+
+#### Monitoring for Service Level Agreements
+
+Percentiles are useful for monitoring service-level agreements (SLAs). Monitor percentiles to detect when SLAs (e.g. API response time) differ from required values.
+
+<Admonition type="warning" title="Scalable Calculation of Percentiles">
+`percentile` calculates an exact percentile using all values in the input data. Use `approx_percentile` for scalable percentile computation when exact values are not required.
+</Admonition>
+
+```yaml
+# Detect when the P95 API latency is slower than 1 second
+- criticality: error
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: latency_ms
+      aggr_type: percentile
+      aggr_params:
+        percentile: 0.95
+      limit: 1000
+
+# Detect when the P95 API latency is slower than 1 second using approximate percentiles
+- criticality: warn
+  check:
+    function: is_aggr_not_greater_than
+    arguments:
+      column: latency_ms
+      aggr_type: approx_percentile
+      aggr_params:
+        percentile: 0.99
+        accuracy: 10000
+      limit: 1000
+```
+
+#### Using Non-Curated Aggregate Functions
+
+Other [Databricks built-in aggregate functions](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin-alpha) may be used to check aggregate values.
+
+<Admonition type="warning" title="Limitations">
+Using non-curated aggregate functions is supported with the following limitations:
+- Functions returning arrays, structs, or maps (e.g., `collect_list`, `collect_set`) are not supported
+- User-Defined Aggregate Functions (UDAFs) are not supported
+- Some aggregate functions are only available in newer versions of the Databricks Runtime. If a function is unavailable in your environment, DQX will raise an error indicating the minimum required runtime version. Use the latest Databricks Runtime version for best compatibility.
+</Admonition>
+
 ## Creating Custom Row-level Checks
 
-### Using SQL Expression
+### Using SQL Expressions
 
 You can define custom checks using SQL Expression rule (`sql_expression`).
 
@@ -3024,7 +3517,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
        function: does_not_contain_pii
        arguments:
          column: description
-   
+
    # PII detection check with custom threshold and named entities
    - criticality: error
      check:
@@ -3041,7 +3534,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
    ```python
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
-   
+
    checks = [
         # Basic PII detection check
         DQRowRule(
@@ -3059,7 +3552,7 @@ The PII detection extras include a built-in `does_not_contain_pii` check that us
             check_func_kwargs={"threshold": 0.8, "entities": ["PERSON", "EMAIL_ADDRESS"]}
         ),
    ]
-   ``` 
+   ```
   </TabItem>
 </Tabs>
 
@@ -3077,7 +3570,7 @@ The built-in check supports several configurable parameters:
 DQX automatically installs the built-in entity recognition models at runtime if they are not already available.
 However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install.
 Any additional models used in a custom configuration must also be installed on your Databricks cluster.
-See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.10.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
+See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.12.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
 </Admonition>
 
 #### Using Built-in NLP Engine Configurations
@@ -3096,7 +3589,7 @@ These can be loaded using `NLPEngineConfig`:
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
    from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
-   
+
    checks = [
         # PII detection check using spacy as a named entity recognizer
         DQRowRule(
@@ -3105,7 +3598,7 @@ These can be loaded using `NLPEngineConfig`:
             column="description",
             check_func=does_not_contain_pii,
             check_func_kwargs={"nlp_engine_config": NLPEngineConfig.SPACY_MEDIUM}
-        ),    
+        ),
    ]
    ```
    </TabItem>
@@ -3125,7 +3618,7 @@ Using custom models for named-entity recognition may require you to install thes
    from databricks.labs.dqx.rule import DQRowRule
    from databricks.labs.dqx.engine import DQEngine
    from databricks.sdk import WorkspaceClient
-   
+
    nlp_engine_config = {
         'nlp_engine_name': 'transformers_stanford_deidentifier_base',
         'models': [
@@ -3168,9 +3661,9 @@ Using custom models for named-entity recognition may require you to install thes
             column="description",
             check_func=does_not_contain_pii,
             check_func_kwargs={"nlp_engine_config": nlp_engine_config},
-        ),    
+        ),
    ]
-   
+
    dq_engine = DQEngine(WorkspaceClient())
    df = spark.read.table("main.default.table")
    valid_df, quarantine_df = dq_engine.apply_checks_and_split(df, checks)

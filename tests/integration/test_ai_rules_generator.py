@@ -94,7 +94,7 @@ def test_generate_dq_rules_ai_assisted_with_custom_functions(ws, spark):
 
     custom_check_functions = {"not_ends_with_suffix": not_ends_with_suffix}
 
-    user_input = USER_INPUT + "\nEmail address must not end with '@gmail.com'."
+    user_input = USER_INPUT + "\nEmail address must not end with '@gmail.com'. Use not_ends_with_suffix function."
 
     generator = DQGenerator(ws, spark, custom_check_functions=custom_check_functions)
     actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
@@ -109,3 +109,75 @@ def test_generate_dq_rules_ai_assisted_with_custom_functions(ws, spark):
         }
     ]
     assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_is_not_equal_to_str(ws, spark):
+    user_input = "Device name must not be equal 'test'"
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
+
+    expected_checks = [
+        {
+            "check": {
+                "arguments": {"column": "device_name", "value": "'test'"},
+                "function": "is_not_equal_to",
+            },
+            "criticality": "error",
+        },
+    ]
+
+    assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_sql_expression(ws, spark):
+    user_input = "Users email must not end with @gmail.com checked using sql expression, skip msg."
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
+
+    expected_checks = [
+        {
+            "check": {
+                "arguments": {"columns": ["email"], "expression": "email NOT LIKE '%@gmail.com'"},
+                "function": "sql_expression",
+            },
+            "criticality": "error",
+        },
+    ]
+
+    assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_summary_stats_and_user_input(ws, spark):
+    """Test AI rule generation using summary statistics with business description."""
+    user_input = "Validate product inventory: ensure prices and quantities are within reasonable ranges"
+
+    summary_stats = {
+        "product_code": {"mean": None, "min": "PROD-1000-A", "max": "PROD-9999-Z"},
+        "price": {"mean": "125.50", "min": "10.00", "max": "500.00"},
+        "stock_quantity": {"mean": "150", "min": "0", "max": "1000"},
+    }
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input, summary_stats=summary_stats)
+
+    # Verify checks were generated and are valid
+    assert len(actual_checks) > 0
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors
+
+
+def test_generate_dq_rules_ai_assisted_with_summary_stats_only(ws, spark):
+    """Test AI rule generation using summary statistics without business description."""
+    summary_stats = {
+        "temperature": {"mean": "22.5", "min": "-10.0", "max": "50.0"},
+        "humidity": {"mean": "65.5", "min": "20.0", "max": "95.0"},
+        "sensor_id": {"mean": None, "min": "SEN001", "max": "SEN100"},
+    }
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(summary_stats=summary_stats)
+
+    # Verify checks were generated and are valid
+    assert len(actual_checks) > 0
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors

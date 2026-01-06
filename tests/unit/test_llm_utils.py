@@ -13,6 +13,7 @@ from databricks.labs.dqx.llm.llm_utils import (
     create_optimizer_training_set,
     get_required_check_functions_definitions,
     get_column_metadata,
+    create_optimizer_training_set_with_stats,
 )
 
 
@@ -70,7 +71,7 @@ def test_get_check_function_definitions_with_custom_check_functions_missing_spec
 
 def test_get_required_check_function_definitions():
     custom_check_functions = {"dummy_custom_check_function_test": dummy_custom_check_function_test}
-    print(get_required_check_functions_definitions(custom_check_functions))
+
     result = list(
         filter(
             lambda x: x['check_function_name'] == 'dummy_custom_check_function_test',
@@ -163,8 +164,7 @@ def test_get_training_examples_with_custom_check_functions():
         ("s3://bucket/path/to/data", "load"),
     ],
 )
-def test_get_column_metadata(location, spark_read_mock_method):
-    mock_spark = Mock()
+def test_get_column_metadata(location, spark_read_mock_method, mock_spark):
     mock_df = Mock()
     mock_schema = Mock()
     mock_schema.fields = [
@@ -188,3 +188,37 @@ def test_get_column_metadata(location, spark_read_mock_method):
         ]
     }
     assert result == json.dumps(expected_result)
+
+
+def test_create_optimizer_training_set_with_stats():
+    """Test that create_optimizer_training_set_with_stats returns properly formatted dspy.Example objects."""
+
+    examples = create_optimizer_training_set_with_stats()
+
+    # Verify it returns a list
+    assert isinstance(examples, list)
+
+    # Verify it has at least one example
+    assert len(examples) >= 1
+
+    # Verify all items are dspy.Example objects
+    for example in examples:
+        assert isinstance(example, dspy.Example)
+
+        # Verify required attributes exist
+        assert hasattr(example, 'business_description')
+        assert hasattr(example, 'data_summary_stats')
+        assert hasattr(example, 'available_functions')
+        assert hasattr(example, 'quality_rules')
+        assert hasattr(example, 'reasoning')
+
+        # Verify data_summary_stats is valid JSON
+        data_summary_stats = json.loads(example.data_summary_stats)
+        assert isinstance(data_summary_stats, dict)
+
+        # Verify available_functions is valid JSON
+        available_functions = json.loads(example.available_functions)
+        assert isinstance(available_functions, list)
+
+        # Verify quality_rules is a string
+        assert isinstance(example.quality_rules, str)

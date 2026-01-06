@@ -34,6 +34,17 @@
       - 2
       - 3
 
+# is_not_in_list check
+- criticality: error
+  check:
+    function: is_not_in_list
+    arguments:
+      column: col2
+      forbidden:
+      - 1000
+      - 2000
+      - 3000
+
 # is_not_null_and_is_in_list check
 - criticality: error
   check:
@@ -239,6 +250,39 @@
     function: is_valid_timestamp
     arguments:
       column: col6
+
+# is_valid_json check
+- criticality: error
+  check:
+    function: is_valid_json
+    arguments:
+      column: col_json_str
+
+# has_json_keys check
+- criticality: error
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+      - key1
+
+- criticality: error
+  check:
+    function: has_json_keys
+    arguments:
+      column: col_json_str
+      keys:
+      - key1
+      - key2
+      require_all: false
+
+- criticality: error
+  check:
+    function: has_valid_json_schema
+    arguments:
+      column: col_json_str2
+      schema: 'STRUCT<a: BIGINT, b: BIGINT>'
 
 # is_not_in_future check
 - criticality: error

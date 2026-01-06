@@ -6,7 +6,7 @@ from functools import cached_property
 import dspy  # type: ignore
 
 from databricks.labs.dqx.config import LLMModelConfig
-from databricks.labs.dqx.llm.llm_utils import create_optimizer_training_set
+from databricks.labs.dqx.llm.llm_utils import create_optimizer_training_set, create_optimizer_training_set_with_stats
 from databricks.labs.dqx.llm.optimizers import BootstrapFewShotOptimizer
 from databricks.labs.dqx.llm.validators import RuleValidator
 
@@ -93,7 +93,9 @@ class DspyRuleSignature(dspy.Signature):
     available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
     quality_rules: str = dspy.OutputField(
         desc=(
-            "Return a valid JSON array of data quality rules. Use double quotes only and capitalize SQL keywords. "
+            "Return a valid JSON array of data quality rules. Use double quotes for JSON syntax. "
+            "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes. "
+            "In SQL filter expressions, use single quotes for string literals and capitalize SQL keywords. "
             "Criticality can be error or warn. "
             "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
@@ -206,17 +208,89 @@ class DspyRuleGenerationWithSchemaInference(dspy.Module):
         return result
 
 
+class DspyRuleUsingDataStatsSignature(dspy.Signature):
+    """Generate data quality rules using data summary statistics."""
+
+    business_description: str | None = dspy.InputField(
+        desc="Optional natural language description of data quality requirements"
+    )
+    data_summary_stats: str = dspy.InputField(desc="JSON string of summary statistics of the data")
+    available_functions: str = dspy.InputField(desc="JSON string of available DQX check functions")
+    quality_rules: str = dspy.OutputField(
+        desc=(
+            "Return a valid JSON array of data quality rules. Use double quotes for JSON syntax. "
+            "For string literal values in check arguments (eg. value or limit parameter), wrap them in single quotes. "
+            "In SQL filter expressions, use single quotes for string literals and capitalize SQL keywords. "
+            "Criticality can be error or warn. "
+            "Filter may be used to apply the rule to the relevant records only. "
+            "Check function name and doc to select the appropriate check function. "
+            "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
+            "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
+        )
+    )
+    reasoning: str = dspy.OutputField(desc="Explanation of why these rules were chosen")
+
+
+class DspyRuleUsingDataStats(dspy.Module):
+    """
+    Generate data quality rules using data summary statistics.
+    """
+
+    def __init__(self, generator: dspy.Predict | None = None):
+        super().__init__()
+        self.generator = generator or dspy.Predict(DspyRuleUsingDataStatsSignature)
+
+    def forward(
+        self, data_summary_stats: str, available_functions: str, business_description: str | None = None
+    ) -> dspy.primitives.prediction.Prediction:
+        """
+        Generate data quality rules.
+
+        Args:
+            data_summary_stats: JSON string containing summary statistics of the data.
+            available_functions: JSON string of available check functions.
+            business_description: Optional natural language description of data quality requirements.
+
+        Returns:
+            Prediction containing quality_rules and reasoning.
+        """
+        result = self.generator(
+            data_summary_stats=data_summary_stats,
+            available_functions=available_functions,
+            business_description=business_description or "",
+        )
+
+        # Validate JSON output
+        if result.quality_rules:
+            try:
+                json.loads(result.quality_rules)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Generated invalid JSON: {e}. Returning empty rules.")
+                result.quality_rules = "[]"
+
+        return result
+
+
 class LLMRuleCompiler:
+    """
+    Compiles and optimizes LLM-based data quality rules.
+
+    Note: This class assumes DSPy is already configured with a language model.
+    The configuration should be done externally before instantiating this class.
+    """
+
     def __init__(
         self,
-        model_config: LLMModelConfig,
         custom_check_functions: dict[str, Callable] | None = None,
         rule_validator: RuleValidator | None = None,
         optimizer: BootstrapFewShotOptimizer | None = None,
     ):
         """
+        Initialize the rule compiler.
+
+        Note: DSPy must be configured before creating this instance.
+
         Args:
-            model_config: Configuration for the LLM model.
             custom_check_functions: Optional custom check functions.
             rule_validator: Optional rule validator instance.
             optimizer: Optional optimizer instance.
@@ -224,11 +298,8 @@ class LLMRuleCompiler:
         self._custom_check_functions = custom_check_functions
         self._optimizer = optimizer or BootstrapFewShotOptimizer()
         self._rule_validator = rule_validator or RuleValidator(custom_check_functions)
-
-        configurator = LLMModelConfigurator(model_config)
-        configurator.configure()
-
         self._dq_model = DspyRuleGenerationWithSchemaInference()
+        self._dq_model_using_data_stats = DspyRuleUsingDataStats()
 
     @cached_property
     def model(self) -> dspy.Module:
@@ -247,4 +318,23 @@ class LLMRuleCompiler:
             return 0.0
 
         optimized_model = self._optimizer.compile(self._dq_model, train_set, metric)
+        return optimized_model
+
+    @cached_property
+    def model_using_data_stats(self) -> dspy.Module:
+        """
+        Get the optimized DSPy model for generating rules from data summary statistics.
+
+        Returns:
+            Optimized DSPy module for generating data quality rules from data stats.
+        """
+        train_set = create_optimizer_training_set_with_stats(self._custom_check_functions)
+
+        def metric(_example, pred, _trace=None):
+            """Metric function for optimization."""
+            if hasattr(pred, "quality_rules"):
+                return self._rule_validator.validate(pred.quality_rules)
+            return 0.0
+
+        optimized_model = self._optimizer.compile(self._dq_model_using_data_stats, train_set, metric)
         return optimized_model
