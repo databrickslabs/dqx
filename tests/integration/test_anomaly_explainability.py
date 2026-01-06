@@ -23,15 +23,15 @@ def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
     # Query registry for feature_importance
     # Model name is stored with full catalog.schema.model format
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None, f"Model {full_model_name} not found in registry"
 
     # Verify feature_importance exists and is non-empty
-    assert record["feature_importance"] is not None
-    assert len(record["feature_importance"]) > 0
+    assert record["features"]["feature_importance"] is not None
+    assert len(record["features"]["feature_importance"]) > 0
 
     # Verify all columns are represented
-    feature_importance = record["feature_importance"]
+    feature_importance = record["features"]["feature_importance"]
     assert "amount" in feature_importance
     assert "quantity" in feature_importance
 
@@ -72,8 +72,8 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_
     # Verify contributions exist in _info.anomaly.contributions
     assert row["_info"]["anomaly"]["contributions"] is not None
 
-    # Extract map from Row: asDict() wraps in extra layer, so extract inner dict
-    contribs = row["anomaly_contributions"].asDict()["anomaly_contributions"]
+    # Extract contributions map from _info.anomaly.contributions
+    contribs = row["_info"]["anomaly"]["contributions"]
 
     # Verify contributions contain feature names
     assert contribs is not None

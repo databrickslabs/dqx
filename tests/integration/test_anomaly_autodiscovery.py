@@ -92,14 +92,14 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ano
 
     # Check registry for segment models
     registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
-    models = registry.filter("status = 'active'").collect()
+    models = registry.filter("identity.status = 'active'").collect()
 
     # Should create 2 segment models (US and EU)
     assert len(models) == 2
 
     # Verify auto-discovered columns (amount and discount)
     for model in models:
-        assert set(model.columns) == {"amount", "discount"}
+        assert set(model.training.columns) == {"amount", "discount"}
 
 
 @pytest.mark.nightly
@@ -129,9 +129,9 @@ def test_explicit_columns_no_auto_segment(spark: SparkSession, make_schema, make
 
     # Verify only 1 global model created (no segmentation)
     registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
-    models = registry.filter("status = 'active'").collect()
+    models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 1
-    assert models[0].is_global_model is True
+    assert models[0].segmentation.is_global_model is True
 
 
 @pytest.mark.nightly

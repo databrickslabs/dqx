@@ -87,7 +87,7 @@ def test_multiple_models_in_same_registry(
 
     # Verify both models exist in registry
     registry_df = spark.table(registry_table)
-    model_names = [row["model_name"] for row in registry_df.select("model_name").distinct().collect()]
+    model_names = [row["model_name"] for row in registry_df.select("identity.model_name").distinct().collect()]
 
     # Models are stored with full three-level names
     assert f"main.default.{model_a}" in model_names
@@ -124,9 +124,9 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
     model_v1 = registry.get_active_model(registry_table, full_model_name)
 
     assert model_v1 is not None
-    assert model_v1.model_name == full_model_name
-    assert model_v1.status == "active"
-    v1_training_time = model_v1.training_time
+    assert model_v1.identity.model_name == full_model_name
+    assert model_v1.identity.status == "active"
+    v1_training_time = model_v1.training.training_time
 
     # Train second version (should archive first) - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
@@ -135,13 +135,13 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
     model_v2 = registry.get_active_model(registry_table, full_model_name)
 
     assert model_v2 is not None
-    assert model_v2.model_name == full_model_name
-    assert model_v2.status == "active"
-    assert model_v2.training_time > v1_training_time
+    assert model_v2.identity.model_name == full_model_name
+    assert model_v2.identity.status == "active"
+    assert model_v2.training.training_time > v1_training_time
 
     # Verify first model is archived
     archived_count = (
-        spark.table(registry_table).filter(f"model_name = '{full_model_name}' AND status = 'archived'").count()
+        spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}' AND identity.status = 'archived'").count()
     )
     assert archived_count == 1
 
@@ -171,8 +171,8 @@ def test_model_staleness_warning(
     old_time = datetime.utcnow() - timedelta(days=35)
     spark.sql(
         f"UPDATE {registry_table} "
-        f"SET training_time = timestamp('{old_time.strftime('%Y-%m-%d %H:%M:%S')}') "
-        f"WHERE model_name = '{full_model_name}'"
+        f"SET training.training_time = timestamp('{old_time.strftime('%Y-%m-%d %H:%M:%S')}') "
+        f"WHERE identity.model_name = '{full_model_name}'"
     )
 
     # Score with old model (should issue warning) - use helper
@@ -240,28 +240,28 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: str, anomaly
 
     # Query registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
     # Verify key metadata is present
-    assert record["model_name"] == full_model_name
-    assert record["model_uri"] is not None
-    assert record["algorithm"] == "IsolationForest"
-    assert record["status"] == "active"
-    assert record["training_time"] is not None
-    assert record["columns"] == ["amount", "quantity", "discount"]
+    assert record["identity"]["model_name"] == full_model_name
+    assert record["identity"]["model_uri"] is not None
+    assert record["identity"]["algorithm"] == "IsolationForest"
+    assert record["identity"]["status"] == "active"
+    assert record["training"]["training_time"] is not None
+    assert record["training"]["columns"] == ["amount", "quantity", "discount"]
 
     # Verify baseline_stats exists
-    assert record["baseline_stats"] is not None
-    assert len(record["baseline_stats"]) == 3  # Three columns
+    assert record["training"]["baseline_stats"] is not None
+    assert len(record["training"]["baseline_stats"]) == 3  # Three columns
 
     # Verify feature_importance exists
-    assert record["feature_importance"] is not None
-    assert len(record["feature_importance"]) == 3  # Three features
+    assert record["features"]["feature_importance"] is not None
+    assert len(record["features"]["feature_importance"]) == 3  # Three features
 
     # Verify metrics exist
-    assert record["metrics"] is not None
-    assert "recommended_threshold" in record["metrics"]
+    assert record["training"]["metrics"] is not None
+    assert "recommended_threshold" in record["training"]["metrics"]
 
 
 @pytest.mark.nightly
@@ -339,14 +339,14 @@ def test_config_hash_stored_during_training(spark: SparkSession, make_random: st
 
     # Verify config_hash is stored
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
 
     assert record is not None
-    assert record["config_hash"] is not None
+    assert record["segmentation"]["config_hash"] is not None
 
     # Verify hash matches expected
     expected_hash = compute_config_hash(columns, None)
-    assert record["config_hash"] == expected_hash
+    assert record["segmentation"]["config_hash"] == expected_hash
 
 
 @pytest.mark.nightly

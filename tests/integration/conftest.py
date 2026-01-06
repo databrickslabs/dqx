@@ -33,6 +33,16 @@ from tests.integration.test_anomaly_utils import (
 # These fixtures train models ONCE per session, reducing test suite runtime significantly.
 # All anomaly-specific fixtures are defined in test_anomaly_fixtures.py for better organization.
 
+# Optional imports for anomaly scoring functionality
+try:
+    import pyspark.sql.functions as F
+    from databricks.labs.dqx.anomaly import has_no_anomalies
+    HAS_ANOMALY_SCORING = True
+except ImportError:
+    HAS_ANOMALY_SCORING = False
+    F = None  # type: ignore[assignment,misc]
+    has_no_anomalies = None  # type: ignore[assignment,misc]
+
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -740,8 +750,8 @@ def anomaly_scorer():
         Returns:
             Scored DataFrame with anomaly metadata
         """
-        import pyspark.sql.functions as F  # pylint: disable=import-outside-toplevel
-        from databricks.labs.dqx.anomaly import has_no_anomalies  # pylint: disable=import-outside-toplevel
+        if not HAS_ANOMALY_SCORING:
+            pytest.skip("Anomaly scoring dependencies not available")
 
         if merge_columns is None:
             merge_columns = ["transaction_id"]

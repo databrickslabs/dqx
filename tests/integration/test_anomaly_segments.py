@@ -54,11 +54,11 @@ def test_explicit_segment_training(
 
     # Verify segmented models were created
     registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
-    models = registry.filter("status = 'active'").collect()
+    models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 3  # One per segment
 
     # Check segment model names
-    model_names = [row.model_name for row in models]
+    model_names = [row.identity.model_name for row in models]
     assert any("region=US" in name for name in model_names)
     assert any("region=EU" in name for name in model_names)
     assert any("region=APAC" in name for name in model_names)
@@ -166,7 +166,7 @@ def test_multi_column_segments(
 
     # Verify 4 segment models created (2 regions × 2 products)
     registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
-    models = registry.filter("status = 'active'").collect()
+    models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 4
 
 

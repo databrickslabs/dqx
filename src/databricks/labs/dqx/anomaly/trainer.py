@@ -35,7 +35,15 @@ from sklearn.preprocessing import RobustScaler
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry, compute_config_hash
+from databricks.labs.dqx.anomaly.model_registry import (
+    AnomalyModelRecord,
+    AnomalyModelRegistry,
+    ModelIdentity,
+    TrainingMetadata,
+    FeatureEngineering,
+    SegmentationConfig,
+    compute_config_hash,
+)
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
@@ -299,12 +307,12 @@ def _prepare_training_config(
     existing = registry.get_active_model(derived_registry_table, derived_model_name)
 
     if existing:
-        config_changed = set(columns) != set(existing.columns) or segment_by != existing.segment_by
+        config_changed = set(columns) != set(existing.training.columns) or segment_by != existing.segmentation.segment_by
 
         if config_changed:
             logger.warning(
                 f"⚠️  Model '{derived_model_name}' exists with different configuration:\n"
-                f"   Existing: columns={existing.columns}, segment_by={existing.segment_by}\n"
+                f"   Existing: columns={existing.training.columns}, segment_by={existing.segmentation.segment_by}\n"
                 f"   New: columns={columns}, segment_by={segment_by}\n"
                 f"   The old model will be archived. Consider using a different model_name "
                 f"if this is a different use case."
@@ -425,25 +433,35 @@ def _train_global(
     # run_id was already saved during model logging
 
     record = AnomalyModelRecord(
-        model_name=model_name,
-        model_uri=model_uri,
-        columns=columns,
-        algorithm=f"IsolationForest_Ensemble_{ensemble_size}" if ensemble_size > 1 else "IsolationForest",
-        hyperparameters=_stringify_dict(hyperparams),
-        training_rows=train_df.count(),
-        training_time=datetime.utcnow(),
-        mlflow_run_id=run_id or "unknown",
-        metrics=validation_metrics,
-        mode="spark",
-        baseline_stats=baseline_stats,
-        feature_importance=feature_importance,
-        temporal_config=None,
-        segment_by=None,
-        segment_values=None,
-        is_global_model=True,
-        feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
-        sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
-        config_hash=compute_config_hash(columns, None),  # Compute config hash for collision detection
+        identity=ModelIdentity(
+            model_name=model_name,
+            model_uri=model_uri,
+            algorithm=f"IsolationForest_Ensemble_{ensemble_size}" if ensemble_size > 1 else "IsolationForest",
+            mlflow_run_id=run_id or "unknown",
+            status="active",
+        ),
+        training=TrainingMetadata(
+            columns=columns,
+            hyperparameters=_stringify_dict(hyperparams),
+            training_rows=train_df.count(),
+            training_time=datetime.utcnow(),
+            metrics=validation_metrics,
+            baseline_stats=baseline_stats,
+        ),
+        features=FeatureEngineering(
+            mode="spark",
+            column_types=None,
+            feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
+            feature_importance=feature_importance,
+            temporal_config=None,
+        ),
+        segmentation=SegmentationConfig(
+            segment_by=None,
+            segment_values=None,
+            is_global_model=True,
+            sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
+            config_hash=compute_config_hash(columns, None),  # Compute config hash for collision detection
+        ),
     )
     registry.save_model(record, registry_table)
 
@@ -667,25 +685,35 @@ def _train_single_segment(
     registry = AnomalyModelRegistry(spark)
 
     record = AnomalyModelRecord(
-        model_name=model_name,
-        model_uri=model_uri,
-        columns=columns,
-        algorithm="IsolationForest",
-        hyperparameters=_stringify_dict(hyperparams),
-        training_rows=train_df.count(),
-        training_time=datetime.utcnow(),
-        mlflow_run_id=run_id,
-        metrics=validation_metrics,
-        mode="spark",
-        baseline_stats=baseline_stats,
-        feature_importance=feature_importance,
-        temporal_config=None,
-        segment_by=segment_by,
-        segment_values=_stringify_dict(segment_values),
-        is_global_model=False,
-        feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
-        sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
-        config_hash=compute_config_hash(columns, segment_by),  # Compute config hash for collision detection
+        identity=ModelIdentity(
+            model_name=model_name,
+            model_uri=model_uri,
+            algorithm="IsolationForest",
+            mlflow_run_id=run_id,
+            status="active",
+        ),
+        training=TrainingMetadata(
+            columns=columns,
+            hyperparameters=_stringify_dict(hyperparams),
+            training_rows=train_df.count(),
+            training_time=datetime.utcnow(),
+            metrics=validation_metrics,
+            baseline_stats=baseline_stats,
+        ),
+        features=FeatureEngineering(
+            mode="spark",
+            column_types=None,
+            feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
+            feature_importance=feature_importance,
+            temporal_config=None,
+        ),
+        segmentation=SegmentationConfig(
+            segment_by=segment_by,
+            segment_values=_stringify_dict(segment_values),
+            is_global_model=False,
+            sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
+            config_hash=compute_config_hash(columns, segment_by),  # Compute config hash for collision detection
+        ),
     )
     registry.save_model(record, registry_table)
 

@@ -20,12 +20,12 @@ def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str, ano
 
     # Check registry records training_rows (should be sampled, use full three-level name)
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
     # With default sample_fraction=0.3, we should get ~60K rows
-    assert record["training_rows"] > 0
-    assert record["training_rows"] <= 200_000
+    assert record["training"]["training_rows"] > 0
+    assert record["training"]["training_rows"] <= 200_000
 
 
 @pytest.mark.nightly
@@ -46,12 +46,12 @@ def test_custom_sampling_parameters(spark: SparkSession, make_random: str, anoma
 
     # Check registry (use full three-level name)
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
     # Should have sampled roughly 50% up to max 300 rows
     # So training_rows should be <= 300
-    assert record["training_rows"] <= 300
+    assert record["training"]["training_rows"] <= 300
 
 
 @pytest.mark.nightly
@@ -98,12 +98,12 @@ def test_train_validation_split(spark: SparkSession, make_random: str, anomaly_e
 
     # Check that metrics exist (which indicates validation was performed, use full three-level name)
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
     # Verify metrics exist
-    assert record["metrics"] is not None
-    assert "recommended_threshold" in record["metrics"]
+    assert record["training"]["metrics"] is not None
+    assert "recommended_threshold" in record["training"]["metrics"]
 
     # Additional validation metrics may exist
     # (precision, recall, f1_score, etc.)
@@ -144,13 +144,13 @@ def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str, a
 
     # Use full three-level name for query
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
     # Should use most/all of the data
     # (May be slightly less due to train/val split or null filtering)
     # With 80/20 split on 500 rows: 500 * 0.8 = 400, but some may be filtered
-    assert record["training_rows"] >= 390  # At least 78% used for training
+    assert record["training"]["training_rows"] >= 390  # At least 78% used for training
 
 
 @pytest.mark.nightly

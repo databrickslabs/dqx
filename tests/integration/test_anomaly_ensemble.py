@@ -36,9 +36,9 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
 
     # Get model_uri from registry
     full_model_name = f"main.default.{model_name}"
-    record = spark.table(registry_table).filter(f"model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
-    model_uri = record["model_uri"]
+    model_uri = record["identity"]["model_uri"]
 
     # Check that multiple URIs are returned
     assert "," in model_uri

@@ -63,9 +63,9 @@ def test_training_filters_nulls(spark: SparkSession, make_random: str, anomaly_e
     registry_table = info["registry_table"]
 
     # Check registry records training_rows (should be 3, not 5)
-    record = spark.table(registry_table).filter(f"model_name = '{model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
-    assert record["training_rows"] > 0
+    assert record["training"]["training_rows"] > 0
     # Note: actual count may vary due to sampling, but should be <= 3
 
 

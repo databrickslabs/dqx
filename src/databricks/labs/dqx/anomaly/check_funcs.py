@@ -95,19 +95,19 @@ def _check_segment_drift(
     drift_threshold_value: float,
 ) -> None:
     """Check and warn about data drift in a segment."""
-    if drift_threshold is not None and segment_model.baseline_stats:
+    if drift_threshold is not None and segment_model.training.baseline_stats:
         drift_result = compute_drift_score(
             segment_df.select(columns),
             columns,
-            segment_model.baseline_stats,
+            segment_model.training.baseline_stats,
             drift_threshold_value,
         )
 
         if drift_result.drift_detected:
             drifted_cols_str = ", ".join(drift_result.drifted_columns)
             segment_name = (
-                "_".join(f"{k}={v}" for k, v in segment_model.segment_values.items())
-                if segment_model.segment_values
+                "_".join(f"{k}={v}" for k, v in segment_model.segmentation.segment_values.items())
+                if segment_model.segmentation.segment_values
                 else "unknown"
             )
             warnings.warn(
@@ -195,12 +195,12 @@ def _score_single_segment(
     )
 
     # Score this segment with optional SHAP (computed in single UDF pass)
-    assert segment_model.feature_metadata is not None, f"Model {segment_model.model_name} missing feature_metadata"
+    assert segment_model.features.feature_metadata is not None, f"Model {segment_model.identity.model_name} missing feature_metadata"
     segment_scored = _score_with_sklearn_model(
-        segment_model.model_uri,
+        segment_model.identity.model_uri,
         segment_df,
         config.columns,
-        segment_model.feature_metadata,
+        segment_model.features.feature_metadata,
         config.merge_columns,
         include_contributions=config.include_contributions,
         model_record=segment_model,  # Pass model record for version validation
@@ -212,7 +212,7 @@ def _score_single_segment(
         segment_scored,
         config.model_name,
         config.score_threshold,
-        segment_values=segment_model.segment_values,
+        segment_values=segment_model.segmentation.segment_values,
         include_contributions=config.include_contributions,
         include_confidence=config.include_confidence,
     )
@@ -256,7 +256,7 @@ def _score_segmented(
     # 2. Saving scored results to tables (as shown in demos)
     # 3. Using fewer segments or global models for massive datasets
     for segment_model in all_segments:
-        segment_filter = _build_segment_filter(segment_model.segment_values)
+        segment_filter = _build_segment_filter(segment_model.segmentation.segment_values)
         if segment_filter is None:
             continue
 
@@ -369,11 +369,11 @@ def _validate_sklearn_compatibility(model_record: AnomalyModelRecord) -> None:
     Raises:
         Warning if minor version mismatch detected (e.g., 1.2.x vs 1.3.x)
     """
-    if not model_record.sklearn_version:
+    if not model_record.segmentation.sklearn_version:
         # Old models without version tracking - can't validate
         return
 
-    trained_version = model_record.sklearn_version
+    trained_version = model_record.segmentation.sklearn_version
     current_version = sklearn.__version__
 
     if trained_version == current_version:
@@ -389,7 +389,7 @@ def _validate_sklearn_compatibility(model_record: AnomalyModelRecord) -> None:
             warnings.warn(
                 f"\nSKLEARN VERSION MISMATCH DETECTED\n"
                 f"Model Information:\n"
-                f"  - Model: {model_record.model_name}\n"
+                f"  - Model: {model_record.identity.model_name}\n"
                 f"  - Trained with: sklearn {trained_version}\n"
                 f"  - Current environment: sklearn {current_version}\n"
                 f"\n"
@@ -399,8 +399,8 @@ def _validate_sklearn_compatibility(model_record: AnomalyModelRecord) -> None:
                 f"Retrain the model with your current sklearn version:\n"
                 f"  anomaly_engine.train(\n"
                 f"      df=df_train,\n"
-                f"      model_name=\"{model_record.model_name}\",\n"
-                f"      columns={model_record.columns}\n"
+                f"      model_name=\"{model_record.identity.model_name}\",\n"
+                f"      columns={model_record.training.columns}\n"
                 f"  )\n",
                 UserWarning,
                 stacklevel=3,
@@ -429,7 +429,7 @@ def _load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomal
         # These are typical pickle incompatibility errors
         error_msg = str(e)
 
-        trained_version = model_record.sklearn_version or "unknown"
+        trained_version = model_record.segmentation.sklearn_version or "unknown"
         current_version = sklearn.__version__
         python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
 
@@ -437,7 +437,7 @@ def _load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomal
             f"\nFAILED TO LOAD ANOMALY DETECTION MODEL\n"
             f"\n"
             f"Model Information:\n"
-            f"  - Model: {model_record.model_name}\n"
+            f"  - Model: {model_record.identity.model_name}\n"
             f"  - Trained with: sklearn {trained_version}\n"
             f"  - Current environment: sklearn {current_version}, Python {python_version}\n"
             f"  - Model URI: {model_uri}\n"
@@ -456,8 +456,8 @@ def _load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomal
             f"1. Retrain the model (RECOMMENDED):\n"
             f"   anomaly_engine.train(\n"
             f"       df=df_train,\n"
-            f"       model_name=\"{model_record.model_name}\",\n"
-            f"       columns={model_record.columns},\n"
+            f"       model_name=\"{model_record.identity.model_name}\",\n"
+            f"       columns={model_record.training.columns},\n"
             f"       registry_table=\"<your_registry_table>\"\n"
             f"   )\n"
             f"\n"
@@ -723,9 +723,9 @@ def _discover_model_and_config(
         record = _get_record_for_discovery(registry_client, registry, model_name_local)
 
         if columns is None:
-            columns = list(record.columns)
+            columns = list(record.training.columns)
         if segment_by is None:
-            segment_by = record.segment_by
+            segment_by = record.segmentation.segment_by
 
     # Validate and normalize
     assert columns is not None, "columns should be set by now"
@@ -774,15 +774,15 @@ def _get_and_validate_model_record(
     expected_hash = compute_config_hash(columns, segment_by)
 
     # Compare with stored hash (backward compatible - compute from columns if missing)
-    if record.config_hash is None:
-        record.config_hash = compute_config_hash(record.columns, record.segment_by)
+    if record.segmentation.config_hash is None:
+        record.segmentation.config_hash = compute_config_hash(record.training.columns, record.segmentation.segment_by)
 
-    if expected_hash != record.config_hash:
+    if expected_hash != record.segmentation.config_hash:
         raise InvalidParameterError(
             f"Configuration mismatch for model '{model_name}':\n"
-            f"  Expected columns: {record.columns}\n"
+            f"  Expected columns: {record.training.columns}\n"
             f"  Provided columns: {columns}\n"
-            f"  Expected segment_by: {record.segment_by}\n"
+            f"  Expected segment_by: {record.segmentation.segment_by}\n"
             f"  Provided segment_by: {segment_by}\n\n"
             f"This model was trained with a different configuration. Either:\n"
             f"  1. Use the correct columns/segments that match the trained model\n"
@@ -794,8 +794,8 @@ def _get_and_validate_model_record(
 
 def _check_model_staleness(record: "AnomalyModelRecord", model_name: str) -> None:
     """Check model training age and issue warning if stale (>30 days)."""
-    if record.training_time:
-        age_days = (datetime.utcnow() - record.training_time).days
+    if record.training.training_time:
+        age_days = (datetime.utcnow() - record.training.training_time).days
         if age_days > 30:
             warnings.warn(
                 f"Model '{model_name}' is {age_days} days old. Consider retraining.",
@@ -813,11 +813,11 @@ def _check_and_warn_drift(
     drift_threshold_value: float,
 ) -> None:
     """Check for data drift and issue warning if detected."""
-    if drift_threshold is not None and record.baseline_stats:
+    if drift_threshold is not None and record.training.baseline_stats:
         drift_result = compute_drift_score(
             df.select(columns),
             columns,
-            record.baseline_stats,
+            record.training.baseline_stats,
             drift_threshold_value,
         )
 
@@ -894,7 +894,7 @@ def _try_segmented_scoring_fallback(
 
     # Auto-detect segmentation
     first_segment = all_segments[0]
-    assert first_segment.segment_by is not None, "Segment model must have segment_by"
+    assert first_segment.segmentation.segment_by is not None, "Segment model must have segment_by"
     return _score_segmented(df, config, registry_client)
 
 
@@ -967,15 +967,15 @@ def _score_global_model(
     expected_hash = compute_config_hash(config.columns, config.segment_by)
 
     # Backward compatibility: compute hash if missing
-    if record.config_hash is None:
-        record.config_hash = compute_config_hash(record.columns, record.segment_by)
+    if record.segmentation.config_hash is None:
+        record.segmentation.config_hash = compute_config_hash(record.training.columns, record.segmentation.segment_by)
 
-    if expected_hash != record.config_hash:
+    if expected_hash != record.segmentation.config_hash:
         raise InvalidParameterError(
             f"Configuration mismatch for model '{config.model_name}':\n"
-            f"  Expected columns: {record.columns}\n"
+            f"  Expected columns: {record.training.columns}\n"
             f"  Provided columns: {config.columns}\n"
-            f"  Expected segment_by: {record.segment_by}\n"
+            f"  Expected segment_by: {record.segmentation.segment_by}\n"
             f"  Provided segment_by: {config.segment_by}\n\n"
             f"This model was trained with a different configuration. Either:\n"
             f"  1. Use the correct columns/segments that match the trained model\n"
@@ -991,25 +991,25 @@ def _score_global_model(
     df_filtered = _prepare_scoring_dataframe(df, config.row_filter)
 
     # Score (ensemble or single model)
-    model_uris = record.model_uri.split(",")
-    assert record.feature_metadata is not None, f"Model {record.model_name} missing feature_metadata"
+    model_uris = record.identity.model_uri.split(",")
+    assert record.features.feature_metadata is not None, f"Model {record.identity.model_name} missing feature_metadata"
 
     scored_df = (
         _score_ensemble_models(
             model_uris,
             df_filtered,
             config.columns,
-            record.feature_metadata,
+            record.features.feature_metadata,
             config.merge_columns,
             config.include_contributions,
             model_record=record,  # Pass model record for version validation
         )
         if len(model_uris) > 1
         else _score_with_sklearn_model(
-            record.model_uri,
+            record.identity.model_uri,
             df_filtered,
             config.columns,
-            record.feature_metadata,
+            record.features.feature_metadata,
             config.merge_columns,
             include_contributions=config.include_contributions,
             model_record=record,  # Pass model record for version validation
