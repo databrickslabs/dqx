@@ -1,14 +1,4 @@
-# databricks-labs-dqx-app ✨
-
-> A modern full-stack application built with [`apx`](https://github.com/databricks-solutions/apx) 🚀
-
-## 🛠️ Tech Stack
-
-This application leverages a powerful, modern tech stack:
-
-- **Backend** 🐍 Python + [FastAPI](https://fastapi.tiangolo.com/)
-- **Frontend** ⚛️ React + [shadcn/ui](https://ui.shadcn.com/)
-- **API Client** 🔄 Auto-generated with [orval](https://orval.dev/) from OpenAPI schema
+# Application for the DQX framework
 
 ## 🚀 Quick Start
 
