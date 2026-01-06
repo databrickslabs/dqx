@@ -1,5 +1,6 @@
 """Integration tests for anomaly model registry management."""
 
+import logging
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 import warnings
@@ -141,7 +142,9 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
 
     # Verify first model is archived
     archived_count = (
-        spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}' AND identity.status = 'archived'").count()
+        spark.table(registry_table)
+        .filter(f"identity.model_name = '{full_model_name}' AND identity.status = 'archived'")
+        .count()
     )
     assert archived_count == 1
 
@@ -204,7 +207,7 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
 
     for col in expected_top_level_columns:
         assert col in actual_columns, f"Missing top-level column: {col}"
-    
+
     # Verify schema contains expected nested fields
     schema_str = str(registry_df.schema)
     expected_nested_fields = [
@@ -230,7 +233,7 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
         "sklearn_version",
         "config_hash",
     ]
-    
+
     for field in expected_nested_fields:
         assert field in schema_str, f"Missing nested field in schema: {field}"
 
@@ -373,7 +376,6 @@ def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_en
     )
 
     # Retrain with different columns (should warn)
-    import logging
     with caplog.at_level(logging.WARNING):
         anomaly_engine.train(
             df=df,

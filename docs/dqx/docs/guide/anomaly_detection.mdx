@@ -582,6 +582,55 @@ Top contributors are shown as percentages summing to 1.0. Use this to:
 - Validate the model learned correct patterns
 - Enrich quarantine data for downstream review
 
+### Understanding Feature Names in Contributions
+
+Contributions use **engineered feature names** rather than original column names. This provides more granular insight into *what aspect* of a column drove the anomaly.
+
+**Feature naming patterns:**
+
+| Pattern | Original Type | Meaning |
+|---------|---------------|---------|
+| `{col}` | numeric | Original numeric value |
+| `{col}_hour_sin`, `{col}_hour_cos` | datetime | Time-of-day pattern (cyclical: hour 23 ≈ hour 0) |
+| `{col}_dow_sin`, `{col}_dow_cos` | datetime | Day-of-week pattern (cyclical: Sunday ≈ Monday) |
+| `{col}_month_sin`, `{col}_month_cos` | datetime | Seasonal/monthly pattern |
+| `{col}_is_weekend` | datetime | Saturday/Sunday vs weekday (0 or 1) |
+| `{col}_{value}` | categorical | OneHot indicator for specific category value |
+| `{col}_freq` | categorical | Frequency encoding (how common this value is) |
+| `{col}_bool` | boolean | Boolean mapped to 0/1 |
+| `{col}_is_null` | any | Missing value indicator (1 if null, 0 otherwise) |
+
+**Example interpretation:**
+
+```
+contributions: {
+  "amount": 0.02,
+  "date_is_weekend": 0.38,
+  "date_hour_cos": 0.28,
+  "date_dow_cos": 0.16,
+  ...
+}
+```
+
+Reading this: "38% of this anomaly is explained by **weekend timing**, 28% by **hour of day**, and only 2% by the **amount** itself." This suggests the transaction occurred at an unusual time (e.g., large transfer on Saturday at 3am) rather than having an unusual amount.
+
+**Aggregating to original columns:**
+
+To see total contribution per original column, sum related features:
+```python
+# Total date contribution = is_weekend + hour_sin + hour_cos + dow_sin + dow_cos + month_sin + month_cos
+date_total = 0.38 + 0.28 + 0.07 + 0.16 + 0.02 + 0.04 + 0.02  # = 0.97 (97%)
+```
+
+**Why show engineered features?**
+
+Engineered feature names reveal *which aspect* of a column matters:
+- High `date_is_weekend` → weekend timing is unusual
+- High `date_hour_sin/cos` → hour of day is unusual
+- High `category_Electronics` → being in Electronics category is unusual for this combination
+
+This granularity helps identify root causes more precisely than aggregated column-level contributions.
+
 ## Performance optimization
 
 When using `row_filter` to score only a subset of rows, DQX joins the scored results back to preserve all original rows. For better performance with wide DataFrames, specify `merge_columns`:
@@ -735,6 +784,11 @@ dq_engine.save_results_in_table(
   - `_info.anomaly.model`: Model name used
 - DQX metadata columns (`_errors`, `_warnings`, etc.)
 
+<Admonition type="tip" title="Customizing column names">
+You can customize the `_info` column name (along with `_errors` and `_warnings`) via `ExtraParams`. 
+See [Customizing result columns](/docs/guide/additional_configuration#customizing-result-columns) for details.
+</Admonition>
+
 **Using with Delta Live Tables**:
 ```python
 import dlt
@@ -815,8 +869,32 @@ run_configs:
 
 ## Requirements and notes
 
+### Databricks Runtime Compatibility
+
+| Compute Type | Recommended Versions | Notes |
+|-------------|---------------------|-------|
+| **Classic Compute (ML Runtime)** | DBR 14.3 ML+, 15.x ML, 16.x ML, 17.x ML | ✅ sklearn, scipy, numpy pre-installed |
+| **Classic Compute (Standard)** | DBR 16.x+, 17.x+ | ✅ Recent versions include sklearn |
+| **Serverless** | All versions | ✅ Fully supported |
+
+:::tip Recommended Setup
+For anomaly detection, we recommend:
+- **Serverless compute** (simplest - no cluster management)
+- **ML Runtime** on classic compute (all dependencies pre-installed)
+- **Standard Runtime 16.x+** if ML Runtime is not needed for other workloads
+:::
+
+### Installation
+
+```bash
+pip install 'databricks-labs-dqx[anomaly]'
+```
+
+This installs: MLflow, scikit-learn, SHAP, and cloudpickle. On ML Runtimes and Serverless, most dependencies are already available.
+
+### General Requirements
+
 - Spark ≥ 3.4 for pandas UDF support (distributed scoring).
-- Install extra: `pip install 'databricks-labs-dqx[anomaly]'` (includes MLflow, scikit-learn, cloudpickle).
 - Works on Databricks, local Spark clusters, and any Spark 3.4+ environment.
 - **Training** runs on driver node (efficient for sampled data ≤1M rows).
 - **Scoring** is fully distributed across Spark cluster via pandas UDFs.

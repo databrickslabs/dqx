@@ -75,7 +75,7 @@ anomaly = [
     "mlflow[databricks]>=2.0",  # Unity Catalog support
     "scikit-learn>=1.0",
     "cloudpickle>=2.0",  # For serializing sklearn models in pandas UDFs
-    "shap>=0.42.0,<0.46.1",  # For TreeSHAP-based feature contributions (compatible with numpy<2)
+    "shap>=0.42.0,<0.50",  # For TreeSHAP-based feature contributions
 ]
 
 [project.entry-points.databricks]
@@ -593,7 +593,8 @@ max-module-lines = 10000
 
 [tool.pylint.imports]
 # List of modules that can be imported at any level, not just the top level one.
-# allow-any-import-level =
+# tests.compat must be imported early to apply numba/coverage patches before other imports
+allow-any-import-level = ["tests.compat"]
 
 # Allow explicit reexports by alias from a package __init__.
 # allow-reexport-from-package =
@@ -868,6 +869,13 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
+
+# Per-file pylint ignores for legitimate exceptions
+# tests/conftest.py: must import tests.compat first to apply numba/coverage patches
+# tests/compat/__init__.py: imports coverage inside function for optional dependency handling
+[tool.pylint-per-file-ignores]
+"/tests/conftest.py" = "wrong-import-order,ungrouped-imports,unused-import"
+"/tests/compat/__init__.py" = "import-outside-toplevel"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]

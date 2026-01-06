@@ -82,6 +82,9 @@ class DQEngineCore(DQEngineCoreBase):
             ColumnArguments.WARNINGS: extra_params.result_column_names.get(
                 ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
             ),
+            ColumnArguments.INFO: extra_params.result_column_names.get(
+                ColumnArguments.INFO.value, DefaultColumnNames.INFO.value
+            ),
         }
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
@@ -451,6 +454,11 @@ class DQEngineCore(DQEngineCoreBase):
                 F.lit(None).cast(dq_result_schema)
             ),
         )
+
+        # Rename _info column to configured name if present (dataset-level checks like has_no_anomalies create it)
+        info_col_name = self._result_column_names[ColumnArguments.INFO]
+        if "_info" in result_df.columns and info_col_name != "_info":
+            result_df = result_df.withColumnRenamed("_info", info_col_name)
 
         # Preserve any new columns added by dataset-level checks alongside the result column
         return result_df

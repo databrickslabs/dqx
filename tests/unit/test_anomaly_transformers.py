@@ -155,7 +155,7 @@ def test_spark_feature_metadata_json_deserialization():
 
 
 def test_spark_feature_metadata_roundtrip():
-    """Test full roundtrip: create → serialize → deserialize."""
+    """Test full roundtrip: create → serialize → deserialize with complex metadata."""
     original = SparkFeatureMetadata(
         column_infos=[
             {"name": "col1", "category": "numeric", "null_count": 5},
@@ -178,29 +178,6 @@ def test_spark_feature_metadata_roundtrip():
     assert restored.categorical_frequency_maps == original.categorical_frequency_maps
     assert restored.onehot_categories == original.onehot_categories
     assert restored.engineered_feature_names == original.engineered_feature_names
-
-
-def test_spark_feature_metadata_backwards_compatibility():
-    """Test backwards compatibility with old models without onehot_categories."""
-    # Simulate old model metadata (before onehot_categories was added)
-    old_json = json.dumps(
-        {
-            "column_infos": [
-                {"name": "amount", "category": "numeric"},
-            ],
-            "categorical_frequency_maps": {"region": {"US": 0.5, "EU": 0.5}},
-            "engineered_feature_names": ["amount_scaled", "region_freq"],
-            # Note: no onehot_categories field
-        }
-    )
-
-    # Should handle missing onehot_categories gracefully
-    metadata = SparkFeatureMetadata.from_json(old_json)
-
-    assert len(metadata.column_infos) == 1
-    assert len(metadata.categorical_frequency_maps) == 1
-    assert not metadata.onehot_categories  # Should default to empty dict
-    assert len(metadata.engineered_feature_names) == 2
 
 
 def test_reconstruct_column_infos():

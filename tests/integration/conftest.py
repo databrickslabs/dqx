@@ -6,12 +6,14 @@ from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
+import pyspark.sql.functions as F
+import pytest
 from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame, SparkSession
-import pytest
+
 from databricks.connect import DatabricksSession
 from databricks.labs.blueprint.installation import Installation
-from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import ExtraParams, InputConfig, InstallationChecksStorageConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -28,20 +30,6 @@ from tests.integration.test_anomaly_utils import (
     get_standard_3d_training_data,
     get_standard_4d_training_data,
 )
-
-# Import shared session-scoped fixtures for anomaly detection tests
-# These fixtures train models ONCE per session, reducing test suite runtime significantly.
-# All anomaly-specific fixtures are defined in test_anomaly_fixtures.py for better organization.
-
-# Optional imports for anomaly scoring functionality
-try:
-    import pyspark.sql.functions as F
-    from databricks.labs.dqx.anomaly import has_no_anomalies
-    HAS_ANOMALY_SCORING = True
-except ImportError:
-    HAS_ANOMALY_SCORING = False
-    F = None  # type: ignore[assignment,misc]
-    has_no_anomalies = None  # type: ignore[assignment,misc]
 
 
 logging.getLogger("tests").setLevel("DEBUG")
@@ -750,9 +738,6 @@ def anomaly_scorer():
         Returns:
             Scored DataFrame with anomaly metadata
         """
-        if not HAS_ANOMALY_SCORING:
-            pytest.skip("Anomaly scoring dependencies not available")
-
         if merge_columns is None:
             merge_columns = ["transaction_id"]
 

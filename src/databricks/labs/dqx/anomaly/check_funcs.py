@@ -195,7 +195,9 @@ def _score_single_segment(
     )
 
     # Score this segment with optional SHAP (computed in single UDF pass)
-    assert segment_model.features.feature_metadata is not None, f"Model {segment_model.identity.model_name} missing feature_metadata"
+    assert (
+        segment_model.features.feature_metadata is not None
+    ), f"Model {segment_model.identity.model_name} missing feature_metadata"
     segment_scored = _score_with_sklearn_model(
         segment_model.identity.model_uri,
         segment_df,
@@ -473,22 +475,19 @@ def _load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomal
 
 def _load_and_validate_model(
     model_uri: str,
-    model_record: AnomalyModelRecord | None,
+    model_record: AnomalyModelRecord,
 ) -> Any:
     """Load model with validation and error handling.
 
     Args:
         model_uri: MLflow model URI
-        model_record: Optional model record for version validation
+        model_record: Model record for version validation
 
     Returns:
         Loaded sklearn model
     """
-    if model_record:
-        _validate_sklearn_compatibility(model_record)
-        return _load_sklearn_model_with_error_handling(model_uri, model_record)
-    # Fallback for old code paths without model_record
-    return mlflow.sklearn.load_model(model_uri)
+    _validate_sklearn_compatibility(model_record)
+    return _load_sklearn_model_with_error_handling(model_uri, model_record)
 
 
 def _create_scoring_udf(
@@ -593,7 +592,7 @@ def _compute_shap_contributions_in_udf(
         if total > 0:
             normalized = abs_vals / total
             contributions: dict[str, float | None] = {
-                c: float(normalized[j]) for j, c in enumerate(engineered_feature_cols)
+                c: round(float(normalized[j]), 3) for j, c in enumerate(engineered_feature_cols)
             }
         else:
             # EDGE CASE: All SHAP values are 0 or extremely small
@@ -607,7 +606,7 @@ def _compute_shap_contributions_in_udf(
                 f"Row {i}: All SHAP values are zero (shap_vals={shap_vals}). "
                 "Using equal contributions. This typically indicates a very normal data point."
             )
-            equal_contrib = 1.0 / len(engineered_feature_cols)
+            equal_contrib = round(1.0 / len(engineered_feature_cols), 3)
             contributions = {c: equal_contrib for c in engineered_feature_cols}
 
         contributions_list.append(contributions)
@@ -622,7 +621,8 @@ def _score_with_sklearn_model(
     feature_metadata_json: str,
     merge_columns: list[str],
     include_contributions: bool = False,
-    model_record: AnomalyModelRecord | None = None,
+    *,
+    model_record: AnomalyModelRecord,
 ) -> DataFrame:
     """Score DataFrame using scikit-learn model with distributed pandas UDF.
 
@@ -636,7 +636,7 @@ def _score_with_sklearn_model(
         feature_metadata_json: JSON string with feature engineering metadata (from registry)
         merge_columns: Columns to use for joining results back (e.g., primary keys or row IDs).
         include_contributions: If True, compute SHAP feature contributions in the same UDF pass.
-        model_record: Optional model record for version validation and error handling.
+        model_record: Model record for version validation and error handling.
 
     Returns:
         DataFrame with anomaly_score, prediction, and optionally anomaly_contributions columns added
@@ -770,12 +770,8 @@ def _get_and_validate_model_record(
             f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
         )
 
-    # Compute expected config hash
+    # Compute expected config hash and compare with stored hash
     expected_hash = compute_config_hash(columns, segment_by)
-
-    # Compare with stored hash (backward compatible - compute from columns if missing)
-    if record.segmentation.config_hash is None:
-        record.segmentation.config_hash = compute_config_hash(record.training.columns, record.segmentation.segment_by)
 
     if expected_hash != record.segmentation.config_hash:
         raise InvalidParameterError(
@@ -840,7 +836,8 @@ def _score_ensemble_models(
     feature_metadata: str,
     merge_columns: list[str],
     include_contributions: bool,
-    model_record: AnomalyModelRecord | None = None,
+    *,
+    model_record: AnomalyModelRecord,
 ) -> DataFrame:
     """Score DataFrame with ensemble of models and compute mean/std."""
     scored_dfs = []
@@ -965,10 +962,6 @@ def _score_global_model(
     """Score using a global (non-segmented) model."""
     # Validate config hash matches
     expected_hash = compute_config_hash(config.columns, config.segment_by)
-
-    # Backward compatibility: compute hash if missing
-    if record.segmentation.config_hash is None:
-        record.segmentation.config_hash = compute_config_hash(record.training.columns, record.segmentation.segment_by)
 
     if expected_hash != record.segmentation.config_hash:
         raise InvalidParameterError(
@@ -1149,6 +1142,11 @@ def has_no_anomalies(
         return _score_global_model(df, record, config)
 
     # Create condition directly from _info.anomaly.is_anomaly (no intermediate column needed)
-    message = F.lit(f"Anomaly score exceeded threshold {score_threshold}")
+    message = F.concat_ws(
+        "",
+        F.lit("Anomaly score "),
+        F.round(F.col("_info").anomaly.score, 3).cast("string"),
+        F.lit(f" exceeded threshold {score_threshold}"),
+    )
     condition_expr = F.col("_info").anomaly.is_anomaly
     return make_condition(condition_expr, message, "has_anomalies"), apply

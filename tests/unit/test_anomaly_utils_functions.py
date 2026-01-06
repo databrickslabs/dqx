@@ -195,28 +195,7 @@ def test_reconstruct_column_infos_all_categories():
 # ============================================================================
 # Feature Metadata JSON Serialization Tests
 # ============================================================================
-
-
-def test_feature_metadata_json_preserves_structure():
-    """Test that JSON serialization preserves data structure."""
-    original = SparkFeatureMetadata(
-        column_infos=[
-            {"name": "col1", "category": "numeric"},
-            {"name": "col2", "category": "categorical", "cardinality": 5},
-        ],
-        categorical_frequency_maps={"col2": {"A": 0.5, "B": 0.3, "C": 0.2}},
-        onehot_categories={"col2": ["A", "B", "C"]},
-        engineered_feature_names=["col1_scaled", "col2_A", "col2_B", "col2_C"],
-    )
-
-    json_str = original.to_json()
-    restored = SparkFeatureMetadata.from_json(json_str)
-
-    # Verify structure is preserved
-    assert restored.column_infos == original.column_infos
-    assert restored.categorical_frequency_maps == original.categorical_frequency_maps
-    assert restored.onehot_categories == original.onehot_categories
-    assert restored.engineered_feature_names == original.engineered_feature_names
+# Note: Full roundtrip test with complex metadata is in test_anomaly_transformers.py
 
 
 def test_feature_metadata_json_handles_empty_maps():

@@ -127,20 +127,23 @@ def test_segment_scoring(
 
     result_with_score = result.select("row_id", "region", "amount", F.col("_info.anomaly.score").alias("anomaly_score"))
     rows = result_with_score.collect()
-    
+
     # Verify we got scores for all rows
     assert all(row.anomaly_score is not None for row in rows), "Some rows missing anomaly scores"
-    
+
     # Verify anomalous values have higher scores than normal values
-    normal_scores = [row.anomaly_score for row in rows if row.row_id in (1, 3)]
-    anomaly_scores = [row.anomaly_score for row in rows if row.row_id in (2, 4)]
-    
-    assert all(a_score > n_score for a_score in anomaly_scores for n_score in normal_scores), \
-        f"Anomaly scores {anomaly_scores} should all be higher than normal scores {normal_scores}"
-    
+    normal_scores = [row.anomaly_score for row in rows if row.row_id in {1, 3}]
+    anomaly_scores = [row.anomaly_score for row in rows if row.row_id in {2, 4}]
+
+    assert all(
+        a_score > n_score for a_score in anomaly_scores for n_score in normal_scores
+    ), f"Anomaly scores {anomaly_scores} should all be higher than normal scores {normal_scores}"
+
     # Verify at least the anomalous rows exceed the threshold
     high_scorers = [row for row in rows if row.anomaly_score > 0.6]
-    assert len(high_scorers) >= 2, f"Expected at least 2 rows with score>0.6, got {len(high_scorers)}. All scores: {[(r.row_id, r.anomaly_score) for r in rows]}"
+    assert (
+        len(high_scorers) >= 2
+    ), f"Expected at least 2 rows with score>0.6, got {len(high_scorers)}. All scores: {[(r.row_id, r.anomaly_score) for r in rows]}"
 
 
 @pytest.mark.nightly

@@ -285,7 +285,7 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
 
     for col in expected_top_level_columns:
         assert col in registry_df.columns
-    
+
     # Verify nested fields exist by accessing them (selecting proves they exist)
     registry_df.select("identity.model_name").limit(1).collect()  # Will error if field doesn't exist
     registry_df.select("training.columns").limit(1).collect()  # Will error if field doesn't exist

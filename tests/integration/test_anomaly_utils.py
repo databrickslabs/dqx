@@ -75,6 +75,7 @@ from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession, DataFrame
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly import has_no_anomalies, AnomalyParams, AnomalyEngine
 
@@ -430,7 +431,7 @@ def train_standard_2d_model(
     train_df = spark.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
 
     # Create AnomalyEngine internally
-    anomaly_engine = AnomalyEngine(spark)
+    anomaly_engine = AnomalyEngine(WorkspaceClient(), spark)
     anomaly_engine.train(
         df=train_df,
         columns=columns,
