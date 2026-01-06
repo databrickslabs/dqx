@@ -307,7 +307,9 @@ def _prepare_training_config(
     existing = registry.get_active_model(derived_registry_table, derived_model_name)
 
     if existing:
-        config_changed = set(columns) != set(existing.training.columns) or segment_by != existing.segmentation.segment_by
+        config_changed = (
+            set(columns) != set(existing.training.columns) or segment_by != existing.segmentation.segment_by
+        )
 
         if config_changed:
             logger.warning(

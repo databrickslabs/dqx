@@ -202,7 +202,7 @@ class AnomalyModelRegistry:
         )
         if not row:
             return None
-        
+
         # Convert nested Row structure to dataclasses
         values = row.asDict(recursive=True)
         record = AnomalyModelRecord(

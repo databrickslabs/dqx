@@ -38,6 +38,7 @@ class DefaultColumnNames(Enum):
 
     ERRORS = "_errors"
     WARNINGS = "_warnings"
+    INFO = "_info"
 
 
 class ColumnArguments(Enum):
@@ -45,6 +46,7 @@ class ColumnArguments(Enum):
 
     ERRORS = "errors"
     WARNINGS = "warnings"
+    INFO = "info"
 
 
 class SingleColumnMixin:

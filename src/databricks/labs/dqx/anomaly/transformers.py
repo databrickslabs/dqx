@@ -70,9 +70,6 @@ class SparkFeatureMetadata:
     def from_json(cls, json_str: str) -> "SparkFeatureMetadata":
         """Deserialize from JSON."""
         data = json.loads(json_str)
-        # Backwards compatibility: old models won't have onehot_categories
-        if "onehot_categories" not in data:
-            data["onehot_categories"] = {}
         return cls(**data)
 
 

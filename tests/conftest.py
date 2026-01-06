@@ -1,47 +1,45 @@
+import logging
 import os
+import re
+from collections.abc import Callable, Generator
+from dataclasses import dataclass, replace
 from datetime import timedelta
+from functools import cached_property
 from io import BytesIO
 from typing import Any
-import re
-import logging
-from collections.abc import Callable, Generator
-from dataclasses import replace, dataclass
-from functools import cached_property
 
-# Apply compatibility patches for test dependencies
-from tests.compat import patch_numba_coverage_compat
-patch_numba_coverage_compat()
-
-# Optional imports for anomaly detection functionality
-try:
-    import tempfile
-    import mlflow
-    from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
-    HAS_ANOMALY_EXTRAS = True
-except ImportError:
-    HAS_ANOMALY_EXTRAS = False
-    # Create placeholders for type hints
-    AnomalyEngine = None  # type: ignore[assignment,misc]
+import tests.compat  # noqa: F401  # Apply numba/coverage compatibility patches
 
 import pytest
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
-from databricks.sdk.retries import retried
+from pyspark.sql.types import IntegerType, StringType, StructField, StructType
+
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.labs.dqx.__about__ import __version__
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
+from databricks.labs.dqx.installer.install import InstallationService, WorkspaceInstaller
 from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
-from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
+from databricks.sdk.retries import retried
+from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
+
+# Optional imports for anomaly detection functionality
+try:
+    import mlflow
+    from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
+
+    HAS_ANOMALY_EXTRAS = True
+except ImportError:
+    HAS_ANOMALY_EXTRAS = False
+    AnomalyEngine = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +64,11 @@ def configure_mlflow_tracking():
     # This avoids filesystem backend deprecation warnings and uses the same
     # backend as production Databricks environments
     mlflow.set_tracking_uri("databricks")
-    
+
     # Set a default experiment for tests (will be created in Databricks workspace)
     # Using /Shared/ path makes it accessible to all users
     mlflow.set_experiment("/Shared/dqx_integration_tests")
-    
+
     yield
     # No cleanup needed - Databricks manages the experiments
 
