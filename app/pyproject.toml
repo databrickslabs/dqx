@@ -1,0 +1,52 @@
+[project]
+name = "databricks-labs-dqx-app"
+dynamic = ["version"]
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.119.0",
+    "pydantic-settings>=2.11.0",
+    "uvicorn>=0.37.0",
+    "databricks-labs-dqx",
+    "databricks-sdk>=0.71.0",
+    "databricks-connect>=16.1.7",
+]
+
+[dependency-groups]
+dev = [
+    "apx",
+    "ruff>=0.14.7",
+]
+
+[tool.apx.metadata]
+app-name = "dqx"
+app-slug = "databricks_labs_dqx_app"
+app-module = "databricks_labs_dqx_app.backend.app:app"
+metadata-path = "src/databricks_labs_dqx_app/_metadata.py"
+
+
+[tool.uv.sources]
+databricks-labs-dqx = { path = "../", editable = true }
+apx = { git = "https://github.com/databricks-solutions/apx.git" }
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+format-jinja = "{{version}}"
+
+[tool.hatch.build.hooks.version]
+path = "src/databricks_labs_dqx_app/_version.py"
+template = '''
+version = "{version}"
+'''
+
+[tool.hatch.build]
+artifacts = ["src/databricks_labs_dqx_app/__dist__", "src/databricks_labs_dqx_app/_metadata.py"]
+exclude = ["src/databricks_labs_dqx_app/ui"]
