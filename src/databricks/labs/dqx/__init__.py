@@ -20,8 +20,10 @@ logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
 logging.getLogger("pyspark.sql.connect.client.logging").setLevel(logging.CRITICAL)
 logging.getLogger("mlflow").setLevel(logging.ERROR)
 
-# Suppress specific MLflow warnings
-warnings.filterwarnings("ignore", category=FutureWarning, message=".*get_latest_versions.*deprecated.*")
+# Suppress MLflow deprecation warnings as safety net during transition to databricks:// tracking URI
+# These should not appear when properly configured, but suppress them just in case
+# warnings.filterwarnings("ignore", category=FutureWarning, message=".*filesystem tracking backend.*deprecated.*")
+# warnings.filterwarnings("ignore", category=FutureWarning, message=".*filesystem model registry backend.*deprecated.*")
 
 # Disable MLflow Trace UI in notebooks
 # databricks-langchain automatically enables MLflow tracing when it's imported

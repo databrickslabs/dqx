@@ -830,8 +830,9 @@ def _model_exists_in_uc(model_name: str) -> bool:
     """
     try:
         client = MlflowClient()
-        # Try to get the latest version - if model doesn't exist, this will raise
-        client.get_latest_versions(model_name, stages=None)
+        # Use get_registered_model instead of deprecated get_latest_versions
+        # This is Unity Catalog compatible and doesn't rely on deprecated stages
+        client.get_registered_model(model_name)
         return True
     except Exception:
         # Model doesn't exist or MLflow API error
