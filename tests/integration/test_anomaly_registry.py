@@ -196,36 +196,43 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
     # Train model - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
-    # Verify all expected columns exist
+    # Verify all expected nested struct columns exist
     registry_df = spark.table(registry_table)
-    expected_columns = [
-        "model_name",
-        "model_uri",
-        "columns",
-        "algorithm",
-        "hyperparameters",
-        "training_rows",
-        "training_time",
-        "mlflow_run_id",
-        "status",
-        "metrics",
-        "mode",
-        "baseline_stats",
-        "feature_importance",
-        "temporal_config",
-        "segment_by",
-        "segment_values",
-        "is_global_model",
-        "column_types",
-        "feature_metadata",
-        "sklearn_version",
-        "config_hash",
-    ]
+    expected_top_level_columns = ["identity", "training", "features", "segmentation"]
 
     actual_columns = registry_df.columns
 
-    for col in expected_columns:
-        assert col in actual_columns, f"Missing column: {col}"
+    for col in expected_top_level_columns:
+        assert col in actual_columns, f"Missing top-level column: {col}"
+    
+    # Verify schema contains expected nested fields
+    schema_str = str(registry_df.schema)
+    expected_nested_fields = [
+        "model_name",
+        "model_uri",
+        "algorithm",
+        "mlflow_run_id",
+        "status",
+        "columns",
+        "hyperparameters",
+        "training_rows",
+        "training_time",
+        "metrics",
+        "baseline_stats",
+        "mode",
+        "feature_importance",
+        "temporal_config",
+        "column_types",
+        "feature_metadata",
+        "segment_by",
+        "segment_values",
+        "is_global_model",
+        "sklearn_version",
+        "config_hash",
+    ]
+    
+    for field in expected_nested_fields:
+        assert field in schema_str, f"Missing nested field in schema: {field}"
 
 
 @pytest.mark.nightly
@@ -350,7 +357,7 @@ def test_config_hash_stored_during_training(spark: SparkSession, make_random: st
 
 
 @pytest.mark.nightly
-def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_engine):
+def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_engine, caplog):
     """Test that warning is issued when retraining with different config."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
@@ -366,9 +373,8 @@ def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_en
     )
 
     # Retrain with different columns (should warn)
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-
+    import logging
+    with caplog.at_level(logging.WARNING):
         anomaly_engine.train(
             df=df,
             columns=["amount", "quantity", "discount"],
@@ -376,10 +382,11 @@ def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_en
             registry_table=registry_table,
         )
 
-        # Check that config change warning was issued
-        config_warnings = [warning for warning in w if "different configuration" in str(warning.message)]
-        assert len(config_warnings) > 0
-        assert "will be archived" in str(config_warnings[0].message)
+    # Check that config change warning was logged
+    warning_messages = [record.message for record in caplog.records if record.levelname == "WARNING"]
+    config_warnings = [msg for msg in warning_messages if "different configuration" in msg]
+    assert len(config_warnings) > 0, f"Expected config warning, got: {warning_messages}"
+    assert "will be archived" in config_warnings[0]
 
 
 @pytest.mark.nightly
