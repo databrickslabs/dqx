@@ -359,7 +359,7 @@ def _register_single_model_to_mlflow(
         # Log scikit-learn model with signature
         model_info = mlflow.sklearn.log_model(
             sk_model=model,
-            artifact_path="model",
+            name="model",
             registered_model_name=model_name,
             signature=signature,
         )
@@ -1252,7 +1252,7 @@ def _train_ensemble(
             ensemble_model_name = f"{model_name}_ensemble_{i}"
             model_info = mlflow.sklearn.log_model(
                 sk_model=model,
-                artifact_path="model",
+                name="model",
                 registered_model_name=ensemble_model_name,
                 signature=signature,
             )

@@ -279,21 +279,17 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
         pass
     assert table_exists
 
-    # Verify table has expected schema
+    # Verify table has expected schema (nested structs)
     registry_df = spark.table(registry_table)
-    expected_columns = [
-        "model_name",
-        "model_uri",
-        "columns",
-        "algorithm",
-        "training_time",
-        "status",
-        "baseline_stats",
-        "feature_importance",
-    ]
+    expected_top_level_columns = ["identity", "training", "features", "segmentation"]
 
-    for col in expected_columns:
+    for col in expected_top_level_columns:
         assert col in registry_df.columns
+    
+    # Verify nested fields exist by accessing them (selecting proves they exist)
+    registry_df.select("identity.model_name").limit(1).collect()  # Will error if field doesn't exist
+    registry_df.select("training.columns").limit(1).collect()  # Will error if field doesn't exist
+    registry_df.select("features.feature_importance").limit(1).collect()  # Will error if field doesn't exist
 
 
 @pytest.mark.nightly

@@ -22,7 +22,6 @@ logging.getLogger("mlflow").setLevel(logging.ERROR)
 
 # Suppress specific MLflow warnings
 warnings.filterwarnings("ignore", category=FutureWarning, message=".*get_latest_versions.*deprecated.*")
-warnings.filterwarnings("ignore", category=Warning, message=".*artifact_path.*is deprecated.*")
 
 # Disable MLflow Trace UI in notebooks
 # databricks-langchain automatically enables MLflow tracing when it's imported
