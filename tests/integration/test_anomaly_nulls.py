@@ -1,51 +1,10 @@
 """Integration tests for null handling in anomaly detection."""
 
-from unittest.mock import MagicMock
-
-import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
-from databricks.sdk import WorkspaceClient
 from tests.integration.test_anomaly_utils import apply_anomaly_check_direct
-
-
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-    return MagicMock(spec=WorkspaceClient)
-
-
-def _setup_anomaly_model(anomaly_engine, train_df, make_random_fn, prefix="test", columns=None):
-    """
-    Helper to train an anomaly model with standard setup.
-
-    Args:
-        anomaly_engine (AnomalyEngine): AnomalyEngine instance
-        train_df (DataFrame): Training DataFrame
-        make_random_fn (Callable): make_random fixture function
-        prefix (str): Prefix for model name
-        columns (list[str] | None): Columns to train on (default: ["amount", "quantity"])
-
-    Returns:
-        dict: dict with model_name and registry_table
-    """
-    if columns is None:
-        columns = ["amount", "quantity"]
-
-    unique_id = make_random_fn(8).lower()
-    model_name = f"main.default.{prefix}_{make_random_fn(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    anomaly_engine.train(
-        df=train_df,
-        columns=columns,
-        model_name=model_name,
-        registry_table=registry_table,
-    )
-
-    return {"model_name": model_name, "registry_table": registry_table}
 
 
 def test_training_filters_nulls(spark: SparkSession, make_random: str, anomaly_engine):
@@ -57,9 +16,16 @@ def test_training_filters_nulls(spark: SparkSession, make_random: str, anomaly_e
     )
 
     # Train (should filter nulls automatically)
-    info = _setup_anomaly_model(anomaly_engine, df, make_random, "test_train_nulls")
-    model_name = info["model_name"]
-    registry_table = info["registry_table"]
+    unique_id = make_random(8).lower()
+    model_name = f"main.default.test_train_nulls_{make_random(4).lower()}"
+    registry_table = f"main.default.{unique_id}_registry"
+
+    anomaly_engine.train(
+        df=df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
 
     # Check registry records training_rows (should be 3, not 5)
     record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
@@ -68,25 +34,18 @@ def test_training_filters_nulls(spark: SparkSession, make_random: str, anomaly_e
     # Note: actual count may vary due to sampling, but should be <= 3
 
 
-def test_nulls_are_skipped_not_flagged(
-    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory
-):
+def test_nulls_are_skipped_not_flagged(spark: SparkSession, shared_2d_model, test_df_factory):
     """Test that rows with nulls are skipped (not flagged as anomalies)."""
-    # Train on normal data (no nulls) with variance
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    info = _setup_anomaly_model(anomaly_engine, train_df, make_random, "test_nulls")
-    model_name = info["model_name"]
-    registry_table = info["registry_table"]
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
 
     # Score data with nulls - use factory
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = test_df_factory(
         spark,
-        normal_rows=[(110.0, 2.1)],
-        anomaly_rows=[(None, 2.0), (100.0, None), (None, None)],
+        normal_rows=[(150.0, 20.0)],  # Middle of training range
+        anomaly_rows=[(None, 20.0), (150.0, None), (None, None)],
         columns_schema="amount double, quantity double",
     )
 
@@ -111,27 +70,21 @@ def test_nulls_are_skipped_not_flagged(
         assert row["anomaly_score"] is not None
 
 
-def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory):
+def test_partial_nulls(spark: SparkSession, shared_3d_model, test_df_factory):
     """Test behavior when some columns are null, others are non-null."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01, 0.1 + i * 0.001) for i in range(50)],
-        "amount double, quantity double, discount double",
-    )
-
-    info = _setup_anomaly_model(
-        anomaly_engine, train_df, make_random, "test_partial_nulls", columns=["amount", "quantity", "discount"]
-    )
-    model_name = info["model_name"]
-    registry_table = info["registry_table"]
+    # Use shared pre-trained 3D model (no training needed!)
+    model_name = shared_3d_model["model_name"]
+    registry_table = shared_3d_model["registry_table"]
 
     # Test data with partial nulls - use factory
+    # Use values within training range (100-300 for amount, 10-50 for quantity, 0.1-0.5 for discount)
     test_df = test_df_factory(
         spark,
-        normal_rows=[(112.0, 2.1, 0.11)],  # No nulls, middle values
+        normal_rows=[(200.0, 30.0, 0.3)],  # Middle of training range
         anomaly_rows=[
-            (None, 2.0, 0.1),  # amount is null
-            (100.0, None, 0.1),  # quantity is null
-            (100.0, 2.0, None),  # discount is null
+            (None, 30.0, 0.3),  # amount is null
+            (200.0, None, 0.3),  # quantity is null
+            (200.0, 30.0, None),  # discount is null
         ],
         columns_schema="amount double, quantity double, discount double",
     )
@@ -154,21 +107,17 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
     assert rows[3]["anomaly_score"] is not None  # Null imputed
 
 
-def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory):
+def test_all_nulls_row(spark: SparkSession, shared_2d_model, test_df_factory):
     """Test row with all nulls in anomaly columns is skipped."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    info = _setup_anomaly_model(anomaly_engine, train_df, make_random, "test_all_nulls")
-    model_name = info["model_name"]
-    registry_table = info["registry_table"]
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
 
     # Test data with all nulls - use factory
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = test_df_factory(
         spark,
-        normal_rows=[(112.0, 2.1)],
+        normal_rows=[(200.0, 30.0)],  # Middle of training range
         anomaly_rows=[(None, None)],
         columns_schema="amount double, quantity double",
     )
@@ -184,26 +133,20 @@ def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: 
     assert rows[1]["anomaly_score"] is not None  # All nulls imputed to 0
 
 
-def test_mixed_null_and_anomaly(
-    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory
-):
+def test_mixed_null_and_anomaly(spark: SparkSession, shared_2d_model, test_df_factory):
     """Test dataset with both nulls and anomalies."""
-    train_df = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0 + i * 0.01) for i in range(50)],
-        "amount double, quantity double",
-    )
-
-    info = _setup_anomaly_model(anomaly_engine, train_df, make_random, "test_mixed")
-    model_name = info["model_name"]
-    registry_table = info["registry_table"]
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
 
     # Test data: normal, null, anomaly - use factory
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = test_df_factory(
         spark,
-        normal_rows=[(112.0, 2.1)],  # Normal (middle of training range)
+        normal_rows=[(200.0, 30.0)],  # Normal (middle of training range)
         anomaly_rows=[
-            (None, 2.0),  # Null
-            (9999.0, 1.0),  # Anomaly
+            (None, 30.0),  # Null
+            (9999.0, 1.0),  # Anomaly (far outside training range)
         ],
         columns_schema="amount double, quantity double",
     )

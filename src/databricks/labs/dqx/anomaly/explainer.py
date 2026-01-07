@@ -178,9 +178,9 @@ def add_top_contributors_to_message(df: DataFrame, threshold: float, top_n: int 
         if not contributions_map:
             return ""
 
-        # Sort by contribution value (descending)
+        # Sort by absolute contribution value (descending) to rank by impact magnitude
         sorted_contribs = sorted(
-            contributions_map.items(), key=lambda x: x[1] if x[1] is not None else 0.0, reverse=True
+            contributions_map.items(), key=lambda x: abs(x[1]) if x[1] is not None else 0.0, reverse=True
         )
 
         # Take top N

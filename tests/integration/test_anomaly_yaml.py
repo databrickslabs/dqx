@@ -8,7 +8,6 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from tests.integration.test_anomaly_utils import train_simple_2d_model, train_simple_3d_model
 
 
 @pytest.fixture
@@ -17,14 +16,11 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test applying anomaly checks defined in YAML."""
-    unique_id = make_random(8).lower()
-    model_name = f"test_yaml_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    # Train model first - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
 
     # Define checks in YAML format
     checks_yaml = f"""
@@ -41,8 +37,9 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
 
     checks = yaml.safe_load(checks_yaml)
 
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        [(1, 150.0, 20.0), (2, 9999.0, 1.0)],  # Normal + extreme anomaly
         "transaction_id int, amount double, quantity double",
     )
 
@@ -58,14 +55,11 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
-def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test YAML with multiple anomaly and standard checks."""
-    unique_id = make_random(8).lower()
-    model_name = f"test_yaml_multi_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    # Train model with more training data for stability - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=200)
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
 
     # Define multiple checks in YAML
     checks_yaml = f"""
@@ -87,12 +81,13 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
 
     checks = yaml.safe_load(checks_yaml)
 
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = spark.createDataFrame(
         [
-            (1, 150.0, 3.0),
-            (2, None, 3.0),
-            (3, 9999.0, 1.0),
-        ],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
+            (1, 200.0, 30.0),  # Normal - middle of training range
+            (2, None, 30.0),  # Null
+            (3, 9999.0, 1.0),  # Extreme anomaly
+        ],
         "transaction_id int, amount double, quantity double",
     )
 
@@ -114,14 +109,11 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
     assert len(row2_errors) > 0
 
 
-def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test YAML configuration with custom score_threshold."""
-    unique_id = make_random(8).lower()
-    model_name = f"test_yaml_threshold_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    # Train model - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
 
     # Define check with custom threshold
     checks_yaml = f"""
@@ -138,8 +130,9 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
 
     checks = yaml.safe_load(checks_yaml)
 
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 150.0, 1.8)],  # Slightly unusual but not extreme
+        [(1, 150.0, 20.0), (2, 200.0, 25.0)],  # Normal values in training range
         "transaction_id int, amount double, quantity double",
     )
 
@@ -154,14 +147,11 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
     assert all(count == 0 for count in error_counts) or sum(error_counts) <= 1
 
 
-def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, shared_3d_model):
     """Test YAML configuration with include_contributions flag."""
-    unique_id = make_random(8).lower()
-    model_name = f"test_yaml_contrib_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    # Train 3D model - use helper
-    train_simple_3d_model(spark, anomaly_engine, model_name, registry_table, train_size=30)
+    # Use shared pre-trained 3D model (no training needed!)
+    model_name = shared_3d_model["model_name"]
+    registry_table = shared_3d_model["registry_table"]
 
     # Define check with contributions
     checks_yaml = f"""
@@ -179,6 +169,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
 
     checks = yaml.safe_load(checks_yaml)
 
+    # Extreme anomaly (far outside training range)
     test_df = spark.createDataFrame(
         [(1, 9999.0, 1.0, 0.95)],
         "transaction_id int, amount double, quantity double, discount double",
@@ -194,14 +185,11 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
     assert len(rows[0]["_errors"]) > 0
 
 
-def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test YAML configuration with drift_threshold."""
-    unique_id = make_random(8).lower()
-    model_name = f"test_yaml_drift_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    # Train model with more data for stability - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=200)
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
 
     # Define check with drift threshold
     checks_yaml = f"""
@@ -219,8 +207,9 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
 
     checks = yaml.safe_load(checks_yaml)
 
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = spark.createDataFrame(
-        [(1, 150.0, 3.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
+        [(1, 200.0, 30.0)],  # Middle of training range
         "transaction_id int, amount double, quantity double",
     )
 
@@ -235,14 +224,11 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
     assert len(row_errors) == 0
 
 
-def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test YAML with criticality='warn'."""
-    unique_id = make_random(8).lower()
-    model_name = f"test_yaml_warn_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
-
-    # Train model with more data for stability - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=200)
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
 
     # Define check with warn criticality
     checks_yaml = f"""
@@ -259,8 +245,9 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_
 
     checks = yaml.safe_load(checks_yaml)
 
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = spark.createDataFrame(
-        [(1, 150.0, 3.0), (2, 9999.0, 1.0)],  # Use middle values from training range [100, 199.5] and [2.0, 3.99]
+        [(1, 200.0, 30.0), (2, 9999.0, 1.0)],  # Normal + extreme anomaly
         "transaction_id int, amount double, quantity double",
     )
 
