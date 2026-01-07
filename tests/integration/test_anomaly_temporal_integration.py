@@ -17,7 +17,6 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-@pytest.mark.nightly
 def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test extract → train → score flow with temporal features."""
     unique_id = make_random(8).lower()
@@ -67,7 +66,6 @@ def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client
     assert row["_info"]["anomaly"]["score"] is not None
 
 
-@pytest.mark.nightly
 def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test training with multiple temporal features."""
     unique_id = make_random(8).lower()
@@ -128,7 +126,6 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, 
     assert row["_info"]["anomaly"]["score"] is not None
 
 
-@pytest.mark.nightly
 def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test that model learns time-based patterns."""
     unique_id = make_random(8).lower()
@@ -192,7 +189,6 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
     # differentiate between hours. A real use case would have varied amounts per hour.
 
 
-@pytest.mark.nightly
 def test_weekend_feature(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
     """Test is_weekend temporal feature."""
     unique_id = make_random(8).lower()
@@ -242,7 +238,6 @@ def test_weekend_feature(spark: SparkSession, mock_workspace_client, make_random
     assert row["_info"]["anomaly"]["score"] is not None
 
 
-@pytest.mark.nightly
 def test_missing_timestamp_column_behavior(spark: SparkSession):
     """Test behavior when timestamp column doesn't exist."""
     df = spark.createDataFrame(
@@ -258,7 +253,6 @@ def test_missing_timestamp_column_behavior(spark: SparkSession):
         result_df.collect()
 
 
-@pytest.mark.nightly
 def test_temporal_features_with_nulls(spark: SparkSession):
     """Test temporal feature extraction with null timestamps."""
     df = spark.sql(

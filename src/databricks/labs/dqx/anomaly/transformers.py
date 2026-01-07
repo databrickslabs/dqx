@@ -391,7 +391,7 @@ class ColumnTypeClassifier:
         # - ID fields are almost never floating point numbers
         # - Continuous features like speed_mph, price, revenue are legitimately high-cardinality
         is_float_type = isinstance(info.spark_type, (T.FloatType, T.DoubleType))
-        
+
         if info.category in {'numeric', 'categorical'} and total_rows > 0 and not is_float_type:
             distinct_count = self._get_distinct_count(info, cardinality_stats)
             if distinct_count:

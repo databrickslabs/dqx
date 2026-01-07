@@ -60,7 +60,6 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
     assert has_error, "Expected at least one row to have anomaly error"
 
 
-@pytest.mark.nightly
 def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that apply_checks_by_metadata_and_split correctly splits valid/quarantine."""
     # Use shared pre-trained model (no training needed!)
@@ -112,7 +111,6 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
     assert "amount" in quarantine_df.columns
 
 
-@pytest.mark.nightly
 def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that quarantine DataFrame has expected structure."""
     # Use shared pre-trained model (no training needed!)
@@ -216,7 +214,6 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
     assert len(rows[2]["_errors"]) > 0
 
 
-@pytest.mark.nightly
 def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test anomaly check with criticality='error'."""
     # Use shared pre-trained model (no training needed!)
@@ -252,7 +249,6 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
     assert "_errors" in quarantine_df.columns
 
 
-@pytest.mark.nightly
 def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test anomaly check with criticality='warn'."""
     # Use shared pre-trained model (no training needed!)
@@ -292,7 +288,6 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
     assert anomalous_row["_warnings"] is not None or anomalous_row["_errors"] is not None
 
 
-@pytest.mark.nightly
 def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_client, shared_2d_model):
     """Test that get_valid() and get_invalid() helpers work with anomaly checks."""
     # Use shared pre-trained model (no training needed!)

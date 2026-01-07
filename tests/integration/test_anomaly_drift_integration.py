@@ -19,7 +19,6 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-@pytest.mark.nightly
 def test_drift_detection_warns_on_distribution_shift(
     spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
 ):
@@ -65,7 +64,6 @@ def test_drift_detection_warns_on_distribution_shift(
         # Note: Global model warnings don't include "anomaly.train", they include retrain_cmd format
 
 
-@pytest.mark.nightly
 def test_no_drift_warning_on_similar_distribution(
     spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
 ):
@@ -106,7 +104,6 @@ def test_no_drift_warning_on_similar_distribution(
         assert len(drift_warnings) == 0
 
 
-@pytest.mark.nightly
 def test_drift_detection_disabled_when_threshold_none(
     spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
 ):
@@ -152,7 +149,6 @@ def test_drift_detection_disabled_when_threshold_none(
 # ============================================================================
 
 
-@pytest.mark.nightly
 def test_drift_detector_no_drift_when_distributions_match(spark):
     """Test that drift is not detected when distributions are identical."""
     df = spark.createDataFrame(
@@ -179,7 +175,6 @@ def test_drift_detector_no_drift_when_distributions_match(spark):
     assert len(result.drifted_columns) == 0
 
 
-@pytest.mark.nightly
 def test_drift_detector_drift_detected_when_mean_shifts(spark):
     """Test that drift is detected when mean shifts significantly."""
     df = spark.createDataFrame(
@@ -207,7 +202,6 @@ def test_drift_detector_drift_detected_when_mean_shifts(spark):
     assert result.recommendation == "retrain"
 
 
-@pytest.mark.nightly
 def test_drift_detector_with_multiple_columns(spark):
     """Test drift detection with multiple columns."""
     df = spark.createDataFrame(

@@ -19,7 +19,6 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-@pytest.mark.nightly
 def test_explicit_segment_training(
     spark: SparkSession,
     mock_workspace_client,
@@ -64,7 +63,6 @@ def test_explicit_segment_training(
     assert any("region=APAC" in name for name in model_names)
 
 
-@pytest.mark.nightly
 def test_segment_scoring(
     spark: SparkSession,
     mock_workspace_client,
@@ -146,7 +144,6 @@ def test_segment_scoring(
     ), f"Expected at least 2 rows with score>0.6, got {len(high_scorers)}. All scores: {[(r.row_id, r.anomaly_score) for r in rows]}"
 
 
-@pytest.mark.nightly
 def test_multi_column_segments(
     spark: SparkSession,
     mock_workspace_client,
@@ -186,7 +183,6 @@ def test_multi_column_segments(
     assert len(models) == 4
 
 
-@pytest.mark.nightly
 def test_unknown_segment_handling(
     spark: SparkSession,
     mock_workspace_client,

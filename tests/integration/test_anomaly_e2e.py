@@ -87,7 +87,6 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     assert second_errors is not None and len(second_errors) > 0, "Anomalous row should have errors"
 
 
-@pytest.mark.nightly
 def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test that anomaly scores are added to the DataFrame."""
     # Create unique schema and table names for test isolation
@@ -135,7 +134,6 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
     assert all(row["anomaly_score"] is not None for row in rows)
 
 
-@pytest.mark.nightly
 def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, make_random, make_schema, anomaly_engine):
     """Test that model_name and registry_table can be omitted for scoring."""
     # Create unique schema and table names for test isolation
@@ -193,7 +191,6 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, ma
     assert errors is None or len(errors) == 0, f"Expected no errors, got: {errors}"
 
 
-@pytest.mark.nightly
 def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test that anomalous rows are flagged based on score_threshold."""
     # Create unique schema and table names for test isolation
@@ -246,7 +243,6 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     assert anomaly_errors is not None and len(anomaly_errors) > 0, "Anomalous row should have errors"
 
 
-@pytest.mark.nightly
 def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test that registry table is auto-created if missing."""
     # Create unique schema and table names for test isolation
@@ -292,7 +288,6 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
     registry_df.select("features.feature_importance").limit(1).collect()  # Will error if field doesn't exist
 
 
-@pytest.mark.nightly
 def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
     """Test training and scoring with multiple columns."""
     # Create unique schema and table names for test isolation
