@@ -127,17 +127,18 @@ class ColumnTypeClassifier:
         Returns:
             Tuple of (column_type_infos, warnings)
         """
-        # Check max columns limit
+        warnings_list = []
+
+        # Warn if many columns selected (soft limit)
         if len(columns) > self.max_input_columns:
-            raise InvalidParameterError(
-                f"Anomaly detection supports max {self.max_input_columns} columns, got {len(columns)}. "
-                f"Select the most important columns for anomaly detection. "
-                f"Tip: Use anomaly.auto_discover() or manually specify columns=['col1', 'col2', ...]"
+            warnings_list.append(
+                f"Training with {len(columns)} columns (recommended max: {self.max_input_columns}). "
+                f"More columns may increase training/scoring time and reduce model quality. "
+                f"Tip: Omit 'columns' parameter to let DQX auto-select the most relevant columns."
             )
 
         schema = {f.name: f.dataType for f in df.schema.fields}
         column_infos = []
-        warnings_list = []
         unsupported_cols = []
 
         for col_name in columns:
@@ -165,17 +166,13 @@ class ColumnTypeClassifier:
         id_warnings = self._check_for_id_fields(df, column_infos)
         warnings_list.extend(id_warnings)
 
-        # Check estimated feature count
+        # Warn if estimated feature count is high (soft limit)
         estimated_features = self._estimate_feature_count(column_infos)
         if estimated_features > self.max_engineered_features:
             breakdown = self._get_feature_breakdown(column_infos)
-            raise InvalidParameterError(
-                f"Feature engineering would create {estimated_features} features (limit: {self.max_engineered_features}). "
-                f"Feature breakdown:\n{breakdown}\n"
-                f"Suggestions:\n"
-                f"  1. Reduce number of categorical columns (highest impact)\n"
-                f"  2. Use columns with lower cardinality\n"
-                f"  3. Prioritize numeric/boolean columns (1 feature each)"
+            warnings_list.append(
+                f"Feature engineering will create {estimated_features} features (recommended max: {self.max_engineered_features}). "
+                f"This may increase training/scoring time. Feature breakdown:\n{breakdown}"
             )
 
         return column_infos, warnings_list
@@ -388,21 +385,24 @@ class ColumnTypeClassifier:
         if id_pattern.search(col_name):
             issues.append("matches ID naming pattern")
 
-        # Check 3: High cardinality (only for numeric and categorical columns)
-        # IMPORTANT: Use BOTH conditions (AND not OR) to avoid false positives:
-        # - distinct_count > 1000 alone would flag legitimate continuous numeric fields
-        #   (e.g., expenses, revenue with decimals naturally have many distinct values)
-        # - Instead, require BOTH high absolute count AND high uniqueness ratio (>80%)
-        #   This better identifies true ID fields vs. legitimate numeric features
-        if info.category in {'numeric', 'categorical'} and total_rows > 0:
+        # Check 3: High cardinality (only for integer/categorical columns, NOT floats)
+        # IMPORTANT: Skip float/double columns because:
+        # - Float/double values naturally have high cardinality due to decimal precision
+        # - ID fields are almost never floating point numbers
+        # - Continuous features like speed_mph, price, revenue are legitimately high-cardinality
+        is_float_type = isinstance(info.spark_type, (T.FloatType, T.DoubleType))
+        
+        if info.category in {'numeric', 'categorical'} and total_rows > 0 and not is_float_type:
             distinct_count = self._get_distinct_count(info, cardinality_stats)
             if distinct_count:
                 uniqueness_ratio = distinct_count / total_rows
                 # Only warn if BOTH conditions are true (strict AND)
                 if distinct_count > 1000 and uniqueness_ratio > 0.8:
+                    # Cap display at 100% since approx_count_distinct can slightly exceed total_rows
+                    display_ratio = min(uniqueness_ratio, 1.0)
                     issues.append(
-                        f"has very high cardinality ({distinct_count} distinct values, "
-                        f"{uniqueness_ratio:.1%} unique)"
+                        f"has very high cardinality (~{distinct_count} distinct values, "
+                        f"~{display_ratio:.0%} unique)"
                     )
 
         return issues

@@ -133,16 +133,16 @@ def test_column_name_types():
 
 
 def test_max_columns_limit():
-    """Test maximum columns limit validation."""
-    max_columns = 10
+    """Test maximum columns limit validation (soft limit - warns but proceeds)."""
+    max_columns = 25
 
-    # Valid: under limit
-    columns_ok = [f"col_{i}" for i in range(8)]
+    # Valid: under recommended limit
+    columns_ok = [f"col_{i}" for i in range(20)]
     assert len(columns_ok) <= max_columns
 
-    # Invalid: over limit
-    columns_too_many = [f"col_{i}" for i in range(15)]
-    assert len(columns_too_many) > max_columns
+    # Above limit (will warn but not error)
+    columns_above_limit = [f"col_{i}" for i in range(30)]
+    assert len(columns_above_limit) > max_columns
 
 
 def test_duplicate_column_detection():
@@ -240,17 +240,17 @@ def test_max_engineered_features_validation():
 
 
 def test_max_input_columns_validation():
-    """Test max input columns limit."""
-    default_max_input = 10
+    """Test max input columns limit (soft limit - warns but proceeds)."""
+    default_max_input = 25
 
-    # Valid input column counts
-    valid_counts = [1, 5, 8, 10]
+    # Valid input column counts (under recommended limit)
+    valid_counts = [1, 5, 10, 20, 25]
     for count in valid_counts:
         assert count <= default_max_input
 
-    # Too many input columns
-    invalid_counts = [15, 20, 50]
-    for count in invalid_counts:
+    # Columns above recommended limit (will warn but not error)
+    above_limit_counts = [30, 40, 50]
+    for count in above_limit_counts:
         assert count > default_max_input
 
 

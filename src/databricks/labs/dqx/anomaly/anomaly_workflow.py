@@ -43,5 +43,4 @@ class AnomalyTrainerWorkflow(Workflow):
             model_name=anomaly_config.model_name,
             registry_table=anomaly_config.registry_table,
             params=anomaly_config.params,
-            profiler_table=anomaly_config.profiler_table,
         )
