@@ -49,7 +49,6 @@ def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_r
     assert "_info" in result_df.columns
 
 
-@pytest.mark.nightly
 def test_multiple_models_in_same_registry(
     spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory, anomaly_scorer
 ):
@@ -109,7 +108,6 @@ def test_multiple_models_in_same_registry(
     assert "anomaly_score" in result_b.columns
 
 
-@pytest.mark.nightly
 def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that get_active_model() returns the most recent model."""
     unique_id = make_random(8).lower()
@@ -149,7 +147,6 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
     assert archived_count == 1
 
 
-@pytest.mark.nightly
 def test_model_staleness_warning(
     spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory
 ):
@@ -189,7 +186,6 @@ def test_model_staleness_warning(
         assert "Consider retraining" in str(stale_warnings[0].message)
 
 
-@pytest.mark.nightly
 def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that registry table has all expected columns."""
     unique_id = make_random(8).lower()
@@ -238,7 +234,6 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
         assert field in schema_str, f"Missing nested field in schema: {field}"
 
 
-@pytest.mark.nightly
 def test_registry_stores_metadata(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that registry stores comprehensive metadata."""
     unique_id = make_random(8).lower()
@@ -274,7 +269,6 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: str, anomaly
     assert "recommended_threshold" in record["training"]["metrics"]
 
 
-@pytest.mark.nightly
 def test_nonexistent_registry_returns_none(spark: SparkSession):
     """Test that get_active_model returns None for non-existent registry."""
     registry = AnomalyModelRegistry(spark)
@@ -284,7 +278,6 @@ def test_nonexistent_registry_returns_none(spark: SparkSession):
     assert model is None
 
 
-@pytest.mark.nightly
 def test_nonexistent_model_returns_none(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that get_active_model returns None for non-existent model."""
     unique_id = make_random(8).lower()
@@ -301,7 +294,6 @@ def test_nonexistent_model_returns_none(spark: SparkSession, make_random: str, a
     assert model is None
 
 
-@pytest.mark.nightly
 def test_config_hash_stability(spark: SparkSession):
     """Test that config_hash is stable for same inputs."""
     columns = ["amount", "quantity", "discount"]
@@ -315,7 +307,6 @@ def test_config_hash_stability(spark: SparkSession):
     assert len(hash1) == 16  # 16 hex characters
 
 
-@pytest.mark.nightly
 def test_config_hash_order_independence(spark: SparkSession):
     """Test that config_hash is order-independent (columns are sorted internally)."""
     # Different order should produce same hash
@@ -325,7 +316,6 @@ def test_config_hash_order_independence(spark: SparkSession):
     assert hash1 == hash2
 
 
-@pytest.mark.nightly
 def test_config_hash_differentiation(spark: SparkSession):
     """Test that different configs produce different hashes."""
     hash1 = compute_config_hash(["amount", "quantity"], None)
@@ -359,7 +349,6 @@ def test_config_hash_stored_during_training(spark: SparkSession, make_random: st
     assert record["segmentation"]["config_hash"] == expected_hash
 
 
-@pytest.mark.nightly
 def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_engine, caplog):
     """Test that warning is issued when retraining with different config."""
     unique_id = make_random(8).lower()
@@ -391,7 +380,6 @@ def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_en
     assert "will be archived" in config_warnings[0]
 
 
-@pytest.mark.nightly
 def test_scoring_validates_config_hash(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that scoring validates config hash and errors on mismatch."""
     unique_id = make_random(8).lower()

@@ -48,7 +48,6 @@ def _setup_anomaly_model(anomaly_engine, train_df, make_random_fn, prefix="test"
     return {"model_name": model_name, "registry_table": registry_table}
 
 
-@pytest.mark.nightly
 def test_training_filters_nulls(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that nulls are filtered during training."""
     # Create training data with nulls
@@ -112,7 +111,6 @@ def test_nulls_are_skipped_not_flagged(
         assert row["anomaly_score"] is not None
 
 
-@pytest.mark.nightly
 def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory):
     """Test behavior when some columns are null, others are non-null."""
     train_df = spark.createDataFrame(
@@ -156,7 +154,6 @@ def test_partial_nulls(spark: SparkSession, mock_workspace_client, make_random: 
     assert rows[3]["anomaly_score"] is not None  # Null imputed
 
 
-@pytest.mark.nightly
 def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory):
     """Test row with all nulls in anomaly columns is skipped."""
     train_df = spark.createDataFrame(
@@ -187,7 +184,6 @@ def test_all_nulls_row(spark: SparkSession, mock_workspace_client, make_random: 
     assert rows[1]["anomaly_score"] is not None  # All nulls imputed to 0
 
 
-@pytest.mark.nightly
 def test_mixed_null_and_anomaly(
     spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory
 ):

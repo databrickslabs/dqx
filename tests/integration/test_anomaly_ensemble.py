@@ -19,7 +19,6 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-@pytest.mark.nightly
 def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
     """Test training an ensemble of models."""
     unique_id = make_random(8).lower()
@@ -46,7 +45,6 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
     assert len(uris) == 3
 
 
-@pytest.mark.nightly
 def test_ensemble_scoring_with_confidence(
     spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_scorer
 ):
@@ -91,7 +89,6 @@ def test_ensemble_scoring_with_confidence(
     assert any(std is not None and std > 0 for std in std_values)
 
 
-@pytest.mark.nightly
 def test_ensemble_with_feature_contributions(
     spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_scorer
 ):

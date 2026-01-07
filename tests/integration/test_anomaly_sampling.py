@@ -1,14 +1,12 @@
 """Integration tests for anomaly detection sampling and performance."""
 
 import warnings
-import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import AnomalyParams
 from tests.integration.test_anomaly_utils import train_large_dataset_model
 
 
-@pytest.mark.nightly
 def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that sampling caps at max_rows for large datasets."""
     unique_id = make_random(8).lower()
@@ -28,7 +26,6 @@ def test_sampling_caps_large_datasets(spark: SparkSession, make_random: str, ano
     assert record["training"]["training_rows"] <= 200_000
 
 
-@pytest.mark.nightly
 def test_custom_sampling_parameters(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that custom sample_fraction and max_rows are respected."""
     unique_id = make_random(8).lower()
@@ -54,7 +51,6 @@ def test_custom_sampling_parameters(spark: SparkSession, make_random: str, anoma
     assert record["training"]["training_rows"] <= 300
 
 
-@pytest.mark.nightly
 def test_sampling_warning_issued(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that warning is issued when data is truncated."""
     unique_id = make_random(8).lower()
@@ -79,7 +75,6 @@ def test_sampling_warning_issued(spark: SparkSession, make_random: str, anomaly_
         # Commenting out assertion as implementation may vary
 
 
-@pytest.mark.nightly
 def test_train_validation_split(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that train/validation split works correctly."""
     unique_id = make_random(8).lower()
@@ -109,7 +104,6 @@ def test_train_validation_split(spark: SparkSession, make_random: str, anomaly_e
     # (precision, recall, f1_score, etc.)
 
 
-@pytest.mark.nightly
 def test_custom_train_ratio(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that custom train_ratio is respected."""
     unique_id = make_random(8).lower()
@@ -127,7 +121,6 @@ def test_custom_train_ratio(spark: SparkSession, make_random: str, anomaly_engin
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
 
-@pytest.mark.nightly
 def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that sample_fraction=1.0 uses all data (up to max_rows)."""
     unique_id = make_random(8).lower()
@@ -153,7 +146,6 @@ def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: str, a
     assert record["training"]["training_rows"] >= 390  # At least 78% used for training
 
 
-@pytest.mark.nightly
 def test_minimal_data_with_sampling(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that small datasets work with sampling."""
     unique_id = make_random(8).lower()
@@ -169,7 +161,6 @@ def test_minimal_data_with_sampling(spark: SparkSession, make_random: str, anoma
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=20, params=params)
 
 
-@pytest.mark.nightly
 def test_performance_with_many_columns(spark: SparkSession, make_random: str, anomaly_engine):
     """Test that training completes in reasonable time with many columns."""
     # Create dataset with 10 columns

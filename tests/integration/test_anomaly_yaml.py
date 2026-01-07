@@ -58,7 +58,6 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, make_rand
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
-@pytest.mark.nightly
 def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML with multiple anomaly and standard checks."""
     unique_id = make_random(8).lower()
@@ -115,7 +114,6 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, m
     assert len(row2_errors) > 0
 
 
-@pytest.mark.nightly
 def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with custom score_threshold."""
     unique_id = make_random(8).lower()
@@ -156,7 +154,6 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
     assert all(count == 0 for count in error_counts) or sum(error_counts) <= 1
 
 
-@pytest.mark.nightly
 def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with include_contributions flag."""
     unique_id = make_random(8).lower()
@@ -197,7 +194,6 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, mak
     assert len(rows[0]["_errors"]) > 0
 
 
-@pytest.mark.nightly
 def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML configuration with drift_threshold."""
     unique_id = make_random(8).lower()
@@ -239,7 +235,6 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, m
     assert len(row_errors) == 0
 
 
-@pytest.mark.nightly
 def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test YAML with criticality='warn'."""
     unique_id = make_random(8).lower()
@@ -279,7 +274,6 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, make_
     assert rows[1]["_warnings"] is not None or rows[1]["_errors"] is not None
 
 
-@pytest.mark.nightly
 def test_yaml_parsing_validation(spark: SparkSession):
     """Test that invalid YAML is caught."""
     # Invalid YAML (missing required argument)

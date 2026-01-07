@@ -22,7 +22,6 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-@pytest.mark.nightly
 def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that different thresholds flag different numbers of anomalies."""
     unique_id = make_random(8).lower()
@@ -86,7 +85,6 @@ def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory):
     assert 0.0 <= recommended <= 1.0
 
 
-@pytest.mark.nightly
 def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick_model_factory):
     """Test using recommended_threshold from registry in checks."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
@@ -119,7 +117,6 @@ def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick
     assert "anomaly_score" in result_df.columns
 
 
-@pytest.mark.nightly
 def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
     """Test that lower threshold increases recall (catches more anomalies)."""
     unique_id = make_random(8).lower()
@@ -161,7 +158,6 @@ def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, m
     assert flagged_high_recall >= flagged_low_recall
 
 
-@pytest.mark.nightly
 def test_threshold_edge_cases(spark, test_df_factory, mock_workspace_client, quick_model_factory):
     """Test edge case thresholds (0.0 and 1.0)."""
     model_name, registry_table, columns = quick_model_factory(spark)
@@ -189,7 +185,6 @@ def test_threshold_edge_cases(spark, test_df_factory, mock_workspace_client, qui
     assert flagged_one <= flagged_zero
 
 
-@pytest.mark.nightly
 def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
     """Test that same threshold produces consistent results."""
     # Use sample_fraction=1.0 for consistency
@@ -214,7 +209,6 @@ def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
             assert abs(score1 - score2) < 0.001  # Allow small floating point error
 
 
-@pytest.mark.nightly
 def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory):
     """Test that validation metrics are stored in registry."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
