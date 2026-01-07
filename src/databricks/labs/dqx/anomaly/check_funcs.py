@@ -819,11 +819,13 @@ def _check_and_warn_drift(
 
         if drift_result.drift_detected:
             drifted_cols_str = ", ".join(drift_result.drifted_columns)
-            retrain_cmd = f"anomaly.train(df=your_dataframe, columns={columns}, model_name='{model_name}')"
+            retrain_cmd = f"anomaly_engine.train(df=your_dataframe, columns={columns}, model_name='{model_name}')"
             warnings.warn(
-                f"DATA DRIFT DETECTED in columns: {drifted_cols_str} "
-                f"(drift score: {drift_result.drift_score:.2f}). "
-                f"Model may be stale. Consider retraining: {retrain_cmd}",
+                f"DISTRIBUTION DRIFT DETECTED in columns: {drifted_cols_str} "
+                f"(drift score: {drift_result.drift_score:.2f}, sample size: {drift_result.sample_size:,} rows). "
+                f"Input data distribution differs significantly from training baseline. "
+                f"This may indicate data quality issues or changing patterns. "
+                f"Consider retraining: {retrain_cmd}",
                 UserWarning,
                 stacklevel=3,
             )

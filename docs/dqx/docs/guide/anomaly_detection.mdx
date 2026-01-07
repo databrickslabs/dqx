@@ -658,41 +658,107 @@ checks = [
 - With `merge_columns`: faster join, but columns must form a unique key to avoid duplicates
 - Similar to `sql_query` function's `merge_columns` pattern
 
-## Drift detection and retraining
+## Drift detection
 
-Drift detection warns when current data distribution significantly differs from training data:
+### What DQX Detects: Data Distribution Drift
+
+DQX monitors **input data distribution** changes compared to training baseline:
+- Numeric columns: Mean/std deviation shifts (z-score based)
+- Threshold: Default 3.0 (3 standard deviations)
+- **This is NOT model performance monitoring** - it detects data changes, not prediction accuracy
+
+### Configuration
 
 ```python
 from databricks.labs.dqx.anomaly import has_no_anomalies
 
 checks = [
     has_no_anomalies(
-        merge_columns=["order_id"],
         model="my_model",
-        columns=["amount", "quantity"],
-        drift_threshold=3.0,  # Z-score threshold (default)
+        drift_threshold=3.0,  # Enable drift detection (None = disabled)
+        merge_columns=["order_id"]
     )
 ]
 ```
 
-**When drift detected**, you'll see a warning like:
+**Note**: Drift detection is **disabled by default** (`drift_threshold=None`). 
+Enable it explicitly by setting `drift_threshold=3.0` (or another z-score threshold).
+
+Small batches (< 1000 rows) are automatically skipped (hardcoded internally for statistical reliability).
+
+### When Drift Is Detected
+
+You'll see a warning like:
 ```
-UserWarning: Data drift detected in columns: amount, quantity (drift score: 4.2).
-Model may be stale. Consider retraining with AnomalyEngine.train().
+UserWarning: DISTRIBUTION DRIFT DETECTED in columns: amount, quantity (drift score: 4.2, sample size: 5,000 rows).
+Input data distribution differs significantly from training baseline.
+This may indicate data quality issues or changing patterns.
+Consider retraining: anomaly_engine.train(...)
 ```
 
-**Workflow for handling drift**:
-1. Enable drift detection in production checks
-2. Monitor warnings in check results or logs
-3. When drift exceeds threshold, retrain the model using the provided command
-4. New model automatically replaces old one in registry (old archived)
+### Behavior for Edge Cases
 
-**Drift metrics**:
-- Z-score for mean shift
-- Relative change in standard deviation
-- Overall drift score = max across all columns
+#### New Segments (Segmented Models)
 
-Set `drift_threshold=None` to disable drift detection.
+**Scenario**: Model trained on regions ['US', 'EU'], scoring data has 'LATAM'
+
+**Behavior**:
+- Rows with 'LATAM' are **not scored** (NULL anomaly_score)
+- No error raised, scoring continues
+- After join, unscored rows have NULL in `_info.anomaly`
+
+**Action**: Retrain model including new segments when they appear
+
+#### New Categorical Values
+
+**Scenario**: Model trained on categories ['A', 'B', 'C'], scoring data has 'D'
+
+**Behavior**:
+- One-hot encoding: 'D' becomes [0, 0, 0] (all zeros)
+- Frequency encoding: 'D' gets 0.0 frequency (default)
+- Model still runs, may naturally flag as anomaly
+- **This is not drift detection** - it's normal anomaly detection
+
+**Action**: Model often flags these naturally. Retrain if many new categories appear.
+
+#### Small Batches
+
+**Behavior**: Drift check skipped if batch < 1000 rows (hardcoded internally)
+
+**Reason**: Small batches have high statistical variance, leading to false positives. 1000 is the industry standard for production drift detection (ensures high confidence). This happens automatically - no configuration needed.
+
+### When to Retrain
+
+Drift detection is an **indicator**, not a mandate:
+
+**Retrain immediately if**:
+- New segments consistently appear (unscored rows accumulating)
+- Drift warnings appear on multiple consecutive batches
+- Business logic changed (new product lines, regions, etc.)
+
+**Retrain NOT needed if**:
+- Drift warning is one-time (temporary spike)
+- Drift score slightly above threshold (close call)
+- Model performance metrics still acceptable
+
+### What Drift Detection Does NOT Cover
+
+**Concept Drift**: Relationships between features change
+- Example: Transaction patterns that used to be normal are now fraud
+- **DQX does not detect this** - only input distribution changes
+- Solution: Monitor model performance separately (precision/recall on labeled data)
+
+**Model Staleness**: Model predictions become less accurate over time
+- **DQX provides a proxy indicator** (data changed, model might be stale)
+- Solution: Track actual prediction quality metrics in production
+
+### Performance Considerations
+
+Drift detection adds ~2-5 seconds per scoring call (when enabled):
+- **Opt-in only**: Set `drift_threshold=3.0` to enable (disabled by default)
+- Uses single-pass aggregation (efficient)
+- Skips small batches (< 1000 rows) automatically for statistical reliability
+- For streaming/high-frequency scoring: Leave `drift_threshold=None` to disable
 
 ## Temporal data (seasonal patterns)
 
