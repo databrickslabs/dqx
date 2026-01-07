@@ -1,12 +1,13 @@
 """Integration tests for temporal features in anomaly detection."""
 
 from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
 from databricks.sdk import WorkspaceClient
 
@@ -17,40 +18,58 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_temporal_features_end_to_end(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
-    """Test extract → train → score flow with temporal features."""
-    unique_id = make_random(8).lower()
-    model_name = f"test_temporal_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+@pytest.fixture(scope="module")
+def temporal_model(spark_session):
+    """
+    Module-scoped temporal model trained once for all tests in this file.
 
-    # Create data with timestamps
-    df = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-01 09:00:00') as event_time FROM range(50)")
+    Trains a model with temporal features (hour, day_of_week) on standard data.
+    Tests that only need to score with temporal features can reuse this model.
+    """
+    suffix = uuid4().hex[:8]
+    model_name = f"temporal_model_{suffix}"
+    registry_table = f"main.default.temporal_reg_{suffix}"
+
+    # Create data with timestamps (9am on weekdays)
+    df = spark_session.sql("SELECT 100.0 as amount, timestamp('2024-01-15 09:00:00') as event_time FROM range(50)")
 
     # Extract temporal features
     df_with_temporal = extract_temporal_features(df, timestamp_column="event_time", features=["hour", "day_of_week"])
 
-    # Verify temporal columns were added
-    assert "temporal_hour" in df_with_temporal.columns
-    assert "temporal_day_of_week" in df_with_temporal.columns
-
-    # Train on original + temporal features
-    anomaly_engine.train(
+    # Train model
+    engine = AnomalyEngine(WorkspaceClient(), spark_session)
+    engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
         model_name=model_name,
         registry_table=registry_table,
     )
 
-    # Score new data with temporal features
-    test_df = spark.sql(
-        "SELECT 1 as transaction_id, 100.0 as amount, timestamp('2024-01-01 03:00:00') as event_time"
-    )  # 3am might be anomalous
+    return {
+        "model_name": model_name,
+        "registry_table": registry_table,
+        "columns": ["amount", "temporal_hour", "temporal_day_of_week"],
+    }
+
+
+def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
+    """Test extract → train → score flow with temporal features."""
+    # Use module-scoped pre-trained temporal model (no training needed!)
+    model_name = temporal_model["model_name"]
+    registry_table = temporal_model["registry_table"]
+
+    # Verify we can extract temporal features
+    test_df = spark.sql("SELECT 1 as transaction_id, 100.0 as amount, timestamp('2024-01-15 09:00:00') as event_time")
 
     test_df_with_temporal = extract_temporal_features(
         test_df, timestamp_column="event_time", features=["hour", "day_of_week"]
     )
 
-    # Call apply function directly to get _info column
+    # Verify temporal columns were added
+    assert "temporal_hour" in test_df_with_temporal.columns
+    assert "temporal_day_of_week" in test_df_with_temporal.columns
+
+    # Score with temporal features
     _, apply_fn = has_no_anomalies(
         merge_columns=["transaction_id"],
         columns=["amount", "temporal_hour", "temporal_day_of_week"],

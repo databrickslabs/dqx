@@ -11,6 +11,7 @@ from typing import Any
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.window import Window
+from pyspark.errors import AnalysisException
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx.config import OutputConfig
@@ -263,7 +264,7 @@ class AnomalyModelRegistry:
             # and compatible with Unity Catalog
             self.spark.table(table).limit(0).count()
             return True
-        except Exception:  # noqa: BLE001
+        except AnalysisException:
             # Table doesn't exist or no permissions
             return False
 
