@@ -1,0 +1,344 @@
+---
+sidebar_position: 11
+---
+
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Migrating to Spark Declarative Pipeline Expectations
+
+DQX provides a migration tool to convert DQX quality checks to Spark Declarative Pipeline (SDP) Expectations format. This serves as an off-ramp for users who need to migrate from DQX to SDP Expectations, enabling you to export your existing quality checks for use in SDP pipelines.
+
+## Overview
+
+The SDP Migration Converter (`SDPMigrationConverter`) allows you to:
+
+- Convert DQX `DQRowRule` objects to SDP Expectations format
+- Convert YAML files containing DQX check definitions to SDP format
+- Generate Python decorator format (`@dp.expect`) for use in SDP Python pipelines
+- Generate SQL CONSTRAINT format (`CONSTRAINT ... EXPECT`) for use in SDP SQL pipelines
+- Handle filters by incorporating them into expectation expressions
+- Automatically generate and sanitize expectation names
+
+<Admonition type="info" title="When to use SDP Migration">
+The SDP Migration Converter is ideal for:
+- **Migration scenarios**: When you need to migrate from DQX to SDP Expectations
+- **Off-ramp support**: Providing an exit path if you encounter issues with DQX
+- **Adoption assistance**: Helping teams adopt SDP Expectations by converting existing DQX checks
+- **Hybrid approaches**: Using both DQX and SDP Expectations in different parts of your pipeline
+</Admonition>
+
+## Supported Check Functions
+
+The converter supports a subset of row-level check functions. The following functions are currently supported:
+
+- `is_not_null` - Checks that a column is not null
+- `is_not_empty` - Checks that a column is not empty
+- `is_not_null_and_not_empty` - Checks that a column is not null and not empty
+- `is_in_list` - Checks that column values are in an allowed list
+- `is_not_in_list` - Checks that column values are not in a forbidden list
+- `is_in_range` - Checks that column values are within a specified range
+- `is_not_in_range` - Checks that column values are outside a specified range
+- `is_equal_to` - Checks that column values equal a specified value
+- `is_not_equal_to` - Checks that column values do not equal a specified value
+- `is_not_less_than` - Checks that column values are not less than a limit
+- `is_not_greater_than` - Checks that column values are not greater than a limit
+- `regex_match` - Checks that column values match a regex pattern
+- `sql_expression` - Checks using a custom SQL expression
+
+<Admonition type="warning" title="Limitations">
+- Only `DQRowRule` objects are supported. `DQDatasetRule` and other rule types are not currently supported.
+- Unsupported check functions will return a result with `supported=False` and an error message.
+- Complex expressions may require manual adjustment after conversion.
+</Admonition>
+
+## Usage
+
+### Converting from DQRowRule Objects
+
+You can convert individual `DQRowRule` objects or lists of rules:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.check_funcs import is_not_null, is_in_range
+    from databricks.labs.dqx.rule import DQRowRule
+    from databricks.labs.dqx.sdp import SDPMigrationConverter
+
+    # Create converter
+    converter = SDPMigrationConverter()
+
+    # Convert a single rule
+    rule = DQRowRule(check_func=is_not_null, column="col1")
+    result = converter.convert_rule(rule)
+
+    if result.supported:
+        print(f"Name: {result.name}")
+        print(f"Expression: {result.expression}")
+        # Output:
+        # Name: col1_is_not_null
+        # Expression: col1 IS NOT NULL
+
+    # Convert multiple rules
+    rules = [
+        DQRowRule(check_func=is_not_null, column="col1"),
+        DQRowRule(
+            check_func=is_in_range,
+            column="col2",
+            check_func_kwargs={"min_limit": 1, "max_limit": 10}
+        )
+    ]
+    results = converter.convert_checks(rules)
+
+    # Generate Python decorator format
+    python_code = converter.to_python_decorator(results)
+    print(python_code)
+    # Output:
+    # @dp.expect("col1_is_not_null", "col1 IS NOT NULL")
+    # @dp.expect("col2_is_in_range", "col2 >= 1 AND col2 <= 10")
+
+    # Generate SQL CONSTRAINT format
+    sql_statements = converter.to_sql_constraints(results)
+    for stmt in sql_statements:
+        print(stmt)
+    # Output:
+    # CONSTRAINT col1_is_not_null EXPECT (col1 IS NOT NULL)
+    # CONSTRAINT col2_is_in_range EXPECT (col2 >= 1 AND col2 <= 10)
+    ```
+  </TabItem>
+</Tabs>
+
+### Converting from YAML Files
+
+You can convert directly from YAML files containing DQX check definitions:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.sdp import SDPMigrationConverter
+
+    converter = SDPMigrationConverter()
+
+    # Convert YAML file to Python decorator format
+    python_code = converter.convert_yaml_to_python("checks.yaml")
+    print(python_code)
+    # Output:
+    # @dp.expect("col1_is_not_null", "col1 IS NOT NULL")
+    # @dp.expect("col2_is_in_range", "col2 >= 1 AND col2 <= 10")
+
+    # Convert YAML file to SQL CONSTRAINT format
+    sql_statements = converter.convert_yaml_to_sql("checks.yaml")
+    for stmt in sql_statements:
+        print(stmt)
+    # Output:
+    # CONSTRAINT col1_is_not_null EXPECT (col1 IS NOT NULL)
+    # CONSTRAINT col2_is_in_range EXPECT (col2 >= 1 AND col2 <= 10)
+    ```
+  </TabItem>
+</Tabs>
+
+### Example YAML File
+
+Here's an example YAML file that can be converted:
+
+```yaml
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col1
+
+- criticality: error
+  check:
+    function: is_in_range
+    arguments:
+      column: col2
+      min_limit: 1
+      max_limit: 10
+
+- criticality: error
+  check:
+    function: is_in_list
+    arguments:
+      column: status
+      allowed:
+        - active
+        - inactive
+        - pending
+
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col3
+  filter: col4 > 0
+```
+
+## Handling Filters
+
+When a DQX check has a filter, it is automatically incorporated into the SDP expectation expression using AND logic:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.check_funcs import is_not_null
+    from databricks.labs.dqx.rule import DQRowRule
+    from databricks.labs.dqx.sdp import SDPMigrationConverter
+
+    converter = SDPMigrationConverter()
+
+    # Rule with filter
+    rule = DQRowRule(
+        check_func=is_not_null,
+        column="col1",
+        filter="col2 > 0"
+    )
+    result = converter.convert_rule(rule)
+
+    print(result.expression)
+    # Output: (col1 IS NOT NULL) AND (col2 > 0)
+    ```
+  </TabItem>
+</Tabs>
+
+## Name Generation
+
+The converter automatically generates sanitized names for expectations. If a rule has a custom name, it will be used (after sanitization). Otherwise, a name is generated from the column name and function name:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.check_funcs import is_not_null
+    from databricks.labs.dqx.rule import DQRowRule
+    from databricks.labs.dqx.sdp import SDPMigrationConverter
+
+    converter = SDPMigrationConverter()
+
+    # Rule with custom name
+    rule1 = DQRowRule(
+        check_func=is_not_null,
+        column="col1",
+        name="custom_check_name"
+    )
+    result1 = converter.convert_rule(rule1)
+    print(result1.name)  # Output: custom_check_name
+
+    # Rule without custom name (auto-generated)
+    rule2 = DQRowRule(check_func=is_not_null, column="col1")
+    result2 = converter.convert_rule(rule2)
+    print(result2.name)  # Output: col1_is_not_null
+    ```
+  </TabItem>
+</Tabs>
+
+## Error Handling
+
+When a check cannot be converted (e.g., unsupported function), the converter returns a result with `supported=False` and an error message:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.sdp import SDPMigrationConverter
+
+    converter = SDPMigrationConverter()
+    results = converter.convert_yaml("checks.yaml")
+
+    for result in results:
+        if not result.supported:
+            print(f"Unsupported check: {result.error_message}")
+        else:
+            print(f"Converted: {result.name} -> {result.expression}")
+    ```
+  </TabItem>
+</Tabs>
+
+## Integration with SDP Pipelines
+
+Once you have the converted expectations, you can use them in your SDP pipelines:
+
+### Python Pipeline Example
+
+```python
+import pyspark.sql.functions as F
+from databricks.labs.dqx.sdp import SDPMigrationConverter
+
+# Convert your DQX checks
+converter = SDPMigrationConverter()
+python_code = converter.convert_yaml_to_python("checks.yaml")
+
+# Use in your SDP pipeline
+@dp.table(name="my_table")
+@dp.expect("col1_is_not_null", "col1 IS NOT NULL")
+@dp.expect("col2_is_in_range", "col2 >= 1 AND col2 <= 10")
+def my_table():
+    return spark.read.table("source_table")
+```
+
+### SQL Pipeline Example
+
+```sql
+-- Convert your DQX checks to SQL
+-- CONSTRAINT col1_is_not_null EXPECT (col1 IS NOT NULL)
+-- CONSTRAINT col2_is_in_range EXPECT (col2 >= 1 AND col2 <= 10)
+
+CREATE OR REFRESH TABLE my_table
+AS SELECT * FROM source_table;
+```
+
+<Admonition type="tip" title="Best Practices">
+- Review converted expectations before using them in production pipelines
+- Test converted expectations on sample data to ensure they work as expected
+- Keep your original DQX checks as a backup during migration
+- Use version control for both DQX checks and converted SDP expectations
+- Consider converting checks incrementally rather than all at once
+</Admonition>
+
+## Complete Example
+
+Here's a complete example showing the full workflow:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.sdp import SDPMigrationConverter
+
+    # Initialize converter
+    converter = SDPMigrationConverter()
+
+    # Convert from YAML file
+    results = converter.convert_yaml("my_checks.yaml")
+
+    # Check conversion status
+    supported_count = sum(1 for r in results if r.supported)
+    unsupported_count = len(results) - supported_count
+
+    print(f"Converted {supported_count} checks successfully")
+    if unsupported_count > 0:
+        print(f"{unsupported_count} checks were not supported")
+
+    # Generate Python decorator format
+    python_code = converter.to_python_decorator(results)
+    print("\nPython Decorator Format:")
+    print(python_code)
+
+    # Generate SQL CONSTRAINT format
+    sql_statements = converter.to_sql_constraints(results)
+    print("\nSQL CONSTRAINT Format:")
+    for stmt in sql_statements:
+        print(stmt)
+
+    # Save to files
+    with open("sdp_expectations.py", "w") as f:
+        f.write(python_code)
+
+    with open("sdp_expectations.sql", "w") as f:
+        f.write("\n".join(sql_statements))
+    ```
+  </TabItem>
+</Tabs>
+
+## API Reference
+
+For complete API documentation, see the [SDPMigrationConverter API Reference](/docs/reference/api/sdp/converter).
+
