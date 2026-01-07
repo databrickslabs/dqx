@@ -343,8 +343,8 @@ def _apply_feature_engineering_for_scoring(
 def _create_udf_schema(include_contributions: bool) -> StructType:
     """Create schema for scoring UDF output.
 
-    Note: anomaly_score is kept for internal use and populating _info.anomaly[0].score.
-    The prediction column has been removed - users should check _info.anomaly[0].is_anomaly.
+    The anomaly_score is used internally for populating _info.anomaly.score.
+    Users should check _info.anomaly.is_anomaly for anomaly status.
     """
     schema_fields = [
         StructField("anomaly_score", DoubleType(), True),
@@ -1053,7 +1053,9 @@ def has_no_anomalies(
     - segment_by=None: Inferred from model registry (checks if model is segmented)
 
     Output columns:
-    - _info: Structured metadata
+    - _errors or _warnings: Standard DQX result column based on criticality setting
+      (customizable via ExtraParams.result_column_names)
+    - _info: Structured anomaly metadata
       - _info.anomaly.score: Anomaly score (0-1)
       - _info.anomaly.is_anomaly: Boolean flag
       - _info.anomaly.threshold: Threshold used
