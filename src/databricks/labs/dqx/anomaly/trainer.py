@@ -106,7 +106,6 @@ class AnomalyEngine(DQEngineBase):
         segment_by: list[str] | None = None,
         registry_table: str | None = None,
         params: AnomalyParams | None = None,
-        profiler_table: str | None = None,
         exclude_columns: list[str] | None = None,
     ) -> str:
         """
@@ -129,7 +128,6 @@ class AnomalyEngine(DQEngineBase):
             segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
             registry_table: Optional registry table; auto-derived if not provided.
             params: Optional tuning parameters; defaults applied if omitted.
-            profiler_table: DQX profiler output table for smarter auto-discovery.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
@@ -167,9 +165,7 @@ class AnomalyEngine(DQEngineBase):
         df_filtered, _exclude_list = _process_exclude_columns(df, columns, exclude_columns)
 
         # Auto-discovery
-        columns, segment_by, discovery_warnings = _perform_auto_discovery(
-            df_filtered, profiler_table, columns, segment_by
-        )
+        columns, segment_by, discovery_warnings = _perform_auto_discovery(df_filtered, columns, segment_by)
 
         # Show auto-discovery warnings
         for warning in discovery_warnings:
@@ -241,7 +237,6 @@ def _process_exclude_columns(
 
 def _perform_auto_discovery(
     df_filtered: DataFrame,
-    profiler_table: str | None,
     columns: list[str] | None,
     segment_by: list[str] | None,
 ) -> tuple[list[str] | None, list[str] | None, list[str]]:
@@ -258,7 +253,7 @@ def _perform_auto_discovery(
         return columns, segment_by, discover_warnings
 
     # Auto-discover columns
-    profile = auto_discover(df_filtered, profiler_output_table=profiler_table)
+    profile = auto_discover(df_filtered)
     discovered_columns = profile.recommended_columns
     discovered_segments = segment_by
 

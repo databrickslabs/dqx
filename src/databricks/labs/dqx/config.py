@@ -102,8 +102,8 @@ class TemporalAnomalyConfig:
 class FeatureEngineeringConfig:
     """Configuration for multi-type feature engineering in anomaly detection."""
 
-    max_input_columns: int = 10  # Hard limit on input columns
-    max_engineered_features: int = 50  # Hard limit on total engineered features
+    max_input_columns: int = 25  # Soft limit - warns but proceeds if exceeded
+    max_engineered_features: int = 50  # Soft limit on total engineered features
     categorical_cardinality_threshold: int = 20  # OneHot if <=20, Frequency if >20
     # Datetime features (always 5 per column: hour_sin, hour_cos, dow_sin, dow_cos, is_weekend)
     datetime_features: list[str] = field(
@@ -136,7 +136,6 @@ class AnomalyConfig:
     registry_table: str | None = None
     params: AnomalyParams | None = None
     temporal_config: TemporalAnomalyConfig | None = None
-    profiler_table: str | None = None  # DQX profiler output for smarter auto-discovery
 
 
 @dataclass
