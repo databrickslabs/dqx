@@ -51,8 +51,8 @@ class SparkFeatureMetadata:
     """
 
     column_infos: list[dict[str, Any]]  # Serializable version of ColumnTypeInfo
-    categorical_frequency_maps: dict[str, dict[str, float]]  # {col_name: {value: frequency}}
-    onehot_categories: dict[str, list[str]]  # {col_name: [distinct_values]} for OneHot encoding
+    categorical_frequency_maps: dict[str, dict[str, float]]  # col_name -> (value -> frequency)
+    onehot_categories: dict[str, list[str]]  # col_name -> [distinct_values] for OneHot encoding
     engineered_feature_names: list[str]  # Final feature names after engineering
 
     def to_json(self) -> str:
@@ -683,7 +683,7 @@ def apply_feature_engineering(
     2. Datetime: Extract hour_sin/cos, dow_sin/cos, month_sin/cos, is_weekend
     3. Boolean: Map to 0/1
     4. Numeric: Keep as-is
-    5. Null indicators: Add {col}_is_null for columns with nulls
+    5. Null indicators: Add column_is_null for columns with nulls
     6. Imputation: Fill nulls with 0 (numeric), "MISSING" (categorical), epoch (datetime), 0 (boolean)
 
     Args:

@@ -607,20 +607,14 @@ def get_table_foreign_keys(table: str, spark: Any) -> dict[str, dict[str, Any]]:
         spark: SparkSession instance
 
     Returns:
-        Dictionary mapping foreign key names to their metadata:
-        {
-            "fk_name": {
-                "columns": ["col1", "col2"],
-                "referenced_table": "catalog.schema.ref_table",
-                "referenced_columns": ["ref_col1", "ref_col2"]
-            }
-        }
+        Dictionary mapping foreign key names to their metadata.
+        Each entry contains: columns (list), referenced_table (str),
+        and referenced_columns (list).
         Returns empty dict if no foreign keys are defined or metadata unavailable.
 
-    Examples:
-        >>> fks = get_table_foreign_keys("main.default.orders", spark)
-        >>> for fk_name, fk_info in fks.items():
-        ...     print(f"{fk_name}: {fk_info['columns']} -> {fk_info['referenced_table']}")
+    Example:
+        fks = get_table_foreign_keys("main.default.orders", spark)
+        # Returns dict with FK name as key, containing columns, referenced_table, referenced_columns
     """
     try:
         fk_rows = _query_table_properties(table, spark)

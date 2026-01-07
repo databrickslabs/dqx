@@ -91,8 +91,7 @@ def auto_discover(
 
 def _prioritize_profiler_columns(profile_df: DataFrame, id_pattern: str) -> DataFrame:
     """Add priority column to profiler output and filter suitable candidates."""
-    # Filter out ID columns and high-null columns
-    # Add temp column to avoid pylint issue with ~ operator on Column type
+    # Filter out ID columns and high-null columns using explicit boolean comparison
     filtered_df = (
         profile_df.withColumn("_is_id", F.col("column_name").rlike(id_pattern))
         .filter((F.col("_is_id") == F.lit(False)) & (F.col("null_rate") < 0.5))

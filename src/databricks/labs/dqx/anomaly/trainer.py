@@ -396,7 +396,7 @@ def _train_global(
     # Check if ensemble training is requested
     ensemble_size = params.ensemble_size if params and params.ensemble_size else 1
 
-    run_id = None  # Initialize to avoid NameError
+    run_id = None
 
     if ensemble_size > 1:
         # Train ensemble
@@ -431,8 +431,6 @@ def _train_global(
         logger.warning(f"Sampling capped at {params.max_rows} rows; model trained on truncated sample.")
 
     registry = AnomalyModelRegistry(spark)
-
-    # run_id was already saved during model logging
 
     record = AnomalyModelRecord(
         identity=ModelIdentity(

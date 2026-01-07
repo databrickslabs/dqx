@@ -1,7 +1,7 @@
 import Layout from '@theme/Layout';
 import { JSX } from 'react';
 import Button from '../components/Button';
-import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart } from 'lucide-react';
+import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart, Radar } from 'lucide-react';
 
 const CallToAction = () => {
   return (
@@ -70,6 +70,11 @@ const Capabilities = () => {
       title: 'Validation Summary & Quality Dashboard',
       description: 'Track and identify data quality issues effectively.',
       icon: PieChart,
+    },
+    {
+      title: 'DQ Anomaly Detection',
+      description: 'Automatically detect unusual data patterns with trained models and explanations.',
+      icon: Radar,
     },
   ];
 

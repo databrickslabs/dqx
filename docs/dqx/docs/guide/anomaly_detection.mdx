@@ -33,8 +33,9 @@ DQX can automatically identify which columns and segments benefit from anomaly d
 **Python** (zero configuration):
 ```python
 from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.sdk import WorkspaceClient
 
-anomaly_engine = AnomalyEngine(spark)
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 # One-liner: auto-discovers everything
 anomaly_engine.train(df=spark.table("catalog.schema.orders"), model_name="orders_monitor")
@@ -62,6 +63,10 @@ DQX offers two auto-discovery modes:
 
 **1. Heuristic Mode** (default - analyzes DataFrame on-the-fly):
 ```python
+from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.sdk import WorkspaceClient
+
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 # Computes statistics during training
 anomaly_engine.train(df=spark.table("orders"), model_name="orders_monitor")
 ```
@@ -72,10 +77,18 @@ anomaly_engine.train(df=spark.table("orders"), model_name="orders_monitor")
 **2. Profiler Mode** (reuses DQX profiler results):
 ```python
 # First, run DQX profiler once (optional, for large datasets)
-from databricks.labs.dqx.profiler import profile
-profile(df, output_table="catalog.schema.profiler_output")
+from databricks.labs.dqx.profiler.profiler import DQProfiler
+from databricks.sdk import WorkspaceClient
+
+profiler = DQProfiler(WorkspaceClient())
+summary_stats, dq_rules = profiler.profile(df)
+# Save profiler output to a table for reuse
+spark.createDataFrame([summary_stats]).write.mode("overwrite").saveAsTable("catalog.schema.profiler_output")
 
 # Then, anomaly training reuses cached statistics
+from databricks.labs.dqx.anomaly import AnomalyEngine
+
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 anomaly_engine.train(
     df=df,
     model_name="orders_monitor",
@@ -124,18 +137,23 @@ ID columns (`user_id`, `transaction_id`, `session_uuid`) have high cardinality a
 When explicitly selecting columns, use `exclude_columns` to filter out unwanted columns:
 
 ```python
-from databricks.labs.dqx.anomaly import train
+from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.sdk import WorkspaceClient
+
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 # Recommended: Exclude IDs and other non-behavioral columns
-train(
+anomaly_engine.train(
     df=spark.table("catalog.schema.orders"),
+    model_name="orders_monitor",
     columns=["amount", "quantity", "discount"],  # Behavioral columns only
     exclude_columns=["user_id", "order_id", "session_uuid"]  # Filter out IDs
 )
 
 # Or let auto-discovery handle it (simplest)
-train(
+anomaly_engine.train(
     df=spark.table("orders"),
+    model_name="orders_auto",
     exclude_columns=["user_id", "ground_truth_label"]  # Exclude specific columns from discovery
 )
 ```
@@ -170,9 +188,10 @@ anomaly_engine.train(df, model_name="test", columns=["user_id", "amount"])  # �
 ### Example: Full Workflow
 
 ```python
-from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+from databricks.sdk import WorkspaceClient
 
-anomaly_engine = AnomalyEngine(spark)
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 # Train with proper column selection
 model_name = anomaly_engine.train(
@@ -184,11 +203,10 @@ model_name = anomaly_engine.train(
 )
 
 # Use in checks
-from databricks.labs.dqx.anomaly import has_no_anomalies
-
 checks = [
     has_no_anomalies(
         merge_columns=["transaction_id"],  # Use ID for merging, not for modeling
+        model=model_name,  # Use the model we just trained
         columns=["amount", "quantity", "discount", "shipping_cost"],
         score_threshold=0.5,
     )
@@ -202,8 +220,9 @@ Detect anomalies specific to regions, categories, or other groupings:
 **Automatic** (discovers segments from data):
 ```python
 from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.sdk import WorkspaceClient
 
-anomaly_engine = AnomalyEngine(spark)
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 # Auto-detects region, product_category as segments
 anomaly_engine.train(df=spark.table("orders"), model_name="orders_monitor")
@@ -224,8 +243,8 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 checks = [
     has_no_anomalies(
         merge_columns=["order_id"],
-        columns=["amount", "quantity"]
-    )  # Infers segment_by from model
+        model="regional_monitor",  # DQX infers segment_by and columns from model
+    )
 ]
 ```
 
@@ -256,8 +275,9 @@ When NOT to use
 
 ```python
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+from databricks.sdk import WorkspaceClient
 
-anomaly_engine = AnomalyEngine(spark)
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 # Train with explicit columns (exclude IDs)
 anomaly_engine.train(
@@ -271,6 +291,7 @@ anomaly_engine.train(
 checks = [
     has_no_anomalies(
         merge_columns=["order_id"],
+        model="orders_monitor",  # Use the trained model
         columns=["amount", "quantity", "shipping_cost"],
         score_threshold=0.5,  # higher = more anomalous
     )
@@ -301,6 +322,8 @@ run_configs:
   check:
     function: has_no_anomalies
     arguments:
+      merge_columns: [order_id]
+      model: orders_monitor
       columns: [amount, quantity, shipping_cost]
       score_threshold: 0.5
 ```
@@ -417,8 +440,9 @@ UserWarning: Column 'optional_field' has 73% nulls. Null indicator feature added
 
 ```python
 from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.sdk import WorkspaceClient
 
-anomaly_engine = AnomalyEngine(spark)
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 # Train with all supported types
 anomaly_engine.train(
@@ -530,6 +554,7 @@ recommended = spark.sql("""
 checks = [
     has_no_anomalies(
         merge_columns=["order_id"],
+        model="orders__abc123__anomaly",
         columns=["amount", "quantity", "shipping_cost"],
         score_threshold=recommended,
     )
@@ -548,6 +573,7 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 checks = [
     has_no_anomalies(
         merge_columns=["order_id"],
+        model="my_model",
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
         include_contributions=True,  # adds contributions to _info.anomaly.contributions
@@ -564,6 +590,8 @@ checks = [
 
 **Access anomaly metadata**:
 ```python
+from pyspark.sql import functions as F
+
 # Access score and contributions via _info column
 df_scored.select(
     "amount", 
@@ -641,6 +669,7 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 checks = [
     has_no_anomalies(
         merge_columns=["order_id"],  # Use PK for fast join instead of all 50 columns
+        model="my_model",
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
         row_filter="is_high_value = true",  # Score only high-value transactions
@@ -664,6 +693,7 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 checks = [
     has_no_anomalies(
         merge_columns=["order_id"],
+        model="my_model",
         columns=["amount", "quantity"],
         drift_threshold=3.0,  # Z-score threshold (default)
     )
@@ -673,15 +703,7 @@ checks = [
 **When drift detected**, you'll see a warning like:
 ```
 UserWarning: Data drift detected in columns: amount, quantity (drift score: 4.2).
-Model may be stale. Retrain using:
-
-from databricks.labs.dqx.anomaly import AnomalyEngine
-anomaly_engine = AnomalyEngine(spark)
-anomaly_engine.train(
-    df=spark.table('catalog.schema.orders'),
-    model_name='orders_monitor',
-    columns=['amount', 'quantity']
-)
+Model may be stale. Consider retraining with AnomalyEngine.train().
 ```
 
 **Workflow for handling drift**:
@@ -704,8 +726,9 @@ For time-series data with seasonal patterns, extract temporal features before tr
 ```python
 from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
+from databricks.sdk import WorkspaceClient
 
-anomaly_engine = AnomalyEngine(spark)
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 # Extract time-based features
 df_with_temporal = extract_temporal_features(
@@ -754,6 +777,7 @@ dq_engine = DQEngine(WorkspaceClient())
 checks = [
     has_no_anomalies(
         merge_columns=["order_id"],
+        model="orders_monitor",
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
         include_contributions=True,
@@ -784,10 +808,8 @@ dq_engine.save_results_in_table(
   - `_info.anomaly.model`: Model name used
 - DQX metadata columns (`_errors`, `_warnings`, etc.)
 
-<Admonition type="tip" title="Customizing column names">
-You can customize the `_info` column name (along with `_errors` and `_warnings`) via `ExtraParams`. 
+**💡 Customizing column names:** You can customize the `_info` column name (along with `_errors` and `_warnings`) via `ExtraParams`. 
 See [Customizing result columns](/docs/guide/additional_configuration#customizing-result-columns) for details.
-</Admonition>
 
 **Using with Delta Live Tables**:
 ```python
@@ -800,6 +822,7 @@ dq_engine = DQEngine(WorkspaceClient())
 checks = [
     has_no_anomalies(
         merge_columns=["order_id"],
+        model="orders_monitor",
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
     )
@@ -826,10 +849,10 @@ def quarantine():
 Customize feature engineering behavior via `FeatureEngineeringConfig`:
 
 ```python
-from databricks.labs.dqx.anomaly import AnomalyEngine
-from databricks.labs.dqx.config import AnomalyParams, FeatureEngineeringConfig
+from databricks.labs.dqx.anomaly import AnomalyEngine, AnomalyParams, FeatureEngineeringConfig
+from databricks.sdk import WorkspaceClient
 
-anomaly_engine = AnomalyEngine(spark)
+anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 anomaly_engine.train(
     df=df,
@@ -877,12 +900,10 @@ run_configs:
 | **Classic Compute (Standard)** | DBR 16.x+, 17.x+ | ✅ Recent versions include sklearn |
 | **Serverless** | All versions | ✅ Fully supported |
 
-:::tip Recommended Setup
-For anomaly detection, we recommend:
+**💡 Recommended Setup:**
 - **Serverless compute** (simplest - no cluster management)
 - **ML Runtime** on classic compute (all dependencies pre-installed)
 - **Standard Runtime 16.x+** if ML Runtime is not needed for other workloads
-:::
 
 ### Installation
 
