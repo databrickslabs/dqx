@@ -12,6 +12,10 @@ from dataclasses import dataclass
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 
+# Minimum sample size for reliable drift detection
+# Small batches have high variance and lead to false positives
+MIN_SAMPLE_SIZE_FOR_DRIFT = 1000
+
 
 @dataclass
 class DriftResult:
@@ -22,6 +26,82 @@ class DriftResult:
     drifted_columns: list[str]
     column_scores: dict[str, float]
     recommendation: str
+    sample_size: int = 0
+
+
+def _build_aggregation_expressions(
+    columns: list[str],
+    baseline_stats: dict[str, dict[str, float]],
+    col_types: dict[str, str],
+) -> tuple[list, list[str]]:
+    """Build aggregation expressions for drift detection.
+
+    Returns:
+        Tuple of (aggregation expressions, columns to check)
+    """
+    agg_exprs = []
+    columns_to_check = []
+
+    for col in columns:
+        if col not in baseline_stats:
+            continue
+
+        columns_to_check.append(col)
+        col_type = col_types.get(col)
+        col_expr = F.col(col).cast("double") if col_type == "boolean" else F.col(col)
+
+        agg_exprs.extend(
+            [
+                F.mean(col_expr).alias(f"mean_{col}"),
+                F.stddev(col_expr).alias(f"std_{col}"),
+            ]
+        )
+
+    return agg_exprs, columns_to_check
+
+
+def _compute_column_drift_score(
+    baseline_mean: float,
+    baseline_std: float,
+    current_mean: float | None,
+    current_std: float | None,
+) -> float:
+    """Compute drift score for a single column.
+
+    Args:
+        baseline_mean: Mean from training data
+        baseline_std: Standard deviation from training data
+        current_mean: Mean from current data
+        current_std: Standard deviation from current data
+
+    Returns:
+        Drift score (weighted average of z-score and std change)
+    """
+    # Handle None values (can occur with single row or all identical values)
+    if current_mean is None:
+        current_mean = baseline_mean
+    if current_std is None:
+        current_std = 0.0
+
+    # Z-score for mean shift
+    if baseline_std == 0:
+        # Avoid division by zero; if baseline std is 0, any change is drift
+        z_score = abs(current_mean - baseline_mean) if current_mean != baseline_mean else 0.0
+    else:
+        z_score = abs(current_mean - baseline_mean) / baseline_std
+
+    # Relative change in standard deviation
+    if baseline_std > 0 and current_std > 0:
+        std_change = abs(current_std - baseline_std) / baseline_std
+    elif baseline_std > 0:
+        # Current std is 0 but baseline is not - this is drift
+        std_change = 1.0
+    else:
+        # Both are 0 - no change
+        std_change = 0.0
+
+    # Combined drift score (weighted average)
+    return (z_score * 0.7) + (std_change * 0.3)
 
 
 def compute_drift_score(
@@ -42,55 +122,54 @@ def compute_drift_score(
     Returns:
         DriftResult with detection status and details.
     """
+    # Early exit for small batches (high variance, unreliable statistics)
+    row_count = df.count()
+    if row_count < MIN_SAMPLE_SIZE_FOR_DRIFT:
+        return DriftResult(
+            drift_detected=False,
+            drift_score=0.0,
+            drifted_columns=[],
+            column_scores={},
+            recommendation="skipped_small_batch",
+            sample_size=row_count,
+        )
+
+    # Build aggregation expressions for all columns (single Spark action)
+    col_types = dict(df.dtypes)
+    agg_exprs, columns_to_check = _build_aggregation_expressions(columns, baseline_stats, col_types)
+
+    # Early exit if no columns to check
+    if not agg_exprs:
+        return DriftResult(
+            drift_detected=False,
+            drift_score=0.0,
+            drifted_columns=[],
+            column_scores={},
+            recommendation="ok",
+            sample_size=row_count,
+        )
+
+    # Single Spark action for all columns
+    stats_row = df.select(*agg_exprs).first()
+    assert stats_row is not None, "Failed to compute statistics"
+
+    # Compute drift scores for each column
     column_scores = {}
     drifted_columns = []
 
-    for col in columns:
-        if col not in baseline_stats:
-            continue
-
+    for col in columns_to_check:
         baseline = baseline_stats[col]
+        current_mean = stats_row[f"mean_{col}"]
+        current_std = stats_row[f"std_{col}"]
 
-        # Get column data type and cast boolean to numeric for statistics
-        col_type = dict(df.dtypes)[col]
-        col_expr = F.col(col).cast("double") if col_type == "boolean" else F.col(col)
-
-        # Compute current statistics
-        current_stats = df.select(
-            F.mean(col_expr).alias("mean"),
-            F.stddev(col_expr).alias("std"),
-        ).first()
-
-        # Z-score for mean shift
-        baseline_mean = baseline["mean"]
-        baseline_std = baseline["std"]
-
-        # Handle None values (can occur with single row or all identical values)
-        assert current_stats is not None, f"Failed to compute stats for column {col}"
-        current_mean = current_stats["mean"] if current_stats["mean"] is not None else baseline_mean
-        current_std = current_stats["std"] if current_stats["std"] is not None else 0.0
-
-        if baseline_std == 0:
-            # Avoid division by zero; if baseline std is 0, any change is drift
-            z_score = abs(current_mean - baseline_mean) if current_mean != baseline_mean else 0.0
-        else:
-            z_score = abs(current_mean - baseline_mean) / baseline_std
-
-        # Relative change in standard deviation
-        if baseline_std > 0 and current_std > 0:
-            std_change = abs(current_std - baseline_std) / baseline_std
-        elif baseline_std > 0:
-            # Current std is 0 but baseline is not - this is drift
-            std_change = 1.0
-        else:
-            # Both are 0 - no change
-            std_change = 0.0
-
-        # Combined drift score (weighted average)
-        col_drift_score = (z_score * 0.7) + (std_change * 0.3)
+        col_drift_score = _compute_column_drift_score(
+            baseline["mean"],
+            baseline["std"],
+            current_mean,
+            current_std,
+        )
 
         column_scores[col] = col_drift_score
-
         if col_drift_score >= threshold:
             drifted_columns.append(col)
 
@@ -106,6 +185,7 @@ def compute_drift_score(
         drifted_columns=drifted_columns,
         column_scores=column_scores,
         recommendation=recommendation,
+        sample_size=row_count,
     )
 
 
