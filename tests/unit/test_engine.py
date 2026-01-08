@@ -78,7 +78,7 @@ def test_get_streaming_metrics_listener_no_observer(mock_workspace_client, mock_
 def test_verify_workspace_client_with_null_product_info(mock_spark):
     ws = create_autospec(WorkspaceClient)
     mock_config = Mock()
-    mock_config._product_info = None  # pylint: disable=protected-access
+    setattr(mock_config, "_product_info", None)
     ws.config = mock_config
 
     DQEngine(spark=mock_spark, workspace_client=ws)
@@ -89,7 +89,7 @@ def test_verify_workspace_client_with_null_product_info(mock_spark):
 def test_verify_workspace_client_with_non_dqx_product_info(mock_spark):
     ws = create_autospec(WorkspaceClient)
     mock_config = Mock()
-    mock_config._product_info = ('other-product', '1.0.0')  # pylint: disable=protected-access
+    setattr(mock_config, "other-product", ('other-product', '1.0.0'))
     ws.config = mock_config
 
     DQEngine(spark=mock_spark, workspace_client=ws)
