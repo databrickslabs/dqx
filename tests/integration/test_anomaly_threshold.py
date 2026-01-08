@@ -1,5 +1,6 @@
 """Integration tests for anomaly threshold selection."""
 
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,7 +23,9 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_threshold_affects_flagging(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_threshold_affects_flagging(
+    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+):
     """Test that different thresholds flag different numbers of anomalies."""
     unique_id = make_random(8).lower()
     model_name = f"test_threshold_{make_random(4).lower()}"
@@ -117,7 +120,9 @@ def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick
     assert "anomaly_score" in result_df.columns
 
 
-def test_precision_recall_tradeoff(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_precision_recall_tradeoff(
+    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+):
     """Test that lower threshold increases recall (catches more anomalies)."""
     unique_id = make_random(8).lower()
     model_name = f"test_precision_recall_{make_random(4).lower()}"

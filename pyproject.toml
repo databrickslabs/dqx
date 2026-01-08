@@ -205,10 +205,6 @@ ignore_missing_imports = true
 module = ["databricks.labs.pytester.*"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["tests.*"]
-disable_error_code = ["operator"]
-
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"

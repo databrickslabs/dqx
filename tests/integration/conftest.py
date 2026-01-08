@@ -31,6 +31,15 @@ from tests.integration.test_anomaly_utils import (
     get_standard_4d_training_data,
 )
 
+# Optional MLflow import for anomaly detection tests
+try:
+    import mlflow
+
+    HAS_MLFLOW = True
+except ImportError:
+    HAS_MLFLOW = False
+    mlflow = None  # type: ignore[assignment]
+
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -41,9 +50,7 @@ logger = logging.getLogger(__name__)
 @pytest.fixture(scope="session", autouse=True)
 def configure_mlflow_tracking():
     """Configure MLflow to use Databricks workspace tracking backend for integration tests."""
-    try:
-        import mlflow
-    except ImportError:
+    if not HAS_MLFLOW:
         # If MLflow not installed (anomaly extras not installed), skip configuration
         yield
         return
