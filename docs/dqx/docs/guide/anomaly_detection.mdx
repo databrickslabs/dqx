@@ -32,9 +32,29 @@ DQX anomaly detection is optimized for production use with sensible defaults:
 
 | **Parameter** | **Default** | **Rationale** |
 |---------------|-------------|---------------|
-| `score_threshold` | **0.65** | Balanced precision/recall for production use |
+| `expected_anomaly_rate` | **0.05 (5%)** | Realistic for most production scenarios (quality issues, moderate fraud) |
+| `score_threshold` | **0.60** | Balanced precision/recall for production use |
 | `ensemble_size` | **2** | Reduces variance and provides confidence scores |
 | `include_contributions` | **True** | Explainability for actionable anomaly investigation |
+
+### Tuning `expected_anomaly_rate`
+
+The `expected_anomaly_rate` parameter tells the model what percentage of your data is expected to be anomalous. This helps calibrate the model:
+
+| **Use Case** | **Typical Rate** | **Example** |
+|--------------|------------------|-------------|
+| Financial fraud | 1-2% | `expected_anomaly_rate=0.01` |
+| Manufacturing defects | 2-5% | `expected_anomaly_rate=0.03` |
+| Data quality issues | 3-7% | `expected_anomaly_rate=0.05` (default) |
+| Exploration / Unknown | 10% | `expected_anomaly_rate=0.10` |
+
+```python
+# Fraud detection (expecting ~1% anomalies)
+anomaly_engine.train(df, model_name="fraud_detector", expected_anomaly_rate=0.01)
+
+# Quality monitoring (default 5%)
+anomaly_engine.train(df, model_name="quality_monitor")  # Uses 0.05
+```
 
 ### Performance Optimizations
 
@@ -283,9 +303,23 @@ When NOT to use
 
 ## How it works
 
-1. Train on recent “good” data to learn typical ranges and combinations.
-2. Score new rows; higher scores = more anomalous.
-3. `has_no_anomalies` flags rows whose score exceeds your threshold (default 0.5).
+DQX uses **Isolation Forest** algorithm to detect anomalies based on how easily records can be separated from normal data:
+
+1. **Train** on recent "good" data to learn typical patterns
+2. **Score** new rows by measuring isolation ease (0 to 1 scale)
+3. **Flag** rows whose score exceeds your threshold (default 0.60)
+
+### Understanding Anomaly Scores
+
+**Important**: Scores are NOT probabilities or statistical confidence levels! They measure how many "splits" are needed to isolate a record:
+
+- **Anomalies**: Few splits needed (isolated near tree top) → **High score (0.6-1.0)**
+- **Normal data**: Many splits needed (deep in tree) → **Low score (0.0-0.3)**
+
+![Isolation Forest Diagram](./images/isolation-forest-diagram.png)
+*Anomalies (orange) are isolated with fewer tree splits than normal data points (teal/green)*
+
+The default threshold of **0.60** is empirically chosen (not a statistical significance level) and can be tuned based on your false positive tolerance.
 
 ## Quick start (Python)
 
@@ -295,12 +329,19 @@ from databricks.sdk import WorkspaceClient
 
 anomaly_engine = AnomalyEngine(WorkspaceClient())
 
-# Train with explicit columns (exclude IDs)
+# Train with explicit columns (uses default expected_anomaly_rate=0.05)
 anomaly_engine.train(
     df=spark.table("catalog.schema.orders"),
     model_name="orders_monitor",
     columns=["amount", "quantity", "shipping_cost"],
     exclude_columns=["order_id", "user_id"],  # Exclude ID fields
+)
+
+# Or adjust expected anomaly rate for specific use cases
+anomaly_engine.train(
+    df=spark.table("catalog.schema.fraud_data"),
+    model_name="fraud_detector",
+    expected_anomaly_rate=0.01,  # Expect 1% fraud
 )
 
 # Use in checks
@@ -309,7 +350,7 @@ checks = [
         merge_columns=["order_id"],
         model="orders_monitor",  # Use the trained model
         columns=["amount", "quantity", "shipping_cost"],
-        score_threshold=0.5,  # higher = more anomalous
+        score_threshold=0.6,  # default threshold
     )
 ]
 ```
@@ -402,11 +443,14 @@ anomaly_engine.train(df=df, model_name="categories", columns=["amount", "categor
 **Cyclical encoding** preserves temporal relationships:
 ```python
 # Example: order_timestamp
-anomaly_engine.train(df=df, model_name="orders", columns=["amount", "order_timestamp"])
+anomaly_engine.train(df=df, model_name="orders")  # Auto-discovers and engineers datetime columns
 # Creates 5 features:
 #   - order_timestamp_hour_sin, order_timestamp_hour_cos (daily cycle)
 #   - order_timestamp_dow_sin, order_timestamp_dow_cos (weekly cycle)
 #   - order_timestamp_is_weekend (0/1)
+
+# ✅ Works with manual column selection too
+anomaly_engine.train(df=df, model_name="orders", columns=["amount", "quantity", "order_timestamp"])
 ```
 
 **Why cyclical?** Hour 23 is close to hour 0 in real-world patterns. Sin/cos encoding preserves this distance.

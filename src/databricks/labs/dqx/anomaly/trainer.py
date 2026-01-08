@@ -107,6 +107,7 @@ class AnomalyEngine(DQEngineBase):
         registry_table: str | None = None,
         params: AnomalyParams | None = None,
         exclude_columns: list[str] | None = None,
+        expected_anomaly_rate: float = 0.05,
     ) -> str:
         """
         Train anomaly detection model(s) with intelligent auto-discovery.
@@ -131,6 +132,10 @@ class AnomalyEngine(DQEngineBase):
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
+            expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.05 = 5%).
+                                  This helps the model calibrate what's "normal" vs "unusual".
+                                  Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
+                                  Note: This is ignored if params.algorithm_config.contamination is explicitly set.
 
         Important Notes:
             - Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.
@@ -143,11 +148,15 @@ class AnomalyEngine(DQEngineBase):
             the base name is returned for simplified API usage.
 
         Examples:
-            # Auto-discovery (simplest)
+            # Auto-discovery with default 5% expected anomaly rate (simplest)
             anomaly_engine.train(df, model_name="my_model")
 
             # Exclude ID fields (recommended)
             anomaly_engine.train(df, model_name="my_model", exclude_columns=["user_id", "order_id"])
+
+            # Adjust expected anomaly rate for specific use cases
+            anomaly_engine.train(df, model_name="fraud_detector", expected_anomaly_rate=0.01)  # 1% fraud
+            anomaly_engine.train(df, model_name="quality_monitor", expected_anomaly_rate=0.10)  # 10% defects
 
             # Explicit columns
             anomaly_engine.train(df, model_name="sales_monitor", columns=["revenue", "transactions"])
@@ -185,6 +194,9 @@ class AnomalyEngine(DQEngineBase):
         derived_model_name, derived_registry_table = _prepare_training_config(
             model_name, registry_table, self.spark, columns, segment_by
         )
+
+        # Apply expected_anomaly_rate to params if contamination not explicitly set
+        params = _apply_expected_anomaly_rate(params, expected_anomaly_rate)
 
         # Execute training
         if segment_by:
@@ -270,6 +282,38 @@ def _perform_auto_discovery(
         )
 
     return discovered_columns, discovered_segments, profile.warnings
+
+
+def _apply_expected_anomaly_rate(params: AnomalyParams | None, expected_anomaly_rate: float) -> AnomalyParams:
+    """
+    Apply expected_anomaly_rate to params if contamination is not explicitly set.
+
+    Args:
+        params: Existing AnomalyParams or None
+        expected_anomaly_rate: Expected fraction of anomalies (e.g., 0.05 for 5%)
+
+    Returns:
+        AnomalyParams with contamination set appropriately
+    """
+    # Create default params if None
+    if params is None:
+        params = AnomalyParams()
+
+    # Deep copy to avoid mutating caller's params
+    params = deepcopy(params)
+
+    # Only apply expected_anomaly_rate if contamination is still at default (0.1)
+    # This allows explicit contamination settings to take precedence
+    if params.algorithm_config.contamination == 0.1:  # sklearn default
+        params.algorithm_config.contamination = expected_anomaly_rate
+        logger.info(f"Using expected_anomaly_rate={expected_anomaly_rate:.2%} for model training")
+    else:
+        logger.info(
+            f"Using explicitly set contamination={params.algorithm_config.contamination:.2%} "
+            f"(expected_anomaly_rate={expected_anomaly_rate:.2%} ignored)"
+        )
+
+    return params
 
 
 def _prepare_training_config(

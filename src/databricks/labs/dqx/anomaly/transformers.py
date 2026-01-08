@@ -621,6 +621,10 @@ def _process_datetime_columns(
         )
         engineered_features.append(f"{col_name}_is_weekend")
 
+        # Drop the original datetime column after feature extraction
+        # This ensures the TimestampType column doesn't reach sklearn (which expects float)
+        transformed_df = transformed_df.drop(col_name)
+
     return transformed_df
 
 
