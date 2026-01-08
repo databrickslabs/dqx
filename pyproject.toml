@@ -194,16 +194,10 @@ profile = "black"
 exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 
 [[tool.mypy.overrides]]
-module = ["google", "google.*"]  # Google libraries are not type annotated
+# External packages without PEP 561 type stubs (unavoidable - these are third-party optional dependencies)
+module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*"]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = ["pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["databricks.labs.pytester.*"]
-ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "--no-header"
@@ -862,12 +856,6 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
 
-# Per-file pylint ignores for legitimate exceptions
-# tests/conftest.py: must import tests.compat first to apply numba/coverage patches
-# tests/compat/__init__.py: imports coverage inside function for optional dependency handling
-[tool.pylint-per-file-ignores]
-"/tests/conftest.py" = "wrong-import-order,ungrouped-imports,unused-import"
-"/tests/compat/__init__.py" = "import-outside-toplevel"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
