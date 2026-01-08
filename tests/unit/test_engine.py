@@ -83,7 +83,7 @@ def test_verify_workspace_client_with_null_product_info(mock_spark):
 
     DQEngine(spark=mock_spark, workspace_client=ws)
 
-    assert mock_config._product_info == ('dqx', __version__)  # pylint: disable=protected-access
+    assert mock_config._product_info == ('dqx', __version__)
 
 
 def test_verify_workspace_client_with_non_dqx_product_info(mock_spark):
@@ -94,4 +94,4 @@ def test_verify_workspace_client_with_non_dqx_product_info(mock_spark):
 
     DQEngine(spark=mock_spark, workspace_client=ws)
 
-    assert mock_config._product_info == ('dqx', __version__)  # pylint: disable=protected-access
+    assert mock_config._product_info == ('dqx', __version__)
