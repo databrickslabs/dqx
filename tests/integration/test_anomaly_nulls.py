@@ -1,5 +1,7 @@
 """Integration tests for null handling in anomaly detection."""
 
+from collections.abc import Callable
+
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
@@ -7,7 +9,7 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 from tests.integration.test_anomaly_utils import apply_anomaly_check_direct
 
 
-def test_training_filters_nulls(spark: SparkSession, make_random: str, anomaly_engine):
+def test_training_filters_nulls(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
     """Test that nulls are filtered during training."""
     # Create training data with nulls
     df = spark.createDataFrame(

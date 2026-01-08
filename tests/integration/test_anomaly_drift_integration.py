@@ -1,6 +1,7 @@
 """Integration tests for drift detection.
 """
 
+from collections.abc import Callable
 from unittest.mock import MagicMock
 import warnings
 
@@ -20,7 +21,7 @@ def mock_workspace_client():
 
 
 def test_drift_detection_warns_on_distribution_shift(
-    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
+    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
 ):
     """Test that drift warning is issued when data distribution shifts."""
     # Create unique table names for test isolation
@@ -66,7 +67,7 @@ def test_drift_detection_warns_on_distribution_shift(
 
 
 def test_no_drift_warning_on_similar_distribution(
-    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
+    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
 ):
     """Test that no drift warning is issued when distributions are similar."""
     # Create unique table names for test isolation
@@ -106,7 +107,7 @@ def test_no_drift_warning_on_similar_distribution(
 
 
 def test_drift_detection_disabled_when_threshold_none(
-    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
+    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
 ):
     """Test that drift detection is disabled when drift_threshold=None."""
     # Create unique table names for test isolation
@@ -146,7 +147,7 @@ def test_drift_detection_disabled_when_threshold_none(
 
 
 def test_drift_detection_skipped_on_small_batch(
-    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine
+    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
 ):
     """Test that drift detection is skipped when batch size < 1000 rows."""
     # Create unique table names for test isolation

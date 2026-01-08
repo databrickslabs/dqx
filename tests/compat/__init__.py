@@ -32,8 +32,9 @@ def _patch_tracer(coverage_types: Any) -> None:
 
 def _patch_type_aliases(coverage_types: Any) -> None:
     """Add missing type aliases that were removed in coverage 7.4."""
+    # These are type aliases for coverage.py internal types - values are for runtime compatibility only
     aliases: list[tuple[str, Any]] = [
-        ('TShouldTraceFn', Callable[[Any, Any], Any | None]),
+        ('TShouldTraceFn', Callable[[Any, Any], Any]),  # Can return Any or None
         ('TShouldStartContextFn', Callable[[Any], str | None]),
         ('TFileDisposition', Any),
         ('TWarnFn', Callable[[str, str, int], None]),

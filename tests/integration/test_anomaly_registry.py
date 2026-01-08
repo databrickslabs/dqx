@@ -1,5 +1,6 @@
 """Integration tests for anomaly model registry management."""
 
+from collections.abc import Callable
 import logging
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
@@ -27,7 +28,9 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine):
+def test_explicit_model_names(
+    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+):
     """Test training with explicit model_name and registry_table."""
     unique_id = make_random(8).lower()
     model_name = f"my_custom_model_{make_random(4).lower()}"
@@ -50,7 +53,12 @@ def test_explicit_model_names(spark: SparkSession, mock_workspace_client, make_r
 
 
 def test_multiple_models_in_same_registry(
-    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory, anomaly_scorer
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    test_df_factory,
+    anomaly_scorer,
 ):
     """Test training multiple models in the same registry table."""
     unique_id = make_random(8).lower()
@@ -108,7 +116,7 @@ def test_multiple_models_in_same_registry(
     assert "anomaly_score" in result_b.columns
 
 
-def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_engine):
+def test_active_model_retrieval(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
     """Test that get_active_model() returns the most recent model."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
@@ -148,7 +156,7 @@ def test_active_model_retrieval(spark: SparkSession, make_random: str, anomaly_e
 
 
 def test_model_staleness_warning(
-    spark: SparkSession, mock_workspace_client, make_random: str, anomaly_engine, test_df_factory
+    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine, test_df_factory
 ):
     """Test that staleness warning is issued when model is >30 days old."""
     unique_id = make_random(8).lower()
@@ -186,7 +194,7 @@ def test_model_staleness_warning(
         assert "Consider retraining" in str(stale_warnings[0].message)
 
 
-def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_engine):
+def test_registry_table_schema(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
     """Test that registry table has all expected columns."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
@@ -234,7 +242,7 @@ def test_registry_table_schema(spark: SparkSession, make_random: str, anomaly_en
         assert field in schema_str, f"Missing nested field in schema: {field}"
 
 
-def test_registry_stores_metadata(spark: SparkSession, make_random: str, anomaly_engine):
+def test_registry_stores_metadata(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
     """Test that registry stores comprehensive metadata."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
@@ -278,7 +286,7 @@ def test_nonexistent_registry_returns_none(spark: SparkSession):
     assert model is None
 
 
-def test_nonexistent_model_returns_none(spark: SparkSession, make_random: str, anomaly_engine):
+def test_nonexistent_model_returns_none(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
     """Test that get_active_model returns None for non-existent model."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
@@ -327,7 +335,7 @@ def test_config_hash_differentiation(spark: SparkSession):
     assert hash2 != hash3  # Different columns and segment_by
 
 
-def test_config_hash_stored_during_training(spark: SparkSession, make_random: str, anomaly_engine):
+def test_config_hash_stored_during_training(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
     """Test that config_hash is stored in registry during training."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
@@ -349,7 +357,7 @@ def test_config_hash_stored_during_training(spark: SparkSession, make_random: st
     assert record["segmentation"]["config_hash"] == expected_hash
 
 
-def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_engine, caplog):
+def test_config_change_warning(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, caplog):
     """Test that warning is issued when retraining with different config."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
@@ -380,7 +388,7 @@ def test_config_change_warning(spark: SparkSession, make_random: str, anomaly_en
     assert "will be archived" in config_warnings[0]
 
 
-def test_scoring_validates_config_hash(spark: SparkSession, make_random: str, anomaly_engine):
+def test_scoring_validates_config_hash(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
     """Test that scoring validates config hash and errors on mismatch."""
     unique_id = make_random(8).lower()
     registry_table = f"main.default.{unique_id}_registry"
