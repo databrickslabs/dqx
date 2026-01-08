@@ -12,25 +12,29 @@ Usage in conftest.py:
 from typing import Any
 from collections.abc import Callable
 
+# Optional import - coverage is only present when running with coverage
+try:
+    import coverage.types as coverage_types  # type: ignore[import-untyped]
+except ImportError:
+    coverage_types = None  # type: ignore[assignment]
+
 
 def _apply_coverage_patches() -> None:
     """Apply numba/coverage compatibility patches if coverage is installed."""
-    try:
-        import coverage.types as coverage_types  # type: ignore[import-untyped]
-    except ImportError:
+    if coverage_types is None:
         return  # coverage not installed, no patching needed
 
     _patch_tracer(coverage_types)
     _patch_type_aliases(coverage_types)
 
 
-def _patch_tracer(coverage_types: Any) -> None:
+def _patch_tracer(types_module: Any) -> None:
     """Add missing Tracer class (was renamed to TracerCore in coverage 7.4+)."""
-    if not hasattr(coverage_types, 'Tracer') and hasattr(coverage_types, 'TracerCore'):
-        coverage_types.Tracer = coverage_types.TracerCore  # type: ignore[attr-defined]
+    if not hasattr(types_module, 'Tracer') and hasattr(types_module, 'TracerCore'):
+        types_module.Tracer = types_module.TracerCore  # type: ignore[attr-defined]
 
 
-def _patch_type_aliases(coverage_types: Any) -> None:
+def _patch_type_aliases(types_module: Any) -> None:
     """Add missing type aliases that were removed in coverage 7.4."""
     # These are type aliases for coverage.py internal types - values are for runtime compatibility only
     aliases: list[tuple[str, Any]] = [
@@ -40,8 +44,8 @@ def _patch_type_aliases(coverage_types: Any) -> None:
         ('TWarnFn', Callable[[str, str, int], None]),
     ]
     for name, value in aliases:
-        if not hasattr(coverage_types, name):
-            setattr(coverage_types, name, value)  # type: ignore[misc,assignment]
+        if not hasattr(types_module, name):
+            setattr(types_module, name, value)  # type: ignore[misc,assignment]
 
 
 # Apply patches immediately on module import

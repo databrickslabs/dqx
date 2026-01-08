@@ -8,7 +8,6 @@ from functools import cached_property
 from io import BytesIO
 from typing import Any
 
-import tests.compat  # noqa: F401  # Apply numba/coverage compatibility patches
 
 import pytest
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
