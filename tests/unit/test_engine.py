@@ -89,7 +89,7 @@ def test_verify_workspace_client_with_null_product_info(mock_spark):
 def test_verify_workspace_client_with_non_dqx_product_info(mock_spark):
     ws = create_autospec(WorkspaceClient)
     mock_config = Mock()
-    setattr(mock_config, "other-product", ('other-product', '1.0.0'))
+    setattr(mock_config, "_product_info", ('other-product', '1.0.0'))
     ws.config = mock_config
 
     DQEngine(spark=mock_spark, workspace_client=ws)
