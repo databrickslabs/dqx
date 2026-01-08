@@ -64,7 +64,7 @@ def configure_mlflow_tracking():
     # Priority: env vars (DATABRICKS_HOST) > DATABRICKS_CONFIG_PROFILE > DEFAULT profile
     databricks_host = os.environ.get("DATABRICKS_HOST")
     profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
-    
+
     if databricks_host:
         # Environment-based auth (DATABRICKS_HOST + TOKEN or azure-cli)
         tracking_uri = "databricks"
