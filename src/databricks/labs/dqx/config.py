@@ -116,12 +116,26 @@ class FeatureEngineeringConfig:
 
 @dataclass
 class AnomalyParams:
-    """Optional tuning parameters for anomaly detection."""
+    """Optional tuning parameters for anomaly detection.
+
+    Attributes:
+        sample_fraction: Fraction of data to sample for training (default 0.3).
+        max_rows: Maximum rows to use for training (default 1,000,000).
+        train_ratio: Train/validation split ratio (default 0.8).
+        ensemble_size: Number of models in ensemble (default 2). Set to None for single model.
+            Ensemble models provide:
+            - More robust anomaly scores (averaged across models)
+            - Confidence scores via standard deviation
+            - Better generalization
+            Performance: Optimized ensemble scoring makes this negligible overhead.
+        algorithm_config: Isolation Forest parameters (contamination, num_trees, seed).
+        feature_engineering: Feature engineering parameters (temporal features, scaling, etc.).
+    """
 
     sample_fraction: float = 0.3
     max_rows: int = 1_000_000
     train_ratio: float = 0.8
-    ensemble_size: int | None = None  # None = single model, >1 = ensemble
+    ensemble_size: int | None = 2  # Default 2-model ensemble for robustness and confidence scores
     algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
     feature_engineering: FeatureEngineeringConfig = field(default_factory=FeatureEngineeringConfig)
 

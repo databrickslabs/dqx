@@ -8,6 +8,7 @@ contribute most to anomaly scores for individual records.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
@@ -38,6 +39,27 @@ try:
     from sklearn.pipeline import Pipeline
 except ImportError:
     Pipeline = None  # type: ignore
+
+
+def create_optimal_tree_explainer(tree_model: Any) -> Any:
+    """Create TreeSHAP explainer for the given tree model.
+
+    Uses SHAP's TreeExplainer, which provides efficient SHAP value computation
+    for tree-based models via optimized C++ implementations.
+
+    Args:
+        tree_model (Any): Trained tree-based model (e.g., IsolationForest)
+
+    Returns:
+        Any: Configured SHAP TreeExplainer
+
+    Raises:
+        ImportError: If SHAP library is not installed
+    """
+    if shap is None:
+        raise ImportError("SHAP library required for explainability")
+
+    return shap.TreeExplainer(tree_model)
 
 
 def compute_feature_contributions(
@@ -101,8 +123,8 @@ def compute_feature_contributions(
             tree_model = model_local
             needs_scaling = False
 
-        # Create TreeExplainer (fast for tree-based models)
-        explainer = shap.TreeExplainer(tree_model)
+        # Create TreeExplainer for SHAP value computation
+        explainer = create_optimal_tree_explainer(tree_model)
 
         # feature_struct is already a DataFrame with struct fields as columns
         feature_matrix = feature_struct.values
