@@ -50,6 +50,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering,
     reconstruct_column_infos,
 )
+from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
 from databricks.sdk import WorkspaceClient
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,7 @@ class AnomalyEngine(DQEngineBase):
         super().__init__(workspace_client)
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
+    @telemetry_logger("anomaly", "train")
     def train(
         self,
         df: DataFrame,
@@ -163,6 +165,9 @@ class AnomalyEngine(DQEngineBase):
         """
         _validate_spark_version(self.spark)
 
+        # Track if auto-discovery will be used (for telemetry)
+        auto_discovery_used = columns is None
+
         # Validate model_name is provided
         if not model_name:
             raise InvalidParameterError(
@@ -197,6 +202,11 @@ class AnomalyEngine(DQEngineBase):
 
         # Apply expected_anomaly_rate to params if contamination not explicitly set
         params = _apply_expected_anomaly_rate(params, expected_anomaly_rate)
+
+        # Log telemetry details (utilization metrics, no customer data)
+        log_telemetry(self.ws, "anomaly_auto_discovery", str(auto_discovery_used).lower())
+        log_telemetry(self.ws, "anomaly_segmented", str(segment_by is not None).lower())
+        log_telemetry(self.ws, "anomaly_num_features", str(len(columns)))
 
         # Execute training
         if segment_by:

@@ -29,8 +29,9 @@ try:
     mlflow.tracing.disable_notebook_display()
     # Disable automatic tracing for LangChain (source of the trace data)
     mlflow.langchain.autolog(disable=True)
-except (ImportError, AttributeError):
-    # MLflow not installed or tracing not available
+except Exception:
+    # MLflow not installed, tracing not available, or configuration failed
+    # (e.g., Databricks auth not available in CI)
     pass
 
 ua.semver_pattern = re.compile(
