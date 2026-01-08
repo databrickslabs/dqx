@@ -703,7 +703,6 @@ def _get_record_for_discovery(
     )
 
 
-@register_rule("dataset")
 def _discover_model_and_config(
     df: DataFrame,
     model: str | None,
