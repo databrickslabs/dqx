@@ -36,7 +36,8 @@ try:
     import mlflow
 
     HAS_MLFLOW = True
-except ImportError:
+except Exception:
+    # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
     HAS_MLFLOW = False
     mlflow = None  # type: ignore[assignment]
 
@@ -58,11 +59,15 @@ def configure_mlflow_tracking():
     # Use Databricks workspace tracking backend (works with Databricks Connect)
     # This avoids filesystem backend deprecation warnings and uses the same
     # backend as production Databricks environments
-    mlflow.set_tracking_uri("databricks")
-
-    # Set a default experiment for tests (will be created in Databricks workspace)
-    # Using /Shared/ path makes it accessible to all users
-    mlflow.set_experiment("/Shared/dqx_integration_tests")
+    try:
+        mlflow.set_tracking_uri("databricks")
+        # Set a default experiment for tests (will be created in Databricks workspace)
+        # Using /Shared/ path makes it accessible to all users
+        mlflow.set_experiment("/Shared/dqx_integration_tests")
+    except Exception as e:
+        # MLflow tracking configuration failed (e.g., Databricks auth not available)
+        # Non-anomaly tests don't need MLflow, so just log and continue
+        logger.warning(f"MLflow tracking configuration failed, anomaly tests may be skipped: {e}")
 
     yield
     # No cleanup needed - Databricks manages the experiments

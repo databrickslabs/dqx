@@ -27,7 +27,8 @@ def _load_anomaly_check_funcs():
     """Lazy-load anomaly check functions to avoid circular import issues."""
     try:
         return importlib.import_module("databricks.labs.dqx.anomaly.check_funcs")
-    except ImportError as e:
+    except Exception as e:
+        # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
         logger.debug(f"Anomaly detection disabled due to import error: {e}")
         return None
 

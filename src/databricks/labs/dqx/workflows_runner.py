@@ -20,7 +20,8 @@ try:
     from databricks.labs.dqx.anomaly.anomaly_workflow import AnomalyTrainerWorkflow
 
     ANOMALY_ENABLED = True
-except ImportError:
+except Exception:
+    # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
     ANOMALY_ENABLED = False
 
 logger = logging.getLogger(__name__)

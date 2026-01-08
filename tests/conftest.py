@@ -35,7 +35,8 @@ try:
     from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
 
     HAS_ANOMALY_EXTRAS = True
-except ImportError:
+except Exception:
+    # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
     HAS_ANOMALY_EXTRAS = False
     AnomalyEngine = None  # type: ignore[assignment,misc]
 
