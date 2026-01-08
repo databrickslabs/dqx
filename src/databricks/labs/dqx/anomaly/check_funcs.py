@@ -784,9 +784,9 @@ def _get_and_validate_model_record(
     if expected_hash != record.segmentation.config_hash:
         raise InvalidParameterError(
             f"Configuration mismatch for model '{model_name}':\n"
-            f"  Expected columns: {record.training.columns}\n"
+            f"  Trained columns: {record.training.columns}\n"
             f"  Provided columns: {columns}\n"
-            f"  Expected segment_by: {record.segmentation.segment_by}\n"
+            f"  Trained segment_by: {record.segmentation.segment_by}\n"
             f"  Provided segment_by: {segment_by}\n\n"
             f"This model was trained with a different configuration. Either:\n"
             f"  1. Use the correct columns/segments that match the trained model\n"
@@ -1035,9 +1035,9 @@ def _score_global_model(
     if expected_hash != record.segmentation.config_hash:
         raise InvalidParameterError(
             f"Configuration mismatch for model '{config.model_name}':\n"
-            f"  Expected columns: {record.training.columns}\n"
+            f"  Trained columns: {record.training.columns}\n"
             f"  Provided columns: {config.columns}\n"
-            f"  Expected segment_by: {record.segmentation.segment_by}\n"
+            f"  Trained segment_by: {record.segmentation.segment_by}\n"
             f"  Provided segment_by: {config.segment_by}\n\n"
             f"This model was trained with a different configuration. Either:\n"
             f"  1. Use the correct columns/segments that match the trained model\n"
