@@ -36,11 +36,9 @@ try:
     import mlflow
 
     HAS_MLFLOW = True
-except Exception:
-    # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
+except ImportError:
     HAS_MLFLOW = False
-    mlflow = None  # type: ignore[assignment]
-
+    # mlflow not defined - callers must check HAS_MLFLOW first
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -50,24 +48,39 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session", autouse=True)
 def configure_mlflow_tracking():
-    """Configure MLflow to use Databricks workspace tracking backend for integration tests."""
+    """Configure MLflow to use Databricks workspace tracking backend for integration tests.
+
+    Authentication is configured via:
+    - Environment variables (DATABRICKS_HOST + DATABRICKS_TOKEN or DATABRICKS_AUTH_TYPE)
+    - Or DATABRICKS_CONFIG_PROFILE env var (uses specific profile from ~/.databrickscfg)
+    - Or DEFAULT profile from ~/.databrickscfg
+    """
     if not HAS_MLFLOW:
         # If MLflow not installed (anomaly extras not installed), skip configuration
         yield
         return
 
-    # Use Databricks workspace tracking backend (works with Databricks Connect)
-    # This avoids filesystem backend deprecation warnings and uses the same
-    # backend as production Databricks environments
-    try:
-        mlflow.set_tracking_uri("databricks")
-        # Set a default experiment for tests (will be created in Databricks workspace)
-        # Using /Shared/ path makes it accessible to all users
-        mlflow.set_experiment("/Shared/dqx_integration_tests")
-    except Exception as e:
-        # MLflow tracking configuration failed (e.g., Databricks auth not available)
-        # Non-anomaly tests don't need MLflow, so just log and continue
-        logger.warning(f"MLflow tracking configuration failed, anomaly tests may be skipped: {e}")
+    # Use Databricks workspace tracking backend
+    # Priority: env vars (DATABRICKS_HOST) > DATABRICKS_CONFIG_PROFILE > DEFAULT profile
+    databricks_host = os.environ.get("DATABRICKS_HOST")
+    profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    
+    if databricks_host:
+        # Environment-based auth (DATABRICKS_HOST + TOKEN or azure-cli)
+        tracking_uri = "databricks"
+        auth_type = os.environ.get("DATABRICKS_AUTH_TYPE", "token")
+        logger.info(f"Using MLflow tracking URI: databricks (env-based auth: {auth_type})")
+    elif profile:
+        # Profile-based auth
+        tracking_uri = f"databricks://{profile}"
+        logger.info(f"Using MLflow tracking URI with profile: {tracking_uri}")
+    else:
+        # Default profile or other Databricks SDK auth methods
+        tracking_uri = "databricks"
+        logger.info("Using MLflow tracking URI: databricks (DEFAULT profile)")
+
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_experiment("/Shared/dqx_integration_tests")
 
     yield
     # No cleanup needed - Databricks manages the experiments

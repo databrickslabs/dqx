@@ -56,6 +56,19 @@ jobs:
           relative_files = true
           EOF
 
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Set env vars for Azure CLI auth
+        run: |
+          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
+          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
       # Run 10 tests in parallel: https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
@@ -116,6 +129,19 @@ jobs:
           source = ../../src
           relative_files = true
           EOF
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Set env vars for Azure CLI auth
+        run: |
+          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
+          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4

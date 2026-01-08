@@ -38,7 +38,7 @@ try:
 except Exception:
     # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
     HAS_ANOMALY_EXTRAS = False
-    AnomalyEngine = None  # type: ignore[assignment,misc]
+    # AnomalyEngine not defined - callers must check HAS_ANOMALY_EXTRAS first
 
 logger = logging.getLogger(__name__)
 
