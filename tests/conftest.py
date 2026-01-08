@@ -33,7 +33,6 @@ from databricks.sdk.service.workspace import ImportFormat
 
 # Optional imports for anomaly detection functionality
 try:
-    import mlflow
     from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
 
     HAS_ANOMALY_EXTRAS = True
@@ -50,27 +49,6 @@ TEST_CATALOG = "dqx"
 @pytest.fixture(scope="session")
 def debug_env_name():
     return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
-
-
-@pytest.fixture(scope="session", autouse=True)
-def configure_mlflow_tracking():
-    """Configure MLflow to use Databricks workspace tracking backend for tests."""
-    if not HAS_ANOMALY_EXTRAS:
-        # If anomaly extras not installed, skip MLflow configuration
-        yield
-        return
-
-    # Use Databricks workspace tracking backend (works with Databricks Connect)
-    # This avoids filesystem backend deprecation warnings and uses the same
-    # backend as production Databricks environments
-    mlflow.set_tracking_uri("databricks")
-
-    # Set a default experiment for tests (will be created in Databricks workspace)
-    # Using /Shared/ path makes it accessible to all users
-    mlflow.set_experiment("/Shared/dqx_integration_tests")
-
-    yield
-    # No cleanup needed - Databricks manages the experiments
 
 
 @pytest.fixture

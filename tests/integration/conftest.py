@@ -38,6 +38,29 @@ logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def configure_mlflow_tracking():
+    """Configure MLflow to use Databricks workspace tracking backend for integration tests."""
+    try:
+        import mlflow
+    except ImportError:
+        # If MLflow not installed (anomaly extras not installed), skip configuration
+        yield
+        return
+
+    # Use Databricks workspace tracking backend (works with Databricks Connect)
+    # This avoids filesystem backend deprecation warnings and uses the same
+    # backend as production Databricks environments
+    mlflow.set_tracking_uri("databricks")
+
+    # Set a default experiment for tests (will be created in Databricks workspace)
+    # Using /Shared/ path makes it accessible to all users
+    mlflow.set_experiment("/Shared/dqx_integration_tests")
+
+    yield
+    # No cleanup needed - Databricks manages the experiments
+
+
 REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
 RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
 RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
@@ -453,39 +476,9 @@ def assert_output_df(spark, expected_output, output_config):
     assert_df_equality(checked_df, expected_output, ignore_nullable=True)
 
 
-# ============================================================================
-# ANOMALY TEST FIXTURE USAGE GUIDE
-# ============================================================================
-#
-# Choose the right fixture for your test:
-#
-# 1. shared_2d_model / shared_3d_model / shared_4d_model (session-scoped)
-#    - Use for: Tests that only score/read existing model
-#    - Benefit: Trained ONCE per session (83% runtime savings)
-#    - Example: test_anomaly_dqengine.py, test_anomaly_explainability.py
-#
-# 2. quick_model_factory (function-scoped)
-#    - Use for: Tests needing custom training params (AnomalyParams, segment_by)
-#    - Example: test_anomaly_threshold.py tests with specific sample_fraction
-#
-# 3. test_df_factory (function-scoped)
-#    - Use for: Creating test DataFrames with transaction_id
-#    - Eliminates: [(1, 100.0, 2.0), (2, 9999.0, 1.0)] boilerplate
-#    - Usage: test_df_factory(spark, normal_rows=..., anomaly_rows=...)
-#
-# 4. anomaly_scorer (function-scoped)
-#    - Use for: Scoring DataFrames with has_no_anomalies
-#    - Eliminates: merge_columns + has_no_anomalies boilerplate
-#
-# Migration example:
-#   OLD: train → create test_df → call has_no_anomalies → score
-#   NEW: test_df_factory(spark) → anomaly_scorer(shared_2d_model)
-# ============================================================================
-#
-# Session-Scoped Shared Model Fixtures for Integration Tests
-# These fixtures train models ONCE per session, reducing test runtime
-# significantly. All tests reuse the same pre-trained models.
-# ============================================================================
+# Anomaly detection test fixtures
+# Session-scoped models (shared_2d_model, shared_3d_model, shared_4d_model) are trained once per test session
+# Function-scoped fixtures (test_df_factory, anomaly_scorer, quick_model_factory) provide per-test utilities
 
 
 @pytest.fixture(scope="session")

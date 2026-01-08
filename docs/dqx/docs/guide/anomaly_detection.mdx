@@ -4,7 +4,9 @@ sidebar_position: 15
 
 # Anomaly Detection (ML-based)
 
-Detect multivariate anomalies by training a model on "normal" data, then flagging rows that deviate. Current implementation uses [scikit-learn](https://scikit-learn.org/) IsolationForest (BSD license) with distributed Spark scoring via pandas UDFs; future releases can add more algorithms behind the same interface.
+Automatically detect unusual data patterns using machine learning. DQX trains models on your "normal" data patterns, then flags suspicious records in production pipelines.
+
+Built on [scikit-learn's Isolation Forest](https://scikit-learn.org/) with distributed Spark scoring, DQX provides production-ready anomaly detection with automatic feature engineering and explainability.
 
 ## Complements Databricks native monitoring
 
@@ -78,7 +80,7 @@ Feature contributions require the SHAP library (not included in base DQX):
 dbutils.library.restartPython()
 
 # Option 2 - Install SHAP separately
-%pip install 'shap>=0.42.0,<0.46'
+%pip install 'shap>=0.42.0,<0.50'
 dbutils.library.restartPython()
 ```
 
@@ -316,8 +318,9 @@ DQX uses **Isolation Forest** algorithm to detect anomalies based on how easily 
 - **Anomalies**: Few splits needed (isolated near tree top) → **High score (0.6-1.0)**
 - **Normal data**: Many splits needed (deep in tree) → **Low score (0.0-0.3)**
 
-![Isolation Forest Diagram](./images/isolation-forest-diagram.png)
-*Anomalies (orange) are isolated with fewer tree splits than normal data points (teal/green)*
+:::info Visualization
+Imagine a decision tree: anomalies (unusual records) are isolated near the top with just a few splits, while normal data requires many splits deep in the tree to separate from other normal points.
+:::
 
 The default threshold of **0.60** is empirically chosen (not a statistical significance level) and can be tuned based on your false positive tolerance.
 
@@ -389,9 +392,10 @@ run_configs:
 | Threshold | Use case |
 |-----------|----------|
 | 0.3 | Aggressive: catch more, risk higher false positives |
-| 0.5 | Balanced (default) |
-| 0.7 | Conservative |
-| 0.9 | Very conservative |
+| 0.5 | More sensitive than default |
+| 0.6 | **Balanced (default)** - recommended starting point |
+| 0.7 | Conservative - fewer alerts |
+| 0.9 | Very conservative - only extreme cases |
 
 ## Practical scenarios
 
