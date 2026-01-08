@@ -1,10 +1,14 @@
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import { defineConfig } from "vite";
-import { existsSync, readFileSync } from "fs";
+import { defineConfig, type Plugin } from "vite";
+import { readFileSync } from "fs";
 import { join, resolve } from "path";
 import { parse } from "smol-toml";
+import type { IncomingMessage, ServerResponse } from "http";
+
+// Header that the APX dev server adds to requests to verify they come from the proxy
+const APX_DEV_PROXY_HEADER = "x-apx-dev-proxy";
 
 type ApxMetadata = {
   appName: string;
@@ -12,21 +16,53 @@ type ApxMetadata = {
   appModule: string;
 };
 
-type DevConfig = {
-  token_id: string | null;
-  pid: number | null;
-  port: number | null;
-};
+// Vite plugin to verify requests come from the APX dev server proxy
+function apxDevProxyGuard(): Plugin {
+  return {
+    name: "apx-dev-proxy-guard",
+    configureServer(server) {
+      // Add middleware at the start to check for the proxy header
+      server.middlewares.use(
+        (req: IncomingMessage, res: ServerResponse, next) => {
+          // Allow internal Vite requests (HMR, etc.)
+          const url = req.url || "";
+          if (
+            url.startsWith("/@") ||
+            url.startsWith("/__vite") ||
+            url.startsWith("/node_modules")
+          ) {
+            next();
+            return;
+          }
 
-type ProjectConfig = {
-  dev: DevConfig;
-};
+          // Check for the APX dev proxy header
+          const hasProxyHeader = req.headers[APX_DEV_PROXY_HEADER] === "true";
+          if (!hasProxyHeader) {
+            // Redirect to APX dev server instead of returning 403
+            const devServerPort = process.env.APX_DEV_SERVER_PORT;
+            if (devServerPort) {
+              const redirectUrl = `http://localhost:${devServerPort}${url}`;
+              res.statusCode = 302;
+              res.setHeader("Location", redirectUrl);
+              res.end();
+            } else {
+              // Fallback to 403 if dev server port is not set
+              res.statusCode = 403;
+              res.setHeader("Content-Type", "text/plain");
+              res.end(
+                "Direct access to Vite dev server is not allowed. " +
+                  "Please access through the APX dev server proxy.",
+              );
+            }
+            return;
+          }
 
-type PortsResponse = {
-  frontend_port: number;
-  backend_port: number;
-  host: string;
-};
+          next();
+        },
+      );
+    },
+  };
+}
 
 // read metadata from pyproject.toml using toml npm package
 export function readMetadata(): ApxMetadata {
@@ -46,70 +82,50 @@ export function readMetadata(): ApxMetadata {
   };
 }
 
-// read dev server port from .apx/project.json
-export function readDevServerPort(): number | null {
-  const projectJsonPath = join(process.cwd(), ".apx", "project.json");
+// Get port configuration from environment variables (set by APX dev server)
+export function getPortConfig(): { frontendPort: number; host: string } {
+  const frontendPortEnv = process.env.APX_FRONTEND_PORT;
 
-  if (!existsSync(projectJsonPath)) {
-    return null;
-  }
-
-  try {
-    const projectConfig: ProjectConfig = JSON.parse(
-      readFileSync(projectJsonPath, "utf-8"),
+  if (!frontendPortEnv) {
+    throw new Error(
+      "APX_FRONTEND_PORT environment variable is not set. " +
+        "Please start the development server using 'apx dev' command.",
     );
-    return projectConfig.dev.port;
-  } catch (error) {
-    return null;
   }
+
+  const frontendPort = parseInt(frontendPortEnv, 10);
+  if (isNaN(frontendPort)) {
+    throw new Error(
+      `Invalid APX_FRONTEND_PORT value: ${frontendPortEnv}. Expected a number.`,
+    );
+  }
+
+  return {
+    frontendPort,
+    host: "localhost",
+  };
 }
 
-// fetch ports from dev server
-export async function fetchPorts(): Promise<{
-  frontendPort: number;
-  backendPort: number;
-  host: string;
-}> {
-  const devServerPort = readDevServerPort();
-
-  // If no dev server is running, use defaults
-  if (!devServerPort) {
-    return { frontendPort: 5173, backendPort: 8000, host: "localhost" };
-  }
-
-  try {
-    const response = await fetch(`http://localhost:${devServerPort}/ports`);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const data: PortsResponse = await response.json();
-    return {
-      frontendPort: data.frontend_port,
-      backendPort: data.backend_port,
-      host: data.host,
-    };
-  } catch (error) {
-    console.warn(
-      `Failed to fetch ports from dev server on port ${devServerPort}:`,
-      error,
-    );
-    // Fallback to defaults
-    return { frontendPort: 5173, backendPort: 8000, host: "localhost" };
-  }
-}
-
-// Use async config to fetch ports from dev server
-export default defineConfig(async () => {
+// Use sync config since we read from env vars
+export default defineConfig(({ command }) => {
   const { appName: APP_NAME, appSlug: APP_SLUG } =
     readMetadata() as ApxMetadata;
-  const {
-    frontendPort: FRONTEND_PORT,
-    backendPort: BACKEND_PORT,
-    host: HOST,
-  } = await fetchPorts();
 
   const APP_UI_PATH = `./src/${APP_SLUG}/ui`;
   const OUT_DIR = `../__dist__`; // relative to APP_UI_PATH!
+
+  // Port config is only needed for dev server, not for production build
+  const isDevServer = command === "serve";
+  const serverConfig = isDevServer
+    ? (() => {
+        const { frontendPort, host } = getPortConfig();
+        return {
+          host,
+          port: frontendPort,
+          strictPort: true,
+        };
+      })()
+    : undefined;
 
   return {
     root: APP_UI_PATH,
@@ -118,25 +134,15 @@ export default defineConfig(async () => {
       tanstackRouter({
         target: "react",
         autoCodeSplitting: true,
-        routesDirectory: `${APP_UI_PATH}/routes`,
+        routesDirectory: `./routes`,
         generatedRouteTree: "./types/routeTree.gen.ts",
       }),
       react(),
       tailwindcss(),
+      // Only add the proxy guard plugin in dev mode
+      ...(isDevServer ? [apxDevProxyGuard()] : []),
     ],
-    // setup proxy for the api, only used in development
-    server: {
-      host: HOST,
-      port: FRONTEND_PORT,
-      strictPort: true,
-      proxy: {
-        "/api": {
-          target: `http://${HOST}:${BACKEND_PORT}`,
-          changeOrigin: true,
-          secure: false,
-        },
-      },
-    },
+    server: serverConfig,
     resolve: {
       alias: {
         "@": resolve(__dirname, APP_UI_PATH),

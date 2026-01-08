@@ -52,7 +52,3 @@ Deploy to Databricks:
 ```bash
 databricks bundle deploy -p <your-profile>
 ```
-
----
-
-<p align="center">Built with ❤️ using <a href="https://github.com/databricks-solutions/apx">apx</a></p>
