@@ -1109,7 +1109,7 @@ def has_no_anomalies(
     segment_by: list[str] | None = None,
     model: str | None = None,
     registry_table: str | None = None,
-    score_threshold: float = 0.65,
+    score_threshold: float = 0.60,
     row_filter: str | None = None,
     drift_threshold: float | None = None,
     include_contributions: bool = True,
@@ -1139,7 +1139,7 @@ def has_no_anomalies(
         segment_by: Segment columns (auto-inferred from model if omitted).
         model: Model name (REQUIRED). Provide the base model name returned from train().
         registry_table: Registry table (auto-derived if omitted).
-        score_threshold: Anomaly score threshold (default 0.65). Records with score >= threshold
+        score_threshold: Anomaly score threshold (default 0.60). Records with score >= threshold
             are flagged as anomalous. Higher threshold = stricter detection (fewer anomalies).
         row_filter: Optional SQL expression to filter rows before scoring.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
