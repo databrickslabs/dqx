@@ -1,10 +1,11 @@
 from datetime import datetime, timezone
-from unittest.mock import create_autospec
+from unittest.mock import create_autospec, Mock
 import pytest
 from pyspark.sql import SparkSession
 from databricks.sdk.errors import DatabricksError
 from databricks.sdk import WorkspaceClient
 
+from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
@@ -72,3 +73,25 @@ def test_get_streaming_metrics_listener_no_observer(mock_workspace_client, mock_
     engine = DQEngine(mock_workspace_client, mock_spark)
     with pytest.raises(InvalidParameterError, match="Metrics cannot be collected for engine with no observer"):
         engine.get_streaming_metrics_listener(metrics_config=OutputConfig(location="dummy"))
+
+
+def test_verify_workspace_client_with_null_product_info(mock_spark):
+    ws = create_autospec(WorkspaceClient)
+    mock_config = Mock()
+    setattr(mock_config, "_product_info", None)
+    ws.config = mock_config
+
+    DQEngine(spark=mock_spark, workspace_client=ws)
+
+    assert getattr(mock_config, "_product_info") == ('dqx', __version__)
+
+
+def test_verify_workspace_client_with_non_dqx_product_info(mock_spark):
+    ws = create_autospec(WorkspaceClient)
+    mock_config = Mock()
+    setattr(mock_config, "_product_info", ('other-product', '1.0.0'))
+    ws.config = mock_config
+
+    DQEngine(spark=mock_spark, workspace_client=ws)
+
+    assert getattr(mock_config, "_product_info") == ('dqx', __version__)
