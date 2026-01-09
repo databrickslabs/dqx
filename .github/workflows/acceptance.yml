@@ -69,6 +69,7 @@ jobs:
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
           echo "MLFLOW_TRACKING_URI=$val" >> $GITHUB_ENV
+          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
 
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
@@ -144,6 +145,7 @@ jobs:
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
           echo "MLFLOW_TRACKING_URI=$val" >> $GITHUB_ENV
+          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
 
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4

@@ -208,7 +208,6 @@ def test_null_rate_validation():
 
     # Invalid null rates for numeric columns
     assert max_null_rate_numeric <= 0.75
-    assert max_null_rate_numeric <= 1.0
 
     # Valid null rates for segment columns
     assert max_null_rate_segment > 0.0
@@ -216,7 +215,6 @@ def test_null_rate_validation():
 
     # Invalid null rates for segment columns
     assert max_null_rate_segment < 0.15  # 15% exceeds 10% threshold
-    assert max_null_rate_segment < 0.5  # 50% exceeds 10% threshold
 
 
 # ============================================================================

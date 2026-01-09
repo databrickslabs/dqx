@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from re import Pattern
 from typing import Any
 
 from pyspark.sql import DataFrame
@@ -246,7 +245,7 @@ def _select_segment_columns(
     df: DataFrame,
     recommended_columns: list[str],
     column_types: dict[str, str],
-    id_pattern: "Pattern[str]",
+    id_pattern: "re.Pattern[str]",
     warnings: list[str],
 ) -> tuple[list[str], int]:
     """Identify and validate segment columns."""
