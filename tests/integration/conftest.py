@@ -51,6 +51,7 @@ def configure_mlflow_tracking():
     """Configure MLflow to use Databricks workspace tracking backend for integration tests.
 
     Authentication is configured via:
+    - MLFLOW_TRACKING_URI env var (highest priority - direct workspace URL)
     - Environment variables (DATABRICKS_HOST + DATABRICKS_TOKEN or DATABRICKS_AUTH_TYPE)
     - Or DATABRICKS_CONFIG_PROFILE env var (uses specific profile from ~/.databrickscfg)
     - Or DEFAULT profile from ~/.databrickscfg
@@ -61,11 +62,16 @@ def configure_mlflow_tracking():
         return
 
     # Use Databricks workspace tracking backend
-    # Priority: env vars (DATABRICKS_HOST) > DATABRICKS_CONFIG_PROFILE > DEFAULT profile
+    # Priority: MLFLOW_TRACKING_URI > DATABRICKS_HOST > DATABRICKS_CONFIG_PROFILE > DEFAULT profile
+    mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     databricks_host = os.environ.get("DATABRICKS_HOST")
     profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
 
-    if databricks_host:
+    if mlflow_tracking_uri:
+        # Explicit MLflow tracking URI set (e.g., from CI/CD)
+        tracking_uri = mlflow_tracking_uri
+        logger.info(f"Using MLflow tracking URI from MLFLOW_TRACKING_URI env var: {tracking_uri}")
+    elif databricks_host:
         # Environment-based auth (DATABRICKS_HOST + TOKEN or azure-cli)
         tracking_uri = "databricks"
         auth_type = os.environ.get("DATABRICKS_AUTH_TYPE", "token")
@@ -79,8 +85,14 @@ def configure_mlflow_tracking():
         tracking_uri = "databricks"
         logger.info("Using MLflow tracking URI: databricks (DEFAULT profile)")
 
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment("/Shared/dqx_integration_tests")
+    try:
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment("/Shared/dqx_integration_tests")
+    except Exception as e:
+        # Log warning but don't fail all tests if MLflow auth fails
+        logger.warning(f"Failed to configure MLflow tracking URI: {e}. Some tests may fail.")
+        # Re-raise to fail fast in CI where we expect auth to work
+        raise
 
     yield
     # No cleanup needed - Databricks manages the experiments
