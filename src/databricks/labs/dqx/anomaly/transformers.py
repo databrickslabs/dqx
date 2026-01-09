@@ -736,6 +736,10 @@ def apply_feature_engineering(
     extra_cols = [c for c in transformed_df.columns if c not in feature_col_names and c not in engineered_features]
     result_df = transformed_df.select(*engineered_features, *extra_cols)
 
+    # Use only the features that actually exist in the result DataFrame
+    # This handles cases where original columns (e.g., datetime) were dropped during transformation
+    actual_engineered_features = [f for f in engineered_features if f in result_df.columns]
+
     # Create metadata for scoring
     metadata = SparkFeatureMetadata(
         column_infos=[
@@ -749,7 +753,7 @@ def apply_feature_engineering(
         ],
         categorical_frequency_maps=frequency_maps,
         onehot_categories=onehot_categories,
-        engineered_feature_names=engineered_features,
+        engineered_feature_names=actual_engineered_features,
     )
 
     return result_df, metadata

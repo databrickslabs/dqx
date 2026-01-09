@@ -424,6 +424,7 @@ class DQEngineCore(DQEngineCoreBase):
 
         check_conditions = []
         current_df = df
+        original_columns = set(df.columns)
 
         for check in checks:
             # each check pass may add new columns to the df and certain checks require original columns
@@ -460,7 +461,21 @@ class DQEngineCore(DQEngineCoreBase):
         if "_info" in result_df.columns and info_col_name != "_info":
             result_df = result_df.withColumnRenamed("_info", info_col_name)
 
-        # Preserve any new columns added by dataset-level checks alongside the result column
+        # Drop temporary columns added by dataset-level checks (e.g., sql_query condition columns)
+        # These are internal columns used to build the check condition but shouldn't appear in final output
+        # Preserve legitimate columns like _info (from has_no_anomalies, only if present) and result columns (_errors, _warnings)
+        columns_to_drop = [
+            col
+            for col in result_df.columns
+            if col not in original_columns
+            and col != dest_col
+            and col != info_col_name  # Preserve _info only if it exists (has_no_anomalies adds it)
+            and col != self._result_column_names[ColumnArguments.ERRORS]
+            and col != self._result_column_names[ColumnArguments.WARNINGS]
+        ]
+        if columns_to_drop:
+            result_df = result_df.drop(*columns_to_drop)
+
         return result_df
 
     def _observe_metrics(self, df: DataFrame) -> DataFrame | tuple[DataFrame, Observation]:

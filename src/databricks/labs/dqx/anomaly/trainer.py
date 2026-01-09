@@ -26,7 +26,13 @@ import numpy as np
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import pandas_udf, col
-from pyspark.sql.types import DoubleType, IntegerType, StructType, StructField
+from pyspark.sql.types import (
+    DoubleType,
+    IntegerType,
+    StructType,
+    StructField,
+    NumericType,
+)
 import pyspark.sql.functions as F
 import sklearn
 from sklearn.ensemble import IsolationForest
@@ -48,6 +54,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
+    SparkFeatureMetadata,
     apply_feature_engineering,
     reconstruct_column_infos,
 )
@@ -467,10 +474,20 @@ def _train_global(
             model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
         )
 
-    # Compute baseline statistics for drift detection (distributed on Spark)
-    baseline_stats = _compute_baseline_statistics(train_df, columns)
+    # Apply feature engineering to compute baseline stats on the same features the model was trained on
+    column_infos_for_stats = reconstruct_column_infos(feature_metadata)
+    engineered_train_df, _ = apply_feature_engineering(
+        train_df,
+        column_infos_for_stats,
+        categorical_cardinality_threshold=20,
+        frequency_maps=feature_metadata.categorical_frequency_maps,
+        onehot_categories=feature_metadata.onehot_categories,
+    )
+    
+    # Compute baseline statistics for drift detection on engineered features
+    baseline_stats = _compute_baseline_statistics(engineered_train_df, feature_metadata.engineered_feature_names)
 
-    # Compute feature importance for explainability (distributed on Spark, use first model if ensemble)
+    # Compute feature importance for explainability (already applies feature engineering internally)
     if ensemble_size > 1:
         model_for_importance = mlflow.sklearn.load_model(model_uris[0])
     else:
@@ -726,10 +743,20 @@ def _train_single_segment(
         model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
     )
 
-    # Compute baseline statistics for drift detection
-    baseline_stats = _compute_baseline_statistics(train_df, columns)
+    # Apply feature engineering to compute baseline stats on the same features the model was trained on
+    column_infos_for_stats = reconstruct_column_infos(feature_metadata)
+    engineered_train_df, _ = apply_feature_engineering(
+        train_df,
+        column_infos_for_stats,
+        categorical_cardinality_threshold=20,
+        frequency_maps=feature_metadata.categorical_frequency_maps,
+        onehot_categories=feature_metadata.onehot_categories,
+    )
+    
+    # Compute baseline statistics for drift detection on engineered features
+    baseline_stats = _compute_baseline_statistics(engineered_train_df, feature_metadata.engineered_feature_names)
 
-    # Compute feature importance for explainability
+    # Compute feature importance for explainability (already applies feature engineering internally)
     feature_importance = _compute_feature_importance(model, val_df, columns, feature_metadata)
 
     registry = AnomalyModelRegistry(spark)
@@ -907,24 +934,20 @@ def _train_validation_split(df: DataFrame, params: AnomalyParams) -> tuple[DataF
 
 def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[Any, dict[str, Any], Any]:
     """
-    Train scikit-learn IsolationForest on driver, returning model, hyperparameters, and feature metadata.
+    Train IsolationForest model with distributed feature engineering and driver-based training.
 
-    Training happens on the driver node with collected data (already sampled to <=1M rows).
-    Feature engineering is applied in Spark (distributed) before training.
-    Scoring will be distributed via pandas UDF with only standard sklearn components.
+    Architecture: Feature engineering runs distributed on Spark for scalability, then model trains
+    on driver with collected data. This hybrid approach maximizes performance while maintaining
+    Spark Connect compatibility (no custom Python classes serialized across cluster).
 
     Returns:
-        - pipeline: sklearn Pipeline with RobustScaler + IsolationForest (NO custom transformers)
-        - hyperparams: Model hyperparameters dict
-        - feature_metadata: Spark transformation metadata for scoring
+        - pipeline: sklearn Pipeline (RobustScaler + IsolationForest) - only standard components
+        - hyperparams: Model configuration for MLflow tracking
+        - feature_metadata: Transformation metadata for distributed scoring (categorical maps, etc.)
     """
-    # Note: sklearn/pandas/numpy imports are at module level.
-    # If not available, import will fail with clear error message.
-
     algo_cfg = params.algorithm_config or IsolationForestConfig()
     fe_config = params.feature_engineering
 
-    # Analyze columns to determine feature engineering strategy
     classifier = ColumnTypeClassifier(
         categorical_cardinality_threshold=fe_config.categorical_cardinality_threshold,
         max_input_columns=fe_config.max_input_columns,
@@ -934,39 +957,32 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
     columns = train_df.columns
     column_infos, _ = classifier.analyze_columns(train_df, columns)
 
-    # Apply feature engineering in Spark (distributed)
-    # This transforms the DataFrame to numeric features only
+    # Feature engineering transforms all column types to numeric features in Spark (distributed).
+    # Datetime → cyclical features (hour_sin/cos, dow_sin/cos, etc.), categorical → one-hot/frequency,
+    # numeric → pass-through. Original datetime/categorical columns are dropped after transformation.
     engineered_df, feature_metadata = apply_feature_engineering(
         train_df,
         column_infos,
         categorical_cardinality_threshold=fe_config.categorical_cardinality_threshold,
-        frequency_maps=None,  # Training mode - compute frequency maps
+        frequency_maps=None,
     )
 
-    # Safeguard: Explicitly select only engineered features to ensure no datetime/string columns reach sklearn
-    # This prevents errors when manually specifying columns that include datetime types
-    engineered_feature_names = feature_metadata.engineered_feature_names
-    engineered_df = engineered_df.select(*engineered_feature_names)
-
-    # Collect engineered numeric data to driver (already sampled to <=1M rows)
     train_pandas = engineered_df.toPandas()
 
-    # Scikit-learn IsolationForest configuration
     iso_forest = IsolationForest(
         contamination=algo_cfg.contamination,
         n_estimators=algo_cfg.num_trees,
         max_samples=algo_cfg.subsampling_rate if algo_cfg.subsampling_rate else 'auto',
-        max_features=1.0,  # Use all features by default
-        bootstrap=False,  # Consistent with typical anomaly detection settings
+        max_features=1.0,
+        bootstrap=False,
         random_state=algo_cfg.random_seed,
-        n_jobs=-1,  # Use all CPU cores on driver for parallel tree training
+        n_jobs=-1,
     )
 
-    # Create pipeline with ONLY standard sklearn components (no custom transformers)
-    # RobustScaler uses median and IQR, making it robust to outliers and heavy tails
+    # Pipeline design: RobustScaler (median/IQR) is resilient to outliers, critical for anomaly detection
+    # where training data may contain unlabeled anomalies. Standard sklearn components enable serialization.
     pipeline = Pipeline([('scaler', RobustScaler()), ('model', iso_forest)])
 
-    # Fit pipeline (scaling + model) on engineered training data
     pipeline.fit(train_pandas)
 
     hyperparams: dict[str, Any] = {
@@ -1004,7 +1020,7 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
 
     # Apply feature engineering in Spark (distributed)
     # Use pre-computed frequency maps from training
-    engineered_df, _ = apply_feature_engineering(
+    engineered_df, updated_metadata = apply_feature_engineering(
         df.select(*feature_cols),
         column_infos,
         categorical_cardinality_threshold=20,  # Use same threshold as training
@@ -1012,8 +1028,9 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
         onehot_categories=feature_metadata.onehot_categories,
     )
 
-    # Get engineered feature names
-    engineered_feature_cols = feature_metadata.engineered_feature_names
+    # Get engineered feature names from the updated metadata (not the passed-in metadata)
+    # This ensures we only use features that actually exist in the engineered DataFrame
+    engineered_feature_cols = updated_metadata.engineered_feature_names
 
     # Serialize model (will be captured in UDF closure)
     # Model contains only standard sklearn components (no custom classes)
@@ -1274,17 +1291,19 @@ def _register_ensemble_member_to_mlflow(
     ensemble_size: int,
     hyperparams: dict[str, Any],
     metrics: dict[str, float],
+    feature_metadata: SparkFeatureMetadata,
 ) -> str:
     """Register a single ensemble member model to MLflow/Unity Catalog.
 
     Args:
         model: Trained sklearn model
-        train_df: Training DataFrame (for signature inference)
+        train_df: Training DataFrame with original columns (for signature inference)
         model_name: Base model name
         ensemble_index: Index of this ensemble member (0-based)
         ensemble_size: Total number of ensemble members
         hyperparams: Model hyperparameters
         metrics: Validation metrics
+        feature_metadata: Feature engineering metadata (for reconstructing transformations)
 
     Returns:
         Model URI in format: models:/<model_name>_ensemble_<index>/<version>
@@ -1294,8 +1313,18 @@ def _register_ensemble_member_to_mlflow(
 
     with mlflow.start_run(run_name=run_name):
         # Infer model signature for Unity Catalog (required)
-        train_pandas = cast(pd.DataFrame, train_df.toPandas())
-        predictions = model.predict(train_pandas.to_numpy())
+        # CRITICAL: Apply feature engineering to train_df before signature inference
+        # train_df has original columns (e.g., 'date' as Timestamp), but model expects engineered features
+        column_infos_reconstructed = reconstruct_column_infos(feature_metadata)
+        engineered_train_df, _ = apply_feature_engineering(
+            train_df,
+            column_infos_reconstructed,
+            categorical_cardinality_threshold=20,
+            frequency_maps=feature_metadata.categorical_frequency_maps,
+            onehot_categories=feature_metadata.onehot_categories,
+        )
+        train_pandas = cast(pd.DataFrame, engineered_train_df.toPandas())
+        predictions = model.predict(train_pandas)
         signature = infer_signature(train_pandas, predictions)
 
         # Log scikit-learn model for this ensemble member
@@ -1383,7 +1412,7 @@ def _train_ensemble(
 
         # Register to MLflow
         model_uri = _register_ensemble_member_to_mlflow(
-            model, train_df, model_name, i, ensemble_size, hyperparams, metrics
+            model, train_df, model_name, i, ensemble_size, hyperparams, metrics, feature_metadata
         )
         model_uris.append(model_uri)
 
