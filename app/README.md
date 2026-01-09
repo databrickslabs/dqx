@@ -52,3 +52,12 @@ Deploy to Databricks:
 ```bash
 databricks bundle deploy -p <your-profile>
 ```
+
+## 🛠️ Config 
+A .env file can be used to set the environment variables of the app.
+
+Example .env file 
+```bash
+DATABRICKS_CONFIG_PROFILE=example_profile
+```
+
