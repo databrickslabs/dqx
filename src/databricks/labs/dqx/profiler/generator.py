@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import logging
+import datetime
 import json
 from collections.abc import Callable
-
 from pyspark.sql import SparkSession
-
 from databricks.sdk import WorkspaceClient
+
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -102,12 +102,15 @@ class DQGenerator(DQEngineBase):
         return dq_rules
 
     @telemetry_logger("generator", "generate_dq_rules_ai_assisted")
-    def generate_dq_rules_ai_assisted(self, user_input: str, input_config: InputConfig | None = None) -> list[dict]:
+    def generate_dq_rules_ai_assisted(
+        self, user_input: str = "", summary_stats: dict | None = None, input_config: InputConfig | None = None
+    ) -> list[dict]:
         """
         Generates data quality rules using LLM based on natural language input.
 
         Args:
-            user_input: Natural language description of data quality requirements.
+            user_input: Optional Natural language description of data quality requirements.
+            summary_stats: Optional summary statistics of the input data.
             input_config: Optional input config providing input data location as a path or fully qualified table name
                 to infer schema. If not provided, LLM will be used to guess the table schema.
 
@@ -122,12 +125,18 @@ class DQGenerator(DQEngineBase):
                 "LLM engine not available. Make sure LLM dependencies are installed: "
                 "pip install 'databricks-labs-dqx[llm]'"
             )
+        if not summary_stats and not user_input:
+            raise MissingParameterError(
+                "Either summary statistics or user input must be provided to generate rules using LLM."
+            )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
         schema_info = get_column_metadata(self.spark, input_config) if input_config else ""
 
         # Generate rules using pre-initialized LLM compiler
-        prediction = self.llm_engine.detect_business_rules_with_llm(user_input=user_input, schema_info=schema_info)
+        prediction = self.llm_engine.detect_business_rules_with_llm(
+            user_input=user_input, schema_info=schema_info, summary_stats=summary_stats
+        )
 
         # Validate the generated rules
         dq_rules = json.loads(prediction.quality_rules)
@@ -230,25 +239,43 @@ class DQGenerator(DQEngineBase):
         Generates a data quality rule to check if a column's value is within a specified range.
 
         Args:
-                column: The name of the column to check.
-                criticality: The criticality of the rule as "warn" or "error"  (default is "error").
-                params: Additional parameters, including the minimum and maximum values.
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error"  (default is "error").
+            params: Additional parameters, including the minimum and maximum values.
 
         Returns:
-                A dictionary representing the data quality rule, or None if no limits are provided.
+            A dictionary representing the data quality rule, or None if no limits are provided.
         """
         min_limit = params.get("min")
         max_limit = params.get("max")
 
-        if not isinstance(min_limit, int) or not isinstance(max_limit, int):
-            return None  # TODO handle timestamp and dates: https://github.com/databrickslabs/dqx/issues/71
+        if min_limit is None and max_limit is None:
+            return None
 
-        if min_limit is not None and max_limit is not None:
+        def _is_num(value):
+            return isinstance(value, (int, float))
+
+        def _is_temporal(value):
+            return isinstance(value, (datetime.date, datetime.datetime))
+
+        def _same_family(value_a, value_b):
+            # numeric with numeric OR temporal with temporal
+            return any(
+                [
+                    _is_num(value_a) and _is_num(value_b),
+                    _is_temporal(value_a) and _is_temporal(value_b),
+                ]
+            )
+
+        # Both bounds
+        if min_limit is not None and max_limit is not None and _same_family(min_limit, max_limit):
             return {
                 "check": {
                     "function": "is_in_range",
                     "arguments": {
                         "column": column,
+                        # pass through Python numeric types (int, float) without stringification
+                        # except for temporal types (datetime/date) which are not Json serializable
                         "min_limit": val_maybe_to_str(min_limit, include_sql_quotes=False),
                         "max_limit": val_maybe_to_str(max_limit, include_sql_quotes=False),
                     },
@@ -257,7 +284,8 @@ class DQGenerator(DQEngineBase):
                 "criticality": criticality,
             }
 
-        if max_limit is not None:
+        # Only max
+        if max_limit is not None and (_is_num(max_limit) or _is_temporal(max_limit)):
             return {
                 "check": {
                     "function": "is_not_greater_than",
@@ -267,7 +295,8 @@ class DQGenerator(DQEngineBase):
                 "criticality": criticality,
             }
 
-        if min_limit is not None:
+        # Only min
+        if min_limit is not None and (_is_num(min_limit) or _is_temporal(min_limit)):
             return {
                 "check": {
                     "function": "is_not_less_than",

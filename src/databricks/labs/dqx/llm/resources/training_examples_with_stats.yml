@@ -1,0 +1,108 @@
+- name: "product_code_not_null_with_high_null_count"
+  business_description: "Product catalog database tracking all products in inventory with product codes and names"
+  data_summary_stats:
+    product_code:
+      mean: null
+      min: "PRD001"
+      max: "PRD950"
+    product_name:
+      mean: null
+      min: "Product A"
+      max: "Product Z"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"product_code"}}}]'
+  reasoning: "Product code is a critical identifier field that should not have nulls to maintain referential integrity."
+
+- name: "temperature_sensor_range_validation"
+  business_description: "IoT sensor data from manufacturing facility monitoring ambient temperature across different zones"
+  data_summary_stats:
+    temperature:
+      mean: "22.5"
+      min: "-10.0"
+      max: "50.0"
+    sensor_id:
+      mean: null
+      min: "SEN001"
+      max: "SEN100"
+  quality_rules: '[{"criticality":"warn","check":{"function":"is_in_range","arguments":{"column":"temperature","min_limit":-10.0,"max_limit":50.0}}}]'
+  reasoning: "Temperature sensor data shows a range from -10°C to 50°C with mean 22.5°C. Values outside this range may indicate sensor malfunction."
+
+- name: "order_amount_positive_no_nulls"
+  data_summary_stats:
+    order_amount:
+      mean: "250.75"
+      min: "0.01"
+      max: "2500.00"
+    order_date:
+      mean: null
+      min: "2024-01-01"
+      max: "2024-12-31"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_not_null","arguments":{"column":"order_amount"}}},{"criticality":"error","check":{"function":"is_in_range","arguments":{"column":"order_amount","min_limit":0.01,"max_limit":2500.00}}}]'
+  reasoning: "Order amount ranges from $0.01 to $2500 with mean $250.75. All orders must have an amount and be within the valid business range. Multiple rules ensure both presence and validity."
+
+- name: "timestamp_freshness_based_on_max"
+  business_description: "Real-time event tracking system for user interactions on website and mobile app"
+  data_summary_stats:
+    event_timestamp:
+      mean: null
+      min: "2024-12-30 00:00:00"
+      max: "2024-12-31 23:59:59"
+    event_type:
+      mean: null
+      min: "click"
+      max: "view"
+  quality_rules: '[{"criticality":"error","check":{"function":"is_data_fresh","arguments":{"column":"event_timestamp","max_age_minutes":1440}}}]'
+  reasoning: "Event timestamps show data from the last 2 days (min: 2024-12-30, max: 2024-12-31). Events should be within 24 hours to be considered fresh for real-time analytics."
+
+- name: "product_code_pattern_validation"
+  business_description: "Inventory system with standardized product codes following company format"
+  data_summary_stats:
+    product_code:
+      mean: null
+      min: "PROD-1000-A"
+      max: "PROD-9999-Z"
+    category:
+      mean: null
+      min: "Electronics"
+      max: "Home"
+    stock_level:
+      mean: "150"
+      min: "0"
+      max: "1000"
+  quality_rules: '[{"criticality":"error","check":{"function":"regex_match","arguments":{"column":"product_code","pattern":"^PROD-\\d{4}-[A-Z]$"}}}]'
+  reasoning: "Product codes follow a specific pattern PROD-####-X where #### is 4 digits and X is a capital letter. This standard format ensures consistency across the inventory system and integration with other systems."
+
+- name: "conditional_discount_validation"
+  business_description: "Sales data where premium customers get discounts but standard customers should not"
+  data_summary_stats:
+    discount_amount:
+      mean: "25.50"
+      min: "0.00"
+      max: "500.00"
+    customer_tier:
+      mean: null
+      min: "premium"
+      max: "standard"
+    order_total:
+      mean: "350.00"
+      min: "10.00"
+      max: "5000.00"
+  quality_rules: '[{"criticality":"warn","check":{"function":"is_in_range","arguments":{"column":"discount_amount","min_limit":0,"max_limit":0}},"filter":"customer_tier = ''standard''"}]'
+  reasoning: "Standard tier customers should not receive discounts (amount must be 0), while premium customers can. This business rule is conditional based on customer tier, requiring context understanding."
+
+- name: "email_completeness_and_format"
+  business_description: "User registration database storing customer account information including contact details"
+  data_summary_stats:
+    email:
+      mean: null
+      min: "alice@example.com"
+      max: "zoe@example.com"
+    username:
+      mean: null
+      min: "alice"
+      max: "zoe"
+    account_status:
+      mean: null
+      min: "active"
+      max: "suspended"
+  quality_rules: '[{"criticality":"warn","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"email"}}},{"criticality":"error","check":{"function":"is_email","arguments":{"column":"email"}}}]'
+  reasoning: "Email should be present for all user accounts and follow valid format. Combining completeness and format validation ensures high-quality contact information."

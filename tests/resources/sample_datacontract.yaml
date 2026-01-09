@@ -310,3 +310,17 @@ schema:
         description: |
           The dataset should not contain duplicate sensor readings for the same 
           sensor_id and reading_timestamp combination within a 1-second window.
+      
+      # Check quality for subsets of data (filter condition)
+      - type: custom
+        engine: dqx
+        description: Ensure technician_id and alert_email are present for high alert levels
+        implementation:
+          criticality: warn
+          filter: alert_level in ('high', 'critical')
+          name: technician_and_email_are_mandatory_for_high_alerts
+          check:
+            function: is_not_null_and_not_empty
+            for_each_column:
+            - technician_id
+            - alert_email
