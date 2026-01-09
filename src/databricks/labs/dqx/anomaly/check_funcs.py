@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 import cloudpickle
+import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
@@ -29,7 +30,11 @@ from pyspark.sql.types import (
 import sklearn
 from sklearn.pipeline import Pipeline
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord, compute_config_hash
-from databricks.labs.dqx.anomaly.trainer import _derive_registry_table, ensure_full_model_name
+from databricks.labs.dqx.anomaly.trainer import (
+    _derive_registry_table,
+    _ensure_mlflow_registry_uri,
+    ensure_full_model_name,
+)
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.explainer import create_optimal_tree_explainer
 from databricks.labs.dqx.anomaly.transformers import (
@@ -419,6 +424,9 @@ def _load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomal
     Raises:
         RuntimeError with actionable error message if loading fails
     """
+    # Ensure MLflow registry URI is configured (shared helper from trainer module)
+    _ensure_mlflow_registry_uri()
+
     try:
         return mlflow.sklearn.load_model(model_uri)
     except (ValueError, AttributeError, TypeError) as e:

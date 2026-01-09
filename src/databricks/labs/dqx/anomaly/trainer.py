@@ -14,6 +14,7 @@ from __future__ import annotations
 import collections.abc
 from copy import deepcopy
 import logging
+import os
 from datetime import datetime
 from typing import Any, cast
 
@@ -389,7 +390,7 @@ def _register_single_model_to_mlflow(
     # Note: When running outside Databricks (e.g., local Spark Connect), you may see a warning:
     # "Unable to get model version source run's workspace ID from request headers"
     # This is expected and informational only - the model will register successfully
-    mlflow.set_registry_uri("databricks-uc")
+    _ensure_mlflow_registry_uri()
 
     with mlflow.start_run() as run:
         # Infer model signature for Unity Catalog (required)
@@ -942,6 +943,11 @@ def _fit_isolation_forest(train_df: DataFrame, params: AnomalyParams) -> tuple[A
         frequency_maps=None,  # Training mode - compute frequency maps
     )
 
+    # Safeguard: Explicitly select only engineered features to ensure no datetime/string columns reach sklearn
+    # This prevents errors when manually specifying columns that include datetime types
+    engineered_feature_names = feature_metadata.engineered_feature_names
+    engineered_df = engineered_df.select(*engineered_feature_names)
+
     # Collect engineered numeric data to driver (already sampled to <=1M rows)
     train_pandas = engineered_df.toPandas()
 
@@ -1250,6 +1256,93 @@ def _compute_feature_importance(
     return importance
 
 
+def _ensure_mlflow_registry_uri() -> None:
+    """Ensure MLflow registry URI is configured for Unity Catalog.
+
+    Sets registry URI to 'databricks-uc' (or value from MLFLOW_REGISTRY_URI env var).
+    In Databricks notebooks, MLflow is pre-configured, but setting it explicitly is idempotent and safe.
+    """
+    registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
+    mlflow.set_registry_uri(registry_uri)
+
+
+def _register_ensemble_member_to_mlflow(
+    model: Any,
+    train_df: DataFrame,
+    model_name: str,
+    ensemble_index: int,
+    ensemble_size: int,
+    hyperparams: dict[str, Any],
+    metrics: dict[str, float],
+) -> str:
+    """Register a single ensemble member model to MLflow/Unity Catalog.
+
+    Args:
+        model: Trained sklearn model
+        train_df: Training DataFrame (for signature inference)
+        model_name: Base model name
+        ensemble_index: Index of this ensemble member (0-based)
+        ensemble_size: Total number of ensemble members
+        hyperparams: Model hyperparameters
+        metrics: Validation metrics
+
+    Returns:
+        Model URI in format: models:/<model_name>_ensemble_<index>/<version>
+    """
+    ensemble_model_name = f"{model_name}_ensemble_{ensemble_index}"
+    run_name = f"{model_name}_ensemble_{ensemble_index}"
+
+    with mlflow.start_run(run_name=run_name):
+        # Infer model signature for Unity Catalog (required)
+        train_pandas = cast(pd.DataFrame, train_df.toPandas())
+        predictions = model.predict(train_pandas.to_numpy())
+        signature = infer_signature(train_pandas, predictions)
+
+        # Log scikit-learn model for this ensemble member
+        model_info = mlflow.sklearn.log_model(
+            sk_model=model,
+            name="model",
+            registered_model_name=ensemble_model_name,
+            signature=signature,
+        )
+        mlflow.log_params(_flatten_hyperparams(hyperparams))
+        mlflow.log_metrics(metrics)
+        mlflow.log_param("ensemble_index", ensemble_index)
+        mlflow.log_param("ensemble_size", ensemble_size)
+
+        # Use explicit version-based URI format
+        # ensemble_model_name inherits full catalog.schema.model format from base model_name
+        return f"models:/{ensemble_model_name}/{model_info.registered_model_version}"
+
+
+def _aggregate_ensemble_metrics(all_metrics: list[dict[str, float]]) -> dict[str, float]:
+    """Aggregate metrics across ensemble members (mean and std).
+
+    Args:
+        all_metrics: List of metric dictionaries, one per ensemble member
+
+    Returns:
+        Dictionary with aggregated metrics (mean and std for each metric)
+    """
+    if not all_metrics:
+        return {}
+
+    aggregated = {}
+    for key in all_metrics[0].keys():
+        values = [m[key] for m in all_metrics if key in m]
+        if values:
+            mean_value = sum(values) / len(values)
+            aggregated[key] = mean_value
+            # Compute standard deviation
+            if len(values) > 1:
+                variance = sum((v - mean_value) ** 2 for v in values) / (len(values) - 1)
+                aggregated[f"{key}_std"] = variance**0.5
+            else:
+                aggregated[f"{key}_std"] = 0.0
+
+    return aggregated
+
+
 def _train_ensemble(
     train_df: DataFrame,
     val_df: DataFrame,
@@ -1265,14 +1358,11 @@ def _train_ensemble(
         Tuple of (model_uris, hyperparams, aggregated_metrics, feature_metadata).
         feature_metadata is from the first ensemble member (all members use same features).
     """
+    _ensure_mlflow_registry_uri()
+
     model_uris = []
     all_metrics = []
-    first_feature_metadata = None  # Capture from first ensemble member
-
-    # Register models to Unity Catalog
-    # Note: When running outside Databricks, you may see warnings about workspace ID headers
-    # This is expected and informational only - models will register successfully
-    mlflow.set_registry_uri("databricks-uc")
+    first_feature_metadata = None
 
     for i in range(ensemble_size):
         # Create modified params with different seed (deep copy to avoid mutation)
@@ -1291,42 +1381,14 @@ def _train_ensemble(
         metrics = _compute_validation_metrics(model, val_df, columns, contamination, feature_metadata)
         all_metrics.append(metrics)
 
-        # Log to MLflow
-        with mlflow.start_run(run_name=f"{model_name}_ensemble_{i}"):
-            # Infer model signature for Unity Catalog (required)
-            train_pandas = cast(pd.DataFrame, train_df.toPandas())
-            predictions = model.predict(train_pandas.to_numpy())
-            signature = infer_signature(train_pandas, predictions)
+        # Register to MLflow
+        model_uri = _register_ensemble_member_to_mlflow(
+            model, train_df, model_name, i, ensemble_size, hyperparams, metrics
+        )
+        model_uris.append(model_uri)
 
-            # Log scikit-learn model for this ensemble member
-            ensemble_model_name = f"{model_name}_ensemble_{i}"
-            model_info = mlflow.sklearn.log_model(
-                sk_model=model,
-                name="model",
-                registered_model_name=ensemble_model_name,
-                signature=signature,
-            )
-            mlflow.log_params(_flatten_hyperparams(hyperparams))
-            mlflow.log_metrics(metrics)
-            mlflow.log_param("ensemble_index", i)
-            mlflow.log_param("ensemble_size", ensemble_size)
-
-            # Use explicit version-based URI format
-            # ensemble_model_name inherits full catalog.schema.model format from base model_name
-            model_uris.append(f"models:/{ensemble_model_name}/{model_info.registered_model_version}")
-
-    # Aggregate metrics (average across ensemble)
-    aggregated_metrics = {}
-    if all_metrics:
-        for key in all_metrics[0].keys():
-            values = [m[key] for m in all_metrics if key in m]
-            if values:
-                aggregated_metrics[key] = sum(values) / len(values)
-                aggregated_metrics[f"{key}_std"] = (
-                    (sum((v - aggregated_metrics[key]) ** 2 for v in values) / (len(values) - 1)) ** 0.5
-                    if len(values) > 1
-                    else 0.0
-                )
+    # Aggregate metrics across ensemble
+    aggregated_metrics = _aggregate_ensemble_metrics(all_metrics)
 
     return model_uris, hyperparams, aggregated_metrics, first_feature_metadata
 

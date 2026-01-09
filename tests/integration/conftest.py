@@ -88,9 +88,16 @@ def configure_mlflow_tracking():
     try:
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_experiment("/Shared/dqx_integration_tests")
+
+        # Also configure registry URI if not already set
+        # MLflow registry URI for Unity Catalog should be "databricks-uc"
+        # It will use the same authentication as tracking URI (DATABRICKS_HOST + DATABRICKS_TOKEN or azure-cli)
+        registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
+        mlflow.set_registry_uri(registry_uri)
+        logger.info(f"Using MLflow registry URI: {registry_uri}")
     except Exception as e:
         # Log warning but don't fail all tests if MLflow auth fails
-        logger.warning(f"Failed to configure MLflow tracking URI: {e}. Some tests may fail.")
+        logger.warning(f"Failed to configure MLflow tracking/registry URI: {e}. Some tests may fail.")
         # Re-raise to fail fast in CI where we expect auth to work
         raise
 
