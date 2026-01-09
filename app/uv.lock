@@ -40,11 +40,12 @@ wheels = [
 
 [[package]]
 name = "apx"
-version = "0.0.0.post210.dev0+7187356"
-source = { git = "https://github.com/databricks-solutions/apx.git#7187356256db7ebeb5e7d0253d7f5315616ac32a" }
+version = "0.0.0.post212.dev0+7a1dddf"
+source = { git = "https://github.com/databricks-solutions/apx.git#7a1dddfa325fb13400452af44ba8f7e66056b197" }
 dependencies = [
     { name = "basedpyright" },
     { name = "databricks-sdk" },
+    { name = "docutils" },
     { name = "fastapi" },
     { name = "hatchling" },
     { name = "httpx" },
@@ -55,6 +56,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "rich" },
+    { name = "sqlmodel" },
     { name = "tenacity" },
     { name = "typer" },
     { name = "typing-extensions" },
@@ -398,18 +400,13 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/73/f7/4e77bdcd83fb5e53d79526f4532dd05af53e5dcbb2c2854ae536baecf133/databricks_labs_blueprint-0.9.3-py3-none-any.whl", hash = "sha256:0e640953deef5e41bc324d1035ce8c5d549023178ce50708700ab34c438451f3", size = 61549, upload-time = "2024-11-14T13:33:21.818Z" },
 ]
 
-[package.optional-dependencies]
-yaml = [
-    { name = "pyyaml" },
-]
-
 [[package]]
 name = "databricks-labs-dqx"
 source = { editable = "../" }
 dependencies = [
     { name = "databricks-labs-blueprint" },
-    { name = "databricks-labs-lsql" },
     { name = "databricks-sdk" },
+    { name = "pyyaml" },
     { name = "sqlalchemy" },
 ]
 
@@ -417,12 +414,14 @@ dependencies = [
 requires-dist = [
     { name = "databricks-connect", marker = "extra == 'cli'", specifier = "~=15.4" },
     { name = "databricks-labs-blueprint", specifier = ">=0.9.1,<0.10" },
-    { name = "databricks-labs-lsql", specifier = ">=0.5,<=0.16" },
-    { name = "databricks-sdk", specifier = "~=0.71" },
-    { name = "datacontract-cli", marker = "extra == 'datacontract'", specifier = ">=0.10.0" },
+    { name = "databricks-langchain", marker = "extra == 'llm'", specifier = ">=0.1.0" },
+    { name = "databricks-sdk", specifier = "~=0.73" },
+    { name = "datacontract-cli", marker = "extra == 'datacontract'", specifier = ">=0.11.1" },
     { name = "dspy", marker = "extra == 'llm'", specifier = "~=3.0.3" },
+    { name = "langchain-core", marker = "extra == 'llm'", specifier = ">=0.1.0" },
     { name = "numpy", marker = "extra == 'pii'", specifier = ">=1.20,<2.0" },
     { name = "presidio-analyzer", marker = "extra == 'pii'", specifier = "~=2.2.359" },
+    { name = "pyyaml", specifier = "~=6.0.3" },
     { name = "spacy", marker = "extra == 'pii'", specifier = "~=3.8" },
     { name = "sqlalchemy", specifier = ">=2.0,<3.0" },
 ]
@@ -464,20 +463,6 @@ dev = [
 ]
 
 [[package]]
-name = "databricks-labs-lsql"
-version = "0.16.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "databricks-labs-blueprint", extra = ["yaml"] },
-    { name = "databricks-sdk" },
-    { name = "sqlglot" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/80/61/b2e2fad8d3680b5db7ce90dea2fec84f5504747f6a648467e083c1aa3c91/databricks_labs_lsql-0.16.0.tar.gz", hash = "sha256:b6680471b198bd5c01fe2bc690a5bf4d0c7504519019fd45241435464dcb47a3", size = 52867, upload-time = "2025-02-27T18:25:36.357Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ac/08/fc6eaa5d1b7c7cae0029170edd1916f97c430589f5c0f9c3cdec98c2c6f5/databricks_labs_lsql-0.16.0-py3-none-any.whl", hash = "sha256:d3004edd7ac2089156ee24db4bb2f4fce7f49bf45e2a96287d1243ac4e4a9cc0", size = 48054, upload-time = "2025-02-27T18:25:34.159Z" },
-]
-
-[[package]]
 name = "databricks-sdk"
 version = "0.77.0"
 source = { registry = "https://pypi.org/simple" }
@@ -489,6 +474,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1e/54/f2393af72974d8e70bfd44b52f17b917190b4934bab66508f4afec9e9285/databricks_sdk-0.77.0.tar.gz", hash = "sha256:56b6017ae17dc31ee821e49746d2ff627a029127166c702088428527813422bd", size = 827462, upload-time = "2026-01-06T13:19:09.432Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/aa/d9186684dbcd338cf51e93621bcf53efa843fe647c0f29f549ebddbf2870/databricks_sdk-0.77.0-py3-none-any.whl", hash = "sha256:42e3211b7dbd53b81a795981149ee08d5b025442a73e464264569edc8c46ee0a", size = 779180, upload-time = "2026-01-06T13:19:07.757Z" },
+]
+
+[[package]]
+name = "docutils"
+version = "0.22.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ae/b6/03bb70946330e88ffec97aefd3ea75ba575cb2e762061e0e62a213befee8/docutils-0.22.4.tar.gz", hash = "sha256:4db53b1fde9abecbb74d91230d32ab626d94f6badfc575d6db9194a49df29968", size = 2291750, upload-time = "2025-12-18T19:00:26.443Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/02/10/5da547df7a391dcde17f59520a231527b8571e6f46fc8efb02ccb370ab12/docutils-0.22.4-py3-none-any.whl", hash = "sha256:d0013f540772d1420576855455d050a2180186c91c15779301ac2ccb3eeb68de", size = 633196, upload-time = "2025-12-18T19:00:18.077Z" },
 ]
 
 [[package]]
@@ -1856,12 +1850,16 @@ wheels = [
 ]
 
 [[package]]
-name = "sqlglot"
-version = "27.29.0"
+name = "sqlmodel"
+version = "0.0.31"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/d1/50/766692a83468adb1bde9e09ea524a01719912f6bc4fdb47ec18368320f6e/sqlglot-27.29.0.tar.gz", hash = "sha256:2270899694663acef94fa93497971837e6fadd712f4a98b32aee1e980bc82722", size = 5503507, upload-time = "2025-10-29T13:50:24.594Z" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "sqlalchemy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/b8/e7cd6def4a773f25d6e29ffce63ccbfd6cf9488b804ab6fb9b80d334b39d/sqlmodel-0.0.31.tar.gz", hash = "sha256:2d41a8a9ee05e40736e2f9db8ea28cbfe9b5d4e5a18dd139e80605025e0c516c", size = 94952, upload-time = "2025-12-28T12:35:01.436Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/70/20c1912bc0bfebf516d59d618209443b136c58a7cff141afa7cf30969988/sqlglot-27.29.0-py3-none-any.whl", hash = "sha256:9a5ea8ac61826a7763de10cad45a35f0aa9bfcf7b96ee74afb2314de9089e1cb", size = 526060, upload-time = "2025-10-29T13:50:22.061Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/72/5aa5be921800f6418a949a73c9bb7054890881143e6bc604a93d228a95a3/sqlmodel-0.0.31-py3-none-any.whl", hash = "sha256:6d946d56cac4c2db296ba1541357cee2e795d68174e2043cd138b916794b1513", size = 27093, upload-time = "2025-12-28T12:35:00.108Z" },
 ]
 
 [[package]]
