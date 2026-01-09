@@ -31,7 +31,6 @@ from pyspark.sql.types import (
     IntegerType,
     StructType,
     StructField,
-    NumericType,
 )
 import pyspark.sql.functions as F
 import sklearn
@@ -433,6 +432,47 @@ def _register_single_model_to_mlflow(
         return model_uri, run.info.run_id
 
 
+def _compute_post_training_metadata(
+    train_df: DataFrame,
+    val_df: DataFrame,
+    columns: list[str],
+    feature_metadata: Any,
+    model: Any,
+) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
+    """
+    Compute baseline statistics and feature importance after training.
+
+    Extracted helper to reduce local variables in training functions.
+
+    Args:
+        train_df: Training DataFrame with original columns
+        val_df: Validation DataFrame
+        columns: Original column names
+        feature_metadata: Feature engineering metadata from training
+        model: Trained model for feature importance computation
+
+    Returns:
+        Tuple of (baseline_stats, feature_importance)
+    """
+    # Apply feature engineering to compute baseline stats on the same features the model was trained on
+    column_infos_for_stats = reconstruct_column_infos(feature_metadata)
+    engineered_train_df, _ = apply_feature_engineering(
+        train_df,
+        column_infos_for_stats,
+        categorical_cardinality_threshold=20,
+        frequency_maps=feature_metadata.categorical_frequency_maps,
+        onehot_categories=feature_metadata.onehot_categories,
+    )
+
+    # Compute baseline statistics for drift detection on engineered features
+    baseline_stats = _compute_baseline_statistics(engineered_train_df, feature_metadata.engineered_feature_names)
+
+    # Compute feature importance for explainability
+    feature_importance = _compute_feature_importance(model, val_df, columns, feature_metadata)
+
+    return baseline_stats, feature_importance
+
+
 def _train_global(
     spark: SparkSession,
     df: DataFrame,
@@ -453,8 +493,6 @@ def _train_global(
     # Check if ensemble training is requested
     ensemble_size = params.ensemble_size if params and params.ensemble_size else 1
 
-    run_id = None
-
     if ensemble_size > 1:
         # Train ensemble
         model_uris, hyperparams, validation_metrics, feature_metadata = _train_ensemble(
@@ -462,6 +500,7 @@ def _train_global(
         )
         model_uri = ",".join(model_uris)  # Store as comma-separated string
         run_id = "ensemble"  # Placeholder for ensemble runs (multiple MLflow runs)
+        model_for_importance = mlflow.sklearn.load_model(model_uris[0])
     else:
         # Train single model (sklearn IsolationForest on driver)
         model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, params)
@@ -473,26 +512,12 @@ def _train_global(
         model_uri, run_id = _register_single_model_to_mlflow(
             model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
         )
-
-    # Apply feature engineering to compute baseline stats on the same features the model was trained on
-    column_infos_for_stats = reconstruct_column_infos(feature_metadata)
-    engineered_train_df, _ = apply_feature_engineering(
-        train_df,
-        column_infos_for_stats,
-        categorical_cardinality_threshold=20,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
-    )
-    
-    # Compute baseline statistics for drift detection on engineered features
-    baseline_stats = _compute_baseline_statistics(engineered_train_df, feature_metadata.engineered_feature_names)
-
-    # Compute feature importance for explainability (already applies feature engineering internally)
-    if ensemble_size > 1:
-        model_for_importance = mlflow.sklearn.load_model(model_uris[0])
-    else:
         model_for_importance = model
-    feature_importance = _compute_feature_importance(model_for_importance, val_df, columns, feature_metadata)
+
+    # Compute baseline stats and feature importance
+    baseline_stats, feature_importance = _compute_post_training_metadata(
+        train_df, val_df, columns, feature_metadata, model_for_importance
+    )
 
     if truncated:
         logger.warning(f"Sampling capped at {params.max_rows} rows; model trained on truncated sample.")
@@ -743,21 +768,10 @@ def _train_single_segment(
         model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
     )
 
-    # Apply feature engineering to compute baseline stats on the same features the model was trained on
-    column_infos_for_stats = reconstruct_column_infos(feature_metadata)
-    engineered_train_df, _ = apply_feature_engineering(
-        train_df,
-        column_infos_for_stats,
-        categorical_cardinality_threshold=20,
-        frequency_maps=feature_metadata.categorical_frequency_maps,
-        onehot_categories=feature_metadata.onehot_categories,
+    # Compute baseline stats and feature importance
+    baseline_stats, feature_importance = _compute_post_training_metadata(
+        train_df, val_df, columns, feature_metadata, model
     )
-    
-    # Compute baseline statistics for drift detection on engineered features
-    baseline_stats = _compute_baseline_statistics(engineered_train_df, feature_metadata.engineered_feature_names)
-
-    # Compute feature importance for explainability (already applies feature engineering internally)
-    feature_importance = _compute_feature_importance(model, val_df, columns, feature_metadata)
 
     registry = AnomalyModelRegistry(spark)
 
