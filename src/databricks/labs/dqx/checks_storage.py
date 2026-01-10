@@ -18,6 +18,7 @@ from sqlalchemy import (
     select,
     delete,
     null,
+    event,
 )
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
@@ -135,7 +136,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
     Handler for storing dq rules (checks) in a Lakebase table.
     """
 
-    def __init__(self, ws: WorkspaceClient, spark: SparkSession, engine: Engine | None = None):
+    def __init__(
+        self,
+        ws: WorkspaceClient,
+        spark: SparkSession,
+        engine: Engine | None = None,
+    ):
         self.ws = ws
         self.spark = spark
         self.engine = engine
@@ -152,19 +158,43 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         """
         if not config.instance_name:
             raise InvalidConfigError("instance_name must be provided for Lakebase storage")
-        if not config.user:
-            raise InvalidConfigError("user must be provided for Lakebase storage")
         if not config.location:
             raise InvalidConfigError("location must be provided for Lakebase storage")
 
         instance = self.ws.database.get_database_instance(config.instance_name)
-        cred = self.ws.database.generate_database_credential(
-            request_id=str(uuid.uuid4()), instance_names=[config.instance_name]
-        )
         host = instance.read_write_dns
-        password = cred.token
+        prefix = "postgresql+psycopg2"
+        port = config.port
+        database = config.database_name
+        user = config.client_id if config.client_id else self.ws.current_user.me().user_name
 
-        return f"postgresql://{config.user}:{password}@{host}:{config.port}/{config.database_name}?sslmode=require"
+        return f"{prefix}://{user}@{host}:{port}/{database}?sslmode=require"
+
+    def _prepare_before_connect(self, config: LakebaseChecksStorageConfig):
+        """
+        Prepare the before_connect event listener with the instance_name captured in closure.
+
+        Args:
+            config: Configuration for saving and loading checks to Lakebase.
+
+        Returns:
+            The _before_connect event listener function.
+
+        Raises:
+            InvalidConfigError: If instance_name is not provided.
+        """
+        if not config.instance_name:
+            raise InvalidConfigError("instance_name must be provided for Lakebase storage")
+
+        instance_name = config.instance_name
+
+        def _before_connect(_dialect, _conn_rec, _cargs, cparams) -> None:
+            cred = self.ws.database.generate_database_credential(
+                request_id=str(uuid.uuid4()), instance_names=[instance_name]
+            )
+            cparams["password"] = cred.token
+
+        return _before_connect
 
     def _get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
         """
@@ -176,8 +206,15 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             SQLAlchemy engine for the Lakebase instance.
         """
-        connection_url = self._get_connection_url(config)
-        return create_engine(connection_url)
+        engine_url = self._get_connection_url(config)
+        engine = create_engine(
+            engine_url,
+            pool_recycle=45 * 60,  # recycle connections every 45 minutes
+            connect_args={'sslmode': 'require'},
+            pool_size=4,
+        )
+        event.listen(engine, "do_connect", self._prepare_before_connect(config))
+        return engine
 
     @staticmethod
     def get_table_definition(schema_name: str, table_name: str) -> Table:
@@ -600,8 +637,8 @@ class InstallationChecksStorageHandler(ChecksStorageHandler[InstallationChecksSt
             # transfer lakebase fields from run config to storage config if not already set
             if run_config.lakebase_instance_name and not config.instance_name:
                 config.instance_name = run_config.lakebase_instance_name
-            if run_config.lakebase_user and not config.user:
-                config.user = run_config.lakebase_user
+            if run_config.lakebase_client_id and not config.client_id:
+                config.client_id = run_config.lakebase_client_id
             # replace port if non-default is specified in the run config
             if run_config.lakebase_port and config.port != run_config.lakebase_port:
                 config.port = run_config.lakebase_port
@@ -822,12 +859,6 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
             InvalidConfigError: If the configuration is invalid or unsupported.
         """
         if run_config.lakebase_instance_name:
-            if not run_config.lakebase_user:
-                raise InvalidConfigError(
-                    f"Lakebase user must be specified in run config '{run_config.name}' when "
-                    f"lakebase_instance_name is set. Please add 'lakebase_user' to your run configuration."
-                )
-
             if not run_config.checks_location:
                 raise InvalidConfigError(
                     f"checks_location must be specified in run config '{run_config.name}' when using Lakebase. "
@@ -846,7 +877,6 @@ class ChecksStorageHandlerFactory(BaseChecksStorageHandlerFactory):
                 LakebaseChecksStorageConfig(
                     location=run_config.checks_location,
                     instance_name=run_config.lakebase_instance_name,
-                    user=run_config.lakebase_user,
                     port=run_config.lakebase_port or "5432",
                     run_config_name=run_config.name,
                 ),

@@ -8,45 +8,47 @@ from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 def test_create_valid_lakebase_check_storage_config():
     """Test creating LakebaseConnectionConfig with valid parameters."""
     config = LakebaseChecksStorageConfig(
-        instance_name="testhost", location="testdb.testschema.testtable", user="testuser", port="5432"
+        instance_name="testhost",
+        location="testdb.testschema.testtable",
+        client_id="00000000-0000-0000-0000-000000000000",
+        port="5432",
     )
 
     assert config.instance_name == "testhost"
     assert config.database_name == "testdb"
-    assert config.user == "testuser"
+    assert config.client_id == "00000000-0000-0000-0000-000000000000"
     assert config.port == "5432"
 
 
 def test_create_lakebase_check_storage_config_default_port():
     """Test creating LakebaseConnectionConfig with default port."""
     config = LakebaseChecksStorageConfig(
-        instance_name="testhost", location="testdb.testschema.testtable", user="testuser"
+        instance_name="testhost",
+        location="testdb.testschema.testtable",
+        client_id="00000000-0000-0000-0000-000000000000",
     )
 
     assert config.instance_name == "testhost"
     assert config.database_name == "testdb"
-    assert config.user == "testuser"
+    assert config.client_id == "00000000-0000-0000-0000-000000000000"
     assert config.port == "5432"  # Default port
 
 
 @pytest.mark.parametrize(
-    "instance_name,location,user,port,expected_error",
+    "instance_name,location,client_id,port,expected_error",
     [
         # Empty/None instance_name
-        ("", "testdb.testschema.testtable", "user", "5432", "Instance name must not be empty or None."),
-        (None, "testdb.testschema.testtable", "user", "5432", "Instance name must not be empty or None."),
+        ("", "testdb.testschema.testtable", "client_id", "5432", "Instance name must not be empty or None."),
+        (None, "testdb.testschema.testtable", "client_id", "5432", "Instance name must not be empty or None."),
         # Empty/None database
-        ("instance", "", "user", "5432", "Location must not be empty or None."),
-        ("instance", None, "user", "5432", "Location must not be empty or None."),
-        # Empty/None user
-        ("instance", "testdb.testschema.testtable", "", "5432", "User must not be empty or None."),
-        ("instance", "testdb.testschema.testtable", None, "5432", "User must not be empty or None."),
+        ("instance", "", "client_id", "5432", "Location must not be empty or None."),
+        ("instance", None, "client_id", "5432", "Location must not be empty or None."),
     ],
 )
-def test_create_invalid_lakebase_check_storage_config(instance_name, location, user, port, expected_error):
+def test_create_invalid_lakebase_check_storage_config(instance_name, location, client_id, port, expected_error):
     """Test LakebaseChecksStorageConfig validation with invalid parameters."""
     with pytest.raises(InvalidParameterError, match=expected_error):
-        LakebaseChecksStorageConfig(instance_name=instance_name, location=location, user=user, port=port)
+        LakebaseChecksStorageConfig(instance_name=instance_name, location=location, client_id=client_id, port=port)
 
 
 def test_valid_lakebase_checks_storage_config():
@@ -54,7 +56,7 @@ def test_valid_lakebase_checks_storage_config():
     config = LakebaseChecksStorageConfig(
         instance_name="testinstance",
         location="testdb.testschema.testtable",
-        user="testuser",
+        client_id="00000000-0000-0000-0000-000000000000",
         port="5432",
         run_config_name="test_run",
         mode="append",
@@ -62,7 +64,7 @@ def test_valid_lakebase_checks_storage_config():
 
     assert config.instance_name == "testinstance"
     assert config.location == "testdb.testschema.testtable"
-    assert config.user == "testuser"
+    assert config.client_id == "00000000-0000-0000-0000-000000000000"
     assert config.port == "5432"
     assert config.run_config_name == "test_run"
     assert config.mode == "append"
@@ -74,7 +76,9 @@ def test_valid_lakebase_checks_storage_config():
 def test_valid_lakebase_checks_storage_config_defaults():
     """Test creating LakebaseChecksStorageConfig with default values."""
     config = LakebaseChecksStorageConfig(
-        instance_name="testinstance", location="testdb.testschema.testtable", user="testuser"
+        instance_name="testinstance",
+        location="testdb.testschema.testtable",
+        client_id="00000000-0000-0000-0000-000000000000",
     )
 
     assert config.run_config_name == "default"
@@ -93,7 +97,9 @@ def test_valid_lakebase_checks_storage_config_defaults():
 def test_invalid_location_empty(location, expected_error):
     """Test LakebaseChecksStorageConfig with empty/None location."""
     with pytest.raises(InvalidParameterError, match=expected_error):
-        LakebaseChecksStorageConfig(instance_name="testinstance", location=location, user="testuser")
+        LakebaseChecksStorageConfig(
+            instance_name="testinstance", location=location, client_id="00000000-0000-0000-0000-000000000000"
+        )
 
 
 @pytest.mark.parametrize(
@@ -111,7 +117,9 @@ def test_invalid_location_empty(location, expected_error):
 def test_invalid_location_format(location, expected_error):
     """Test LakebaseChecksStorageConfig with invalid location format."""
     with pytest.raises(InvalidConfigError, match=expected_error):
-        LakebaseChecksStorageConfig(instance_name="testinstance", location=location, user="testuser")
+        LakebaseChecksStorageConfig(
+            instance_name="testinstance", location=location, client_id="00000000-0000-0000-0000-000000000000"
+        )
 
 
 @pytest.mark.parametrize(
@@ -125,7 +133,9 @@ def test_invalid_instance_name(instance_name, expected_error):
     """Test LakebaseChecksStorageConfig with invalid instance name."""
     with pytest.raises(InvalidParameterError, match=expected_error):
         LakebaseChecksStorageConfig(
-            instance_name=instance_name, location="testdb.testschema.testtable", user="testuser"
+            instance_name=instance_name,
+            location="testdb.testschema.testtable",
+            client_id="00000000-0000-0000-0000-000000000000",
         )
 
 
@@ -144,7 +154,10 @@ def test_invalid_mode(mode, expected_error):
     """Test LakebaseChecksStorageConfig with invalid mode."""
     with pytest.raises(InvalidConfigError, match=expected_error):
         LakebaseChecksStorageConfig(
-            instance_name="testinstance", location="testdb.testschema.testtable", user="testuser", mode=mode
+            instance_name="testinstance",
+            location="testdb.testschema.testtable",
+            client_id="00000000-0000-0000-0000-000000000000",
+            mode=mode,
         )
 
 
@@ -152,13 +165,19 @@ def test_valid_modes():
     """Test LakebaseChecksStorageConfig with valid modes."""
     # Test 'append' mode
     config_append = LakebaseChecksStorageConfig(
-        instance_name="testinstance", location="testdb.testschema.testtable", user="testuser", mode="append"
+        instance_name="testinstance",
+        location="testdb.testschema.testtable",
+        client_id="00000000-0000-0000-0000-000000000000",
+        mode="append",
     )
     assert config_append.mode == "append"
 
     # Test 'overwrite' mode
     config_overwrite = LakebaseChecksStorageConfig(
-        instance_name="testinstance", location="testdb.testschema.testtable", user="testuser", mode="overwrite"
+        instance_name="testinstance",
+        location="testdb.testschema.testtable",
+        client_id="00000000-0000-0000-0000-000000000000",
+        mode="overwrite",
     )
     assert config_overwrite.mode == "overwrite"
 
@@ -166,7 +185,9 @@ def test_valid_modes():
 def test_location_properties():
     """Test database_name, schema_name, and table_name properties."""
     config = LakebaseChecksStorageConfig(
-        instance_name="testinstance", location="testdb.testschema.testtable", user="testuser"
+        instance_name="testinstance",
+        location="testdb.testschema.testtable",
+        client_id="00000000-0000-0000-0000-000000000000",
     )
 
     assert config.database_name == "testdb"
@@ -177,7 +198,9 @@ def test_location_properties():
 def test_complex_location_with_special_characters():
     """Test location parsing with special characters in names."""
     config = LakebaseChecksStorageConfig(
-        instance_name="testinstance", location="test_db.test_schema.test_table", user="testuser"
+        instance_name="testinstance",
+        location="test_db.test_schema.test_table",
+        client_id="00000000-0000-0000-0000-000000000000",
     )
 
     assert config.database_name == "test_db"
@@ -189,11 +212,13 @@ def test_eager_validation_on_init():
     """Test that validation happens eagerly during __post_init__."""
     # This should fail immediately during construction, not later
     with pytest.raises(InvalidParameterError, match="Instance name must not be empty or None"):
-        LakebaseChecksStorageConfig(instance_name="", location="testdb.testschema.testtable", user="testuser")
+        LakebaseChecksStorageConfig(
+            instance_name="", location="testdb.testschema.testtable", client_id="00000000-0000-0000-0000-000000000000"
+        )
 
 
 def test_multiple_validation_errors_precedence():
     """Test that the first validation error is raised when multiple issues exist."""
     # Empty location should be caught first, before instance name validation
     with pytest.raises(InvalidParameterError, match="Location must not be empty or None"):
-        LakebaseChecksStorageConfig(instance_name="", location="", user="testuser")
+        LakebaseChecksStorageConfig(instance_name="", location="", client_id="00000000-0000-0000-0000-000000000000")

@@ -34,6 +34,17 @@
       - 2
       - 3
 
+# is_not_in_list check
+- criticality: error
+  check:
+    function: is_not_in_list
+    arguments:
+      column: col2
+      forbidden:
+      - 1000
+      - 2000
+      - 3000
+
 # is_not_null_and_is_in_list check
 - criticality: error
   check:
