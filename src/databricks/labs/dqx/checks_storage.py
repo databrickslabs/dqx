@@ -6,6 +6,7 @@ from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar, NoReturn
+from urllib.parse import quote
 from sqlalchemy import (
     Engine,
     create_engine,
@@ -20,7 +21,6 @@ from sqlalchemy import (
     null,
     event,
 )
-from urllib.parse import quote
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, IntegrityError
