@@ -76,6 +76,17 @@ def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_rand
         config = TableChecksStorageConfig(location=table_name)
         engine.load_checks(config=config)
 
+def test_load_checks_with_special_characters_in_table_name(ws, make_schema, make_random, spark):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"`{catalog_name}`.`{schema_name}`.`table-with-special_chars$#{make_random(5)}`"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, run_config_name="default")
+    engine.save_checks(INPUT_CHECKS, config=config)
+    checks = engine.load_checks(config=config)
+    assert checks == EXPECTED_CHECKS, "Checks were not loaded correctly."
+
 
 def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
     catalog_name = TEST_CATALOG

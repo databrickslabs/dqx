@@ -23,7 +23,7 @@ from sqlalchemy import (
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, IntegrityError
-
+from urllib.parse import quote
 
 import yaml
 from pyspark.sql import SparkSession
@@ -107,7 +107,8 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             NotFound: if the table does not exist in the workspace
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
-        if not self.ws.tables.exists(config.location).table_exists:
+        api_ready_location = quote(config.location.replace("`", ""))
+        if not self.ws.tables.exists(api_ready_location).table_exists:
             raise NotFound(f"Checks table {config.location} does not exist in the workspace")
         rules_df = self.spark.read.table(config.location)
         return serialize_checks_from_dataframe(rules_df, run_config_name=config.run_config_name) or []
