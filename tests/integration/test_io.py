@@ -198,6 +198,68 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
     assert_df_equality(input_df, result_df)  # no new records
 
 
+def test_save_batch_dataframe_to_path(spark, make_schema, make_volume, make_random):
+    catalog_name = TEST_CATALOG
+    schema_obj = make_schema(catalog_name=catalog_name)
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema_obj.name)
+    volume_path = f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{make_random(10).lower()}"
+
+    mode = "overwrite"
+    output_config = OutputConfig(location=volume_path, mode=mode, format="delta")
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2], [3, 4]], data_schema)
+
+    save_dataframe_as_table(input_df, output_config)
+
+    result_df = spark.read.format("delta").load(volume_path)
+    assert_df_equality(input_df, result_df, ignore_row_order=True)
+
+
+def test_save_streaming_dataframe_to_path(spark, make_schema, make_volume, make_random):
+    catalog_name = TEST_CATALOG
+    schema_obj = make_schema(catalog_name=catalog_name)
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema_obj.name)
+
+    table_name = make_random(10).lower()
+    volume_path = f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{table_name}"
+    checkpoint_path = f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/checkpoints/{table_name}"
+
+    source_table = f"{catalog_name}.{schema_obj.name}.{make_random(10).lower()}"
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
+    input_df.write.format("delta").mode("overwrite").saveAsTable(source_table)
+
+    streaming_input_df = spark.readStream.table(source_table)
+    output_config = OutputConfig(
+        location=volume_path,
+        mode="append",
+        format="delta",
+        options={"checkpointLocation": checkpoint_path},
+        trigger={"availableNow": True},
+    )
+
+    query = save_dataframe_as_table(streaming_input_df, output_config)
+    query.awaitTermination()
+
+    result_df = spark.read.format("delta").load(volume_path)
+    assert_df_equality(input_df, result_df)
+
+
+def test_save_dataframe_invalid_location(spark):
+    invalid_location = "invalid/location"
+    output_config = OutputConfig(location=invalid_location, mode="overwrite")
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
+
+    with pytest.raises(
+        InvalidConfigError,
+        match="Invalid output location. It must be a 2 or 3-level table namespace or storage path, given invalid/location",
+    ):
+        save_dataframe_as_table(input_df, output_config)
+
+
 def test_get_reference_dataframes(spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name

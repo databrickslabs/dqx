@@ -1217,6 +1217,42 @@ def test_benchmark_foreach_is_data_fresh_per_time_window(benchmark, ws, generate
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_has_no_outliers(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.has_no_outliers,
+            column="col2",
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_integer_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_not_greater_than")
+def test_benchmark_foreach_has_no_outliers(benchmark, ws, generated_integer_df):
+    columns, df, n_rows = generated_integer_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            criticality="error",
+            check_func=check_funcs.has_no_outliers,
+            columns=columns,
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize(
     "column",
     [
@@ -1511,6 +1547,20 @@ def test_benchmark_is_non_empty_geometry(skip_if_runtime_not_geo_compatible, ben
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_is_not_null_island(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_not_null_island,
+            column="point_geom",
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 def test_benchmark_has_dimension(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
@@ -1556,6 +1606,126 @@ def test_benchmark_has_y_coordinate_between(skip_if_runtime_not_geo_compatible, 
     assert actual_count == EXPECTED_ROWS
 
 
+def test_benchmark_is_area_not_greater_than(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_area_not_greater_than,
+            column="polygon_geom",
+            check_func_kwargs={"value": 1.0},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_area_not_less_than(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_area_not_less_than,
+            column="polygon_geom",
+            check_func_kwargs={"value": 1.0},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_area_equal_to(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_area_equal_to,
+            column="polygon_geom",
+            check_func_kwargs={"value": 1.0},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_area_not_equal_to(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_area_not_equal_to,
+            column="polygon_geom",
+            check_func_kwargs={"value": 1.0},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_num_points_not_greater_than(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_num_points_not_greater_than,
+            column="polygon_geom",
+            check_func_kwargs={"value": 1},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_num_points_not_less_than(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_num_points_not_less_than,
+            column="polygon_geom",
+            check_func_kwargs={"value": 1},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_num_points_equal_to(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_num_points_equal_to,
+            column="polygon_geom",
+            check_func_kwargs={"value": 1},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_num_points_not_equal_to(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=geo_check_funcs.is_num_points_not_equal_to,
+            column="polygon_geom",
+            check_func_kwargs={"value": 1},
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
 @pytest.mark.benchmark(group="test_benchmark_has_valid_schema")
 def test_benchmark_has_valid_schema(benchmark, ws, generated_df):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
@@ -1591,4 +1761,126 @@ def test_benchmark_foreach_has_valid_schema(benchmark, ws, generated_string_df):
     ]
     benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
     actual_count = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.benchmark(group="test_benchmark_is_valid_json")
+def test_benchmark_is_valid_json(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.is_valid_json,
+            column="col_json_str",
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.benchmark(group="test_benchmark_has_json_keys")
+def test_benchmark_has_json_keys_require_at_least_one(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1", "key2"], "require_all": False},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.benchmark(group="test_benchmark_has_json_keys")
+def test_benchmark_has_json_keys_require_all_true(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_json_keys,
+            column="col_json_str",
+            check_func_kwargs={"keys": ["key1", "key2"]},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.benchmark(group="test_benchmark_has_valid_json_schema")
+def test_benchmark_has_valid_json_schema(benchmark, ws, generated_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=check_funcs.has_valid_json_schema,
+            column="col_json_str",
+            check_func_kwargs={"schema": "STRUCT<key1: STRING, key2: STRING>"},
+        ),
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_count_distinct_with_group_by(benchmark, ws, generated_df):
+    """Benchmark count_distinct with group_by (uses two-stage aggregation: groupBy + join)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "group_by": ["col3"],
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_approx_count_distinct_with_group_by(benchmark, ws, generated_df):
+    """Benchmark approx_count_distinct with group_by (uses window functions - should be faster)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "approx_count_distinct",
+                "group_by": ["col3"],
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_is_aggr_count_distinct_no_group_by(benchmark, ws, generated_df):
+    """Benchmark count_distinct without group_by (baseline - uses standard aggregation)."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.is_aggr_not_greater_than,
+            column="col2",
+            check_func_kwargs={
+                "aggr_type": "count_distinct",
+                "limit": 1000000,
+            },
+        )
+    ]
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS

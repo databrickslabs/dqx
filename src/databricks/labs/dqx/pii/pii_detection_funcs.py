@@ -19,7 +19,7 @@ from pyspark.sql import Column
 from pyspark.sql.functions import concat_ws, lit, pandas_udf
 
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.check_funcs import make_condition, _get_normalized_column_and_expr
+from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError
 
@@ -87,7 +87,7 @@ def does_not_contain_pii(
     _validate_environment()
 
     entity_detection_udf = _build_detection_udf(nlp_engine_config_dict, language, threshold, entities)
-    col_str_norm, _, col_expr = _get_normalized_column_and_expr(column)
+    col_str_norm, _, col_expr = get_normalized_column_and_expr(column)
     entity_info = entity_detection_udf(col_expr)
     condition = entity_info.isNotNull()
     message = concat_ws(" ", lit(f"Column '{col_str_norm}' contains PII:"), entity_info)

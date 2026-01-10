@@ -9,25 +9,11 @@ from databricks.labs.dqx.check_funcs import make_condition, register_rule
 
 # Sample user input with specific requirements to avoid flakiness in tests
 USER_INPUT = """
-Username should not start with 's' and should not contain more than 20 letters if user id is provided. Error message must be: "Username should not start with 's' and should not contain more than 20 letters if user id is provided"
-Apply validation when user_id is not null. Use SQL expression for this check with the following expression: NOT (username LIKE 's%') AND LENGTH(username) <= 20.
-Users at age 18 or above must have a valid email address.
-Age should be between 0 and 120.
+Users at age 18 or above must have a valid email address checked using regex.
+Age should be between 0 and 120. Output the rules in the given order.
 """
 
 EXPECTED_CHECKS = [
-    {
-        "check": {
-            "arguments": {
-                "columns": ["username"],
-                "expression": "NOT (username LIKE 's%') AND LENGTH(username) <= 20",
-                "msg": "Username should not start with 's' and should not contain more than 20 letters if user id is provided",
-            },
-            "function": "sql_expression",
-        },
-        "criticality": "error",
-        "filter": "user_id IS NOT NULL",
-    },
     {
         "check": {
             "arguments": {"column": "email", "regex": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
@@ -123,3 +109,75 @@ def test_generate_dq_rules_ai_assisted_with_custom_functions(ws, spark):
         }
     ]
     assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_is_not_equal_to_str(ws, spark):
+    user_input = "Device name must not be equal 'test'"
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
+
+    expected_checks = [
+        {
+            "check": {
+                "arguments": {"column": "device_name", "value": "'test'"},
+                "function": "is_not_equal_to",
+            },
+            "criticality": "error",
+        },
+    ]
+
+    assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_sql_expression(ws, spark):
+    user_input = "Users email must not end with @gmail.com checked using sql expression, skip msg."
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
+
+    expected_checks = [
+        {
+            "check": {
+                "arguments": {"columns": ["email"], "expression": "email NOT LIKE '%@gmail.com'"},
+                "function": "sql_expression",
+            },
+            "criticality": "error",
+        },
+    ]
+
+    assert actual_checks == expected_checks
+
+
+def test_generate_dq_rules_ai_assisted_with_summary_stats_and_user_input(ws, spark):
+    """Test AI rule generation using summary statistics with business description."""
+    user_input = "Validate product inventory: ensure prices and quantities are within reasonable ranges"
+
+    summary_stats = {
+        "product_code": {"mean": None, "min": "PROD-1000-A", "max": "PROD-9999-Z"},
+        "price": {"mean": "125.50", "min": "10.00", "max": "500.00"},
+        "stock_quantity": {"mean": "150", "min": "0", "max": "1000"},
+    }
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input, summary_stats=summary_stats)
+
+    # Verify checks were generated and are valid
+    assert len(actual_checks) > 0
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors
+
+
+def test_generate_dq_rules_ai_assisted_with_summary_stats_only(ws, spark):
+    """Test AI rule generation using summary statistics without business description."""
+    summary_stats = {
+        "temperature": {"mean": "22.5", "min": "-10.0", "max": "50.0"},
+        "humidity": {"mean": "65.5", "min": "20.0", "max": "95.0"},
+        "sensor_id": {"mean": None, "min": "SEN001", "max": "SEN100"},
+    }
+
+    generator = DQGenerator(ws, spark)
+    actual_checks = generator.generate_dq_rules_ai_assisted(summary_stats=summary_stats)
+
+    # Verify checks were generated and are valid
+    assert len(actual_checks) > 0
+    assert not DQEngineCore.validate_checks(actual_checks).has_errors

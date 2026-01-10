@@ -15,6 +15,7 @@ from databricks.labs.dqx.utils import (
     is_simple_column_expression,
     normalize_bound_args,
     safe_strip_file_from_path,
+    missing_required_packages,
 )
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
@@ -146,39 +147,39 @@ def test_get_columns_as_strings_allow_simple_expression_only(columns: list[str |
         get_columns_as_strings(columns, allow_simple_expressions_only=True)
 
 
-def test_valid_2_level_table_namespace():
+def test_valid_2_level_table_namespace(mock_spark):
     input_location = "db.table"
     input_format = None
     input_config = InputConfig(location=input_location, format=input_format)
-    assert read_input_data(Mock(), input_config)
+    assert read_input_data(mock_spark, input_config)
 
 
-def test_valid_3_level_table_namespace():
+def test_valid_3_level_table_namespace(mock_spark):
     input_location = "catalog.schema.table"
     input_format = None
     input_config = InputConfig(location=input_location, format=input_format)
-    assert read_input_data(Mock(), input_config)
+    assert read_input_data(mock_spark, input_config)
 
 
-def test_streaming_source():
+def test_streaming_source(mock_spark):
     input_location = "catalog.schema.table"
     input_config = InputConfig(location=input_location, is_streaming=True)
-    df = read_input_data(Mock(), input_config)
+    df = read_input_data(mock_spark, input_config)
     assert df.isStreaming
 
 
-def test_invalid_streaming_source_format():
+def test_invalid_streaming_source_format(mock_spark):
     input_location = "/Volumes/catalog/schema/volume/"
     input_format = "json"
     input_config = InputConfig(location=input_location, format=input_format, is_streaming=True)
     with pytest.raises(InvalidConfigError, match="Streaming reads from file sources must use 'cloudFiles' format"):
-        read_input_data(Mock(), input_config)
+        read_input_data(mock_spark, input_config)
 
 
-def test_input_location_missing_when_reading_input_data():
+def test_input_location_missing_when_reading_input_data(mock_spark):
     input_config = InputConfig(location="")
     with pytest.raises(InvalidConfigError, match="Input location not configured"):
-        read_input_data(Mock(), input_config)
+        read_input_data(mock_spark, input_config)
 
 
 def test_safe_query_with_similar_names():
@@ -335,9 +336,9 @@ def test_normalize_bound_args_unsupported_type():
         normalize_bound_args({"a": 1})
 
 
-def test_get_reference_dataframes_with_missing_ref_tables() -> None:
-    assert get_reference_dataframes(Mock(), reference_tables={}) is None
-    assert get_reference_dataframes(Mock(), reference_tables=None) is None
+def test_get_reference_dataframes_with_missing_ref_tables(mock_spark) -> None:
+    assert get_reference_dataframes(mock_spark, reference_tables={}) is None
+    assert get_reference_dataframes(mock_spark, reference_tables=None) is None
 
 
 @pytest.mark.parametrize(
@@ -366,3 +367,16 @@ def test_get_reference_dataframes_with_missing_ref_tables() -> None:
 )
 def test_safe_strip_file_from_path(path: str, expected: str):
     assert safe_strip_file_from_path(path) == expected
+
+
+@pytest.mark.parametrize(
+    "packages,expected",
+    [
+        (["os", "json"], False),
+        (["os", "definitely_not_a_real_package"], True),
+        (["not_a_real_package1", "not_a_real_package2"], True),
+        ([], False),
+    ],
+)
+def test_missing_required_packages(packages, expected):
+    assert missing_required_packages(packages) == expected
