@@ -20,10 +20,10 @@ from sqlalchemy import (
     null,
     event,
 )
+from urllib.parse import quote
 from sqlalchemy.schema import CreateSchema
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, IntegrityError
-from urllib.parse import quote
 
 import yaml
 from pyspark.sql import SparkSession
@@ -107,8 +107,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             NotFound: if the table does not exist in the workspace
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
-        api_ready_location = quote(config.location.replace("`", ""))
-        if not self.ws.tables.exists(api_ready_location).table_exists:
+        if not self.ws.tables.exists(to_api_identifier(config.location)).table_exists:
             raise NotFound(f"Checks table {config.location} does not exist in the workspace")
         rules_df = self.spark.read.table(config.location)
         return serialize_checks_from_dataframe(rules_df, run_config_name=config.run_config_name) or []
@@ -898,3 +897,21 @@ def is_table_location(location: str) -> bool:
         bool: True if the location is a valid table name and not a file path, False otherwise.
     """
     return bool(TABLE_PATTERN.match(location)) and not location.lower().endswith(tuple(FILE_SERIALIZERS.keys()))
+
+
+def to_api_identifier(location: str) -> str:
+    """
+    Transform a Spark SQL table identifier into a Databricks SDK-compatible string.
+
+    This function bridges the gap between Spark's SQL requirements (backticks for
+    special characters) and the Databricks Workspace Client's REST requirements
+    (literal strings in URL paths). It removes SQL-style backticks and applies
+    URL encoding to ensure safety for characters like '$' or '#'.
+
+    Args:
+        location (str): The fully qualified table location (e.g., "`cat`.`schema`.`tab`").
+
+    Returns:
+        str: A URL-encoded string compatible with Databricks SDK methods like tables.exists().
+    """
+    return quote(location.replace("`", ""))

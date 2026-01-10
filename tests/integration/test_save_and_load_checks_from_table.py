@@ -76,6 +76,7 @@ def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_rand
         config = TableChecksStorageConfig(location=table_name)
         engine.load_checks(config=config)
 
+
 def test_load_checks_with_special_characters_in_table_name(ws, make_schema, make_random, spark):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
