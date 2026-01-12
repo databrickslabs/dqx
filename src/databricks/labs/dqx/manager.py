@@ -46,6 +46,8 @@ class DQRuleManager:
     df: DataFrame
     spark: SparkSession
     engine_user_metadata: dict[str, str]
+    rule_fingerprint: str
+    rule_set_fingerprint: str
     run_time_overwrite: datetime | None
     run_id: str
     ref_dfs: dict[str, DataFrame] | None = None
@@ -151,6 +153,8 @@ class DQRuleManager:
             F.lit(self.check.check_func.__name__).alias("function"),
             run_time_expr.alias("run_time"),
             F.lit(self.run_id).alias("run_id"),
+            F.lit(self.rule_fingerprint).alias("rule_fingerprint"),
+            F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
             F.create_map(*[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
                 "user_metadata"
             ),

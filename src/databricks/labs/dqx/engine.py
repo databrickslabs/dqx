@@ -38,6 +38,7 @@ from databricks.labs.dqx.rule import (
     DefaultColumnNames,
     DQRule,
 )
+from databricks.labs.dqx.checks_serializer import generate_rule_set_fingerprint
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
@@ -385,12 +386,16 @@ class DQEngineCore(DQEngineCoreBase):
             empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
             return df.select("*", empty_result)
 
+        rule_set_fingerprint = generate_rule_set_fingerprint(checks)
+
         check_conditions = []
         current_df = df
 
         for check in checks:
             manager = DQRuleManager(
                 check=check,
+                rule_fingerprint=check.rule_fingerprint,
+                rule_set_fingerprint=rule_set_fingerprint,
                 df=current_df,
                 spark=self.spark,
                 run_id=self.run_id,

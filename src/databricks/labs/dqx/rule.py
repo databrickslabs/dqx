@@ -1,5 +1,7 @@
 import abc
+import hashlib
 import inspect
+import json
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -194,6 +196,10 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         if self.columns is not None:
             return self._get_columns_as_string_expr(self.columns)
         return F.lit(None).cast("array<string>")
+
+    @ft.cached_property
+    def rule_fingerprint(self) -> str:
+        return hashlib.md5(json.dumps(self.to_dict(), sort_keys=True).encode("utf-8")).hexdigest()
 
     def prepare_check_func_args_and_kwargs(self) -> tuple[list, dict]:
         """
