@@ -72,7 +72,7 @@ datacontract = [
     "datacontract-cli>=0.11.1"
 ]
 anomaly = [
-    "mlflow[databricks]>=2.0",  # Unity Catalog support
+    "mlflow[databricks]>=2.19.1",  # Unity Catalog support + azure-cli auth type support (PR #14158)
     "scikit-learn>=1.0",
     "cloudpickle>=2.0",  # For serializing sklearn models in pandas UDFs
     "shap>=0.42.0,<0.50",  # For TreeSHAP-based feature contributions
