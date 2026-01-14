@@ -232,7 +232,7 @@ def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_r
     else:
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
-    assert not ws.tables.exists(metrics_table_name).table_exists
+    assert not spark.catalog.tableExists(metrics_table_name)
 
 
 @pytest.mark.parametrize(
