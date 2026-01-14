@@ -425,7 +425,7 @@ class DQDltGenerator(DQEngineBase):
 
             function_mapping = self._checks_mapping
             if rule_name not in function_mapping:
-                logger.info(f"No rule '{rule_name}' for column '{column}'. skipping...")
+                logger.info(f"No rule '{rule_name}' for column '{column}'. Skipping...")
                 continue
 
             expr = function_mapping[rule_name](column, **params)
