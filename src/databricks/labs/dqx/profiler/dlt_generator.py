@@ -361,7 +361,7 @@ class DQDltGenerator(DQEngineBase):
                 profile_params["max"] = check_args.get("limit")
             else:
                 logger.info(
-                    f"Unsupported check function '{check_func}' for column '{check_args.get('column', 'unknown')}'. skipping..."
+                    f"Unsupported check function '{check_func}' for column '{check_args.get('column', 'unknown')}'. Skipping..."
                 )
                 continue
 
