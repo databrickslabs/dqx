@@ -31,9 +31,6 @@ from tests.integration.test_anomaly_utils import (
     get_standard_4d_training_data,
 )
 
-# Must be set before importing mlflow for SDK-backed auth to work
-os.environ.setdefault("MLFLOW_ENABLE_DB_SDK", "true")
-
 # Optional MLflow import for anomaly detection tests
 try:
     import mlflow
@@ -54,38 +51,34 @@ def configure_mlflow_tracking():
     """Configure MLflow to use Databricks workspace tracking backend for integration tests.
 
     Authentication uses the Databricks SDK via metadata service (from databrickslabs/sandbox/acceptance action).
-    MLFLOW_ENABLE_DB_SDK is set at module import time (before mlflow import) to ensure SDK-backed auth works.
+    This fixture forces MLflow to use SDK-based authentication and ensures consistent tracking URI format.
     """
     if not HAS_MLFLOW:
         # If MLflow not installed (anomaly extras not installed), skip configuration
         yield
         return
 
-    # Verify SDK authentication works before configuring MLflow
-    # Fail fast in CI if SDK auth doesn't work - MLflow will fail anyway with a less useful error
-    try:
-        ws = WorkspaceClient()
-        ws.current_user.me()
-        host = os.getenv("DATABRICKS_HOST") or "not set"
-        auth_type = os.getenv("DATABRICKS_AUTH_TYPE") or "not set"
-        logger.info(f"SDK auth OK: host={host} auth_type={auth_type}")
-    except Exception:
-        logger.exception("SDK authentication check failed (WorkspaceClient.current_user.me())")
-        raise
+    # Force SDK auth path for MLflow (must be set before MLflow tries to auth)
+    os.environ.setdefault("MLFLOW_ENABLE_DB_SDK", "true")
 
-    # Use tracking URI from env var if set, otherwise default to "databricks"
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "databricks")
+    # Always prefer Databricks tracking backend identifier.
+    # If someone sets MLFLOW_TRACKING_URI to a host URL by mistake, ignore it.
+    raw_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if raw_tracking_uri and (raw_tracking_uri == "databricks" or raw_tracking_uri.startswith("databricks://")):
+        tracking_uri = raw_tracking_uri
+    else:
+        tracking_uri = "databricks"
+
+    # UC registry should be databricks-uc
     registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
 
     try:
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_registry_uri(registry_uri)
         mlflow.set_experiment("/Shared/dqx_integration_tests")
-        logger.info(f"MLflow configured: tracking_uri={tracking_uri}, registry_uri={registry_uri}")
+        logger.info("MLflow configured: tracking_uri=%s registry_uri=%s", tracking_uri, registry_uri)
     except Exception as e:
-        # Log warning but don't fail all tests if MLflow auth fails
-        logger.warning(f"Failed to configure MLflow tracking/registry URI: {e}. Some tests may fail.")
-        # Re-raise to fail fast in CI where we expect auth to work
+        logger.warning("Failed to configure MLflow: %s", e)
         raise
 
     yield
