@@ -299,29 +299,31 @@ def test_workspace_config_as_dict():
 # Test LakebaseChecksStorageConfig validation and properties
 def test_lakebase_config_missing_instance_name():
     with pytest.raises(InvalidParameterError, match="Instance name must not be empty or None"):
-        LakebaseChecksStorageConfig(location="db.schema.table", instance_name=None, user="test_user")
-
-
-def test_lakebase_config_missing_user():
-    with pytest.raises(InvalidParameterError, match="User must not be empty or None"):
-        LakebaseChecksStorageConfig(location="db.schema.table", instance_name="instance", user=None)
+        LakebaseChecksStorageConfig(
+            location="db.schema.table", instance_name=None, client_id="00000000-0000-0000-0000-000000000000"
+        )
 
 
 def test_lakebase_config_invalid_location_format():
     with pytest.raises(InvalidConfigError, match="Invalid Lakebase table name.*Must be in the format"):
-        LakebaseChecksStorageConfig(location="invalid_table", instance_name="instance", user="test_user")
+        LakebaseChecksStorageConfig(
+            location="invalid_table", instance_name="instance", client_id="00000000-0000-0000-0000-000000000000"
+        )
 
 
 def test_lakebase_config_invalid_mode():
     with pytest.raises(InvalidConfigError, match="Invalid mode.*Must be 'append' or 'overwrite'"):
         LakebaseChecksStorageConfig(
-            location="db.schema.table", instance_name="instance", user="test_user", mode="invalid"
+            location="db.schema.table",
+            instance_name="instance",
+            client_id="00000000-0000-0000-0000-000000000000",
+            mode="invalid",
         )
 
 
 def test_lakebase_config_properties():
     config = LakebaseChecksStorageConfig(
-        location="my_db.my_schema.my_table", instance_name="instance", user="test_user"
+        location="my_db.my_schema.my_table", instance_name="instance", client_id="00000000-0000-0000-0000-000000000000"
     )
     assert config.database_name == "my_db"
     assert config.schema_name == "my_schema"
@@ -329,7 +331,9 @@ def test_lakebase_config_properties():
 
 
 def test_lakebase_config_properties_cached():
-    config = LakebaseChecksStorageConfig(location="db1.sch1.tbl1", instance_name="instance", user="test_user")
+    config = LakebaseChecksStorageConfig(
+        location="db1.sch1.tbl1", instance_name="instance", client_id="00000000-0000-0000-0000-000000000000"
+    )
     # Access properties multiple times to ensure caching works
     assert config.database_name == "db1"
     assert config.database_name == "db1"
@@ -341,12 +345,18 @@ def test_lakebase_config_properties_cached():
 
 def test_lakebase_config_valid_modes():
     config_append = LakebaseChecksStorageConfig(
-        location="db.schema.table", instance_name="instance", user="test_user", mode="append"
+        location="db.schema.table",
+        instance_name="instance",
+        client_id="00000000-0000-0000-0000-000000000000",
+        mode="append",
     )
     assert config_append.mode == "append"
 
     config_overwrite = LakebaseChecksStorageConfig(
-        location="db.schema.table", instance_name="instance", user="test_user", mode="overwrite"
+        location="db.schema.table",
+        instance_name="instance",
+        client_id="00000000-0000-0000-0000-000000000000",
+        mode="overwrite",
     )
     assert config_overwrite.mode == "overwrite"
 
@@ -437,7 +447,7 @@ def test_run_config_defaults():
     assert not config.reference_tables
     assert not config.custom_check_functions
     assert config.lakebase_instance_name is None
-    assert config.lakebase_user is None
+    assert config.lakebase_client_id is None
     assert config.lakebase_port is None
 
 
