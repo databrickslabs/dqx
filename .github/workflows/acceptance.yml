@@ -56,6 +56,21 @@ jobs:
           relative_files = true
           EOF
 
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Set env vars for Azure CLI auth
+        run: |
+          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
+          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+          echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
+          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
+
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
       # Run 10 tests in parallel: https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
@@ -70,9 +85,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-          DATABRICKS_AUTH_TYPE: azure-cli
-          MLFLOW_TRACKING_URI: databricks
-          MLFLOW_REGISTRY_URI: databricks-uc
 
       - name: Merge coverage reports and convert them to XML
         run: |
@@ -120,6 +132,21 @@ jobs:
           relative_files = true
           EOF
 
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Set env vars for Azure CLI auth
+        run: |
+          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
+          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+          echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
+          echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
+
       - name: Run integration tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
         with:
@@ -132,9 +159,6 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-          DATABRICKS_AUTH_TYPE: azure-cli
-          MLFLOW_TRACKING_URI: databricks
-          MLFLOW_REGISTRY_URI: databricks-uc
 
       - name: Merge coverage reports and convert them to XML
         run: |
