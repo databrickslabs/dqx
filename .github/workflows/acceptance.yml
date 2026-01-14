@@ -67,6 +67,8 @@ jobs:
           codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
           # MLflow: force SDK-based auth (uses metadata service from acceptance action)
           MLFLOW_ENABLE_DB_SDK: "true"
@@ -127,6 +129,8 @@ jobs:
           codegen_path: tests/integration/.codegen.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
           # MLflow: force SDK-based auth (uses metadata service from acceptance action)
