@@ -55,6 +55,10 @@ def configure_mlflow_tracking():
     - Environment variables (DATABRICKS_HOST + DATABRICKS_TOKEN or DATABRICKS_AUTH_TYPE)
     - Or DATABRICKS_CONFIG_PROFILE env var (uses specific profile from ~/.databrickscfg)
     - Or DEFAULT profile from ~/.databrickscfg
+
+    When DATABRICKS_AUTH_TYPE=azure-cli is set but DATABRICKS_TOKEN is not available,
+    this fixture will attempt to get a token from an authenticated WorkspaceClient
+    (which uses the custom credentials provider from databrickslabs/sandbox/acceptance action).
     """
     if not HAS_MLFLOW:
         # If MLflow not installed (anomaly extras not installed), skip configuration
@@ -66,6 +70,46 @@ def configure_mlflow_tracking():
     mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     databricks_host = os.environ.get("DATABRICKS_HOST")
     profile = os.environ.get("DATABRICKS_CONFIG_PROFILE")
+    auth_type = os.environ.get("DATABRICKS_AUTH_TYPE", "token")
+    databricks_token = os.environ.get("DATABRICKS_TOKEN")
+
+    # If using azure-cli auth but no token is set, try to get token from authenticated WorkspaceClient
+    # The databrickslabs/sandbox/acceptance action provides authentication via custom credentials provider
+    # MLflow needs a token, so we extract it from the authenticated SDK client
+    # 
+    # Security note: Creating WorkspaceClient() is safe - it uses the same credentials provider
+    # (GitHub OIDC) that's already configured via environment variables. No secrets are stored
+    # or leaked - we only extract a token that's already been obtained by the SDK.
+    if auth_type == "azure-cli" and not databricks_token and databricks_host:
+        try:
+            # Create a WorkspaceClient which will use the custom credentials provider
+            # (e.g., GitHub OIDC from databrickslabs/sandbox/acceptance action)
+            # This is safe - credentials are handled internally by the SDK, no secrets stored
+            ws = WorkspaceClient()
+            # Verify authentication works by making a simple API call
+            ws.current_user.me()
+            
+            # Get token from the config's credentials provider
+            # The Databricks SDK stores the token in the config after authentication
+            config = ws.config
+            if hasattr(config, "authenticate"):
+                # Extract token by creating a dummy request and calling authenticate
+                # This triggers the credentials provider to add the Authorization header
+                import requests
+                
+                test_request = requests.Request("GET", f"https://{databricks_host}/api/2.0/preview/scim/v2/Me")
+                prepared = test_request.prepare()
+                config.authenticate(prepared)
+                # Extract token from Authorization header (format: "Bearer <token>")
+                auth_header = prepared.headers.get("Authorization", "")
+                if auth_header.startswith("Bearer "):
+                    token = auth_header[7:]  # Remove "Bearer " prefix
+                    # Set token as env var for MLflow to use
+                    # This is the standard way MLflow expects authentication
+                    os.environ["DATABRICKS_TOKEN"] = token
+                    logger.info("Retrieved DATABRICKS_TOKEN from authenticated WorkspaceClient for MLflow")
+        except Exception as e:
+            logger.warning(f"Failed to get token from WorkspaceClient: {e}. MLflow may fail to authenticate.")
 
     if mlflow_tracking_uri:
         # Explicit MLflow tracking URI set (e.g., from CI/CD)
@@ -74,7 +118,6 @@ def configure_mlflow_tracking():
     elif databricks_host:
         # Environment-based auth (DATABRICKS_HOST + TOKEN or azure-cli)
         tracking_uri = "databricks"
-        auth_type = os.environ.get("DATABRICKS_AUTH_TYPE", "token")
         logger.info(f"Using MLflow tracking URI: databricks (env-based auth: {auth_type})")
     elif profile:
         # Profile-based auth
