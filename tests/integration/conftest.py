@@ -72,9 +72,13 @@ def configure_mlflow_tracking():
     registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
 
     try:
+        # Avoid MLflow honoring an empty/None experiment id from the environment.
+        os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_registry_uri(registry_uri)
-        mlflow.set_experiment("/Shared/dqx_integration_tests")
+        experiment = mlflow.set_experiment("/Shared/dqx_integration_tests")
+        if experiment and getattr(experiment, "experiment_id", None):
+            os.environ["MLFLOW_EXPERIMENT_ID"] = experiment.experiment_id
         logger.info(f"MLflow configured: tracking_uri={tracking_uri} registry_uri={registry_uri}")
     except Exception as e:
         logger.warning(f"Failed to configure MLflow: {e}")
