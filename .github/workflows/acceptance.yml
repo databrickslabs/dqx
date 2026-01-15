@@ -71,10 +71,18 @@ jobs:
           if [[ ! "$val" =~ ^https?:// ]]; then
             val="https://$val"
           fi
+          # Workaround for MLflow OIDC auth: MLflow requires a profile to exist even when it uses SDK auth.
+          dummy_profile="${RUNNER_TEMP}/databricks_profile"
+          cat > "$dummy_profile" << EOF
+          [DEFAULT]
+          host = https://dummy
+          token = dummy
+          EOF
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+          echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
 
-          # MLflow: MUST be these values (do NOT set to host)
+          # MLflow: Use databricks scheme so MLflow uses SDK auth (with dummy profile present).
           echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
           echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
           echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
@@ -94,8 +102,9 @@ jobs:
           # Belt + braces: pass through explicitly to the action step
           DATABRICKS_HOST: ${{ env.DATABRICKS_HOST }}
           DATABRICKS_AUTH_TYPE: ${{ env.DATABRICKS_AUTH_TYPE }}
+          DATABRICKS_CONFIG_FILE: ${{ env.DATABRICKS_CONFIG_FILE }}
           MLFLOW_ENABLE_DB_SDK: "true"
-          MLFLOW_TRACKING_URI: "databricks"
+          MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
           MLFLOW_REGISTRY_URI: "databricks-uc"
 
       - name: Merge coverage reports and convert them to XML
@@ -159,9 +168,18 @@ jobs:
           if [[ ! "$val" =~ ^https?:// ]]; then
             val="https://$val"
           fi
+          # Workaround for MLflow OIDC auth: MLflow requires a profile to exist even when it uses SDK auth.
+          dummy_profile="${RUNNER_TEMP}/databricks_profile"
+          cat > "$dummy_profile" << EOF
+          [DEFAULT]
+          host = https://dummy
+          token = dummy
+          EOF
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
+          echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
 
+          # MLflow: Use databricks scheme so MLflow uses SDK auth (with dummy profile present).
           echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
           echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
           echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
@@ -181,8 +199,9 @@ jobs:
 
           DATABRICKS_HOST: ${{ env.DATABRICKS_HOST }}
           DATABRICKS_AUTH_TYPE: ${{ env.DATABRICKS_AUTH_TYPE }}
+          DATABRICKS_CONFIG_FILE: ${{ env.DATABRICKS_CONFIG_FILE }}
           MLFLOW_ENABLE_DB_SDK: "true"
-          MLFLOW_TRACKING_URI: "databricks"
+          MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
           MLFLOW_REGISTRY_URI: "databricks-uc"
 
       - name: Merge coverage reports and convert them to XML
