@@ -67,6 +67,10 @@ jobs:
         shell: bash
         run: |
           val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          # Ensure host has https:// prefix (SDK and MLflow expect full URL)
+          if [[ ! "$val" =~ ^https?:// ]]; then
+            val="https://$val"
+          fi
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
@@ -151,6 +155,10 @@ jobs:
         shell: bash
         run: |
           val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          # Ensure host has https:// prefix (SDK and MLflow expect full URL)
+          if [[ ! "$val" =~ ^https?:// ]]; then
+            val="https://$val"
+          fi
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
@@ -226,6 +234,10 @@ jobs:
       - name: Set env vars for Azure CLI auth
         run: |
           val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          # Ensure host has https:// prefix (SDK expects full URL)
+          if [[ ! "$val" =~ ^https?:// ]]; then
+            val="https://$val"
+          fi
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
@@ -284,6 +296,10 @@ jobs:
       - name: Set env vars for Azure CLI auth
         run: |
           val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
+          # Ensure host has https:// prefix (SDK expects full URL)
+          if [[ ! "$val" =~ ^https?:// ]]; then
+            val="https://$val"
+          fi
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
