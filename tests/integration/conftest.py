@@ -31,6 +31,11 @@ from tests.integration.test_anomaly_utils import (
     get_standard_4d_training_data,
 )
 
+# Must be set before importing mlflow
+# Set here as safety net - workflow also sets this, but this ensures it's set
+# before mlflow import even in local testing scenarios
+os.environ.setdefault("MLFLOW_ENABLE_DB_SDK", "true")
+
 # Optional MLflow import for anomaly detection tests
 try:
     import mlflow
@@ -58,9 +63,7 @@ def configure_mlflow_tracking():
         yield
         return
 
-    # Force SDK auth path for MLflow (must be set before MLflow tries to auth)
-    os.environ.setdefault("MLFLOW_ENABLE_DB_SDK", "true")
-
+    # MLFLOW_ENABLE_DB_SDK is already set at module level (before mlflow import)
     # Always prefer Databricks tracking backend identifier.
     # If someone sets MLFLOW_TRACKING_URI to a host URL by mistake, ignore it.
     raw_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
@@ -76,9 +79,9 @@ def configure_mlflow_tracking():
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_registry_uri(registry_uri)
         mlflow.set_experiment("/Shared/dqx_integration_tests")
-        logger.info("MLflow configured: tracking_uri=%s registry_uri=%s", tracking_uri, registry_uri)
+        logger.info(f"MLflow configured: tracking_uri={tracking_uri} registry_uri={registry_uri}")
     except Exception as e:
-        logger.warning("Failed to configure MLflow: %s", e)
+        logger.warning(f"Failed to configure MLflow: {e}")
         raise
 
     yield
