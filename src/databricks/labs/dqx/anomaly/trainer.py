@@ -22,7 +22,6 @@ import cloudpickle
 import mlflow
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
-import numpy as np
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import pandas_udf, col
@@ -1062,8 +1061,13 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
     def predict_udf(*cols: pd.Series) -> pd.DataFrame:
         """Pandas UDF for distributed scoring (Spark Connect compatible).
 
-        Note: All imports are at module-level since DQX is installed as a wheel on all cluster nodes.
+        Note: All imports are local for Spark Connect compatibility when DQX
+        is NOT installed as a wheel on all cluster nodes.
         """
+        import cloudpickle
+        import pandas as pd
+        import numpy as np
+
         # Deserialize model (only standard sklearn components)
         model_local = cloudpickle.loads(model_bytes)
 

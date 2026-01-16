@@ -108,6 +108,12 @@ def compute_feature_contributions(
         Returns:
             DataFrame with anomaly_contributions column
         """
+        import pandas as pd
+        import numpy as np
+        import mlflow.sklearn as mlflow_sklearn
+        from sklearn.pipeline import Pipeline
+        import shap
+
         # Load model once per executor
         model_local = mlflow_sklearn.load_model(model_uri)
 
@@ -124,7 +130,7 @@ def compute_feature_contributions(
             needs_scaling = False
 
         # Create TreeExplainer for SHAP value computation
-        explainer = create_optimal_tree_explainer(tree_model)
+        explainer = shap.TreeExplainer(tree_model)
 
         # feature_struct is already a DataFrame with struct fields as columns
         feature_matrix = feature_struct.values
@@ -165,10 +171,6 @@ def compute_feature_contributions(
                     # 3. Single constant feature
                     # Fallback: Assign equal contributions to avoid division by zero
                     # Note: This is rare and may indicate the instance has very low anomaly score
-                    logger.debug(
-                        f"Row {i}: All SHAP values are zero (shap_values={shap_values}). "
-                        "Using equal contributions. This typically indicates a very normal data point."
-                    )
                     contributions = {col: 1.0 / len(columns) for col in columns}
 
                 contributions_list.append(contributions)

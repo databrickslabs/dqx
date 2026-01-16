@@ -14,7 +14,6 @@ from typing import Any
 import cloudpickle
 import mlflow
 import mlflow.sklearn
-import numpy as np
 import pandas as pd
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.functions import pandas_udf, col
@@ -28,7 +27,6 @@ from pyspark.sql.types import (
     BooleanType,
 )
 import sklearn
-from sklearn.pipeline import Pipeline
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord, compute_config_hash
 from databricks.labs.dqx.anomaly.trainer import (
     _derive_registry_table,
@@ -36,7 +34,6 @@ from databricks.labs.dqx.anomaly.trainer import (
     ensure_full_model_name,
 )
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
-from databricks.labs.dqx.anomaly.explainer import create_optimal_tree_explainer
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
@@ -515,7 +512,14 @@ def _create_scoring_udf(
         """Pandas UDF for distributed scoring with optional SHAP (Spark Connect compatible).
 
         Note: All imports are at module-level since DQX is installed as a wheel on all cluster nodes.
+        Wait, no - refactored to use local imports for Spark Connect compatibility when DQX
+        is NOT installed as a wheel on all cluster nodes.
         """
+        import cloudpickle
+        import pandas as pd
+        import numpy as np
+        from sklearn.pipeline import Pipeline
+
         # Deserialize model
         model_local = cloudpickle.loads(model_bytes)
 
@@ -527,11 +531,66 @@ def _create_scoring_udf(
         scores = -model_local.score_samples(feature_matrix)
 
         # Compute SHAP if requested
-        contributions_list = []
+        contributions_list: list[dict[str, float | None]] = []
         if include_contributions:
-            contributions_list = _compute_shap_contributions_in_udf(
-                model_local, feature_matrix, engineered_feature_cols
-            )
+            try:
+                import shap
+            except ImportError as e:
+                raise ImportError(
+                    "SHAP library not available in pandas UDF worker.\n\n"
+                    "To fix:\n"
+                    "  1. Install DQX with anomaly extras: %pip install 'databricks-labs-dqx[anomaly]'\n"
+                    "  2. Or install SHAP separately: %pip install 'shap>=0.42.0,<0.46'\n"
+                    "  3. Restart Python: dbutils.library.restartPython()\n"
+                    "  4. Re-run the scoring operation\n\n"
+                    "If this error persists after installation, the cluster may need to be restarted."
+                ) from e
+
+            # Extract components from Pipeline if present
+            if isinstance(model_local, Pipeline):
+                scaler = model_local.named_steps.get("scaler")
+                tree_model = model_local.named_steps["model"]
+            else:
+                scaler = None
+                tree_model = model_local
+
+            # Create TreeSHAP explainer for feature contribution computation
+            explainer = shap.TreeExplainer(tree_model)
+
+            # Prepare data (scaling if needed)
+            shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+
+            # Identify rows with NaN values
+            has_nan = pd.isna(shap_data).any(axis=1)
+            valid_indices = ~has_nan
+
+            # Initialize contributions list (None for all rows initially)
+            num_rows = len(shap_data)
+            num_features = len(engineered_feature_cols)
+            contributions_list = [{c: None for c in engineered_feature_cols} for _ in range(num_rows)]
+
+            # Batch process valid rows
+            if valid_indices.sum() > 0:
+                # Compute SHAP values for all valid rows in a single batch
+                valid_data = shap_data[valid_indices]
+                shap_values_batch = explainer.shap_values(valid_data)
+
+                # Normalize absolute SHAP values to sum to 1.0 per row
+                abs_shap = np.abs(shap_values_batch)
+                totals = abs_shap.sum(axis=1, keepdims=True)
+
+                # Assign equal contributions when all SHAP values are zero
+                normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
+
+                # Build contribution dictionaries for valid rows
+                valid_row_idx = 0
+                for i in range(num_rows):
+                    if valid_indices[i]:
+                        contributions_list[i] = {
+                            engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3)
+                            for j in range(num_features)
+                        }
+                        valid_row_idx += 1
 
         # Build result
         result = {"anomaly_score": scores}
@@ -541,93 +600,6 @@ def _create_scoring_udf(
         return pd.DataFrame(result)
 
     return predict_with_shap_udf
-
-
-def _compute_shap_contributions_in_udf(
-    model_local: Any,
-    feature_matrix: pd.DataFrame,
-    engineered_feature_cols: list[str],
-) -> list[dict[str, float | None]]:
-    """Compute SHAP contributions using batch processing for optimal performance.
-
-    Optimizations implemented:
-    - Single SHAP call for all valid rows (not N calls) - 3-5x faster
-    - Vectorized normalization via NumPy
-    - Efficient NaN handling
-    - Uses SHAP's TreeExplainer with optimized C++ implementation
-
-    Args:
-        model_local: Loaded sklearn model (Pipeline or IsolationForest)
-        feature_matrix: DataFrame with engineered features
-        engineered_feature_cols: List of feature column names
-
-    Returns:
-        List of contribution dictionaries, one per row (values can be float or None for rows with NaN)
-    """
-    if not SHAP_AVAILABLE:
-        raise ImportError(
-            "SHAP library not available in pandas UDF worker. This should have been caught earlier.\n\n"
-            "To fix:\n"
-            "  1. Install DQX with anomaly extras: %pip install 'databricks-labs-dqx[anomaly]'\n"
-            "  2. Or install SHAP separately: %pip install 'shap>=0.42.0,<0.46'\n"
-            "  3. Restart Python: dbutils.library.restartPython()\n"
-            "  4. Re-run the scoring operation\n\n"
-            "If this error persists after installation, the cluster may need to be restarted."
-        )
-
-    # Extract components from Pipeline if present
-    if isinstance(model_local, Pipeline):
-        scaler = model_local.named_steps.get('scaler')
-        tree_model = model_local.named_steps['model']
-    else:
-        scaler = None
-        tree_model = model_local
-
-    # Create TreeSHAP explainer for feature contribution computation
-    explainer = create_optimal_tree_explainer(tree_model)
-
-    # Prepare data (scaling if needed)
-    shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
-
-    # Identify rows with NaN values
-    has_nan = pd.isna(shap_data).any(axis=1)
-    valid_indices = ~has_nan
-
-    # Initialize contributions list (None for all rows initially)
-    num_rows = len(shap_data)
-    num_features = len(engineered_feature_cols)
-    contributions_list: list[dict[str, float | None]] = [
-        {c: None for c in engineered_feature_cols} for _ in range(num_rows)
-    ]
-
-    # Early exit if no valid rows
-    if valid_indices.sum() == 0:
-        return contributions_list
-
-    # Compute SHAP values for all valid rows in a single batch
-    # TreeExplainer.shap_values() processes batches efficiently
-    valid_data = shap_data[valid_indices]
-    shap_values_batch = explainer.shap_values(valid_data)
-
-    # Normalize absolute SHAP values to sum to 1.0 per row
-    # This makes contributions interpretable as relative importance percentages
-    abs_shap = np.abs(shap_values_batch)
-    totals = abs_shap.sum(axis=1, keepdims=True)
-
-    # Assign equal contributions when all SHAP values are zero
-    # This occurs for data points perfectly aligned with training distribution
-    normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
-
-    # Build contribution dictionaries for valid rows
-    valid_row_idx = 0
-    for i in range(num_rows):
-        if valid_indices[i]:
-            contributions_list[i] = {
-                engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3) for j in range(num_features)
-            }
-            valid_row_idx += 1
-
-    return contributions_list
 
 
 def _score_with_sklearn_model(
@@ -908,7 +880,12 @@ def _score_ensemble_models(
     # Create ensemble UDF
     @pandas_udf(schema)  # type: ignore[call-overload]
     def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
-        """Score with all ensemble models in single pass."""
+        """Score with all ensemble models in single pass (Spark Connect compatible)."""
+        import cloudpickle
+        import pandas as pd
+        import numpy as np
+        from sklearn.pipeline import Pipeline
+
         # Deserialize all models once per executor
         models = [cloudpickle.loads(mb) for mb in models_bytes]
 
@@ -927,9 +904,67 @@ def _score_ensemble_models(
 
         # Compute SHAP contributions using first model
         # Contribution patterns are consistent across ensemble members
-        contributions_list = []
+        contributions_list: list[dict[str, float | None]] = []
         if include_contributions:
-            contributions_list = _compute_shap_contributions_in_udf(models[0], feature_matrix, engineered_feature_cols)
+            try:
+                import shap
+            except ImportError as e:
+                raise ImportError(
+                    "SHAP library not available in pandas UDF worker.\n\n"
+                    "To fix:\n"
+                    "  1. Install DQX with anomaly extras: %pip install 'databricks-labs-dqx[anomaly]'\n"
+                    "  2. Or install SHAP separately: %pip install 'shap>=0.42.0,<0.46'\n"
+                    "  3. Restart Python: dbutils.library.restartPython()\n"
+                    "  4. Re-run the scoring operation\n\n"
+                    "If this error persists after installation, the cluster may need to be restarted."
+                ) from e
+
+            model_local = models[0]
+            # Extract components from Pipeline if present
+            if isinstance(model_local, Pipeline):
+                scaler = model_local.named_steps.get("scaler")
+                tree_model = model_local.named_steps["model"]
+            else:
+                scaler = None
+                tree_model = model_local
+
+            # Create TreeSHAP explainer for feature contribution computation
+            explainer = shap.TreeExplainer(tree_model)
+
+            # Prepare data (scaling if needed)
+            shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+
+            # Identify rows with NaN values
+            has_nan = pd.isna(shap_data).any(axis=1)
+            valid_indices = ~has_nan
+
+            # Initialize contributions list (None for all rows initially)
+            num_rows = len(shap_data)
+            num_features = len(engineered_feature_cols)
+            contributions_list = [{c: None for c in engineered_feature_cols} for _ in range(num_rows)]
+
+            # Batch process valid rows
+            if valid_indices.sum() > 0:
+                # Compute SHAP values for all valid rows in a single batch
+                valid_data = shap_data[valid_indices]
+                shap_values_batch = explainer.shap_values(valid_data)
+
+                # Normalize absolute SHAP values to sum to 1.0 per row
+                abs_shap = np.abs(shap_values_batch)
+                totals = abs_shap.sum(axis=1, keepdims=True)
+
+                # Assign equal contributions when all SHAP values are zero
+                normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
+
+                # Build contribution dictionaries for valid rows
+                valid_row_idx = 0
+                for i in range(num_rows):
+                    if valid_indices[i]:
+                        contributions_list[i] = {
+                            engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3)
+                            for j in range(num_features)
+                        }
+                        valid_row_idx += 1
 
         # Build result
         result = {
