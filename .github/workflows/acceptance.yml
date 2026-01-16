@@ -260,7 +260,7 @@ jobs:
           dummy_profile="${RUNNER_TEMP}/databricks_profile"
           cat > "$dummy_profile" << EOF
           [DEFAULT]
-          host = https://dummy
+          host = $val
           token = dummy
           EOF
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
@@ -358,7 +358,7 @@ jobs:
           dummy_profile="${RUNNER_TEMP}/databricks_profile"
           cat > "$dummy_profile" << EOF
           [DEFAULT]
-          host = https://dummy
+          host = $val
           token = dummy
           EOF
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV

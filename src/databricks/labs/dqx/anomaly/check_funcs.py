@@ -515,10 +515,14 @@ def _create_scoring_udf(
     return predict_udf
 
 
-def _make_shap_helpers():
-    """Create SHAP helper functions for pandas UDFs."""
+def _create_scoring_udf_with_contributions(
+    model_bytes: bytes,
+    engineered_feature_cols: list[str],
+    schema: StructType,
+):
+    """Create pandas UDF for distributed scoring with SHAP contributions."""
 
-    def _format_shap_contributions(
+    def format_shap_contributions(
         shap_values: np.ndarray,
         valid_indices: np.ndarray,
         num_rows: int,
@@ -543,16 +547,16 @@ def _make_shap_helpers():
         # Build contribution dictionaries for valid rows
         valid_row_idx = 0
         for i in range(num_rows):
-            if not valid_indices[i]:
-                continue
-            contributions[i] = {
-                engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3) for j in range(num_features)
-            }
-            valid_row_idx += 1
+            if valid_indices[i]:
+                contributions[i] = {
+                    engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3)
+                    for j in range(num_features)
+                }
+                valid_row_idx += 1
 
         return contributions
 
-    def _compute_shap_values(
+    def compute_shap_values(
         model_local: Any,
         feature_matrix: pd.DataFrame,
         engineered_feature_cols: list[str],
@@ -581,28 +585,16 @@ def _make_shap_helpers():
 
         # Compute SHAP values
         shap_values = np.array([])
-        if valid_indices.any():
-            if len(engineered_feature_cols) == 1:
-                # For single feature, contribution is always 100% (1.0 or -1.0)
-                # This avoids IndexError in SHAP for single-feature models
-                shap_values = np.ones((len(shap_data[valid_indices]), 1))
-            else:
-                # Create TreeSHAP explainer only when needed
-                explainer = shap.TreeExplainer(tree_model)
-                shap_values = explainer.shap_values(shap_data[valid_indices])
+        if valid_indices.any() and len(engineered_feature_cols) == 1:
+            # For single feature, contribution is always 100% (1.0 or -1.0)
+            # This avoids IndexError in SHAP for single-feature models
+            shap_values = np.ones((len(shap_data[valid_indices]), 1))
+        elif valid_indices.any():
+            # Create TreeSHAP explainer only when needed
+            explainer = shap.TreeExplainer(tree_model)
+            shap_values = explainer.shap_values(shap_data[valid_indices])
 
         return shap_values, valid_indices
-
-    return _compute_shap_values, _format_shap_contributions
-
-
-def _create_scoring_udf_with_contributions(
-    model_bytes: bytes,
-    engineered_feature_cols: list[str],
-    schema: StructType,
-):
-    """Create pandas UDF for distributed scoring with SHAP contributions."""
-    compute_shap_values, format_shap_contributions = _make_shap_helpers()
 
     @pandas_udf(schema)  # type: ignore[call-overload]
     def predict_with_shap_udf(*cols: pd.Series) -> pd.DataFrame:
@@ -919,7 +911,80 @@ def _create_ensemble_scoring_udf_with_contributions(
     schema: StructType,
 ):
     """Create ensemble scoring UDF with SHAP contributions."""
-    compute_shap_values, format_shap_contributions = _make_shap_helpers()
+
+    def format_shap_contributions(
+        shap_values: np.ndarray,
+        valid_indices: np.ndarray,
+        num_rows: int,
+        engineered_feature_cols: list[str],
+    ) -> list[dict[str, float | None]]:
+        """Format SHAP values into contribution dictionaries."""
+        import numpy as np
+
+        num_features = len(engineered_feature_cols)
+        contributions: list[dict[str, float | None]] = [
+            {c: None for c in engineered_feature_cols} for _ in range(num_rows)
+        ]
+
+        if shap_values.size == 0:
+            return contributions
+
+        # Normalize absolute SHAP values to sum to 1.0 per row
+        abs_shap = np.abs(shap_values)
+        totals = abs_shap.sum(axis=1, keepdims=True)
+        normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
+
+        # Build contribution dictionaries for valid rows
+        valid_row_idx = 0
+        for i in range(num_rows):
+            if valid_indices[i]:
+                contributions[i] = {
+                    engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3)
+                    for j in range(num_features)
+                }
+                valid_row_idx += 1
+
+        return contributions
+
+    def compute_shap_values(
+        model_local: Any,
+        feature_matrix: pd.DataFrame,
+        engineered_feature_cols: list[str],
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Compute SHAP values for a model and feature matrix.
+
+        Returns:
+            Tuple of (shap_values, valid_indices)
+        """
+        import pandas as pd
+        import numpy as np
+
+        try:
+            import shap
+        except ImportError as e:
+            raise ImportError("SHAP library not available in pandas UDF worker.") from e
+
+        # Extract components from Pipeline if present
+        scaler = getattr(model_local, "named_steps", {}).get("scaler")
+        tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
+
+        shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+
+        # Identify valid rows (no NaNs)
+        valid_indices = ~pd.isna(shap_data).any(axis=1)
+
+        # Compute SHAP values
+        shap_values = np.array([])
+        if valid_indices.any() and len(engineered_feature_cols) == 1:
+            # For single feature, contribution is always 100% (1.0 or -1.0)
+            # This avoids IndexError in SHAP for single-feature models
+            shap_values = np.ones((len(shap_data[valid_indices]), 1))
+        elif valid_indices.any():
+            # Create TreeSHAP explainer only when needed
+            explainer = shap.TreeExplainer(tree_model)
+            shap_values = explainer.shap_values(shap_data[valid_indices])
+
+        return shap_values, valid_indices
 
     @pandas_udf(schema)  # type: ignore[call-overload]
     def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
