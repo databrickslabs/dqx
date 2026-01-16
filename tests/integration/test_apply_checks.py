@@ -80,6 +80,8 @@ def test_apply_checks_passed(ws, spark):
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame([[1, 3, 3, None, None]], EXPECTED_SCHEMA)
+    # Dataset-level checks can reorder columns; normalize before asserting
+    checked = checked.select(expected.columns)
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
@@ -286,6 +288,7 @@ def test_foreign_key_check(ws, spark):
         EXPECTED_SCHEMA,
     )
 
+    checked = checked.select(expected.columns)
     assert_df_equality(checked, expected, ignore_nullable=True)
     assert_df_equality(
         bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
@@ -419,6 +422,7 @@ def test_foreign_key_check_negate(ws, spark):
         EXPECTED_SCHEMA,
     )
 
+    checked = checked.select(expected.columns)
     assert_df_equality(checked, expected, ignore_nullable=True)
     assert_df_equality(
         bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
@@ -543,6 +547,7 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
         EXPECTED_SCHEMA,
     )
 
+    checked = checked.select(expected.columns)
     assert_df_equality(checked, expected, ignore_nullable=True)
     assert_df_equality(checked_yaml, expected, ignore_nullable=True)
 
@@ -3961,6 +3966,7 @@ def test_apply_checks_with_custom_check(ws, spark):
         EXPECTED_SCHEMA,
     )
 
+    checked = checked.select(expected.columns)
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 

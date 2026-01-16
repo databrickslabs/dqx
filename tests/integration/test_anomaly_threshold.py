@@ -24,12 +24,16 @@ def mock_workspace_client():
 
 
 def test_threshold_affects_flagging(
-    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    anomaly_registry_prefix,
 ):
     """Test that different thresholds flag different numbers of anomalies."""
     unique_id = make_random(8).lower()
     model_name = f"test_threshold_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model using helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
@@ -67,7 +71,7 @@ def test_threshold_affects_flagging(
     assert errors_aggressive >= errors_conservative
 
 
-def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory):
+def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory, anomaly_registry_prefix):
     """Test that recommended_threshold is stored in registry metrics."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
@@ -75,7 +79,7 @@ def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory):
     model_name, registry_table, _columns = quick_model_factory(spark, params=params)
 
     # Query recommended threshold from registry (use full three-level name)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None, f"Model {full_model_name} not found in registry"
 
@@ -88,7 +92,9 @@ def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory):
     assert 0.0 <= recommended <= 1.0
 
 
-def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick_model_factory):
+def test_using_recommended_threshold(
+    spark: SparkSession, test_df_factory, quick_model_factory, anomaly_registry_prefix
+):
     """Test using recommended_threshold from registry in checks."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
@@ -96,7 +102,7 @@ def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick
     model_name, registry_table, columns = quick_model_factory(spark, params=params)
 
     # Query recommended threshold (use full three-level name)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     recommended_result = spark.sql(
         f"""
         SELECT training.metrics['recommended_threshold'] as threshold
@@ -121,12 +127,16 @@ def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick
 
 
 def test_precision_recall_tradeoff(
-    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    anomaly_registry_prefix,
 ):
     """Test that lower threshold increases recall (catches more anomalies)."""
     unique_id = make_random(8).lower()
     model_name = f"test_precision_recall_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model using helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
@@ -214,7 +224,7 @@ def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
             assert abs(score1 - score2) < 0.001  # Allow small floating point error
 
 
-def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory):
+def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory, anomaly_registry_prefix):
     """Test that validation metrics are stored in registry."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
@@ -222,7 +232,7 @@ def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory
     model_name, registry_table, _columns = quick_model_factory(spark, params=params)
 
     # Check metrics in registry (use full three-level name)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None, f"Model {full_model_name} not found in registry"
 

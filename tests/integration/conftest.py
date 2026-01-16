@@ -504,7 +504,7 @@ def assert_output_df(spark, expected_output, output_config):
 
 
 # Anomaly detection test fixtures
-# Session-scoped models (shared_2d_model, shared_3d_model, shared_4d_model) are trained once per test session
+# Shared model fixtures (shared_2d_model, shared_3d_model, shared_4d_model) are session-scoped for speed
 # Function-scoped fixtures (test_df_factory, anomaly_scorer, quick_model_factory) provide per-test utilities
 
 
@@ -528,7 +528,24 @@ def spark_session():
 
 
 @pytest.fixture(scope="session")
-def shared_2d_model(spark_session):
+def anomaly_registry_prefix_session(spark_session):
+    schema_name = f"dqx_anom_{uuid4().hex[:8]}"
+    spark_session.sql(f"CREATE SCHEMA IF NOT EXISTS {TEST_CATALOG}.{schema_name}")
+    return f"{TEST_CATALOG}.{schema_name}"
+
+
+@pytest.fixture
+def anomaly_registry_schema(make_schema):
+    return make_schema(catalog_name=TEST_CATALOG)
+
+
+@pytest.fixture
+def anomaly_registry_prefix(anomaly_registry_schema):
+    return f"{TEST_CATALOG}.{anomaly_registry_schema.name}"
+
+
+@pytest.fixture(scope="session")
+def shared_2d_model(spark_session, anomaly_registry_prefix_session):
     """
     Shared 2D anomaly model trained once per session.
 
@@ -554,7 +571,7 @@ def shared_2d_model(spark_session):
     """
     suffix = uuid4().hex[:8]
     model_name = f"shared_2d_model_{suffix}"
-    registry_table = f"main.default.shared_2d_reg_{suffix}"
+    registry_table = f"{anomaly_registry_prefix_session}.shared_2d_reg_{suffix}"
 
     train_df = spark_session.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
 
@@ -575,7 +592,7 @@ def shared_2d_model(spark_session):
 
 
 @pytest.fixture(scope="session")
-def shared_3d_model(spark_session):
+def shared_3d_model(spark_session, anomaly_registry_prefix_session):
     """
     Shared 3D anomaly model with contributions support.
 
@@ -601,7 +618,7 @@ def shared_3d_model(spark_session):
     """
     suffix = uuid4().hex[:8]
     model_name = f"shared_3d_model_{suffix}"
-    registry_table = f"main.default.shared_3d_reg_{suffix}"
+    registry_table = f"{anomaly_registry_prefix_session}.shared_3d_reg_{suffix}"
 
     train_df = spark_session.createDataFrame(
         get_standard_3d_training_data(), "amount double, quantity double, discount double"
@@ -624,7 +641,7 @@ def shared_3d_model(spark_session):
 
 
 @pytest.fixture(scope="session")
-def shared_4d_model(spark_session):
+def shared_4d_model(spark_session, anomaly_registry_prefix_session):
     """
     Shared 4D anomaly model for multi-column tests.
 
@@ -650,7 +667,7 @@ def shared_4d_model(spark_session):
     """
     suffix = uuid4().hex[:8]
     model_name = f"shared_4d_model_{suffix}"
-    registry_table = f"main.default.shared_4d_reg_{suffix}"
+    registry_table = f"{anomaly_registry_prefix_session}.shared_4d_reg_{suffix}"
 
     train_df = spark_session.createDataFrame(
         get_standard_4d_training_data(), "amount double, quantity double, discount double, weight double"
@@ -779,7 +796,7 @@ def anomaly_scorer():
 
 
 @pytest.fixture
-def quick_model_factory(anomaly_engine, make_random):
+def quick_model_factory(anomaly_engine, make_random, make_schema):
     """
     Factory for training lightweight models with custom parameters.
 
@@ -796,8 +813,8 @@ def quick_model_factory(anomaly_engine, make_random):
         train_data: list[tuple] | None = None,
         params=None,
         segment_by: list[str] | None = None,
-        catalog: str = "main",
-        schema: str = "default",
+        catalog: str = TEST_CATALOG,
+        schema: str | None = None,
     ):
         """
         Train a quick test model.
@@ -824,6 +841,9 @@ def quick_model_factory(anomaly_engine, make_random):
         """
         if columns is None:
             columns = ["amount", "quantity"]
+
+        if schema is None:
+            schema = make_schema(catalog_name=catalog).name
 
         unique_id = make_random(8).lower()
         model_name = f"test_model_{make_random(4).lower()}"

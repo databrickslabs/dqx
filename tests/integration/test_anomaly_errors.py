@@ -23,12 +23,12 @@ def mock_workspace_client():
 
 
 def test_column_mismatch_error(
-    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory
+    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_registry_prefix
 ):
     """Test error when scoring columns don't match training columns."""
     unique_id = make_random(8).lower()
     model_name = f"test_col_mismatch_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on [amount, quantity] - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
@@ -55,12 +55,18 @@ def test_column_mismatch_error(
 
 
 def test_column_order_independence(
-    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_scorer
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random,
+    anomaly_engine,
+    test_df_factory,
+    anomaly_scorer,
+    anomaly_registry_prefix,
 ):
     """Test that column order doesn't matter (set comparison)."""
     unique_id = make_random(8).lower()
     model_name = f"test_col_order_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on [amount, quantity] - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
@@ -86,11 +92,11 @@ def test_column_order_independence(
     assert True  # No error - order doesn't matter
 
 
-def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine):
+def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test error when training on empty DataFrame."""
     unique_id = make_random(8).lower()
     model_name = f"test_empty_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     empty_df = spark.createDataFrame([], "amount double, quantity double")
 
@@ -105,12 +111,12 @@ def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine)
 
 
 def test_missing_registry_table_for_scoring_error(
-    spark: SparkSession, mock_workspace_client, make_random, test_df_factory
+    spark: SparkSession, mock_workspace_client, make_random, test_df_factory, anomaly_registry_prefix
 ):
     """Test error when registry table doesn't exist during scoring."""
     unique_id = make_random(8).lower()
     model_name = f"test_missing_registry_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_nonexistent_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_nonexistent_registry"
 
     # Use factory to create test DataFrame
     df = test_df_factory(

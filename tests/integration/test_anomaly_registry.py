@@ -29,12 +29,16 @@ def mock_workspace_client():
 
 
 def test_explicit_model_names(
-    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    anomaly_registry_prefix,
 ):
     """Test training with explicit model_name and registry_table."""
     unique_id = make_random(8).lower()
     model_name = f"my_custom_model_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
@@ -59,10 +63,11 @@ def test_multiple_models_in_same_registry(
     anomaly_engine,
     test_df_factory,
     anomaly_scorer,
+    anomaly_registry_prefix,
 ):
     """Test training multiple models in the same registry table."""
     unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
     model_a = f"model_a_{make_random(4).lower()}"
     model_b = f"model_b_{make_random(4).lower()}"
 
@@ -98,8 +103,8 @@ def test_multiple_models_in_same_registry(
     model_names = [row["model_name"] for row in registry_df.select("identity.model_name").distinct().collect()]
 
     # Models are stored with full three-level names
-    assert f"main.default.{model_a}" in model_names
-    assert f"main.default.{model_b}" in model_names
+    assert f"{anomaly_registry_prefix}.{model_a}" in model_names
+    assert f"{anomaly_registry_prefix}.{model_b}" in model_names
 
     # Verify correct model is loaded for each check - use anomaly_scorer
 
@@ -116,10 +121,12 @@ def test_multiple_models_in_same_registry(
     assert "anomaly_score" in result_b.columns
 
 
-def test_active_model_retrieval(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_active_model_retrieval(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that get_active_model() returns the most recent model."""
     unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
     model_name = f"test_active_{make_random(4).lower()}"
 
     # Train first version - use helper
@@ -127,7 +134,7 @@ def test_active_model_retrieval(spark: SparkSession, make_random: Callable[[int]
 
     # Get active model (use full three-level name)
     registry = AnomalyModelRegistry(spark)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     model_v1 = registry.get_active_model(registry_table, full_model_name)
 
     assert model_v1 is not None
@@ -156,12 +163,17 @@ def test_active_model_retrieval(spark: SparkSession, make_random: Callable[[int]
 
 
 def test_model_staleness_warning(
-    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine, test_df_factory
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    test_df_factory,
+    anomaly_registry_prefix,
 ):
     """Test that staleness warning is issued when model is >30 days old."""
     unique_id = make_random(8).lower()
     model_name = f"test_stale_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper with standard training data
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_2d_training_data())
@@ -175,7 +187,7 @@ def test_model_staleness_warning(
     )
 
     # Mock old training_time in registry (use full three-level name)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     old_time = datetime.utcnow() - timedelta(days=35)
     spark.sql(
         f"UPDATE {registry_table} "
@@ -194,10 +206,12 @@ def test_model_staleness_warning(
         assert "Consider retraining" in str(stale_warnings[0].message)
 
 
-def test_registry_table_schema(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_registry_table_schema(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that registry table has all expected columns."""
     unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
     model_name = f"test_schema_{make_random(4).lower()}"
 
     # Train model - use helper
@@ -242,17 +256,19 @@ def test_registry_table_schema(spark: SparkSession, make_random: Callable[[int],
         assert field in schema_str, f"Missing nested field in schema: {field}"
 
 
-def test_registry_stores_metadata(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_registry_stores_metadata(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that registry stores comprehensive metadata."""
     unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
     model_name = f"test_metadata_{make_random(4).lower()}"
 
     # Train model - use helper with standard 3D training data
     train_simple_3d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_3d_training_data())
 
     # Query registry (use full three-level name)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
@@ -277,19 +293,21 @@ def test_registry_stores_metadata(spark: SparkSession, make_random: Callable[[in
     assert "recommended_threshold" in record["training"]["metrics"]
 
 
-def test_nonexistent_registry_returns_none(spark: SparkSession):
+def test_nonexistent_registry_returns_none(spark: SparkSession, anomaly_registry_prefix):
     """Test that get_active_model returns None for non-existent registry."""
     registry = AnomalyModelRegistry(spark)
 
-    model = registry.get_active_model("main.default.nonexistent_registry", "nonexistent_model")
+    model = registry.get_active_model(f"{anomaly_registry_prefix}.nonexistent_registry", "nonexistent_model")
 
     assert model is None
 
 
-def test_nonexistent_model_returns_none(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_nonexistent_model_returns_none(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that get_active_model returns None for non-existent model."""
     unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
     existing_model = f"existing_model_{make_random(4).lower()}"
 
     # Train a model - use helper
@@ -335,10 +353,12 @@ def test_config_hash_differentiation(spark: SparkSession):
     assert hash2 != hash3  # Different columns and segment_by
 
 
-def test_config_hash_stored_during_training(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_config_hash_stored_during_training(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that config_hash is stored in registry during training."""
     unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
     model_name = f"test_config_hash_{make_random(4).lower()}"
     columns = ["amount", "quantity"]
 
@@ -346,7 +366,7 @@ def test_config_hash_stored_during_training(spark: SparkSession, make_random: Ca
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Verify config_hash is stored
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
 
     assert record is not None
@@ -357,10 +377,12 @@ def test_config_hash_stored_during_training(spark: SparkSession, make_random: Ca
     assert record["segmentation"]["config_hash"] == expected_hash
 
 
-def test_config_change_warning(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, caplog):
+def test_config_change_warning(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, caplog, anomaly_registry_prefix
+):
     """Test that warning is issued when retraining with different config."""
     unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
     model_name = f"test_config_warn_{make_random(4).lower()}"
 
     # Train with initial columns (2D) - use helper
@@ -388,10 +410,12 @@ def test_config_change_warning(spark: SparkSession, make_random: Callable[[int],
     assert "will be archived" in config_warnings[0]
 
 
-def test_scoring_validates_config_hash(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_scoring_validates_config_hash(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that scoring validates config hash and errors on mismatch."""
     unique_id = make_random(8).lower()
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
     model_name = f"test_score_validate_{make_random(4).lower()}"
 
     # Train with specific columns (2D) - use helper

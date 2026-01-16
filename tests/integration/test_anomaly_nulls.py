@@ -9,7 +9,9 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 from tests.integration.test_anomaly_utils import apply_anomaly_check_direct
 
 
-def test_training_filters_nulls(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_training_filters_nulls(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that nulls are filtered during training."""
     # Create training data with nulls
     df = spark.createDataFrame(
@@ -19,8 +21,8 @@ def test_training_filters_nulls(spark: SparkSession, make_random: Callable[[int]
 
     # Train (should filter nulls automatically)
     unique_id = make_random(8).lower()
-    model_name = f"main.default.test_train_nulls_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    model_name = f"{anomaly_registry_prefix}.test_train_nulls_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     anomaly_engine.train(
         df=df,

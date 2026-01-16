@@ -9,17 +9,19 @@ from databricks.labs.dqx.anomaly import AnomalyParams
 from tests.integration.test_anomaly_utils import train_large_dataset_model
 
 
-def test_sampling_caps_large_datasets(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_sampling_caps_large_datasets(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that sampling caps at max_rows for large datasets."""
     unique_id = make_random(8).lower()
     model_name = f"test_sampling_large_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train with defaults (should cap at max_rows if needed) - use helper
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=200_000)
 
     # Check registry records training_rows (should be sampled, use full three-level name)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
@@ -28,11 +30,13 @@ def test_sampling_caps_large_datasets(spark: SparkSession, make_random: Callable
     assert record["training"]["training_rows"] <= 200_000
 
 
-def test_custom_sampling_parameters(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_custom_sampling_parameters(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that custom sample_fraction and max_rows are respected."""
     unique_id = make_random(8).lower()
     model_name = f"test_custom_sampling_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Use custom sampling: 50% sample, max 300 rows
     params = AnomalyParams(
@@ -44,7 +48,7 @@ def test_custom_sampling_parameters(spark: SparkSession, make_random: Callable[[
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
     # Check registry (use full three-level name)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
@@ -53,11 +57,13 @@ def test_custom_sampling_parameters(spark: SparkSession, make_random: Callable[[
     assert record["training"]["training_rows"] <= 300
 
 
-def test_sampling_warning_issued(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_sampling_warning_issued(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that warning is issued when data is truncated."""
     unique_id = make_random(8).lower()
     model_name = f"test_sampling_warning_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Use very restrictive sampling
     params = AnomalyParams(
@@ -77,11 +83,13 @@ def test_sampling_warning_issued(spark: SparkSession, make_random: Callable[[int
         # Commenting out assertion as implementation may vary
 
 
-def test_train_validation_split(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_train_validation_split(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that train/validation split works correctly."""
     unique_id = make_random(8).lower()
     model_name = f"test_train_val_split_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Use default train_ratio (0.8)
     params = AnomalyParams(
@@ -94,7 +102,7 @@ def test_train_validation_split(spark: SparkSession, make_random: Callable[[int]
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
     # Check that metrics exist (which indicates validation was performed, use full three-level name)
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
@@ -106,11 +114,13 @@ def test_train_validation_split(spark: SparkSession, make_random: Callable[[int]
     # (precision, recall, f1_score, etc.)
 
 
-def test_custom_train_ratio(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_custom_train_ratio(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that custom train_ratio is respected."""
     unique_id = make_random(8).lower()
     model_name = f"test_custom_train_ratio_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Use 90/10 split
     params = AnomalyParams(
@@ -123,11 +133,13 @@ def test_custom_train_ratio(spark: SparkSession, make_random: Callable[[int], st
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
 
-def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_no_sampling_with_full_fraction(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that sample_fraction=1.0 uses all data (up to max_rows)."""
     unique_id = make_random(8).lower()
     model_name = f"test_no_sampling_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     params = AnomalyParams(
         sample_fraction=1.0,  # Use all data
@@ -138,7 +150,7 @@ def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: Callab
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=500, params=params)
 
     # Use full three-level name for query
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
 
@@ -148,11 +160,13 @@ def test_no_sampling_with_full_fraction(spark: SparkSession, make_random: Callab
     assert record["training"]["training_rows"] >= 390  # At least 78% used for training
 
 
-def test_minimal_data_with_sampling(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_minimal_data_with_sampling(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that small datasets work with sampling."""
     unique_id = make_random(8).lower()
     model_name = f"test_minimal_data_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     params = AnomalyParams(
         sample_fraction=1.0,
@@ -163,7 +177,9 @@ def test_minimal_data_with_sampling(spark: SparkSession, make_random: Callable[[
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=20, params=params)
 
 
-def test_performance_with_many_columns(spark: SparkSession, make_random: Callable[[int], str], anomaly_engine):
+def test_performance_with_many_columns(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
     """Test that training completes in reasonable time with many columns."""
     # Create dataset with 10 columns
     df = spark.range(1000).selectExpr(
@@ -181,7 +197,7 @@ def test_performance_with_many_columns(spark: SparkSession, make_random: Callabl
 
     unique_id = make_random(8).lower()
     model_name = f"test_many_cols_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     params = AnomalyParams(
         sample_fraction=0.5,
