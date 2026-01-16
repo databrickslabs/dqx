@@ -108,7 +108,8 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           # Exclude anomaly tests from regular integration tests to avoid duplication
-          PYTEST_ADDOPTS: "--ignore-glob=tests/integration/test_anomaly_*.py"
+          # Pattern is relative to tests/integration/ directory where pytest runs
+          PYTEST_ADDOPTS: "--ignore-glob=test_anomaly_*.py"
 
           # Belt + braces: pass through explicitly to the action step
           DATABRICKS_HOST: ${{ env.DATABRICKS_HOST }}
@@ -192,7 +193,8 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           # Exclude anomaly tests from regular integration tests to avoid duplication
-          PYTEST_ADDOPTS: "--ignore-glob=tests/integration/test_anomaly_*.py"
+          # Pattern is relative to tests/integration/ directory where pytest runs
+          PYTEST_ADDOPTS: "--ignore-glob=test_anomaly_*.py"
 
           DATABRICKS_HOST: ${{ env.DATABRICKS_HOST }}
           DATABRICKS_AUTH_TYPE: ${{ env.DATABRICKS_AUTH_TYPE }}
