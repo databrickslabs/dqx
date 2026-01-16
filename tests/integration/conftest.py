@@ -529,12 +529,14 @@ def spark_session():
     return DatabricksSession.builder.getOrCreate()
 
 
-@pytest.fixture  # function-scoped (default, matches pytester's behavior)
+@pytest.fixture(scope="session")  # session-scoped to match spark_session and work correctly with pytest-xdist
 def spark(spark_session):
     """Override pytester's spark fixture to use our session-scoped spark_session.
 
     This ensures all tests use the working DatabricksSession approach and avoids
-    Spark Connect URL configuration issues.
+    Spark Connect URL configuration issues. Session-scoped is safer for parallel
+    execution with pytest-xdist (10 workers) as it ensures consistent fixture
+    scoping across the test session.
     """
     return spark_session
 
