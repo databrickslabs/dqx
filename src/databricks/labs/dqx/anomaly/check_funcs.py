@@ -585,14 +585,15 @@ def _create_scoring_udf_with_contributions(
 
         # Compute SHAP values
         shap_values = np.array([])
-        if valid_indices.any() and len(engineered_feature_cols) == 1:
-            # For single feature, contribution is always 100% (1.0 or -1.0)
-            # This avoids IndexError in SHAP for single-feature models
-            shap_values = np.ones((len(shap_data[valid_indices]), 1))
-        elif valid_indices.any():
-            # Create TreeSHAP explainer only when needed
-            explainer = shap.TreeExplainer(tree_model)
-            shap_values = explainer.shap_values(shap_data[valid_indices])
+        if valid_indices.any():
+            if len(engineered_feature_cols) == 1:
+                # For single feature, contribution is always 100% (1.0 or -1.0)
+                # This avoids IndexError in SHAP for single-feature models
+                shap_values = np.ones((len(shap_data[valid_indices]), 1))
+            else:
+                # Create TreeSHAP explainer only when needed
+                explainer = shap.TreeExplainer(tree_model)
+                shap_values = explainer.shap_values(shap_data[valid_indices])
 
         return shap_values, valid_indices
 
@@ -975,14 +976,15 @@ def _create_ensemble_scoring_udf_with_contributions(
 
         # Compute SHAP values
         shap_values = np.array([])
-        if valid_indices.any() and len(engineered_feature_cols) == 1:
-            # For single feature, contribution is always 100% (1.0 or -1.0)
-            # This avoids IndexError in SHAP for single-feature models
-            shap_values = np.ones((len(shap_data[valid_indices]), 1))
-        elif valid_indices.any():
-            # Create TreeSHAP explainer only when needed
-            explainer = shap.TreeExplainer(tree_model)
-            shap_values = explainer.shap_values(shap_data[valid_indices])
+        if valid_indices.any():
+            if len(engineered_feature_cols) == 1:
+                # For single feature, contribution is always 100% (1.0 or -1.0)
+                # This avoids IndexError in SHAP for single-feature models
+                shap_values = np.ones((len(shap_data[valid_indices]), 1))
+            else:
+                # Create TreeSHAP explainer only when needed
+                explainer = shap.TreeExplainer(tree_model)
+                shap_values = explainer.shap_values(shap_data[valid_indices])
 
         return shap_values, valid_indices
 
