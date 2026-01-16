@@ -768,7 +768,7 @@ def make_lakebase_instance(ws, make_random):
 def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]]) -> None:
     """
     Compares two lists of checks dictionaries for equality, ensuring
-    they contain the same checks with identical fields.
+    they contain the same checks with identical fields (exact match).
 
     Args:
         result: The result checks list.
@@ -781,8 +781,7 @@ def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]])
     sorted_result = sorted(result, key=_sort_key)
     sorted_expected = sorted(expected, key=_sort_key)
     for res, exp in zip(sorted_result, sorted_expected):
-        for key in exp:
-            assert res.get(key) == exp[key], f"Mismatch for key '{key}': {res.get(key)} != {exp[key]}"
+        assert res == exp, f"Mismatch: {res} != {exp}"
 
 
 def _sort_key(check: dict[str, Any]) -> str:

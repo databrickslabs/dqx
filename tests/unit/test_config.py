@@ -382,7 +382,7 @@ def test_table_config_defaults():
     config = TableChecksStorageConfig(location="catalog.schema.table")
     assert config.location == "catalog.schema.table"
     assert config.run_config_name == "default"
-    assert config.mode == "overwrite"
+    assert config.mode == "append"
 
 
 def test_table_config_custom_values():

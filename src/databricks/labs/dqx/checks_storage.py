@@ -280,7 +280,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 "check": check.get("check"),
                 "filter": check.get("filter"),
                 "run_config_name": check.get("run_config_name", config.run_config_name),
-                "user_metadata": null() if user_metadata is None else user_metadata,
+                "user_metadata": user_metadata,
             }
             normalized_checks.append(normalized_check)
         return normalized_checks
@@ -366,40 +366,38 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             List of dq rules.
         """
-        stmt = text(f"SELECT * FROM {config.schema_name}.{config.table_name}")
-        with engine.connect() as conn:
-
-            if config.run_config_name and self._rule_set_columns_exists(conn, config.schema_name, config.table_name):
-                logger.info("Rule version columns exist in the table.")
-                if config.rule_set_fingerprint:
-                    logger.info(f"Filtering checks by rule_set_fingerprint='{config.rule_set_fingerprint}'")
-                    stmt = text(
-                        f"""SELECT * FROM {config.schema_name}.{config.table_name} 
-                            WHERE rule_set_fingerprint = '{config.rule_set_fingerprint}' 
-                            AND run_config_name = '{config.run_config_name}'
-                    """
-                    )
-                else:
-                    logger.info("No rule_set_fingerprint provided, loading the most recent version.")
-                    stmt = text(
-                        f"""SELECT * FROM {config.schema_name}.{config.table_name} 
-                            WHERE rule_set_fingerprint = (
-                            SELECT rule_set_fingerprint FROM {config.schema_name}.{config.table_name} 
-                            WHERE run_config_name = '{config.run_config_name}' 
-                            ORDER BY created_at DESC 
-                            LIMIT 1
-                    )"""
-                    )
-            if config.run_config_name and not self._rule_set_columns_exists(
-                conn, config.schema_name, config.table_name
-            ):
-                logger.info(f"Filtering checks by run_config_name='{config.run_config_name}'")
-                self._ensure_rule_version_columns_exist(conn, config)
-                stmt = text(
-                    f"""SELECT * FROM {config.schema_name}.{config.table_name} 
+        stmt = text(
+                    f"""SELECT  *
+                        FROM {config.schema_name}.{config.table_name} 
                         WHERE run_config_name = '{config.run_config_name}'"""
                 )
-
+        
+        if self._rule_set_columns_exists(engine, config.schema_name, config.table_name):
+            logger.info("Rule version columns exist in the table.")
+            if config.rule_set_fingerprint:
+                logger.info(f"Filtering checks by rule_set_fingerprint='{config.rule_set_fingerprint}'")
+                stmt = text(
+                    f"""SELECT *                      
+                        FROM {config.schema_name}.{config.table_name} 
+                        WHERE rule_set_fingerprint = '{config.rule_set_fingerprint}' 
+                        AND run_config_name = '{config.run_config_name}'
+                """
+                )
+            else:
+                logger.info("No rule_set_fingerprint provided, loading the most recent version.")
+                stmt = text(
+                    f"""SELECT *                                        
+                        FROM {config.schema_name}.{config.table_name} 
+                        WHERE rule_set_fingerprint = (
+                        SELECT rule_set_fingerprint FROM {config.schema_name}.{config.table_name} 
+                        WHERE run_config_name = '{config.run_config_name}' 
+                        ORDER BY created_at DESC 
+                        LIMIT 1)
+                """
+                )
+           
+        with engine.connect() as conn:
+                   
             result = conn.execute(stmt)
             checks = result.mappings().all()
             logger.info(
@@ -412,14 +410,19 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                     f"for run_config_name='{config.run_config_name}'. "
                     f"Make sure the profiler has run successfully and saved checks to this location."
                 )
-            return [dict(check) for check in checks]
+            checks_dict= [dict(check) for check in checks]
+            forbidden_keys = ["rule_fingerprint", "rule_set_fingerprint", "created_at"]
+            return [{k: v for k, v in d.items() if k not in forbidden_keys} for d in checks_dict]
 
     @staticmethod
     def _rule_set_columns_exists(engine, schema, table) -> bool:
         inspector = inspect(engine)
+        if not inspector.has_table(table, schema=schema):
+            return False
         cols = inspector.get_columns(table, schema=schema)
-        rule_set_columns = ["rule_fingerprint", "rule_set_fingerprint", "created_at"]
-        return all(x in cols for x in rule_set_columns)
+        existing_column_names = {col['name'] for col in cols}
+        rule_set_columns = ["rule_fingerprint", "rule_set_fingerprint", "created_at"]        
+        return all(x in existing_column_names for x in rule_set_columns)
 
     def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
         """

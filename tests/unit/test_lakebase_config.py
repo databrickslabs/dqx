@@ -82,7 +82,7 @@ def test_valid_lakebase_checks_storage_config_defaults():
     )
 
     assert config.run_config_name == "default"
-    assert config.mode == "overwrite"
+    assert config.mode == "append"
     assert config.port == "5432"  # Default port
 
 

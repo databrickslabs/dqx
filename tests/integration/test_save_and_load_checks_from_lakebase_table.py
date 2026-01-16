@@ -1,11 +1,13 @@
 import pytest
-
+import time
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
 
 from tests.conftest import compare_checks
 from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHECKS as TEST_CHECKS
+
+
 
 
 def test_load_checks_when_lakebase_table_does_not_exist(
@@ -203,3 +205,25 @@ def _create_lakebase_location(database_name, make_random):
     table_name = f"checks_{make_random(10).lower()}"
     location = f"{database_name}.config.{table_name}"
     return location
+
+
+def test_save_and_load_checks_from_lakebase_without_rule_set_fingerprint(
+    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
+):
+    dq_engine = DQEngine(ws, spark)
+
+    instance = make_lakebase_instance()
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(
+        location=lakebase_location, client_id=lakebase_client_id, instance_name=instance.name
+    )
+
+    FIRST_CHECKS=TEST_CHECKS[0:2]
+    SECOND_CHECKS=TEST_CHECKS[2:]
+    dq_engine.save_checks(checks=FIRST_CHECKS, config=config)
+    time.sleep(3)
+    dq_engine.save_checks(checks=SECOND_CHECKS, config=config)
+    checks = dq_engine.load_checks(config=config)
+
+    compare_checks(checks, SECOND_CHECKS)

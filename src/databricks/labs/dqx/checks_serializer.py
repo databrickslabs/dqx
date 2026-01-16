@@ -5,7 +5,7 @@ import warnings
 from typing import Any
 from collections.abc import Callable
 from pathlib import Path
-
+from datetime import datetime
 import yaml
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -140,7 +140,7 @@ def deserialize_checks_to_dataframe(
         InvalidCheckError: If any check is invalid or unsupported.
     """
     dq_rule_checks: list[DQRule] = deserialize_checks(checks)
-    created_at = F.current_timestamp()
+    created_at = datetime.now()
     rule_set_fingerprint = generate_rule_set_fingerprint(dq_rule_checks)
     dq_rule_rows = []
 
@@ -176,20 +176,21 @@ def deserialize_checks_to_dataframe(
 
 def generate_rule_set_fingerprint(checks: list[DQRule]) -> str:
     rule_dicts = [check.rule_fingerprint for check in checks]
-    return str(hash(sorted(rule_dicts)))
+    return str(hash(tuple(sorted(rule_dicts))))
 
 
 def generate_rule_set_fingerprint_from_dict(checks: list[dict]) -> tuple[list[dict], str]:
     rule_set = []
-    for check in checks:
+    for check in checks:        
         rule_fingerprint = hashlib.md5(json.dumps(check, sort_keys=True).encode("utf-8")).hexdigest()
         check['rule_fingerprint'] = rule_fingerprint
         rule_set.append(rule_fingerprint)
-    rule_set_fingerprint = str(hash(sorted(rule_set)))
-    created_at = F.current_timestamp()
+    rule_set_fingerprint = str(hash(tuple(sorted(rule_set))))
+    created_at = datetime.now()
     for check in checks:
         check['rule_set_fingerprint'] = rule_set_fingerprint
         check['created_at'] = created_at
+    print(checks,created_at)
     return checks, rule_set_fingerprint
 
 

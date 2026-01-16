@@ -13,9 +13,14 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.sdk.errors import NotFound
 
-from databricks.labs.dqx.checks_serializer import CHECKS_TABLE_SCHEMA
+# from databricks.labs.dqx.checks_serializer import CHECKS_TABLE_SCHEMA
 
 from tests.conftest import TEST_CATALOG
+
+CHECKS_TABLE_SCHEMA = (
+    "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
+    " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>"
+)
 
 
 INPUT_CHECKS = [
@@ -97,7 +102,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
     engine = DQEngine(ws, spark)
     config = TableChecksStorageConfig(location=table_name, run_config_name="default")
     engine.save_checks(INPUT_CHECKS, config=config)
-    checks_df = spark.read.table(table_name)
+    checks_df = spark.read.table(table_name).select("name", "criticality", "check", "filter", "run_config_name", "user_metadata")
 
     expected_raw_checks = [
         {
@@ -154,6 +159,8 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
+    config = TableChecksStorageConfig(location=table_name)  # only loading run_config_name = "default"
+    engine = DQEngine(ws, spark)
     input_checks = [
         {
             "name": "col1_is_null",
@@ -191,7 +198,7 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
             "name": "column_in_list_escaped",
             "criticality": "warn",
             # escape string arguments (columns and allowed)
-            "check": {"function": "is_in_list", "arguments": {"column": "\"col_2\"", "allowed": "[1, 2]"}},
+            "check": {"function": "is_in_list", "arguments": {"column": "\"col_2\"", "allowed": [1, 2]}},
             "filter": None,
             "run_config_name": "default",
         },
@@ -203,11 +210,10 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
             "run_config_name": "non_default",
         },
     ]
-    checks_df = spark.createDataFrame(input_checks, CHECKS_TABLE_SCHEMA)
-    checks_df.write.saveAsTable(table_name)
-
-    engine = DQEngine(ws, spark)
-    config = TableChecksStorageConfig(location=table_name)  # only loading run_config_name = "default"
+    # checks_df = spark.createDataFrame(input_checks, CHECKS_TABLE_SCHEMA)
+    # checks_df.write.saveAsTable(table_name)
+    engine.save_checks(checks=input_checks, config=config)    
+    
     loaded_checks = engine.load_checks(config=config)
 
     expected_checks = [
