@@ -576,7 +576,7 @@ def shared_2d_model(spark_session, anomaly_registry_prefix_session):
     train_df = spark_session.createDataFrame(get_standard_2d_training_data(), "amount double, quantity double")
 
     engine = AnomalyEngine(WorkspaceClient(), spark_session)
-    engine.train(
+    full_model_name = engine.train(
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -584,7 +584,7 @@ def shared_2d_model(spark_session, anomaly_registry_prefix_session):
     )
 
     return {
-        "model_name": model_name,
+        "model_name": full_model_name,
         "registry_table": registry_table,
         "columns": ["amount", "quantity"],
         "training_data": get_standard_2d_training_data(),
@@ -625,7 +625,7 @@ def shared_3d_model(spark_session, anomaly_registry_prefix_session):
     )
 
     engine = AnomalyEngine(WorkspaceClient(), spark_session)
-    engine.train(
+    full_model_name = engine.train(
         df=train_df,
         columns=["amount", "quantity", "discount"],
         model_name=model_name,
@@ -633,7 +633,7 @@ def shared_3d_model(spark_session, anomaly_registry_prefix_session):
     )
 
     return {
-        "model_name": model_name,
+        "model_name": full_model_name,
         "registry_table": registry_table,
         "columns": ["amount", "quantity", "discount"],
         "training_data": get_standard_3d_training_data(),
@@ -674,7 +674,7 @@ def shared_4d_model(spark_session, anomaly_registry_prefix_session):
     )
 
     engine = AnomalyEngine(WorkspaceClient(), spark_session)
-    engine.train(
+    full_model_name = engine.train(
         df=train_df,
         columns=["amount", "quantity", "discount", "weight"],
         model_name=model_name,
@@ -682,7 +682,7 @@ def shared_4d_model(spark_session, anomaly_registry_prefix_session):
     )
 
     return {
-        "model_name": model_name,
+        "model_name": full_model_name,
         "registry_table": registry_table,
         "columns": ["amount", "quantity", "discount", "weight"],
         "training_data": get_standard_4d_training_data(),
@@ -856,7 +856,7 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
         schema_str = ", ".join(f"{col} double" for col in columns)
         train_df = spark.createDataFrame(train_data, schema_str)
 
-        anomaly_engine.train(
+        full_model_name = anomaly_engine.train(
             df=train_df,
             columns=columns,
             model_name=model_name,
@@ -865,6 +865,6 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
             segment_by=segment_by,
         )
 
-        return model_name, registry_table, columns
+        return full_model_name, registry_table, columns
 
     return _train

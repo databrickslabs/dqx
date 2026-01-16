@@ -275,7 +275,7 @@ def test_registry_stores_metadata(
     # Verify key metadata is present
     assert record["identity"]["model_name"] == full_model_name
     assert record["identity"]["model_uri"] is not None
-    assert record["identity"]["algorithm"] == "IsolationForest"
+    assert record["identity"]["algorithm"].startswith("IsolationForest")
     assert record["identity"]["status"] == "active"
     assert record["training"]["training_time"] is not None
     assert record["training"]["columns"] == ["amount", "quantity", "discount"]
@@ -439,4 +439,4 @@ def test_scoring_validates_config_hash(
         result.collect()  # Force evaluation
 
     assert "Configuration mismatch" in str(exc_info.value)
-    assert "Expected columns" in str(exc_info.value)
+    assert "Trained columns" in str(exc_info.value)

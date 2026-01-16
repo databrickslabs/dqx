@@ -19,10 +19,9 @@ def test_feature_importance_stored(spark: SparkSession, shared_2d_model, anomaly
     registry_table = shared_2d_model["registry_table"]
 
     # Query registry for feature_importance
-    # Model name is stored with full catalog.schema.model format
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
-    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
-    assert record is not None, f"Model {full_model_name} not found in registry"
+    # Model name is already in full catalog.schema.model format from the fixture
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
+    assert record is not None, f"Model {model_name} not found in registry"
 
     # Verify feature_importance exists and is non-empty
     assert record["features"]["feature_importance"] is not None
