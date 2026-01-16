@@ -421,7 +421,7 @@ def expected_quality_checking_output(spark) -> DataFrame:
     )
 
 
-def _setup_quality_checks(ctx, spark, ws):
+def _setup_quality_checks(ctx, session, ws):
     config = ctx.config
     checks_location = config.get_run_config().checks_location
     checks = [
@@ -442,7 +442,7 @@ def _setup_quality_checks(ctx, spark, ws):
         install_folder=ctx.installation.install_folder(),
     )
 
-    InstallationChecksStorageHandler(ws, spark).save(checks=checks, config=config)
+    InstallationChecksStorageHandler(ws, session).save(checks=checks, config=config)
     return checks_location
 
 
@@ -488,20 +488,20 @@ def contains_expected_workflows(workflows, state):
     return False
 
 
-def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, quarantine_config):
-    dq_engine = DQEngine(ws, spark)
+def assert_quarantine_and_output_dfs(ws, session, expected_output, output_config, quarantine_config):
+    dq_engine = DQEngine(ws, session)
     expected_output_df = dq_engine.get_valid(expected_output)
     expected_quarantine_df = dq_engine.get_invalid(expected_output)
 
-    output_df = spark.table(output_config.location)
+    output_df = session.table(output_config.location)
     assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
 
-    quarantine_df = spark.table(quarantine_config.location)
+    quarantine_df = session.table(quarantine_config.location)
     assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
-def assert_output_df(spark, expected_output, output_config):
-    checked_df = spark.table(output_config.location)
+def assert_output_df(session, expected_output, output_config):
+    checked_df = session.table(output_config.location)
     assert_df_equality(checked_df, expected_output, ignore_nullable=True)
 
 
@@ -527,6 +527,16 @@ def spark_session():
 
     logger.debug(f"Using cluster id '{cluster_id}'")
     return DatabricksSession.builder.getOrCreate()
+
+
+@pytest.fixture  # function-scoped (default, matches pytester's behavior)
+def spark(spark_session):
+    """Override pytester's spark fixture to use our session-scoped spark_session.
+
+    This ensures all tests use the working DatabricksSession approach and avoids
+    Spark Connect URL configuration issues.
+    """
+    return spark_session
 
 
 @pytest.fixture(scope="session")
@@ -707,7 +717,7 @@ def test_df_factory():
     """
 
     def _create(
-        spark: SparkSession,
+        session: SparkSession,
         normal_rows: list[tuple] | None = None,
         anomaly_rows: list[tuple] | None = None,
         columns_schema: str = "amount double, quantity double",
@@ -717,7 +727,7 @@ def test_df_factory():
         Create test DataFrame with auto-assigned IDs.
 
         Args:
-            spark (SparkSession): SparkSession instance
+            session (SparkSession): SparkSession instance
             normal_rows (list[tuple] | None): Tuples of normal data (default: [(100.0, 2.0)])
             anomaly_rows (list[tuple] | None): Tuples of anomalous data (default: [(9999.0, 1.0)])
             columns_schema (str): Schema for data columns (excluding ID)
@@ -728,7 +738,7 @@ def test_df_factory():
 
         Example:
             # Creates [(1, 100.0, 2.0), (2, 9999.0, 1.0)]
-            df = test_df_factory(spark)
+            df = test_df_factory(session)
         """
         if normal_rows is None:
             normal_rows = [(100.0, 2.0)]
@@ -740,7 +750,7 @@ def test_df_factory():
             all_rows.append((idx,) + row)
 
         schema = f"{id_column} int, {columns_schema}"
-        return spark.createDataFrame(all_rows, schema)
+        return session.createDataFrame(all_rows, schema)
 
     return _create
 
@@ -809,7 +819,7 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
     """
 
     def _train(
-        spark: SparkSession,
+        session: SparkSession,
         train_size: int = 50,
         columns: list[str] | None = None,
         train_data: list[tuple] | None = None,
@@ -822,7 +832,7 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
         Train a quick test model.
 
         Args:
-            spark (SparkSession): SparkSession instance
+            session (SparkSession): SparkSession instance
             train_size (int): Number of training rows (default: 50)
             columns (list[str] | None): Column names (default: ["amount", "quantity"])
             train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
@@ -838,7 +848,7 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
             # Train with custom params
             from databricks.labs.dqx.anomaly import AnomalyParams
             model, registry, cols = quick_model_factory(
-                spark, params=AnomalyParams(sample_fraction=1.0, max_rows=100)
+                session, params=AnomalyParams(sample_fraction=1.0, max_rows=100)
             )
         """
         if columns is None:
@@ -856,7 +866,7 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
 
         # Infer schema from columns
         schema_str = ", ".join(f"{col} double" for col in columns)
-        train_df = spark.createDataFrame(train_data, schema_str)
+        train_df = session.createDataFrame(train_data, schema_str)
 
         full_model_name = anomaly_engine.train(
             df=train_df,

@@ -1295,10 +1295,16 @@ def _ensure_mlflow_registry_uri() -> None:
     """Ensure MLflow registry URI is configured for Unity Catalog.
 
     Sets registry URI to 'databricks-uc' (or value from MLFLOW_REGISTRY_URI env var).
+    Also sets tracking URI to ensure MLflow uses SDK auth in worker processes.
     In Databricks notebooks, MLflow is pre-configured, but setting it explicitly is idempotent and safe.
     """
     registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
     mlflow.set_registry_uri(registry_uri)
+
+    # Also ensure tracking URI is set to use SDK auth (especially in worker processes)
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if tracking_uri:
+        mlflow.set_tracking_uri(tracking_uri)
 
 
 def _register_ensemble_member_to_mlflow(
