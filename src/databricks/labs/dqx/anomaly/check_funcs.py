@@ -569,7 +569,12 @@ def _create_scoring_udf(
         # Compute and format SHAP values
         shap_values = np.array([])
         if valid_indices.any():
-            shap_values = explainer.shap_values(shap_data[valid_indices])
+            if len(engineered_feature_cols) == 1:
+                # For single feature, contribution is always 100% (1.0 or -1.0)
+                # This avoids IndexError in SHAP for single-feature models
+                shap_values = np.ones((len(shap_data[valid_indices]), 1))
+            else:
+                shap_values = explainer.shap_values(shap_data[valid_indices])
 
         contributions_list = format_contributions(shap_values, valid_indices, len(shap_data))
 
@@ -908,9 +913,14 @@ def _create_ensemble_scoring_udf(
         shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
         valid_indices = ~pd.isna(shap_data).any(axis=1)
 
+        # Compute and format SHAP values
         shap_values = np.array([])
         if valid_indices.any():
-            shap_values = explainer.shap_values(shap_data[valid_indices])
+            if len(engineered_feature_cols) == 1:
+                # For single feature, contribution is always 100%
+                shap_values = np.ones((len(shap_data[valid_indices]), 1))
+            else:
+                shap_values = explainer.shap_values(shap_data[valid_indices])
 
         result["anomaly_contributions"] = format_contributions(shap_values, valid_indices, len(shap_data))
 
