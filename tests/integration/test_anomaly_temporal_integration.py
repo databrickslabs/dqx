@@ -18,17 +18,16 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-@pytest.fixture(scope="module")
-def temporal_model(spark_session):
+@pytest.fixture
+def temporal_model(spark_session, anomaly_registry_prefix):
     """
-    Module-scoped temporal model trained once for all tests in this file.
+    Temporal model trained per test for schema isolation.
 
     Trains a model with temporal features (hour, day_of_week) on standard data.
-    Tests that only need to score with temporal features can reuse this model.
     """
     suffix = uuid4().hex[:8]
     model_name = f"temporal_model_{suffix}"
-    registry_table = f"main.default.temporal_reg_{suffix}"
+    registry_table = f"{anomaly_registry_prefix}.temporal_reg_{suffix}"
 
     # Create data with timestamps (9am on weekdays)
     df = spark_session.sql("SELECT 100.0 as amount, timestamp('2024-01-15 09:00:00') as event_time FROM range(50)")
@@ -85,11 +84,13 @@ def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
     assert row["_info"]["anomaly"]["score"] is not None
 
 
-def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
+def test_multiple_temporal_features(
+    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, anomaly_registry_prefix
+):
     """Test training with multiple temporal features."""
     unique_id = make_random(8).lower()
     model_name = f"test_multi_temporal_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     df = spark.sql("SELECT 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time FROM range(50)")
 
@@ -145,11 +146,13 @@ def test_multiple_temporal_features(spark: SparkSession, mock_workspace_client, 
     assert row["_info"]["anomaly"]["score"] is not None
 
 
-def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
+def test_temporal_pattern_detection(
+    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, anomaly_registry_prefix
+):
     """Test that model learns time-based patterns."""
     unique_id = make_random(8).lower()
     model_name = f"test_temporal_pattern_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Create data with distinct patterns for different hours
     # 9am-5pm: amount=100, evening: amount=50
@@ -208,11 +211,13 @@ def test_temporal_pattern_detection(spark: SparkSession, mock_workspace_client, 
     # differentiate between hours. A real use case would have varied amounts per hour.
 
 
-def test_weekend_feature(spark: SparkSession, mock_workspace_client, make_random, anomaly_engine):
+def test_weekend_feature(
+    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, anomaly_registry_prefix
+):
     """Test is_weekend temporal feature."""
     unique_id = make_random(8).lower()
     model_name = f"test_weekend_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on weekday data
     df = spark.sql(

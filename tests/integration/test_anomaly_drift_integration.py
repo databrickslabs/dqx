@@ -21,13 +21,17 @@ def mock_workspace_client():
 
 
 def test_drift_detection_warns_on_distribution_shift(
-    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    anomaly_registry_prefix,
 ):
     """Test that drift warning is issued when data distribution shifts."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
     model_name = f"test_drift_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on distribution centered at 100 - use helper (need >= 1000 rows for drift check)
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=1500)
@@ -67,13 +71,17 @@ def test_drift_detection_warns_on_distribution_shift(
 
 
 def test_no_drift_warning_on_similar_distribution(
-    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    anomaly_registry_prefix,
 ):
     """Test that no drift warning is issued when distributions are similar."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
     model_name = f"test_no_drift_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on distribution - use helper (need >= 1000 rows)
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=1500)
@@ -107,13 +115,17 @@ def test_no_drift_warning_on_similar_distribution(
 
 
 def test_drift_detection_disabled_when_threshold_none(
-    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    anomaly_registry_prefix,
 ):
     """Test that drift detection is disabled when drift_threshold=None."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
     model_name = f"test_drift_disabled_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=1500)
@@ -147,13 +159,17 @@ def test_drift_detection_disabled_when_threshold_none(
 
 
 def test_drift_detection_skipped_on_small_batch(
-    spark: SparkSession, mock_workspace_client, make_random: Callable[[int], str], anomaly_engine
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    anomaly_registry_prefix,
 ):
     """Test that drift detection is skipped when batch size < 1000 rows."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
     model_name = f"test_small_batch_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=1500)

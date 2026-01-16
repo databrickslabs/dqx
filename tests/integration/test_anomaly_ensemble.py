@@ -19,11 +19,11 @@ def mock_workspace_client():
     return MagicMock(spec=WorkspaceClient)
 
 
-def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
+def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test training an ensemble of models."""
     unique_id = make_random(8).lower()
     model_name = f"test_ensemble_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train ensemble with 3 models - use helper
     params = AnomalyParams(
@@ -34,7 +34,7 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=100, params=params)
 
     # Get model_uri from registry
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None
     model_uri = record["identity"]["model_uri"]
@@ -46,12 +46,18 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine):
 
 
 def test_ensemble_scoring_with_confidence(
-    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_scorer
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random,
+    anomaly_engine,
+    test_df_factory,
+    anomaly_scorer,
+    anomaly_registry_prefix,
 ):
     """Test scoring with ensemble model returns confidence scores."""
     unique_id = make_random(8).lower()
     model_name = f"test_ensemble_scoring_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train ensemble - use helper
     params = AnomalyParams(
@@ -90,12 +96,18 @@ def test_ensemble_scoring_with_confidence(
 
 
 def test_ensemble_with_feature_contributions(
-    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_scorer
+    spark: SparkSession,
+    mock_workspace_client,
+    make_random,
+    anomaly_engine,
+    test_df_factory,
+    anomaly_scorer,
+    anomaly_registry_prefix,
 ):
     """Test that ensemble works with feature contributions."""
     unique_id = make_random(8).lower()
     model_name = f"test_ensemble_contributions_{make_random(4).lower()}"
-    registry_table = f"main.default.{unique_id}_registry"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train ensemble with 3D model - use helper
     params = AnomalyParams(

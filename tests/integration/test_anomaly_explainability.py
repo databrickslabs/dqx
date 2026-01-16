@@ -12,7 +12,7 @@ shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min t
 from pyspark.sql import SparkSession
 
 
-def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
+def test_feature_importance_stored(spark: SparkSession, shared_2d_model, anomaly_registry_prefix):
     """Test that feature_importance is stored in registry."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -20,7 +20,7 @@ def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
 
     # Query registry for feature_importance
     # Model name is stored with full catalog.schema.model format
-    full_model_name = f"main.default.{model_name}"
+    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
     assert record is not None, f"Model {full_model_name} not found in registry"
 
