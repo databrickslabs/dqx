@@ -138,7 +138,7 @@ test_coverage   = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --d
 # Note that integration tests are controlled by the acceptance action (e.g. running 10 tests in parallel):
 # https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
 # This integration config is only used when running integration tests locally.
-integration     = "pytest tests/integration/ -n 10 --cov --cov-report=xml:coverage-integration.xml --timeout 1200 --durations 20"
+integration     = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 1200 --durations 20"
 e2e             = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 perf            = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 fmt             = ["black .",

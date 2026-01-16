@@ -62,6 +62,9 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
+      - name: Run unit tests and generate test coverage report
+        run: make test
+
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for integration tests
@@ -222,6 +225,9 @@ jobs:
 
       - name: Install hatch
         run: pip install hatch==1.15.0
+
+      - name: Run unit tests and generate test coverage report
+        run: make test
 
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
