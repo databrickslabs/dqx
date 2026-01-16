@@ -574,8 +574,6 @@ def _make_shap_helpers():
         scaler = getattr(model_local, "named_steps", {}).get("scaler")
         tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
 
-        # Create TreeSHAP explainer and prepare data
-        explainer = shap.TreeExplainer(tree_model)
         shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
 
         # Identify valid rows (no NaNs)
@@ -589,6 +587,8 @@ def _make_shap_helpers():
                 # This avoids IndexError in SHAP for single-feature models
                 shap_values = np.ones((len(shap_data[valid_indices]), 1))
             else:
+                # Create TreeSHAP explainer only when needed
+                explainer = shap.TreeExplainer(tree_model)
                 shap_values = explainer.shap_values(shap_data[valid_indices])
 
         return shap_values, valid_indices
