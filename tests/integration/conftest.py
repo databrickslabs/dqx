@@ -64,9 +64,11 @@ def configure_mlflow_tracking():
         return
 
     # MLFLOW_ENABLE_DB_SDK is already set at module level (before mlflow import)
-    # Use tracking URI from environment if set, otherwise default to "databricks"
-    # The "databricks" scheme ensures MLflow uses SDK auth with profile resolution.
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "databricks")
+    # Use tracking URI from environment when explicitly configured; otherwise skip.
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not tracking_uri:
+        yield
+        return
 
     # UC registry should be databricks-uc
     registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")

@@ -282,7 +282,7 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           # Run only anomaly tests
-          PYTEST_ADDOPTS: "test_anomaly_*.py"
+          PYTEST_ADDOPTS: "-k test_anomaly_"
 
           # Belt + braces: pass through explicitly to the action step
           DATABRICKS_HOST: ${{ env.DATABRICKS_HOST }}
@@ -381,7 +381,7 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           # Run only anomaly tests
-          PYTEST_ADDOPTS: "test_anomaly_*.py"
+          PYTEST_ADDOPTS: "-k test_anomaly_"
 
           DATABRICKS_HOST: ${{ env.DATABRICKS_HOST }}
           DATABRICKS_AUTH_TYPE: ${{ env.DATABRICKS_AUTH_TYPE }}
