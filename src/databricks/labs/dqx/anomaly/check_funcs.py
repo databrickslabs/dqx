@@ -14,6 +14,7 @@ from typing import Any
 import cloudpickle
 import mlflow
 import mlflow.sklearn
+import numpy as np
 import pandas as pd
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.functions import pandas_udf, col
@@ -495,35 +496,50 @@ def _create_scoring_udf(
     include_contributions: bool,
     schema: StructType,
 ):
-    """Create pandas UDF for distributed scoring with optional SHAP.
+    """Create pandas UDF for distributed scoring with optional SHAP."""
 
-    Args:
-        model_bytes: Serialized sklearn model
-        engineered_feature_cols: List of engineered feature column names
-        include_contributions: Whether to compute SHAP contributions
-        schema: UDF output schema
+    def format_contributions(
+        shap_values: np.ndarray,
+        valid_indices: np.ndarray,
+        num_rows: int,
+    ) -> list[dict[str, float | None]]:
+        """Format SHAP values into contribution dictionaries."""
+        import numpy as np
 
-    Returns:
-        Pandas UDF for scoring
-    """
+        num_features = len(engineered_feature_cols)
+        contributions: list[dict[str, float | None]] = [
+            {c: None for c in engineered_feature_cols} for _ in range(num_rows)
+        ]
 
-    @pandas_udf(schema)  # type: ignore[call-overload]  # StructType is valid but mypy has incomplete stubs
+        if shap_values.size == 0:
+            return contributions
+
+        # Normalize absolute SHAP values to sum to 1.0 per row
+        abs_shap = np.abs(shap_values)
+        totals = abs_shap.sum(axis=1, keepdims=True)
+        normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
+
+        # Build contribution dictionaries for valid rows
+        valid_row_idx = 0
+        for i in range(num_rows):
+            if not valid_indices[i]:
+                continue
+            contributions[i] = {
+                engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3) for j in range(num_features)
+            }
+            valid_row_idx += 1
+
+        return contributions
+
+    @pandas_udf(schema)  # type: ignore[call-overload]
     def predict_with_shap_udf(*cols: pd.Series) -> pd.DataFrame:
-        """Pandas UDF for distributed scoring with optional SHAP (Spark Connect compatible).
-
-        Note: All imports are at module-level since DQX is installed as a wheel on all cluster nodes.
-        Wait, no - refactored to use local imports for Spark Connect compatibility when DQX
-        is NOT installed as a wheel on all cluster nodes.
-        """
+        """Pandas UDF for distributed scoring with optional SHAP (Spark Connect compatible)."""
         import cloudpickle
         import pandas as pd
         import numpy as np
-        from sklearn.pipeline import Pipeline
 
-        # Deserialize model
+        # Deserialize model and prepare input
         model_local = cloudpickle.loads(model_bytes)
-
-        # Convert input to DataFrame
         feature_matrix = pd.concat(cols, axis=1)
         feature_matrix.columns = engineered_feature_cols
 
@@ -531,73 +547,33 @@ def _create_scoring_udf(
         scores = -model_local.score_samples(feature_matrix)
 
         # Compute SHAP if requested
-        contributions_list: list[dict[str, float | None]] = []
-        if include_contributions:
-            try:
-                import shap
-            except ImportError as e:
-                raise ImportError(
-                    "SHAP library not available in pandas UDF worker.\n\n"
-                    "To fix:\n"
-                    "  1. Install DQX with anomaly extras: %pip install 'databricks-labs-dqx[anomaly]'\n"
-                    "  2. Or install SHAP separately: %pip install 'shap>=0.42.0,<0.46'\n"
-                    "  3. Restart Python: dbutils.library.restartPython()\n"
-                    "  4. Re-run the scoring operation\n\n"
-                    "If this error persists after installation, the cluster may need to be restarted."
-                ) from e
+        if not include_contributions:
+            return pd.DataFrame({"anomaly_score": scores})
 
-            # Extract components from Pipeline if present
-            if isinstance(model_local, Pipeline):
-                scaler = model_local.named_steps.get("scaler")
-                tree_model = model_local.named_steps["model"]
-            else:
-                scaler = None
-                tree_model = model_local
+        try:
+            import shap
+        except ImportError as e:
+            raise ImportError("SHAP library not available in pandas UDF worker.") from e
 
-            # Create TreeSHAP explainer for feature contribution computation
-            explainer = shap.TreeExplainer(tree_model)
+        # Extract components from Pipeline if present
+        scaler = getattr(model_local, "named_steps", {}).get("scaler")
+        tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
 
-            # Prepare data (scaling if needed)
-            shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+        # Create TreeSHAP explainer and prepare data
+        explainer = shap.TreeExplainer(tree_model)
+        shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
 
-            # Identify rows with NaN values
-            has_nan = pd.isna(shap_data).any(axis=1)
-            valid_indices = ~has_nan
+        # Identify valid rows (no NaNs)
+        valid_indices = ~pd.isna(shap_data).any(axis=1)
 
-            # Initialize contributions list (None for all rows initially)
-            num_rows = len(shap_data)
-            num_features = len(engineered_feature_cols)
-            contributions_list = [{c: None for c in engineered_feature_cols} for _ in range(num_rows)]
+        # Compute and format SHAP values
+        shap_values = np.array([])
+        if valid_indices.any():
+            shap_values = explainer.shap_values(shap_data[valid_indices])
 
-            # Batch process valid rows
-            if valid_indices.sum() > 0:
-                # Compute SHAP values for all valid rows in a single batch
-                valid_data = shap_data[valid_indices]
-                shap_values_batch = explainer.shap_values(valid_data)
+        contributions_list = format_contributions(shap_values, valid_indices, len(shap_data))
 
-                # Normalize absolute SHAP values to sum to 1.0 per row
-                abs_shap = np.abs(shap_values_batch)
-                totals = abs_shap.sum(axis=1, keepdims=True)
-
-                # Assign equal contributions when all SHAP values are zero
-                normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
-
-                # Build contribution dictionaries for valid rows
-                valid_row_idx = 0
-                for i in range(num_rows):
-                    if valid_indices[i]:
-                        contributions_list[i] = {
-                            engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3)
-                            for j in range(num_features)
-                        }
-                        valid_row_idx += 1
-
-        # Build result
-        result = {"anomaly_score": scores}
-        if include_contributions:
-            result["anomaly_contributions"] = contributions_list
-
-        return pd.DataFrame(result)
+        return pd.DataFrame({"anomaly_score": scores, "anomaly_contributions": contributions_list})
 
     return predict_with_shap_udf
 
@@ -818,6 +794,131 @@ def _check_and_warn_drift(
             )
 
 
+def _serialize_ensemble_models(
+    model_uris: list[str],
+    model_record: AnomalyModelRecord,
+) -> list[bytes]:
+    """Load and serialize ensemble models for UDF."""
+    models_bytes = []
+    for uri in model_uris:
+        model = _load_and_validate_model(uri, model_record)
+        models_bytes.append(cloudpickle.dumps(model))
+    return models_bytes
+
+
+def _prepare_ensemble_scoring_schema(include_contributions: bool) -> StructType:
+    """Prepare schema for ensemble scoring UDF."""
+    schema_fields = [
+        StructField("anomaly_score", DoubleType(), True),
+        StructField("anomaly_score_std", DoubleType(), True),
+    ]
+    if include_contributions:
+        schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
+    return StructType(schema_fields)
+
+
+def _join_ensemble_scores(
+    df_filtered: DataFrame,
+    scored_df: DataFrame,
+    merge_columns: list[str],
+    include_contributions: bool,
+) -> DataFrame:
+    """Join scores back to original DataFrame."""
+    cols_to_select = [*merge_columns, "_scores.anomaly_score", "_scores.anomaly_score_std"]
+    if include_contributions:
+        cols_to_select.append("_scores.anomaly_contributions")
+
+    return df_filtered.join(scored_df.select(*cols_to_select), on=merge_columns, how="left")
+
+
+def _create_ensemble_scoring_udf(
+    models_bytes: list[bytes],
+    engineered_feature_cols: list[str],
+    include_contributions: bool,
+    schema: StructType,
+):
+    """Create ensemble scoring UDF."""
+
+    def format_contributions(
+        shap_values: np.ndarray,
+        valid_indices: np.ndarray,
+        num_rows: int,
+    ) -> list[dict[str, float | None]]:
+        """Format SHAP values into contribution dictionaries."""
+        import numpy as np
+
+        num_features = len(engineered_feature_cols)
+        contributions: list[dict[str, float | None]] = [
+            {c: None for c in engineered_feature_cols} for _ in range(num_rows)
+        ]
+
+        if shap_values.size == 0:
+            return contributions
+
+        # Normalize absolute SHAP values to sum to 1.0 per row
+        abs_shap = np.abs(shap_values)
+        totals = abs_shap.sum(axis=1, keepdims=True)
+        normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
+
+        # Build contribution dictionaries for valid rows
+        valid_row_idx = 0
+        for i in range(num_rows):
+            if not valid_indices[i]:
+                continue
+            contributions[i] = {
+                engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3) for j in range(num_features)
+            }
+            valid_row_idx += 1
+
+        return contributions
+
+    @pandas_udf(schema)  # type: ignore[call-overload]
+    def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
+        """Score with all ensemble models in single pass (Spark Connect compatible)."""
+        import cloudpickle
+        import pandas as pd
+        import numpy as np
+
+        # Deserialize all models and prepare input
+        models = [cloudpickle.loads(mb) for mb in models_bytes]
+        feature_matrix = pd.concat(cols, axis=1)
+        feature_matrix.columns = engineered_feature_cols
+
+        # Score with all ensemble models and compute stats
+        scores_matrix = np.array([-model.score_samples(feature_matrix) for model in models])
+        mean_scores = scores_matrix.mean(axis=0)
+        std_scores = scores_matrix.std(axis=0, ddof=1)
+
+        # Build result
+        result = {"anomaly_score": mean_scores, "anomaly_score_std": std_scores}
+        if not include_contributions:
+            return pd.DataFrame(result)
+
+        try:
+            import shap
+        except ImportError as e:
+            raise ImportError("SHAP library not available in pandas UDF worker.") from e
+
+        # Compute SHAP contributions using first model
+        model_local = models[0]
+        scaler = getattr(model_local, "named_steps", {}).get("scaler")
+        tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
+
+        explainer = shap.TreeExplainer(tree_model)
+        shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+        valid_indices = ~pd.isna(shap_data).any(axis=1)
+
+        shap_values = np.array([])
+        if valid_indices.any():
+            shap_values = explainer.shap_values(shap_data[valid_indices])
+
+        result["anomaly_contributions"] = format_contributions(shap_values, valid_indices, len(shap_data))
+
+        return pd.DataFrame(result)
+
+    return ensemble_scoring_udf
+
+
 def _score_ensemble_models(
     model_uris: list[str],
     df_filtered: DataFrame,
@@ -848,146 +949,27 @@ def _score_ensemble_models(
         DataFrame with anomaly_score (mean), anomaly_score_std (confidence),
         and optionally anomaly_contributions
     """
-    # Load and validate all ensemble models before creating UDF
-    # This ensures models are compatible and reduces UDF serialization size
-    ensemble_models = []
-    for uri in model_uris:
-        model = _load_and_validate_model(uri, model_record)
-        ensemble_models.append(model)
+    # Load and serialize models
+    models_bytes = _serialize_ensemble_models(model_uris, model_record)
 
-    # Serialize all models once for UDF
-    models_bytes = [cloudpickle.dumps(model) for model in ensemble_models]
-
-    # Prepare feature metadata
+    # Prepare feature metadata and apply engineering
     column_infos, feature_metadata = _prepare_feature_metadata(feature_metadata_json)
-
-    # Apply feature engineering
     engineered_df = _apply_feature_engineering_for_scoring(
         df_filtered, columns, merge_columns, column_infos, feature_metadata
     )
-
     engineered_feature_cols = feature_metadata.engineered_feature_names
 
-    # Create ensemble UDF schema
-    schema_fields = [
-        StructField("anomaly_score", DoubleType(), True),
-        StructField("anomaly_score_std", DoubleType(), True),
-    ]
-    if include_contributions:
-        schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
-    schema = StructType(schema_fields)
-
     # Create ensemble UDF
-    @pandas_udf(schema)  # type: ignore[call-overload]
-    def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
-        """Score with all ensemble models in single pass (Spark Connect compatible)."""
-        import cloudpickle
-        import pandas as pd
-        import numpy as np
-        from sklearn.pipeline import Pipeline
+    schema = _prepare_ensemble_scoring_schema(include_contributions)
+    ensemble_scoring_udf = _create_ensemble_scoring_udf(
+        models_bytes, engineered_feature_cols, include_contributions, schema
+    )
 
-        # Deserialize all models once per executor
-        models = [cloudpickle.loads(mb) for mb in models_bytes]
+    # Apply UDF and join results
+    input_cols = [col(c) for c in engineered_feature_cols]
+    scored_df = engineered_df.withColumn("_scores", ensemble_scoring_udf(*input_cols))
 
-        # Convert input to DataFrame
-        feature_matrix = pd.concat(cols, axis=1)
-        feature_matrix.columns = engineered_feature_cols
-
-        # Score with all ensemble models
-        # IsolationForest.score_samples returns negative anomaly scores (lower = more anomalous)
-        # Negate to get positive anomaly scores (higher = more anomalous)
-        scores_matrix = np.array([-model.score_samples(feature_matrix) for model in models])
-
-        # Compute mean score (ensemble consensus) and std (confidence/uncertainty)
-        mean_scores = scores_matrix.mean(axis=0)
-        std_scores = scores_matrix.std(axis=0, ddof=1)
-
-        # Compute SHAP contributions using first model
-        # Contribution patterns are consistent across ensemble members
-        contributions_list: list[dict[str, float | None]] = []
-        if include_contributions:
-            try:
-                import shap
-            except ImportError as e:
-                raise ImportError(
-                    "SHAP library not available in pandas UDF worker.\n\n"
-                    "To fix:\n"
-                    "  1. Install DQX with anomaly extras: %pip install 'databricks-labs-dqx[anomaly]'\n"
-                    "  2. Or install SHAP separately: %pip install 'shap>=0.42.0,<0.46'\n"
-                    "  3. Restart Python: dbutils.library.restartPython()\n"
-                    "  4. Re-run the scoring operation\n\n"
-                    "If this error persists after installation, the cluster may need to be restarted."
-                ) from e
-
-            model_local = models[0]
-            # Extract components from Pipeline if present
-            if isinstance(model_local, Pipeline):
-                scaler = model_local.named_steps.get("scaler")
-                tree_model = model_local.named_steps["model"]
-            else:
-                scaler = None
-                tree_model = model_local
-
-            # Create TreeSHAP explainer for feature contribution computation
-            explainer = shap.TreeExplainer(tree_model)
-
-            # Prepare data (scaling if needed)
-            shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
-
-            # Identify rows with NaN values
-            has_nan = pd.isna(shap_data).any(axis=1)
-            valid_indices = ~has_nan
-
-            # Initialize contributions list (None for all rows initially)
-            num_rows = len(shap_data)
-            num_features = len(engineered_feature_cols)
-            contributions_list = [{c: None for c in engineered_feature_cols} for _ in range(num_rows)]
-
-            # Batch process valid rows
-            if valid_indices.sum() > 0:
-                # Compute SHAP values for all valid rows in a single batch
-                valid_data = shap_data[valid_indices]
-                shap_values_batch = explainer.shap_values(valid_data)
-
-                # Normalize absolute SHAP values to sum to 1.0 per row
-                abs_shap = np.abs(shap_values_batch)
-                totals = abs_shap.sum(axis=1, keepdims=True)
-
-                # Assign equal contributions when all SHAP values are zero
-                normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
-
-                # Build contribution dictionaries for valid rows
-                valid_row_idx = 0
-                for i in range(num_rows):
-                    if valid_indices[i]:
-                        contributions_list[i] = {
-                            engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3)
-                            for j in range(num_features)
-                        }
-                        valid_row_idx += 1
-
-        # Build result
-        result = {
-            "anomaly_score": mean_scores,
-            "anomaly_score_std": std_scores,
-        }
-        if include_contributions:
-            result["anomaly_contributions"] = contributions_list
-
-        return pd.DataFrame(result)
-
-    # Apply ensemble scoring UDF to engineered features
-    scored_df = engineered_df.withColumn("_scores", ensemble_scoring_udf(*[col(c) for c in engineered_feature_cols]))
-
-    # Select columns to join back
-    cols_to_select = [*merge_columns, "_scores.anomaly_score", "_scores.anomaly_score_std"]
-    if include_contributions:
-        cols_to_select.append("_scores.anomaly_contributions")
-
-    # Join scores back to original DataFrame
-    result = df_filtered.join(scored_df.select(*cols_to_select), on=merge_columns, how="left")
-
-    return result
+    return _join_ensemble_scores(df_filtered, scored_df, merge_columns, include_contributions)
 
 
 def _try_segmented_scoring_fallback(

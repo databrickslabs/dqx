@@ -323,6 +323,8 @@ load-plugins = [
     "pylint.extensions.typing",
     "pylint_per_file_ignores",
 ]
+# this is to ignore pylint errors for anomaly detection udfs
+per-file-ignores = "src/databricks/labs/dqx/anomaly/check_funcs.py:import-outside-toplevel,redefined-outer-name,reimported,too-complex\nsrc/databricks/labs/dqx/anomaly/trainer.py:import-outside-toplevel,redefined-outer-name,reimported\nsrc/databricks/labs/dqx/anomaly/explainer.py:import-outside-toplevel,redefined-outer-name,reimported"
 
 # Pickle collected data for later comparisons.
 persistent = true
