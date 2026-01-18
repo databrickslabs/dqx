@@ -118,7 +118,7 @@ Quarantine or Flag based on criticality:
 * For critical data, quarantine bad records (use functions with split, e.g. `apply_checks_and_split`) so they are not propagated downstream. This allows for targeted remediation (curation) of low-quality data.
 * For non-critical data, flag records (e.g. use functions without split, e.g. `apply_checks`), but allow progress with alerts or downstream monitoring.
 
-See more in [Applying Quality Checks Guide](/docs/guide/quality_checks_apply/)
+See more in [Applying Quality Checks Guide](/docs/guide/quality_checks_apply/).
 
 ### Apply All Checks in One Pass
 
@@ -174,9 +174,9 @@ checks = """
     function: is_not_null
     arguments:
       column: col1
-    user_metadata:
-      version: v1
-      location: catalog.schema.checks_table
+  user_metadata:
+    version: v1
+    location: catalog.schema.checks_table
 """
 
 # version rules set
