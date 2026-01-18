@@ -185,3 +185,18 @@ def test_save_run_config_in_custom_folder_installation(ws, installation_ctx_cust
         run_config_name="default", install_folder=installation_ctx_custom_install_folder.install_folder
     )
     assert actual_default_run_config == installation_ctx_custom_install_folder.config.get_run_config("default")
+
+
+def test_save_workspace_config_with_extra_fields_in_user_installation(ws, installation_ctx, spark):
+    installation_ctx.installation.save(installation_ctx.config)
+
+    run_config = RunConfig(name="fake")
+    config = WorkspaceConfig(run_configs=[run_config])
+    # extra configs are skipped
+    config.extra_field = "extra_value"
+
+    product_name = installation_ctx.product_info.product_name()
+    ConfigSerializer(ws).save_config(config=config, assume_user=True, product_name=product_name)
+
+    actual_config = ConfigSerializer(ws).load_config(assume_user=True, product_name=product_name)
+    assert actual_config == config
