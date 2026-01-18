@@ -3,8 +3,6 @@ sidebar_position: 311
 ---
 
 import Admonition from '@theme/Admonition';
-import Tabs from '@theme/Tabs';
-import TabItem from '@theme/TabItem';
 
 # Best Practices in Production
 
@@ -18,10 +16,10 @@ DQX offers built-in support for storing and retrieving data quality rules (check
 It is recommended to maintain checks in a Delta table to centralize data quality checks across tables, improve maintainability and discoverability.
 
 ```python
-# load checks in Delta table
+# load checks from Delta table
 checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table"))
 
-# save checks from a Delta table
+# save checks to Delta table
 dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table", mode="overwrite"))
 ```
 
@@ -142,7 +140,7 @@ results = dq_engine.apply_checks(df, checks)
 ### Scale Checks Across Multiple Tables
 
 When applying similar quality rules to multiple tables, use DQX methods designed for multi-table execution.
-Use built-in DQX apply methods that support applying checks across multiple tables in a single call (e.g., `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_for_patterns`)
+Use built-in DQX apply methods that support applying checks across multiple tables in a single call (e.g., `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_for_patterns`).
 
 See more in [Applying Checks on Multiple Tables](/docs/guide/quality_checks_apply/#applying-checks-on-multiple-tables).
 
