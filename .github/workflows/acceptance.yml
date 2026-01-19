@@ -51,7 +51,6 @@ jobs:
     # Workflows triggered by PRs from forks don't have access to the tool environment.
     # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
     needs: detect_changes
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     steps:
@@ -135,7 +134,6 @@ jobs:
     # Workflows triggered by PRs from forks don't have access to the tool environment.
     # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
     needs: detect_changes
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     env:
