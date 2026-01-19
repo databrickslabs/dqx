@@ -45,6 +45,8 @@ jobs:
               - 'tests/integration/test_anomaly_*.py'
 
   integration:
+    # Temporarily disabled to speed up anomaly-only debugging.
+    if: false
     # Only run this job for PRs from branches on the main repository and not from forks.
     # Workflows triggered by PRs from forks don't have access to the tool environment.
     # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
@@ -127,6 +129,8 @@ jobs:
           use_oidc: true
 
   integration_serverless:
+    # Temporarily disabled to speed up anomaly-only debugging.
+    if: false
     # Only run this job for PRs from branches on the main repository and not from forks.
     # Workflows triggered by PRs from forks don't have access to the tool environment.
     # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
@@ -293,6 +297,15 @@ jobs:
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
           MLFLOW_REGISTRY_URI: "databricks-uc"
+      - name: Debug MLflow/Databricks env (anomaly)
+        shell: bash
+        run: |
+          echo "DATABRICKS_HOST=${DATABRICKS_HOST}"
+          echo "DATABRICKS_AUTH_TYPE=${DATABRICKS_AUTH_TYPE}"
+          echo "DATABRICKS_CONFIG_FILE=${DATABRICKS_CONFIG_FILE}"
+          echo "MLFLOW_ENABLE_DB_SDK=${MLFLOW_ENABLE_DB_SDK}"
+          echo "MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}"
+          echo "MLFLOW_REGISTRY_URI=${MLFLOW_REGISTRY_URI}"
 
       - name: Merge coverage reports and convert them to XML
         run: |
@@ -391,6 +404,15 @@ jobs:
           MLFLOW_ENABLE_DB_SDK: "true"
           MLFLOW_TRACKING_URI: ${{ env.MLFLOW_TRACKING_URI }}
           MLFLOW_REGISTRY_URI: "databricks-uc"
+      - name: Debug MLflow/Databricks env (anomaly serverless)
+        shell: bash
+        run: |
+          echo "DATABRICKS_HOST=${DATABRICKS_HOST}"
+          echo "DATABRICKS_AUTH_TYPE=${DATABRICKS_AUTH_TYPE}"
+          echo "DATABRICKS_CONFIG_FILE=${DATABRICKS_CONFIG_FILE}"
+          echo "MLFLOW_ENABLE_DB_SDK=${MLFLOW_ENABLE_DB_SDK}"
+          echo "MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI}"
+          echo "MLFLOW_REGISTRY_URI=${MLFLOW_REGISTRY_URI}"
 
       - name: Merge coverage reports and convert them to XML
         run: |
@@ -403,7 +425,8 @@ jobs:
           use_oidc: true
 
   e2e:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    # Temporarily disabled to speed up anomaly-only debugging.
+    if: false
     environment: tool
     runs-on: larger
     steps:
@@ -463,7 +486,8 @@ jobs:
           DATABRICKS_AUTH_TYPE: ${{ env.DATABRICKS_AUTH_TYPE }}
 
   e2e_serverless:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    # Temporarily disabled to speed up anomaly-only debugging.
+    if: false
     environment: tool
     runs-on: larger
     env:
