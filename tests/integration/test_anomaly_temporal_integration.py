@@ -20,7 +20,7 @@ def mock_workspace_client():
 
 
 @pytest.fixture
-def temporal_model(spark, anomaly_registry_prefix):
+def temporal_model(ws, spark, anomaly_registry_prefix):
     """
     Temporal model trained per test for schema isolation.
 
@@ -37,7 +37,7 @@ def temporal_model(spark, anomaly_registry_prefix):
     df_with_temporal = extract_temporal_features(df, timestamp_column="event_time", features=["hour", "day_of_week"])
 
     # Train model
-    engine = AnomalyEngine(WorkspaceClient(), spark)
+    engine = AnomalyEngine(ws, spark)
     engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
