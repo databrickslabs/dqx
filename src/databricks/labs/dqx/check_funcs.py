@@ -1931,6 +1931,7 @@ def has_valid_schema(
     ref_table: str | None = None,
     columns: list[str | Column] | None = None,
     strict: bool = False,
+    ignore_columns: list[str] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a schema compatibility check condition and closure for dataset-level validation.
@@ -1948,6 +1949,8 @@ def has_valid_schema(
         strict: Whether to perform strict schema validation (default: False).
             - False: Validates that all expected columns exist with compatible types (allows extra columns)
             - True: Validates exact schema match (same columns, same order, same types)
+        ignore_columns: Optional list of column names in the checked DataFrame schema to
+            ignore for validation.
 
     Returns:
         A tuple of:
@@ -1976,6 +1979,12 @@ def has_valid_schema(
     if columns:
         column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
+    ignore_column_names: list[str] | None = None
+    if ignore_columns:
+        ignore_column_names = [
+            get_column_name_or_alias(col) if not isinstance(col, str) else col for col in ignore_columns
+        ]
+
     expected_schema = _get_schema(expected_schema or types.StructType(), column_names)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -2003,7 +2012,8 @@ def has_valid_schema(
         else:
             _expected_schema = expected_schema
 
-        actual_schema = df.select(*columns).schema if columns else df.schema
+        base_df = df.select(*columns) if columns else df
+        actual_schema = base_df.drop(*(ignore_column_names or [])).schema
 
         if strict:
             errors = _get_strict_schema_comparison(actual_schema, _expected_schema)

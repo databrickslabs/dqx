@@ -14,6 +14,7 @@ from pyspark.sql import DataFrame, Observation, SparkSession
 from pyspark.sql.streaming import StreamingQuery
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.config_serializer import ConfigSerializer
@@ -345,6 +346,17 @@ class DQEngineCore(DQEngineCoreBase):
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
 
+    def _get_checks_with_ignored_result_columns(self, checks: list[DQRule]) -> list[DQRule]:
+        """Get checks with ignored result columns for schema validation checks."""
+        for check in checks:
+            if check.check_func is not check_funcs.has_valid_schema:
+                continue
+            existing_ignored = check.check_func_kwargs.get("ignore_columns") or []
+            check.check_func_kwargs["ignore_columns"] = list(
+                set(existing_ignored + list(self._result_column_names.values()))
+            )
+        return checks
+
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of DataFrame.
 
@@ -385,6 +397,7 @@ class DQEngineCore(DQEngineCoreBase):
             empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
             return df.select("*", empty_result)
 
+        checks = self._get_checks_with_ignored_result_columns(checks)
         check_conditions = []
         current_df = df
 
