@@ -1,56 +1,39 @@
 import logging
 import os
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
+from uuid import uuid4
 
 import pyspark.sql.functions as F
 import pytest
 from chispa import assert_df_equality  # type: ignore
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
+
+from databricks.connect import DatabricksSession
 from databricks.labs.blueprint.installation import Installation
+from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
-from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig
+from databricks.labs.dqx.config import ExtraParams, InputConfig, InstallationChecksStorageConfig, OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
+from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 from databricks.sdk.service.workspace import ImportFormat
 
-# Optional anomaly detection imports - placed here to keep databricks imports grouped
-try:
-    from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
-except ImportError:
-    AnomalyEngine = None  # type: ignore[assignment,misc]
-    has_no_anomalies = None  # type: ignore[assignment]
-
 from tests.conftest import TEST_CATALOG
-from tests.integration.test_anomaly_constants import (
-    EXTRA_PARAMS,
-    OUTLIER_AMOUNT,
-    OUTLIER_QUANTITY,
-    REPORTING_COLUMNS,
-    RUN_ID,
-    RUN_TIME,
+from tests.integration.test_anomaly_utils import (
+    get_standard_2d_training_data,
+    get_standard_3d_training_data,
+    get_standard_4d_training_data,
 )
 
-# Optional test utilities - placed here to keep tests imports grouped
-try:
-    from tests.integration.test_anomaly_utils import (
-        get_standard_2d_training_data,
-        get_standard_3d_training_data,
-        get_standard_4d_training_data,
-    )
-except ImportError:
-    get_standard_2d_training_data = None  # type: ignore[assignment]
-    get_standard_3d_training_data = None  # type: ignore[assignment]
-    get_standard_4d_training_data = None  # type: ignore[assignment]
-
-# HAS_ANOMALY flag set after all conditional imports
-HAS_ANOMALY = AnomalyEngine is not None
-
 # Must be set before importing mlflow
+# Set here as safety net - workflow also sets this, but this ensures it's set
+# before mlflow import even in local testing scenarios
 os.environ.setdefault("MLFLOW_ENABLE_DB_SDK", "true")
 
 # Optional MLflow import for anomaly detection tests
@@ -60,6 +43,7 @@ try:
     HAS_MLFLOW = True
 except ImportError:
     HAS_MLFLOW = False
+    # mlflow not defined - callers must check HAS_MLFLOW first
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
@@ -69,21 +53,28 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session", autouse=True)
 def configure_mlflow_tracking():
-    """Configure MLflow to use Databricks workspace tracking backend for integration tests."""
+    """Configure MLflow to use Databricks workspace tracking backend for integration tests.
+
+    Authentication uses the Databricks SDK via metadata service (from databrickslabs/sandbox/acceptance action).
+    This fixture forces MLflow to use SDK-based authentication and ensures consistent tracking URI format.
+    """
     if not HAS_MLFLOW:
+        # If MLflow not installed (anomaly extras not installed), skip configuration
         yield
         return
 
+    # MLFLOW_ENABLE_DB_SDK is already set at module level (before mlflow import)
+    # Use tracking URI from environment when explicitly configured; otherwise skip.
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
-        local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB", "/tmp/dqx-mlflow.db")
-        tracking_uri = f"sqlite:///{local_mlflow_db}"
-        os.environ.setdefault("MLFLOW_TRACKING_URI", tracking_uri)
-        os.environ.setdefault("MLFLOW_REGISTRY_URI", tracking_uri)
+        yield
+        return
 
+    # UC registry should be databricks-uc
     registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
 
     try:
+        # Avoid MLflow honoring an empty/None experiment id from the environment.
         os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
         mlflow.set_tracking_uri(tracking_uri)
         mlflow.set_registry_uri(registry_uri)
@@ -96,6 +87,13 @@ def configure_mlflow_tracking():
         raise
 
     yield
+    # No cleanup needed - Databricks manages the experiments
+
+
+REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
+RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
+RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
+EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID)
 
 
 def build_quality_violation(
@@ -423,7 +421,7 @@ def expected_quality_checking_output(spark) -> DataFrame:
     )
 
 
-def _setup_quality_checks(ctx, spark, ws):
+def _setup_quality_checks(ctx, session, ws):
     config = ctx.config
     checks_location = config.get_run_config().checks_location
     checks = [
@@ -444,7 +442,7 @@ def _setup_quality_checks(ctx, spark, ws):
         install_folder=ctx.installation.install_folder(),
     )
 
-    InstallationChecksStorageHandler(ws, spark).save(checks=checks, config=config)
+    InstallationChecksStorageHandler(ws, session).save(checks=checks, config=config)
     return checks_location
 
 
@@ -490,21 +488,45 @@ def contains_expected_workflows(workflows, state):
     return False
 
 
-def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, quarantine_config):
-    dq_engine = DQEngine(ws, spark)
+def assert_quarantine_and_output_dfs(ws, session, expected_output, output_config, quarantine_config):
+    dq_engine = DQEngine(ws, session)
     expected_output_df = dq_engine.get_valid(expected_output)
     expected_quarantine_df = dq_engine.get_invalid(expected_output)
 
-    output_df = spark.table(output_config.location)
+    output_df = session.table(output_config.location)
     assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
 
-    quarantine_df = spark.table(quarantine_config.location)
+    quarantine_df = session.table(quarantine_config.location)
     assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
-def assert_output_df(spark, expected_output, output_config):
-    checked_df = spark.table(output_config.location)
+def assert_output_df(session, expected_output, output_config):
+    checked_df = session.table(output_config.location)
     assert_df_equality(checked_df, expected_output, ignore_nullable=True)
+
+
+# Anomaly detection test fixtures
+# All fixtures are function-scoped for test isolation and reliability with Spark Connect sessions
+
+
+@pytest.fixture
+def spark():
+    """
+    Function-scoped Spark fixture using DatabricksSession.
+    
+    Creates a fresh Databricks Connect session for each test to avoid cascade
+    failures from session restarts. Overrides pytester's default spark fixture
+    to ensure all tests use DatabricksSession instead of Spark Connect URL.
+    """
+    cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
+    serverless_cluster_id = os.environ.get("DATABRICKS_SERVERLESS_COMPUTE_ID")
+
+    if serverless_cluster_id:
+        logger.debug(f"Using serverless cluster id '{serverless_cluster_id}'")
+        return DatabricksSession.builder.serverless(True).getOrCreate()
+
+    logger.debug(f"Using cluster id '{cluster_id}'")
+    return DatabricksSession.builder.getOrCreate()
 
 
 @pytest.fixture
@@ -520,22 +542,27 @@ def anomaly_registry_prefix(anomaly_registry_schema):
 
 
 @pytest.fixture
-def shared_2d_model(spark, make_schema, make_random):
-    """Function-scoped 2D anomaly model for testing."""
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
+def shared_2d_model(spark, anomaly_registry_prefix, make_random):
+    """
+    2D anomaly model for testing.
 
-    schema = make_schema(catalog_name=TEST_CATALOG)
+    Returns a dict with model_name, registry_table, and columns.
+
+    Usage:
+        result = anomaly_scorer(test_df, **shared_2d_model)
+    """
     suffix = make_random(8).lower()
-    model_name = f"test_2d_{suffix}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
+    model_name = f"shared_2d_model_{suffix}"
+    registry_table = f"{anomaly_registry_prefix}.shared_2d_reg_{suffix}"
     columns = ["amount", "quantity"]
 
     training_data = get_standard_2d_training_data()
     train_df = spark.createDataFrame(training_data, "amount double, quantity double")
 
-    engine = AnomalyEngine(WorkspaceClient(), spark)
-    full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
+    anomaly_engine = AnomalyEngine()
+    full_model_name = anomaly_engine.train(
+        df=train_df, columns=columns, model_name=model_name, registry_table=registry_table
+    )
 
     return {
         "model_name": full_model_name,
@@ -546,22 +573,27 @@ def shared_2d_model(spark, make_schema, make_random):
 
 
 @pytest.fixture
-def shared_3d_model(spark, make_schema, make_random):
-    """Function-scoped 3D anomaly model for testing."""
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
+def shared_3d_model(spark, anomaly_registry_prefix, make_random):
+    """
+    3D anomaly model for testing with SHAP contributions.
 
-    schema = make_schema(catalog_name=TEST_CATALOG)
+    Returns a dict with model_name, registry_table, and columns.
+
+    Usage:
+        result = anomaly_scorer(test_df, **shared_3d_model, include_contributions=True)
+    """
     suffix = make_random(8).lower()
-    model_name = f"test_3d_{suffix}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
-    columns = ["amount", "quantity", "discount"]
+    model_name = f"shared_3d_model_{suffix}"
+    registry_table = f"{anomaly_registry_prefix}.shared_3d_reg_{suffix}"
+    columns = ["amount", "quantity", "price"]
 
     training_data = get_standard_3d_training_data()
-    train_df = spark.createDataFrame(training_data, "amount double, quantity double, discount double")
+    train_df = spark.createDataFrame(training_data, "amount double, quantity double, price double")
 
-    engine = AnomalyEngine(WorkspaceClient(), spark)
-    full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
+    anomaly_engine = AnomalyEngine()
+    full_model_name = anomaly_engine.train(
+        df=train_df, columns=columns, model_name=model_name, registry_table=registry_table
+    )
 
     return {
         "model_name": full_model_name,
@@ -572,22 +604,29 @@ def shared_3d_model(spark, make_schema, make_random):
 
 
 @pytest.fixture
-def shared_4d_model(spark, make_schema, make_random):
-    """Function-scoped 4D anomaly model for testing."""
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
+def shared_4d_model(spark, anomaly_registry_prefix, make_random):
+    """
+    4D anomaly model for multi-feature contribution tests.
 
-    schema = make_schema(catalog_name=TEST_CATALOG)
+    Returns a dict with model_name, registry_table, and columns.
+
+    Usage:
+        result = anomaly_scorer(test_df, **shared_4d_model)
+    """
     suffix = make_random(8).lower()
-    model_name = f"test_4d_{suffix}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
-    columns = ["amount", "quantity", "discount", "weight"]
+    model_name = f"shared_4d_model_{suffix}"
+    registry_table = f"{anomaly_registry_prefix}.shared_4d_reg_{suffix}"
+    columns = ["amount", "quantity", "price", "discount"]
 
     training_data = get_standard_4d_training_data()
-    train_df = spark.createDataFrame(training_data, "amount double, quantity double, discount double, weight double")
+    train_df = spark.createDataFrame(
+        training_data, "amount double, quantity double, price double, discount double"
+    )
 
-    engine = AnomalyEngine(WorkspaceClient(), spark)
-    full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
+    anomaly_engine = AnomalyEngine()
+    full_model_name = anomaly_engine.train(
+        df=train_df, columns=columns, model_name=model_name, registry_table=registry_table
+    )
 
     return {
         "model_name": full_model_name,
@@ -595,23 +634,51 @@ def shared_4d_model(spark, make_schema, make_random):
         "columns": columns,
         "training_data": training_data,
     }
+
+
+# ============================================================================
+# Helper Fixtures for Test Data and Scoring
+# ============================================================================
 
 
 @pytest.fixture
 def test_df_factory():
-    """Factory for creating test DataFrames with transaction_id."""
+    """
+    Factory for creating standard test DataFrames with transaction_id.
+
+    Addresses pattern seen in test_anomaly_dqengine.py:228, test_anomaly_threshold.py:164, etc.
+
+    Returns a callable that accepts spark and data parameters.
+    """
 
     def _create(
-        session,
+        session: SparkSession,
         normal_rows: list[tuple] | None = None,
         anomaly_rows: list[tuple] | None = None,
         columns_schema: str = "amount double, quantity double",
         id_column: str = "transaction_id",
     ):
+        """
+        Create test DataFrame with auto-assigned IDs.
+
+        Args:
+            session (SparkSession): SparkSession instance
+            normal_rows (list[tuple] | None): Tuples of normal data (default: [(100.0, 2.0)])
+            anomaly_rows (list[tuple] | None): Tuples of anomalous data (default: [(9999.0, 1.0)])
+            columns_schema (str): Schema for data columns (excluding ID)
+            id_column (str): Name of ID column to prepend
+
+        Returns:
+            DataFrame with schema: "{id_column} int, {columns_schema}"
+
+        Example:
+            # Creates [(1, 100.0, 2.0), (2, 9999.0, 1.0)]
+            df = test_df_factory(session)
+        """
         if normal_rows is None:
             normal_rows = [(100.0, 2.0)]
         if anomaly_rows is None:
-            anomaly_rows = [(OUTLIER_AMOUNT, OUTLIER_QUANTITY)]
+            anomaly_rows = [(9999.0, 1.0)]
 
         all_rows = []
         for idx, row in enumerate(normal_rows + anomaly_rows, start=1):
@@ -625,9 +692,11 @@ def test_df_factory():
 
 @pytest.fixture
 def anomaly_scorer():
-    """Helper to score DataFrames with anomaly check."""
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
+    """
+    Helper to score DataFrames with anomaly check.
+
+    Eliminates boilerplate seen across test_anomaly_e2e.py, test_anomaly_threshold.py, etc.
+    """
 
     def _score(
         test_df,
@@ -638,6 +707,21 @@ def anomaly_scorer():
         extract_score: bool = True,
         **check_kwargs,
     ):
+        """
+        Score DataFrame with has_no_anomalies check.
+
+        Args:
+            test_df (DataFrame): DataFrame to score
+            model_name: Model name from registry
+            registry_table: Registry table path
+            columns: Columns to score
+            merge_columns: Merge key columns (default: ["transaction_id"])
+            extract_score: If True, extract _info.anomaly.score to top level
+            **check_kwargs: Additional has_no_anomalies arguments
+
+        Returns:
+            Scored DataFrame with anomaly metadata
+        """
         if merge_columns is None:
             merge_columns = ["transaction_id"]
 
@@ -664,15 +748,13 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
     Factory for training lightweight models with custom parameters.
 
     Use when tests need specific training params (e.g., AnomalyParams, segment_by).
-    For simple 2D scoring tests, prefer function-scoped shared_2d_model instead.
+    For simple 2D scoring tests, prefer session-scoped shared_2d_model instead.
 
     Returns a callable that accepts spark and training parameters.
     """
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
 
     def _train(
-        session,
+        session: SparkSession,
         train_size: int = 50,
         columns: list[str] | None = None,
         train_data: list[tuple] | None = None,
@@ -689,17 +771,19 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
             train_size (int): Number of training rows (default: 50)
             columns (list[str] | None): Column names (default: ["amount", "quantity"])
             train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
-            params (AnomalyParams | None): AnomalyParams for custom training config
+            params (AnomalyParams): AnomalyParams for custom training config
             segment_by (list[str] | None): Segment columns for segmented models
             catalog (str): Catalog name
-            schema (str | None): Schema name
+            schema (str): Schema name
 
         Returns:
             tuple: (model_name, registry_table, columns)
 
         Example:
+            # Train with custom params
+            from databricks.labs.dqx.anomaly import AnomalyParams
             model, registry, cols = quick_model_factory(
-                spark, params=AnomalyParams(sample_fraction=1.0, max_rows=100)
+                session, params=AnomalyParams(sample_fraction=1.0, max_rows=100)
             )
         """
         if columns is None:
@@ -713,7 +797,7 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
         registry_table = f"{catalog}.{schema}.{unique_id}_registry"
 
         if train_data is None:
-            train_data = [(100.0 + i * 0.5, 2.0) for i in range(train_size)]
+            train_data = [(100.0, 2.0) for _ in range(train_size)]
 
         # Infer schema from columns
         schema_str = ", ".join(f"{col} double" for col in columns)

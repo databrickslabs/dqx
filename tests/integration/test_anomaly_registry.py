@@ -13,6 +13,7 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, compute_config_hash
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,
     get_standard_3d_training_data,
@@ -110,13 +111,21 @@ def test_multiple_models_in_same_registry(
 
     # Score with model_a
     result_a = anomaly_scorer(
-        df1, model_name=model_a, registry_table=registry_table, columns=["amount", "quantity"], score_threshold=0.5
+        df1,
+        model_name=model_a,
+        registry_table=registry_table,
+        columns=["amount", "quantity"],
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     assert "anomaly_score" in result_a.columns
 
     # Score with model_b
     result_b = anomaly_scorer(
-        df2, model_name=model_b, registry_table=registry_table, columns=["discount", "weight"], score_threshold=0.5
+        df2,
+        model_name=model_b,
+        registry_table=registry_table,
+        columns=["discount", "weight"],
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     assert "anomaly_score" in result_b.columns
 
@@ -433,7 +442,7 @@ def test_scoring_validates_config_hash(
             columns=["amount", "quantity", "discount"],  # Different columns!
             model=model_name,
             registry_table=registry_table,
-            score_threshold=0.5,
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
         )
         result = apply_fn(df_score)
         result.collect()  # Force evaluation

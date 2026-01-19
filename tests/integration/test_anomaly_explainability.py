@@ -11,8 +11,10 @@ shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min t
 
 from pyspark.sql import SparkSession
 
+from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD, OUTLIER_AMOUNT, OUTLIER_QUANTITY
 
-def test_feature_importance_stored(spark: SparkSession, shared_2d_model, anomaly_registry_prefix):
+
+def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
     """Test that feature_importance is stored in registry."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -49,7 +51,7 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_
     test_df = test_df_factory(
         spark,
         normal_rows=[],
-        anomaly_rows=[(9999.0, 1.0, 0.95)],
+        anomaly_rows=[(OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95)],
         columns_schema="amount double, quantity double, discount double",
     )
 
@@ -59,7 +61,7 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_
         model_name=model_name,
         registry_table=registry_table,
         columns=columns,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
     )
@@ -89,7 +91,7 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
     test_df = test_df_factory(
         spark,
         normal_rows=[],
-        anomaly_rows=[(9999.0, 1.0, 0.95)],
+        anomaly_rows=[(OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95)],
         columns_schema="amount double, quantity double, discount double",
     )
 
@@ -99,7 +101,7 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
         model_name=model_name,
         registry_table=registry_table,
         columns=columns,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
     )
@@ -126,7 +128,7 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
     test_df = test_df_factory(
         spark,
         normal_rows=[],
-        anomaly_rows=[(9999.0, 1.0, 0.95, 1.0)],
+        anomaly_rows=[(OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95, 1.0)],
         columns_schema="amount double, quantity double, discount double, weight double",
     )
 
@@ -136,7 +138,7 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
         model_name=model_name,
         registry_table=registry_table,
         columns=columns,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
     )
@@ -173,7 +175,7 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
         model_name=model_name,
         registry_table=registry_table,
         columns=columns,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=False,  # Explicitly False
         extract_score=False,
     )
@@ -193,7 +195,7 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
     test_df = test_df_factory(
         spark,
         normal_rows=[],
-        anomaly_rows=[(9999.0, 2.0, 0.15)],  # Extreme amount
+        anomaly_rows=[(OUTLIER_AMOUNT, 2.0, 0.15)],  # Extreme amount
         columns_schema="amount double, quantity double, discount double",
     )
 
@@ -203,7 +205,7 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
         model_name=model_name,
         registry_table=registry_table,
         columns=columns,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
     )

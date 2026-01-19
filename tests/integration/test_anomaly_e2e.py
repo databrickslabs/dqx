@@ -11,6 +11,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.sdk import WorkspaceClient
 from tests.conftest import TEST_CATALOG
+from tests.integration.test_anomaly_constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,
     get_recommended_threshold,
@@ -54,7 +55,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     test_df = spark.createDataFrame(
         [
             (1, 150.0, 15.0),  # Normal - in dense part of training range
-            (2, 9999.0, 100.0),  # Clear anomaly - far outside
+            (2, OUTLIER_AMOUNT, 100.0),  # Clear anomaly - far outside
         ],
         "transaction_id int, amount double, quantity double",
     )
@@ -102,7 +103,7 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
     test_df = spark.createDataFrame(
         [
             (1, 150.0, 15.0),  # Normal - in dense part of training range
-            (2, 9999.0, 1.0),  # Anomaly - far outside
+            (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY),  # Anomaly - far outside
         ],
         "transaction_id int, amount double, quantity double",
     )
@@ -207,7 +208,7 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
         [
             (1, 200.0, 30.0),  # Normal - center of training range (100-300, 10-50)
             (2, 210.0, 32.0),  # Normal - center of training range
-            (3, 9999.0, 0.1),  # Anomaly - far out
+            (3, OUTLIER_AMOUNT, 0.1),  # Anomaly - far out
         ],
         "transaction_id int, amount double, quantity double",
     )
@@ -300,7 +301,10 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
     train_simple_4d_model(spark, anomaly_engine, model_name, registry_table)
 
     test_df = spark.createDataFrame(
-        [(1, 200.0, 30.0, 0.25, 90.0), (2, 9999.0, 1.0, 0.95, 1.0)],  # First in center, second far out
+        [
+            (1, 200.0, 30.0, 0.25, 90.0),
+            (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95, 1.0),
+        ],  # First in center, second far out
         "transaction_id int, amount double, quantity double, discount double, weight double",
     )
 

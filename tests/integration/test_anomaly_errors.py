@@ -13,6 +13,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration.test_anomaly_utils import train_simple_2d_model
 
 
@@ -48,7 +49,7 @@ def test_column_mismatch_error(
             columns=["amount", "discount"],
             model=model_name,
             registry_table=registry_table,
-            score_threshold=0.5,
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
         )
         result_df = apply_fn(test_df)
         result_df.collect()
@@ -85,7 +86,7 @@ def test_column_order_independence(
         model_name=model_name,
         registry_table=registry_table,
         columns=["quantity", "amount"],  # Different order from training
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
         extract_score=False,
     )
     result_df.collect()
@@ -133,7 +134,7 @@ def test_missing_registry_table_for_scoring_error(
             columns=["amount", "quantity"],
             model=model_name,
             registry_table=registry_table,
-            score_threshold=0.5,
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
         )
         result_df = apply_fn(df)
         result_df.collect()

@@ -6,6 +6,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
+from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD, OUTLIER_AMOUNT, OUTLIER_QUANTITY
 from tests.integration.test_anomaly_utils import apply_anomaly_check_direct
 
 
@@ -38,8 +39,8 @@ def test_training_filters_nulls(
     # Note: actual count may vary due to sampling, but should be <= 3
 
 
-def test_nulls_are_skipped_not_flagged(spark: SparkSession, shared_2d_model, test_df_factory):
-    """Test that rows with nulls are skipped (not flagged as anomalies)."""
+def test_nulls_are_scored_not_skipped(spark: SparkSession, shared_2d_model, test_df_factory):
+    """Test that rows with nulls are scored (nulls imputed with indicators)."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
@@ -55,7 +56,11 @@ def test_nulls_are_skipped_not_flagged(spark: SparkSession, shared_2d_model, tes
 
     # Call apply function directly to get anomaly_score column
     result_df = apply_anomaly_check_direct(
-        test_df, model_name, registry_table, columns=["amount", "quantity"], score_threshold=0.5
+        test_df,
+        model_name,
+        registry_table,
+        columns=["amount", "quantity"],
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
 
     # NOTE: Null handling follows ML best practices:
@@ -99,7 +104,7 @@ def test_partial_nulls(spark: SparkSession, shared_3d_model, test_df_factory):
         columns=["amount", "quantity", "discount"],
         model=model_name,
         registry_table=registry_table,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df)
     rows = result_df.select("transaction_id", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
@@ -111,8 +116,8 @@ def test_partial_nulls(spark: SparkSession, shared_3d_model, test_df_factory):
     assert rows[3]["anomaly_score"] is not None  # Null imputed
 
 
-def test_all_nulls_row(spark: SparkSession, shared_2d_model, test_df_factory):
-    """Test row with all nulls in anomaly columns is skipped."""
+def test_all_nulls_row_is_scored(spark: SparkSession, shared_2d_model, test_df_factory):
+    """Test row with all nulls in anomaly columns is still scored."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
@@ -128,7 +133,11 @@ def test_all_nulls_row(spark: SparkSession, shared_2d_model, test_df_factory):
 
     # Call apply function directly to get anomaly_score column
     result_df = apply_anomaly_check_direct(
-        test_df, model_name, registry_table, columns=["amount", "quantity"], score_threshold=0.5
+        test_df,
+        model_name,
+        registry_table,
+        columns=["amount", "quantity"],
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     rows = result_df.collect()
 
@@ -150,14 +159,18 @@ def test_mixed_null_and_anomaly(spark: SparkSession, shared_2d_model, test_df_fa
         normal_rows=[(200.0, 30.0)],  # Normal (middle of training range)
         anomaly_rows=[
             (None, 30.0),  # Null
-            (9999.0, 1.0),  # Anomaly (far outside training range)
+            (OUTLIER_AMOUNT, OUTLIER_QUANTITY),  # Anomaly (far outside training range)
         ],
         columns_schema="amount double, quantity double",
     )
 
     # Call apply function directly to get anomaly_score column
     result_df = apply_anomaly_check_direct(
-        test_df, model_name, registry_table, columns=["amount", "quantity"], score_threshold=0.5
+        test_df,
+        model_name,
+        registry_table,
+        columns=["amount", "quantity"],
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     rows = result_df.collect()
 

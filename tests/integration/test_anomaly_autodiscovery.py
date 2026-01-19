@@ -4,6 +4,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 from tests.conftest import TEST_CATALOG
+from tests.integration.test_anomaly_constants import SEGMENT_REGIONS
 
 
 def test_auto_discover_numeric_columns(spark: SparkSession):
@@ -32,7 +33,7 @@ def test_auto_discover_segments(spark: SparkSession):
     """Test auto-discovery identifies categorical columns for segmentation."""
     # Create data with good segment candidates
     data = []
-    for region in ("US", "EU", "APAC"):
+    for region in SEGMENT_REGIONS:
         for i in range(1500):  # >1000 rows per segment
             data.append((region, 100.0 + i))
 
@@ -133,7 +134,7 @@ def test_warnings_for_small_segments(spark: SparkSession):
     """Test that warnings are issued for segments with <1000 rows."""
     # Create data with small segments
     data = []
-    for region in ("US", "EU", "APAC"):
+    for region in SEGMENT_REGIONS:
         for i in range(500):  # Only 500 rows per segment
             data.append((region, 100.0 + i))
 

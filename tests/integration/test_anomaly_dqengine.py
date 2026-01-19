@@ -5,7 +5,6 @@ Integration tests for anomaly detection with DQEngine.
 from unittest.mock import MagicMock
 
 import pytest
-import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -13,6 +12,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_constants import DQENGINE_SCORE_THRESHOLD, OUTLIER_AMOUNT, OUTLIER_QUANTITY
 from tests.integration.test_anomaly_utils import create_anomaly_check_rule
 
 
@@ -30,7 +30,7 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        [(1, 100.0, 2.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
         "transaction_id int, amount double, quantity double",
     )
 
@@ -40,7 +40,7 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
             model_name=model_name,
             registry_table=registry_table,
             columns=columns,
-            score_threshold=0.6,
+            score_threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
 
@@ -69,7 +69,7 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
 
     # Test with in-cluster points and clear outliers
     test_df = spark.createDataFrame(
-        [(1, 110.0, 12.0), (2, 150.0, 15.0), (3, 9999.0, 1.0), (4, 8888.0, 100.0)],
+        [(1, 110.0, 12.0), (2, 150.0, 15.0), (3, OUTLIER_AMOUNT, OUTLIER_QUANTITY), (4, 8888.0, 100.0)],
         "transaction_id int, amount double, quantity double",
     )
 
@@ -79,23 +79,12 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
             model_name=model_name,
             registry_table=registry_table,
             columns=columns,
-            score_threshold=0.6,
+            score_threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
 
-    # First apply checks to see scores before split
-    result_df = dq_engine.apply_checks(test_df, checks)
-
-    # Debug: Print scores to diagnose split behavior (access from _info.anomaly.score)
-    print("\n=== Test Data Anomaly Scores ===")
-
-    test_scores = result_df.select("amount", "quantity", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
-    for row in test_scores:
-        print(f"  amount={row.amount}, quantity={row.quantity}, score={row.anomaly_score}")
-
     # Now split
     valid_df, quarantine_df = dq_engine.apply_checks_and_split(test_df, checks)
-    print(f"Valid count: {valid_df.count()}, Quarantine count: {quarantine_df.count()}")
 
     # Verify split occurred
     assert valid_df.count() + quarantine_df.count() == test_df.count()
@@ -119,7 +108,7 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(1, 9999.0, 1.0)],  # Anomalous row
+        [(1, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],  # Anomalous row
         "transaction_id int, amount double, quantity double",
     )
 
@@ -129,7 +118,7 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
             model_name=model_name,
             registry_table=registry_table,
             columns=columns,
-            score_threshold=0.6,
+            score_threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
 
@@ -147,8 +136,8 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
 
     # DQX split DataFrames don't include metadata columns
     # Verify we have the correct data
-    assert row["amount"] == 9999.0
-    assert row["quantity"] == 1.0
+    assert row["amount"] == OUTLIER_AMOUNT
+    assert row["quantity"] == OUTLIER_QUANTITY
 
 
 def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, shared_2d_model):
@@ -162,7 +151,7 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
         [
             (1, 110.0, 12.0),  # Normal - in dense part of training range (100-300, 10-50)
             (2, None, 10.0),  # Null amount - will fail is_not_null
-            (3, 9999.0, 1.0),  # Far-out anomaly
+            (3, OUTLIER_AMOUNT, OUTLIER_QUANTITY),  # Far-out anomaly
         ],
         "transaction_id int, amount double, quantity double",
     )
@@ -192,14 +181,6 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
     result_df = dq_engine.apply_checks(test_df, checks)
     rows = result_df.collect()
 
-    # Debug: Print scores
-    print("\n=== Multi-Check Test Scores ===")
-    for i, row in enumerate(rows):
-        anomaly_score = row['anomaly_score'] if 'anomaly_score' in row.asDict() else 'N/A'
-        print(
-            f"  Row {i}: amount={row['amount']}, anomaly_score={anomaly_score}, errors={len(row['_errors']) if row['_errors'] else 0}"
-        )
-
     # Normal row: no errors
     assert rows[0]["_errors"] == [] or rows[0]["_errors"] is None, f"Normal row has errors: {rows[0]['_errors']}"
 
@@ -222,7 +203,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        [(1, 100.0, 2.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
         "transaction_id int, amount double, quantity double",
     )
 
@@ -257,7 +238,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 9999.0, 1.0)],
+        [(1, 100.0, 2.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
         "transaction_id int, amount double, quantity double",
     )
 
@@ -282,7 +263,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
 
     # With warn criticality, anomalous rows should have warnings not errors
     # (Check for _warnings instead of _errors)
-    anomalous_row = rows[1]  # 9999.0, 1.0
+    anomalous_row = rows[1]  # OUTLIER_AMOUNT, OUTLIER_QUANTITY
 
     # Should have either warnings or errors (implementation may vary)
     assert anomalous_row["_warnings"] is not None or anomalous_row["_errors"] is not None
@@ -297,7 +278,7 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
 
     # Test with in-cluster point (in dense part of range) and far-out anomaly
     test_df = spark.createDataFrame(
-        [(1, 110.0, 12.0), (2, 9999.0, 1.0)],
+        [(1, 110.0, 12.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
         "transaction_id int, amount double, quantity double",
     )
 
@@ -307,25 +288,16 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
             model_name=model_name,
             registry_table=registry_table,
             columns=columns,
-            score_threshold=0.6,
+            score_threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
 
     # Apply checks
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Debug: Print scores (access from _info.anomaly.score)
-    print("\n=== Helper Test Scores ===")
-
-    test_scores = result_df.select("amount", "quantity", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
-    for row in test_scores:
-        print(f"  amount={row.amount}, quantity={row.quantity}, score={row.anomaly_score}")
-
     # Use helpers to split
     valid_df = dq_engine.get_valid(result_df)
     invalid_df = dq_engine.get_invalid(result_df)
-
-    print(f"Valid count: {valid_df.count()}, Invalid count: {invalid_df.count()}")
 
     # Verify split
     assert valid_df.count() >= 1, f"Expected >= 1 normal row, got {valid_df.count()}"  # At least one normal row
