@@ -1385,11 +1385,12 @@ def _shuffle_column(
     seed: int,
 ) -> DataFrame:
     """Shuffle a single column using stable row indexing and random ordering."""
+    partition_window = Window.partitionBy(F.lit(1))
     if row_id_columns:
-        stable_window = Window.orderBy(*[F.col(c) for c in row_id_columns])
+        stable_window = partition_window.orderBy(*[F.col(c) for c in row_id_columns])
     else:
-        stable_window = Window.orderBy(F.monotonically_increasing_id())
-    shuffle_window = Window.orderBy(F.rand(seed))
+        stable_window = partition_window.orderBy(F.monotonically_increasing_id())
+    shuffle_window = partition_window.orderBy(F.rand(seed))
 
     base_indexed = df.withColumn("_row_idx", F.row_number().over(stable_window))
     shuffled_values = (

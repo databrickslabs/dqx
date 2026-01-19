@@ -76,7 +76,10 @@ def configure_mlflow_tracking():
 
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
-        local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB", "/tmp/dqx-mlflow.db")
+        local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB")
+        if not local_mlflow_db:
+            worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+            local_mlflow_db = f"/tmp/dqx-mlflow-{worker_id}.db"
         tracking_uri = f"sqlite:///{local_mlflow_db}"
         os.environ.setdefault("MLFLOW_TRACKING_URI", tracking_uri)
         os.environ.setdefault("MLFLOW_REGISTRY_URI", tracking_uri)
