@@ -8,7 +8,6 @@ from functools import cached_property
 from typing import Any
 from uuid import uuid4
 
-import pyspark
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, Observation, SparkSession
 from pyspark.sql.streaming import StreamingQuery
@@ -1103,7 +1102,6 @@ class DQEngine(DQEngineBase):
             For streaming use spark.streams.addListener(get_streaming_metrics_listener(..))
         """
         if self._engine.observer:
-            self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
                 run_id=self._engine.run_id,
                 run_name=self._engine.observer.name,
@@ -1211,18 +1209,6 @@ class DQEngine(DQEngineBase):
             ref_dfs=ref_dfs,
             checks_location=storage_config.location,
         )
-
-    def _validate_session_for_metrics(self) -> None:
-        """
-        Validates the session for metrics collection.
-
-        Raises:
-            TypeError: If the session is a SparkConnect session.
-        """
-        if isinstance(self.spark, pyspark.sql.connect.session.SparkSession):
-            raise TypeError(
-                "Metrics collection is not supported for SparkConnect sessions. Use a Spark cluster with Dedicated access mode to collect metrics."
-            )
 
     @staticmethod
     def _wait_for_one_time_trigger_streaming_queries(
