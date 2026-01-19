@@ -14,7 +14,6 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationCh
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 from databricks.sdk.service.workspace import ImportFormat
 
@@ -523,7 +522,7 @@ def anomaly_registry_prefix(anomaly_registry_schema):
 
 
 @pytest.fixture
-def shared_2d_model(spark, make_schema, make_random):
+def shared_2d_model(ws, spark, make_schema, make_random):
     """Function-scoped 2D anomaly model for testing."""
     if not HAS_ANOMALY:
         pytest.skip("Anomaly extras not installed")
@@ -537,7 +536,7 @@ def shared_2d_model(spark, make_schema, make_random):
     training_data = get_standard_2d_training_data()
     train_df = spark.createDataFrame(training_data, "amount double, quantity double")
 
-    engine = AnomalyEngine(WorkspaceClient(), spark)
+    engine = AnomalyEngine(ws, spark)
     full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
 
     return {
@@ -549,7 +548,7 @@ def shared_2d_model(spark, make_schema, make_random):
 
 
 @pytest.fixture
-def shared_3d_model(spark, make_schema, make_random):
+def shared_3d_model(ws, spark, make_schema, make_random):
     """Function-scoped 3D anomaly model for testing."""
     if not HAS_ANOMALY:
         pytest.skip("Anomaly extras not installed")
@@ -563,7 +562,7 @@ def shared_3d_model(spark, make_schema, make_random):
     training_data = get_standard_3d_training_data()
     train_df = spark.createDataFrame(training_data, "amount double, quantity double, discount double")
 
-    engine = AnomalyEngine(WorkspaceClient(), spark)
+    engine = AnomalyEngine(ws, spark)
     full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
 
     return {
@@ -575,7 +574,7 @@ def shared_3d_model(spark, make_schema, make_random):
 
 
 @pytest.fixture
-def shared_4d_model(spark, make_schema, make_random):
+def shared_4d_model(ws, spark, make_schema, make_random):
     """Function-scoped 4D anomaly model for testing."""
     if not HAS_ANOMALY:
         pytest.skip("Anomaly extras not installed")
@@ -589,7 +588,7 @@ def shared_4d_model(spark, make_schema, make_random):
     training_data = get_standard_4d_training_data()
     train_df = spark.createDataFrame(training_data, "amount double, quantity double, discount double, weight double")
 
-    engine = AnomalyEngine(WorkspaceClient(), spark)
+    engine = AnomalyEngine(ws, spark)
     full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
 
     return {
@@ -662,7 +661,7 @@ def anomaly_scorer():
 
 
 @pytest.fixture
-def quick_model_factory(anomaly_engine, make_random, make_schema):
+def quick_model_factory(ws, spark, make_random, make_schema):
     """
     Factory for training lightweight models with custom parameters.
 
@@ -722,7 +721,10 @@ def quick_model_factory(anomaly_engine, make_random, make_schema):
         schema_str = ", ".join(f"{col} double" for col in columns)
         train_df = session.createDataFrame(train_data, schema_str)
 
-        full_model_name = anomaly_engine.train(
+        # Create engine with shared ws client
+        engine = AnomalyEngine(ws, session)
+
+        full_model_name = engine.train(
             df=train_df,
             columns=columns,
             model_name=model_name,
