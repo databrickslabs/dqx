@@ -123,25 +123,26 @@ def _analyze_string_column(
     col_name: str,
     null_rate: float,
     warnings: list[str],
+    distinct_count: int | None = None,
 ) -> tuple[int, str, str, int, float] | None:
     """Analyze a string (categorical) column and return candidate tuple."""
-    cardinality_row = df.select(F.countDistinct(col_name)).first()
-    if not cardinality_row:
-        return None
+    if distinct_count is None:
+        cardinality_row = df.select(F.countDistinct(col_name)).first()
+        if not cardinality_row:
+            return None
+        distinct_count = cardinality_row[0]
 
-    cardinality = cardinality_row[0]
-
-    if cardinality <= 20 and null_rate < 0.5:
+    if distinct_count <= 20 and null_rate < 0.5:
         # Low cardinality categorical
-        return (3, col_name, 'categorical', cardinality, null_rate)  # Priority 3
+        return (3, col_name, 'categorical', distinct_count, null_rate)  # Priority 3
 
-    if 20 < cardinality <= 100 and null_rate < 0.5:
+    if 20 < distinct_count <= 100 and null_rate < 0.5:
         # High cardinality categorical (frequency encoding)
-        return (5, col_name, 'categorical', cardinality, null_rate)  # Priority 5
+        return (5, col_name, 'categorical', distinct_count, null_rate)  # Priority 5
 
-    if cardinality > 100:
+    if distinct_count > 100:
         warnings.append(
-            f"Column '{col_name}' has {cardinality} distinct values (>100), "
+            f"Column '{col_name}' has {distinct_count} distinct values (>100), "
             "excluding from auto-selection (too high cardinality)."
         )
 
@@ -213,19 +214,28 @@ def _check_high_cardinality_warning(
         )
 
 
-def _calculate_total_segments(df: DataFrame, recommended_segments: list[str], warnings: list[str]) -> int:
+def _calculate_total_segments(
+    df: DataFrame,
+    recommended_segments: list[str],
+    warnings: list[str],
+    *,
+    total_count: int,
+    distinct_counts: dict[str, int] | None = None,
+) -> int:
     """Calculate total segment combinations and add warning if too many."""
     if not recommended_segments:
         return 1
 
-    total_rows = df.count()
     segment_count = 1
     for col in recommended_segments:
-        distinct_count = df.select(col).distinct().count()
+        if distinct_counts is not None and col in distinct_counts:
+            distinct_count = distinct_counts[col]
+        else:
+            distinct_count = df.select(col).distinct().count()
         segment_count *= distinct_count
 
     # Warn if segments are too granular relative to data size
-    avg_rows_per_segment = total_rows / segment_count if segment_count > 0 else 0
+    avg_rows_per_segment = total_count / segment_count if segment_count > 0 else 0
 
     if segment_count > 50:
         warnings.append(
@@ -235,7 +245,7 @@ def _calculate_total_segments(df: DataFrame, recommended_segments: list[str], wa
     elif avg_rows_per_segment < 100:
         warnings.append(
             f"Detected {segment_count} segments with only ~{int(avg_rows_per_segment)} rows per segment on average. "
-            f"Models may be unreliable. Consider reducing segmentation or using more data (total rows: {total_rows})."
+            f"Models may be unreliable. Consider reducing segmentation or using more data (total rows: {total_count})."
         )
 
     return segment_count
@@ -247,14 +257,16 @@ def _select_segment_columns(
     column_types: dict[str, str],
     id_pattern: "re.Pattern[str]",
     warnings: list[str],
+    *,
+    total_count: int,
+    null_counts: dict[str, int],
+    distinct_counts: dict[str, int],
 ) -> tuple[list[str], int]:
     """Identify and validate segment columns."""
     recommended_segments = []
     candidate_segments = []  # Track all viable candidates for user info
     categorical_types = (StringType, IntegerType)
     categorical_fields = [f for f in df.schema.fields if isinstance(f.dataType, categorical_types)]
-
-    total_count = df.count()
 
     for field in categorical_fields:
         col_name = field.name
@@ -264,16 +276,13 @@ def _select_segment_columns(
             continue
 
         # Compute distinct count and null rate
-        stats_row = df.select(
-            F.countDistinct(col_name).alias("distinct_count"),
-            F.count(F.when(F.col(col_name).isNull(), 1)).alias("null_count"),
-        ).first()
-
-        if not stats_row:
-            continue
-
-        distinct_count = stats_row["distinct_count"]
-        null_rate = stats_row["null_count"] / total_count if total_count > 0 else 1.0
+        distinct_count = distinct_counts.get(col_name)
+        null_count = null_counts.get(col_name, 0)
+        if distinct_count is None:
+            distinct_row = df.select(F.countDistinct(col_name)).first()
+            assert distinct_row is not None, "Failed to compute distinct count"
+            distinct_count = distinct_row[0]
+        null_rate = null_count / total_count if total_count > 0 else 1.0
         is_id_column = id_pattern.search(col_name) is not None
 
         # Check segment criteria: conservative for auto-discovery
@@ -318,7 +327,9 @@ def _select_segment_columns(
             )
 
     # Calculate total segment combinations
-    segment_count = _calculate_total_segments(df, recommended_segments, warnings)
+    segment_count = _calculate_total_segments(
+        df, recommended_segments, warnings, total_count=total_count, distinct_counts=distinct_counts
+    )
     return recommended_segments, segment_count
 
 
@@ -365,9 +376,10 @@ def _analyze_and_add_string_column(
     null_rate: float,
     warnings: list[str],
     candidates: list[tuple[int, str, str, int | None, float]],
+    distinct_count: int | None = None,
 ) -> None:
     """Analyze string column and add to candidates if suitable."""
-    candidate = _analyze_string_column(df, col_name, null_rate, warnings)
+    candidate = _analyze_string_column(df, col_name, null_rate, warnings, distinct_count=distinct_count)
     if candidate:
         candidates.append(candidate)
 
@@ -381,6 +393,7 @@ def _analyze_column_by_type(
     candidates: list[tuple[int, str, str, int | None, float]],
     column_stats: dict[str, dict[str, float]],
     unsupported_columns: list[str],
+    distinct_count: int | None = None,
 ) -> None:
     """Analyze a column based on its type and add to candidates if suitable."""
     if isinstance(col_type, (IntegerType, LongType, FloatType, DoubleType, DecimalType)):
@@ -390,7 +403,7 @@ def _analyze_column_by_type(
     elif isinstance(col_type, (DateType, TimestampType, TimestampNTZType)):
         _analyze_and_add_datetime_column(col_name, null_rate, candidates)
     elif isinstance(col_type, StringType):
-        _analyze_and_add_string_column(df, col_name, null_rate, warnings, candidates)
+        _analyze_and_add_string_column(df, col_name, null_rate, warnings, candidates, distinct_count=distinct_count)
     else:
         unsupported_columns.append(col_name)
 
@@ -417,6 +430,16 @@ def _auto_discover_heuristic(
     id_pattern = re.compile(r"(?i)(id|key)$")
 
     total_count = df.count()
+    column_names = [f.name for f in df.schema.fields]
+
+    null_exprs = [F.count(F.when(F.col(col_name).isNull(), 1)).alias(f"{col_name}__nulls") for col_name in column_names]
+    distinct_columns = [f.name for f in df.schema.fields if isinstance(f.dataType, (StringType, IntegerType))]
+    distinct_exprs = [F.countDistinct(col_name).alias(f"{col_name}__distinct") for col_name in distinct_columns]
+
+    stats_row = df.agg(*null_exprs, *distinct_exprs).first()
+    assert stats_row is not None, "Failed to compute column statistics"
+    null_counts = {col_name: stats_row[f"{col_name}__nulls"] for col_name in column_names}
+    distinct_counts = {col_name: stats_row[f"{col_name}__distinct"] for col_name in distinct_columns}
 
     for field in df.schema.fields:
         col_name = field.name
@@ -426,14 +449,20 @@ def _auto_discover_heuristic(
         if id_pattern.search(col_name):
             continue
 
-        # Count nulls
-        null_count_row = df.select(F.count(F.when(F.col(col_name).isNull(), 1)).alias("null_count")).first()
-        assert null_count_row is not None, "Failed to compute null count"
-        null_rate = null_count_row["null_count"] / total_count if total_count > 0 else 1.0
+        null_count = null_counts.get(col_name, 0)
+        null_rate = null_count / total_count if total_count > 0 else 1.0
 
         # Analyze by type and collect candidates
         _analyze_column_by_type(
-            col_type, df, col_name, null_rate, warnings, candidates, column_stats, unsupported_columns
+            col_type,
+            df,
+            col_name,
+            null_rate,
+            warnings,
+            candidates,
+            column_stats,
+            unsupported_columns,
+            distinct_count=distinct_counts.get(col_name),
         )
 
     # Select top columns
@@ -442,7 +471,14 @@ def _auto_discover_heuristic(
 
     # Select segment columns
     recommended_segments, segment_count = _select_segment_columns(
-        df, recommended_columns, column_types, id_pattern, warnings
+        df,
+        recommended_columns,
+        column_types,
+        id_pattern,
+        warnings,
+        total_count=total_count,
+        null_counts=null_counts,
+        distinct_counts=distinct_counts,
     )
 
     # Remove segment columns from feature columns (they would be constant within each segment)

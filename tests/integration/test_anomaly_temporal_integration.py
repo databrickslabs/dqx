@@ -10,6 +10,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 
 
 @pytest.fixture
@@ -19,7 +20,7 @@ def mock_workspace_client():
 
 
 @pytest.fixture
-def temporal_model(spark_session, anomaly_registry_prefix):
+def temporal_model(spark, anomaly_registry_prefix):
     """
     Temporal model trained per test for schema isolation.
 
@@ -30,13 +31,13 @@ def temporal_model(spark_session, anomaly_registry_prefix):
     registry_table = f"{anomaly_registry_prefix}.temporal_reg_{suffix}"
 
     # Create data with timestamps (9am on weekdays)
-    df = spark_session.sql("SELECT 100.0 as amount, timestamp('2024-01-15 09:00:00') as event_time FROM range(50)")
+    df = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-15 09:00:00') as event_time FROM range(50)")
 
     # Extract temporal features
     df_with_temporal = extract_temporal_features(df, timestamp_column="event_time", features=["hour", "day_of_week"])
 
     # Train model
-    engine = AnomalyEngine(WorkspaceClient(), spark_session)
+    engine = AnomalyEngine(WorkspaceClient(), spark)
     engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
@@ -74,7 +75,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
         model=model_name,
         registry_table=registry_table,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df_with_temporal)
 
@@ -138,7 +139,7 @@ def test_multiple_temporal_features(
         ],
         model=model_name,
         registry_table=registry_table,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df_with_temporal)
     assert "_info" in result_df.columns
@@ -193,7 +194,7 @@ def test_temporal_pattern_detection(
         columns=["amount", "temporal_hour"],
         model=model_name,
         registry_table=registry_table,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
 
     # Score both
@@ -254,7 +255,7 @@ def test_weekend_feature(
         columns=["amount", "temporal_is_weekend"],
         model=model_name,
         registry_table=registry_table,
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df_with_temporal)
     assert "_info" in result_df.columns

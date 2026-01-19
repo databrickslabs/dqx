@@ -10,6 +10,7 @@ import pyspark.sql.functions as F
 from databricks.labs.dqx.anomaly import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD, OUTLIER_AMOUNT
 from tests.integration.test_anomaly_utils import (
     apply_anomaly_check_direct,
     train_simple_2d_model,
@@ -44,7 +45,7 @@ def test_threshold_affects_flagging(
             (1, 100.0, 2.0),  # Normal
             (2, 150.0, 1.8),  # Slightly unusual
             (3, 500.0, 1.0),  # Moderately unusual
-            (4, 9999.0, 0.5),  # Highly unusual
+            (4, OUTLIER_AMOUNT, 0.5),  # Highly unusual
         ],
         "transaction_id int, amount double, quantity double",
     )
@@ -71,7 +72,7 @@ def test_threshold_affects_flagging(
     assert errors_aggressive >= errors_conservative
 
 
-def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory, anomaly_registry_prefix):
+def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory):
     """Test that recommended_threshold is stored in registry metrics."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
@@ -91,9 +92,7 @@ def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory, 
     assert 0.0 <= recommended <= 1.0
 
 
-def test_using_recommended_threshold(
-    spark: SparkSession, test_df_factory, quick_model_factory, anomaly_registry_prefix
-):
+def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick_model_factory):
     """Test using recommended_threshold from registry in checks."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)
@@ -142,7 +141,7 @@ def test_precision_recall_tradeoff(
     test_df = spark.createDataFrame(
         [
             (1, 100.0, 2.0),  # Normal
-            (2, 9999.0, 0.1),  # Extreme anomaly
+            (2, OUTLIER_AMOUNT, 0.1),  # Extreme anomaly
             (3, 8888.0, 0.2),  # Extreme anomaly
         ],
         "transaction_id int, amount double, quantity double",
@@ -208,12 +207,24 @@ def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
 
     # Call directly to get anomaly_score column
     # Run twice with same threshold
-    result1 = apply_anomaly_check_direct(test_df, model_name, registry_table, columns=columns, score_threshold=0.5)
-    result2 = apply_anomaly_check_direct(test_df, model_name, registry_table, columns=columns, score_threshold=0.5)
+    result1 = apply_anomaly_check_direct(
+        test_df,
+        model_name,
+        registry_table,
+        columns=columns,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
+    )
+    result2 = apply_anomaly_check_direct(
+        test_df,
+        model_name,
+        registry_table,
+        columns=columns,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
+    )
 
     # Should produce same results
-    scores1 = [row["anomaly_score"] for row in result1.collect()]
-    scores2 = [row["anomaly_score"] for row in result2.collect()]
+    scores1 = [row["anomaly_score"] for row in result1.orderBy("transaction_id").collect()]
+    scores2 = [row["anomaly_score"] for row in result2.orderBy("transaction_id").collect()]
 
     # Scores should be identical (deterministic)
     for score1, score2 in zip(scores1, scores2):
@@ -221,7 +232,7 @@ def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
             assert abs(score1 - score2) < 0.001  # Allow small floating point error
 
 
-def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory, anomaly_registry_prefix):
+def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory):
     """Test that validation metrics are stored in registry."""
     # Use sample_fraction=1.0 to ensure validation set has enough data
     params = AnomalyParams(sample_fraction=1.0, max_rows=50)

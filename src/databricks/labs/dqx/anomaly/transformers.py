@@ -141,12 +141,30 @@ class ColumnTypeClassifier:
         column_infos = []
         unsupported_cols = []
 
+        null_exprs = [F.count(F.when(F.col(col_name).isNull(), 1)).alias(f"{col_name}__nulls") for col_name in columns]
+        nulls_row = df.agg(*null_exprs).first()
+        assert nulls_row is not None, "Failed to compute null counts"
+        null_counts = {col_name: nulls_row[f"{col_name}__nulls"] for col_name in columns}
+
+        string_columns = [col_name for col_name in columns if isinstance(schema[col_name], T.StringType)]
+        distinct_counts: dict[str, int] = {}
+        if string_columns:
+            distinct_exprs = [F.countDistinct(col_name).alias(f"{col_name}__distinct") for col_name in string_columns]
+            distinct_row = df.agg(*distinct_exprs).first()
+            assert distinct_row is not None, "Failed to compute distinct counts"
+            distinct_counts = {col_name: distinct_row[f"{col_name}__distinct"] for col_name in string_columns}
+
         for col_name in columns:
             if col_name not in schema:
                 raise InvalidParameterError(f"Column '{col_name}' not found in DataFrame")
 
             col_type = schema[col_name]
-            info = self._classify_column(df, col_name, col_type)
+            info = self._classify_column(
+                col_name,
+                col_type,
+                null_count=null_counts.get(col_name, 0),
+                distinct_count=distinct_counts.get(col_name),
+            )
 
             if info.category == 'unsupported':
                 unsupported_cols.append((col_name, type(col_type).__name__))
@@ -177,10 +195,10 @@ class ColumnTypeClassifier:
 
         return column_infos, warnings_list
 
-    def _classify_column(self, df: DataFrame, col_name: str, col_type: T.DataType) -> ColumnTypeInfo:
+    def _classify_column(
+        self, col_name: str, col_type: T.DataType, *, null_count: int, distinct_count: int | None = None
+    ) -> ColumnTypeInfo:
         """Classify a single column."""
-        # Count nulls
-        null_count = df.filter(F.col(col_name).isNull()).count()
 
         # Numeric types
         if isinstance(
@@ -212,9 +230,9 @@ class ColumnTypeClassifier:
 
         # Handle string columns as categorical features
         if isinstance(col_type, T.StringType):
-            cardinality_row = df.select(F.countDistinct(col_name)).first()
-            assert cardinality_row is not None, "Failed to compute cardinality"
-            cardinality = cardinality_row[0]
+            if distinct_count is None:
+                raise InvalidParameterError(f"Missing distinct count for string column '{col_name}'")
+            cardinality = distinct_count
 
             # Determine encoding strategy based on cardinality
             if cardinality <= self.categorical_cardinality_threshold:

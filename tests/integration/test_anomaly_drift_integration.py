@@ -8,9 +8,16 @@ import warnings
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_constants import (
+    DEFAULT_SCORE_THRESHOLD,
+    DRIFT_THRESHOLD,
+    DRIFT_TRAIN_SIZE,
+    OUTLIER_AMOUNT,
+    OUTLIER_QUANTITY,
+)
 from tests.integration.test_anomaly_utils import create_anomaly_check_rule, train_simple_2d_model
 
 
@@ -34,7 +41,7 @@ def test_drift_detection_warns_on_distribution_shift(
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on distribution centered at 100 - use helper (need >= 1000 rows for drift check)
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=1500)
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=DRIFT_TRAIN_SIZE)
 
     # Test on distribution centered at 2000 (significant shift) - need >= 1000 rows
     test_df = spark.createDataFrame(
@@ -48,8 +55,8 @@ def test_drift_detection_warns_on_distribution_shift(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=0.5,
-            drift_threshold=3.0,
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            drift_threshold=DRIFT_THRESHOLD,
         )
     ]
 
@@ -84,7 +91,7 @@ def test_no_drift_warning_on_similar_distribution(
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on distribution - use helper (need >= 1000 rows)
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=1500)
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=DRIFT_TRAIN_SIZE)
 
     # Test on similar distribution (need >= 1000 rows for drift check to run)
     test_df = spark.createDataFrame(
@@ -98,8 +105,8 @@ def test_no_drift_warning_on_similar_distribution(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=0.5,
-            drift_threshold=3.0,
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            drift_threshold=DRIFT_THRESHOLD,
         )
     ]
 
@@ -128,11 +135,11 @@ def test_drift_detection_disabled_when_threshold_none(
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=1500)
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=DRIFT_TRAIN_SIZE)
 
     # Test on very different distribution (large enough batch)
     test_df = spark.createDataFrame(
-        [(i, 9999.0, 1.0) for i in range(1200)],
+        [(i, OUTLIER_AMOUNT, OUTLIER_QUANTITY) for i in range(1200)],
         "transaction_id int, amount double, quantity double",
     )
 
@@ -142,7 +149,7 @@ def test_drift_detection_disabled_when_threshold_none(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=0.5,
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
             drift_threshold=None,  # Disable drift detection
         )
     ]
@@ -172,11 +179,11 @@ def test_drift_detection_skipped_on_small_batch(
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=1500)
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=DRIFT_TRAIN_SIZE)
 
     # Test on very different distribution BUT with small batch (< 1000 rows)
     test_df = spark.createDataFrame(
-        [(i, 9999.0, 1.0) for i in range(500)],  # Only 500 rows
+        [(i, OUTLIER_AMOUNT, OUTLIER_QUANTITY) for i in range(500)],  # Only 500 rows
         "transaction_id int, amount double, quantity double",
     )
 
@@ -186,8 +193,8 @@ def test_drift_detection_skipped_on_small_batch(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=0.5,
-            drift_threshold=3.0,  # Drift detection enabled, but batch too small
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            drift_threshold=DRIFT_THRESHOLD,  # Drift detection enabled, but batch too small
         )
     ]
 

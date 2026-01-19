@@ -7,6 +7,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import AnomalyParams
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD, OUTLIER_AMOUNT, OUTLIER_QUANTITY
 from tests.integration.test_anomaly_utils import train_simple_2d_model, train_simple_3d_model
 
 # Ensemble tests validate ensemble-specific behavior (confidence scores, multiple model URIs)
@@ -81,7 +82,7 @@ def test_ensemble_scoring_with_confidence(
         model_name=model_name,
         registry_table=registry_table,
         columns=["amount", "quantity"],
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_confidence=True,
         extract_score=False,
     )
@@ -121,7 +122,7 @@ def test_ensemble_with_feature_contributions(
     test_df = test_df_factory(
         spark,
         normal_rows=[(100.0, 2.0, 0.1)],
-        anomaly_rows=[(9999.0, 1.0, 0.95)],
+        anomaly_rows=[(OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95)],
         columns_schema="amount double, quantity double, discount double",
     )
 
@@ -131,7 +132,7 @@ def test_ensemble_with_feature_contributions(
         model_name=model_name,
         registry_table=registry_table,
         columns=["amount", "quantity", "discount"],
-        score_threshold=0.5,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         include_confidence=True,
         extract_score=False,

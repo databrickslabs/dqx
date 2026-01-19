@@ -78,6 +78,7 @@ from pyspark.sql import SparkSession, DataFrame
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly import has_no_anomalies, AnomalyParams, AnomalyEngine
+from tests.integration.test_anomaly_constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
 
 
 # ============================================================================
@@ -169,7 +170,7 @@ def get_standard_test_points_2d() -> dict[str, tuple[float, float]]:
     These points are designed to work with get_standard_2d_training_data():
     - normal_in_center: (200.0, 30.0) - Center of distribution
     - normal_near_center: (210.0, 32.0) - Near center
-    - clear_anomaly: (9999.0, 1.0) - Far outside
+    - clear_anomaly: (OUTLIER_AMOUNT, OUTLIER_QUANTITY) - Far outside
 
     All normal points score ~0.55-0.57 with RobustScaler.
     Anomaly points score ~0.65+ with RobustScaler.
@@ -187,7 +188,7 @@ def get_standard_test_points_2d() -> dict[str, tuple[float, float]]:
     return {
         "normal_in_center": (200.0, 30.0),
         "normal_near_center": (210.0, 32.0),
-        "clear_anomaly": (9999.0, 1.0),
+        "clear_anomaly": (OUTLIER_AMOUNT, OUTLIER_QUANTITY),
     }
 
 
@@ -211,7 +212,7 @@ def get_standard_test_points_4d() -> dict[str, tuple[float, float, float, float]
     """
     return {
         "normal_in_center": (200.0, 30.0, 0.25, 90.0),
-        "clear_anomaly": (9999.0, 1.0, 0.95, 1.0),
+        "clear_anomaly": (OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95, 1.0),
     }
 
 
@@ -325,7 +326,7 @@ def assert_anomaly_separation(
         result_df = dq_engine.apply_checks(test_df, checks)
         rows = result_df.collect()
         assert_anomaly_separation(rows, expected_normal_count=2,
-                                  expected_anomaly_count=1, score_threshold=0.6)
+                                  expected_anomaly_count=1, score_threshold=DQENGINE_SCORE_THRESHOLD)
     """
     normal_count = sum(1 for row in result_rows if row.get("anomaly_score") and row["anomaly_score"] < score_threshold)
     anomaly_count = sum(

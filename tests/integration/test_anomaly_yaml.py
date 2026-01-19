@@ -8,6 +8,12 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from tests.integration.test_anomaly_constants import (
+    DEFAULT_SCORE_THRESHOLD,
+    DQENGINE_SCORE_THRESHOLD,
+    OUTLIER_AMOUNT,
+    OUTLIER_QUANTITY,
+)
 
 
 @pytest.fixture
@@ -32,14 +38,14 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, shared_2d
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.5
+          score_threshold: {DEFAULT_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)
 
     # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = spark.createDataFrame(
-        [(1, 150.0, 20.0), (2, 9999.0, 1.0)],  # Normal + extreme anomaly
+        [(1, 150.0, 20.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],  # Normal + extreme anomaly
         "transaction_id int, amount double, quantity double",
     )
 
@@ -76,7 +82,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.6
+          score_threshold: {DQENGINE_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)
@@ -86,7 +92,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
         [
             (1, 200.0, 30.0),  # Normal - middle of training range
             (2, None, 30.0),  # Null
-            (3, 9999.0, 1.0),  # Extreme anomaly
+            (3, OUTLIER_AMOUNT, OUTLIER_QUANTITY),  # Extreme anomaly
         ],
         "transaction_id int, amount double, quantity double",
     )
@@ -163,7 +169,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, sha
           columns: [amount, quantity, discount]
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.5
+          score_threshold: {DEFAULT_SCORE_THRESHOLD}
           include_contributions: true
     """
 
@@ -171,7 +177,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, sha
 
     # Extreme anomaly (far outside training range)
     test_df = spark.createDataFrame(
-        [(1, 9999.0, 1.0, 0.95)],
+        [(1, OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95)],
         "transaction_id int, amount double, quantity double, discount double",
     )
 
@@ -201,7 +207,7 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, s
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.6
+          score_threshold: {DQENGINE_SCORE_THRESHOLD}
           drift_threshold: 3.0
     """
 
@@ -240,14 +246,14 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, share
           columns: [amount, quantity]
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.6
+          score_threshold: {DQENGINE_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)
 
     # Use values within training range (100-300 for amount, 10-50 for quantity)
     test_df = spark.createDataFrame(
-        [(1, 200.0, 30.0), (2, 9999.0, 1.0)],  # Normal + extreme anomaly
+        [(1, 200.0, 30.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],  # Normal + extreme anomaly
         "transaction_id int, amount double, quantity double",
     )
 
@@ -271,7 +277,7 @@ def test_yaml_parsing_validation(spark: SparkSession):
         arguments:
           # Missing columns argument
           model: test_missing_args
-          score_threshold: 0.5
+          score_threshold: {DEFAULT_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)
