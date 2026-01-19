@@ -286,7 +286,7 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           # Run only anomaly tests (stop on first failure for clearer logs)
-          PYTEST_ADDOPTS: "-k test_anomaly_ -x -vv"
+          PYTEST_ADDOPTS: "-k test_anomaly_ -x -vv -n 0 --maxfail=1"
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
 
@@ -396,7 +396,7 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           # Run only anomaly tests (stop on first failure for clearer logs)
-          PYTEST_ADDOPTS: "-k test_anomaly_ -x -vv"
+          PYTEST_ADDOPTS: "-k test_anomaly_ -x -vv -n 0 --maxfail=1"
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
 
