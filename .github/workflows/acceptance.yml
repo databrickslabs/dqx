@@ -46,7 +46,7 @@ jobs:
 
   integration:
     # Temporarily disabled to speed up anomaly-only debugging.
-    if: false
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     # Only run this job for PRs from branches on the main repository and not from forks.
     # Workflows triggered by PRs from forks don't have access to the tool environment.
     # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
@@ -128,7 +128,7 @@ jobs:
 
   integration_serverless:
     # Temporarily disabled to speed up anomaly-only debugging.
-    if: false
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     # Only run this job for PRs from branches on the main repository and not from forks.
     # Workflows triggered by PRs from forks don't have access to the tool environment.
     # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
@@ -426,7 +426,7 @@ jobs:
 
   e2e:
     # Temporarily disabled to speed up anomaly-only debugging.
-    if: false
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     steps:
@@ -487,7 +487,7 @@ jobs:
 
   e2e_serverless:
     # Temporarily disabled to speed up anomaly-only debugging.
-    if: false
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     env:
