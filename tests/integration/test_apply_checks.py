@@ -8804,7 +8804,7 @@ def test_apply_checks_with_has_valid_schema_ignores_result_columns(ws, spark):
                 "expected_schema": "id int, v1 int, v2 string",
                 "strict": True,
             },
-        )
+        ),
     ]
 
     checked = dq_engine.apply_checks(test_df, checks)
@@ -8835,7 +8835,7 @@ def test_apply_checks_with_has_valid_schema_ignores_result_columns(ws, spark):
                         "user_metadata": {},
                     },
                 ],
-                None
+                None,
             ],
         ],
         expected_schema,
