@@ -1,5 +1,8 @@
 import logging
 import os
+import time
+from pathlib import Path
+import tomllib
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
@@ -14,7 +17,8 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationCh
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.sdk.service.compute import DataSecurityMode, Kind
+from databricks.sdk.errors import BadRequest
+from databricks.sdk.service.compute import DataSecurityMode, Kind, Library, PythonPyPiLibrary
 from databricks.sdk.service.workspace import ImportFormat
 
 # Optional anomaly detection imports - placed here to keep databricks imports grouped
@@ -64,6 +68,116 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
+
+_ANOMALY_LIBS_INSTALLED = {"value": False}
+
+
+def _wait_for_library_install(ws, cluster_id: str, package: str, timeout_s: int = 900, poll_s: int = 10) -> None:
+    """Wait for a PyPI library to be installed on a cluster."""
+    deadline = time.time() + timeout_s
+    last_status = None
+
+    logger.info(f"Waiting for library install on cluster {cluster_id}: {package}")
+    while time.time() < deadline:
+        library_statuses = list(ws.libraries.cluster_status(cluster_id))
+        matching = []
+        for entry in library_statuses:
+            lib = getattr(entry, "library", None)
+            pypi = getattr(lib, "pypi", None)
+            if pypi and getattr(pypi, "package", None) == package:
+                matching.append(entry)
+
+        if not matching:
+            logger.info(f"Library {package} not yet reported on cluster {cluster_id}; waiting...")
+            time.sleep(poll_s)
+            continue
+
+        states = {
+            getattr(getattr(entry, "status", None), "value", getattr(entry, "status", None)) for entry in matching
+        }
+        last_status = states
+        sorted_states = sorted(s for s in states if s is not None)
+        logger.info(f"Library {package} status on cluster {cluster_id}: {sorted_states}")
+        if "FAILED" in states or "SKIPPED" in states:
+            raise RuntimeError(f"Library install failed for {package} on cluster {cluster_id}: {states}")
+        if states == {"INSTALLED"}:
+            return
+
+        time.sleep(poll_s)
+
+    raise TimeoutError(
+        f"Timed out waiting for {package} to install on cluster {cluster_id}. Last status: {last_status}"
+    )
+
+
+def _load_local_anomaly_dependencies() -> list[str]:
+    """Load anomaly extras dependencies from local pyproject.toml."""
+    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    if not pyproject_path.exists():
+        logger.warning(f"pyproject.toml not found at {pyproject_path}")
+        return []
+
+    try:
+        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"Failed to read {pyproject_path}: {e}")
+        return []
+
+    deps = data.get("project", {}).get("optional-dependencies", {}).get("anomaly", [])
+    if not isinstance(deps, list):
+        logger.warning("Invalid anomaly optional-dependencies format in pyproject.toml")
+        return []
+
+    return deps
+
+
+@pytest.fixture(scope="function", autouse=True)
+def ensure_anomaly_cluster_libraries(ws, spark, request):
+    """Ensure anomaly dependencies are installed on the Spark Connect cluster."""
+    if request.node.get_closest_marker("anomaly") is None:
+        return
+    if _ANOMALY_LIBS_INSTALLED["value"]:
+        return
+
+    if not HAS_ANOMALY:
+        return
+
+    packages = _load_local_anomaly_dependencies()
+    if not packages:
+        logger.warning("No anomaly dependencies found in local pyproject.toml; skipping cluster install.")
+        return
+
+    cluster_id = spark.conf.get("spark.databricks.clusterUsageTags.clusterId", None)
+    if not cluster_id:
+        cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
+
+    if not cluster_id:
+        logger.warning("No cluster id found; skipping cluster library installation for anomaly deps.")
+        return
+
+    existing_statuses = list(ws.libraries.cluster_status(cluster_id))
+    installed = {
+        getattr(getattr(entry, "library", None).pypi, "package", None): getattr(
+            getattr(entry, "status", None), "value", getattr(entry, "status", None)
+        )
+        for entry in existing_statuses
+        if getattr(getattr(entry, "library", None), "pypi", None)
+    }
+
+    to_install = [package for package in packages if installed.get(package) != "INSTALLED"]
+    if to_install:
+        try:
+            ws.libraries.install(
+                cluster_id=cluster_id,
+                libraries=[Library(pypi=PythonPyPiLibrary(package=package)) for package in to_install],
+            )
+        except BadRequest as e:
+            logger.warning(f"Skipping library installation for cluster {cluster_id}: {e}")
+            return
+
+    for package in packages:
+        _wait_for_library_install(ws, cluster_id, package)
+    _ANOMALY_LIBS_INSTALLED["value"] = True
 
 
 @pytest.fixture(scope="session", autouse=True)

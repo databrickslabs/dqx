@@ -6,8 +6,9 @@ import pytest
 import yaml
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+
 from tests.integration.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     DQENGINE_SCORE_THRESHOLD,
@@ -15,10 +16,13 @@ from tests.integration.test_anomaly_constants import (
     OUTLIER_QUANTITY,
 )
 
+pytestmark = pytest.mark.anomaly
+
 
 @pytest.fixture
 def mock_workspace_client():
     """Create a mock WorkspaceClient for testing."""
+
     return MagicMock(spec=WorkspaceClient)
 
 

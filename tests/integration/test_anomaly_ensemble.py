@@ -5,18 +5,26 @@ from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import AnomalyParams
 from databricks.sdk import WorkspaceClient
-from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD, OUTLIER_AMOUNT, OUTLIER_QUANTITY
-from tests.integration.test_anomaly_utils import train_simple_2d_model, train_simple_3d_model
+from databricks.labs.dqx.anomaly import AnomalyParams
 
-# Ensemble tests validate ensemble-specific behavior (confidence scores, multiple model URIs)
-# Ensemble mode uses sklearn.ensemble.IsolationForest (same as single models, just trains multiple)
+from tests.integration.test_anomaly_constants import (
+    DEFAULT_SCORE_THRESHOLD,
+    OUTLIER_AMOUNT,
+    OUTLIER_QUANTITY,
+)
+from tests.integration.test_anomaly_utils import (
+    train_simple_2d_model,
+    train_simple_3d_model,
+)
+
+pytestmark = pytest.mark.anomaly
 
 
 @pytest.fixture
 def mock_workspace_client():
     """Create a mock WorkspaceClient for testing."""
+
     return MagicMock(spec=WorkspaceClient)
 
 

@@ -1,14 +1,19 @@
 """Integration tests for auto-discovery of anomaly detection columns and segments."""
 
+import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.profiler import auto_discover
+
 from tests.conftest import TEST_CATALOG
 from tests.integration.test_anomaly_constants import SEGMENT_REGIONS
+
+pytestmark = pytest.mark.anomaly
 
 
 def test_auto_discover_numeric_columns(spark: SparkSession):
     """Test auto-discovery selects numeric columns with variance."""
+
     df = spark.createDataFrame(
         [
             (1, 100.0, 50.0, "2024-01-01", "id123"),

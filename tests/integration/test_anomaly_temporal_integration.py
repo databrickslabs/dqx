@@ -3,19 +3,23 @@
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
 
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
-from databricks.sdk import WorkspaceClient
+
 from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
+
+pytestmark = pytest.mark.anomaly
 
 
 @pytest.fixture
 def mock_workspace_client():
     """Create a mock WorkspaceClient for testing."""
+
     return MagicMock(spec=WorkspaceClient)
 
 

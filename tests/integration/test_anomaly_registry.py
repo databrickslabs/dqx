@@ -1,18 +1,22 @@
 """Integration tests for anomaly model registry management."""
 
-from collections.abc import Callable
 import logging
+import warnings
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
-import warnings
 
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, compute_config_hash
-from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.model_registry import (
+    AnomalyModelRegistry,
+    compute_config_hash,
+)
+from databricks.labs.dqx.errors import InvalidParameterError
+
 from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration.test_anomaly_utils import (
     get_standard_2d_training_data,
@@ -22,10 +26,13 @@ from tests.integration.test_anomaly_utils import (
     train_simple_3d_model,
 )
 
+pytestmark = pytest.mark.anomaly
+
 
 @pytest.fixture
 def mock_workspace_client():
     """Create a mock WorkspaceClient for testing."""
+
     return MagicMock(spec=WorkspaceClient)
 
 
