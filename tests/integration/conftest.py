@@ -183,6 +183,7 @@ def _ensure_anomaly_cluster_libraries() -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    _ = config
     if not any(item.get_closest_marker("anomaly") for item in items):
         return
     if fcntl is None:
