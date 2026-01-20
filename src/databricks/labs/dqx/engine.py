@@ -346,14 +346,18 @@ class DQEngineCore(DQEngineCoreBase):
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
 
-    @staticmethod
-    def _preselect_schema_validation_columns(df: DataFrame, checks: list[DQRule]) -> list[DQRule]:
+    def _preselect_schema_validation_columns(self, df: DataFrame, checks: list[DQRule]) -> list[DQRule]:
         """Determine columns for schema validation checks."""
         for check in checks:
             if check.check_func is not check_funcs.has_valid_schema:
                 continue
+
+            # Default columns to all columns of the current DataFrame if not explicitly set
             if not check.check_func_kwargs.get("columns"):
-                check.check_func_kwargs["columns"] = df.columns
+                check.check_func_kwargs["columns"] = [
+                    col for col in df.columns if col not in set(self._result_column_names.values())
+                ]
+
         return checks
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
@@ -396,7 +400,7 @@ class DQEngineCore(DQEngineCoreBase):
             empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
             return df.select("*", empty_result)
 
-        checks = DQEngineCore._preselect_schema_validation_columns(df, checks)
+        checks = self._preselect_schema_validation_columns(df, checks)
         check_conditions = []
         current_df = df
 

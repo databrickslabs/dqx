@@ -2014,8 +2014,10 @@ def has_valid_schema(
         else:
             _expected_schema = expected_schema
 
-        base_df = df.select(*columns) if columns else df
-        actual_schema = base_df.drop(*(ignore_column_names or [])).schema
+        selected_column_names = column_names if column_names else df.columns
+        if ignore_column_names:
+            selected_column_names = [col for col in selected_column_names if col not in ignore_column_names]
+        actual_schema = df.select(*selected_column_names).schema
 
         if strict:
             errors = _get_strict_schema_comparison(actual_schema, _expected_schema)

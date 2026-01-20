@@ -2785,7 +2785,7 @@ def test_has_valid_schema_with_ignore_columns(spark: SparkSession):
         "a string, b int, c double, d string",
     )
 
-    expected_schema = "a string, b int, c string"
+    expected_schema = "a string, b int, c double"
     condition, apply_method = has_valid_schema(expected_schema, ignore_columns=["d"], strict=True)
     actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
