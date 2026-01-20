@@ -186,6 +186,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     _ = config
     if not any(item.get_closest_marker("anomaly") for item in items):
         return
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        # Only run once in the controller process to avoid auth issues in workers.
+        return
     if fcntl is None:
         _ensure_anomaly_cluster_libraries()
         return
