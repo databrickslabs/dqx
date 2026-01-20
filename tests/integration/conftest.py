@@ -155,13 +155,16 @@ def _ensure_anomaly_cluster_libraries() -> None:
 
     ws = WorkspaceClient()
     existing_statuses = list(ws.libraries.cluster_status(cluster_id))
-    installed = {
-        getattr(getattr(entry, "library", None).pypi, "package", None): getattr(
-            getattr(entry, "status", None), "value", getattr(entry, "status", None)
-        )
-        for entry in existing_statuses
-        if getattr(getattr(entry, "library", None), "pypi", None)
-    }
+    installed = {}
+    for entry in existing_statuses:
+        lib = getattr(entry, "library", None)
+        pypi = getattr(lib, "pypi", None) if lib else None
+        if not pypi:
+            continue
+        package = getattr(pypi, "package", None)
+        status = getattr(getattr(entry, "status", None), "value", getattr(entry, "status", None))
+        if package:
+            installed[package] = status
 
     to_install = [package for package in packages if installed.get(package) != "INSTALLED"]
     if to_install:
