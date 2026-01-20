@@ -17,6 +17,7 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationCh
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.pytester.fixtures.baseline import factory
+from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import BadRequest
 from databricks.sdk.service.compute import DataSecurityMode, Kind, Library, PythonPyPiLibrary
 from databricks.sdk.service.workspace import ImportFormat
@@ -70,6 +71,10 @@ logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
 _ANOMALY_LIBS_INSTALLED = {"value": False}
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    fcntl = None  # type: ignore[assignment]
 
 
 def _wait_for_library_install(ws, cluster_id: str, package: str, timeout_s: int = 900, poll_s: int = 10) -> None:
@@ -131,14 +136,10 @@ def _load_local_anomaly_dependencies() -> list[str]:
     return deps
 
 
-@pytest.fixture(scope="function", autouse=True)
-def ensure_anomaly_cluster_libraries(ws, spark, request):
-    """Ensure anomaly dependencies are installed on the Spark Connect cluster."""
-    if request.node.get_closest_marker("anomaly") is None:
-        return
+def _ensure_anomaly_cluster_libraries() -> None:
+    """Install anomaly dependencies on the cluster once per test run."""
     if _ANOMALY_LIBS_INSTALLED["value"]:
         return
-
     if not HAS_ANOMALY:
         return
 
@@ -147,14 +148,12 @@ def ensure_anomaly_cluster_libraries(ws, spark, request):
         logger.warning("No anomaly dependencies found in local pyproject.toml; skipping cluster install.")
         return
 
-    cluster_id = spark.conf.get("spark.databricks.clusterUsageTags.clusterId", None)
-    if not cluster_id:
-        cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
-
+    cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
     if not cluster_id:
         logger.warning("No cluster id found; skipping cluster library installation for anomaly deps.")
         return
 
+    ws = WorkspaceClient()
     existing_statuses = list(ws.libraries.cluster_status(cluster_id))
     installed = {
         getattr(getattr(entry, "library", None).pypi, "package", None): getattr(
@@ -178,6 +177,22 @@ def ensure_anomaly_cluster_libraries(ws, spark, request):
     for package in packages:
         _wait_for_library_install(ws, cluster_id, package)
     _ANOMALY_LIBS_INSTALLED["value"] = True
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if not any(item.get_closest_marker("anomaly") for item in items):
+        return
+    if fcntl is None:
+        _ensure_anomaly_cluster_libraries()
+        return
+
+    lock_path = os.environ.get("DQX_ANOMALY_TEST_LOCK", "/tmp/dqx-anomaly-libs.lock")
+    with open(lock_path, "w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            _ensure_anomaly_cluster_libraries()
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 @pytest.fixture(scope="session", autouse=True)
