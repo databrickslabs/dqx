@@ -1941,6 +1941,8 @@ def has_valid_schema(
     In strict mode, validates that the schema matches exactly (same columns, same order, same types)
     for the columns specified in columns or for all columns if columns is not specified.
 
+    All columns in the `ignore_columns` list will be ignored even if the column is present in the `columns` list.
+
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
