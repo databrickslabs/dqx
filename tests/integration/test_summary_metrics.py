@@ -548,7 +548,7 @@ def test_save_summary_metrics_with_streaming(ws, spark, make_schema, make_volume
         ],
         TEST_SCHEMA,
     )
-    test_df.write.saveAsTable(f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}", data=test_df, mode="overwrite")
+    test_df.write.saveAsTable(f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}", mode="overwrite")
 
     input_df = spark.readStream.table(input_config.location)
     valid_df, quarantine_df, _ = dq_engine.apply_checks_by_metadata_and_split(input_df, TEST_CHECKS)
