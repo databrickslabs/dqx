@@ -29,17 +29,17 @@ See more in [Storing Checks](/docs/guide/quality_checks_storage/).
 
 DQX rules directly influence data quality and, when applied to data in transit, can also impact pipeline behavior. Unauthorized or accidental changes to rules tables can have a significant downstream impact. For this reason, it is critical to enforce strong access controls and governance on all tables used to store data quality checks.
 
-Recommended access control practices:
+**Recommended access control practices:**
 * Grant read-only access to business users and data engineers who need visibility into rules but should not modify them.
 * Restrict write and update privileges to tightly controlled groups or preferably service principals.
 * Modify rules only through approved workflows executed by a service principal, rather than allowing ad-hoc SQL updates to rules tables.
 * Avoid direct DML access (INSERT, UPDATE, DELETE) on rules tables outside of governed deployment or CI/CD processes.
 
-Segregation and governance:
+**Segregation and governance:**
 * Align rule storage and access patterns with enterprise security and compliance standards.
 * Maintain separate rules tables to prevent unauthorized cross-domain changes and align access with organizational structure, e.g.
-  * Domain or data product to reflect ownership and business boundaries
-  * Team ownership to align with responsibility and access policies
+  * Domain or data product to reflect business boundaries
+  * Team ownership to align with ownership
   * Environment (dev, test, prod) to prevent accidental cross-environment changes
 
 ### Use a common set of checks for groups of tables
