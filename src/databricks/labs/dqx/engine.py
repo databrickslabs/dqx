@@ -357,6 +357,11 @@ class DQEngineCore(DQEngineCoreBase):
                 check.check_func_kwargs["columns"] = [
                     col for col in df.columns if col not in set(self._result_column_names.values())
                 ]
+                # Clear cached rule check so the updated columns are used when evaluating.
+                try:
+                    object.__delattr__(check, "check")
+                except AttributeError:
+                    pass
 
         return checks
 
