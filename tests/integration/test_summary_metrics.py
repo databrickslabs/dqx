@@ -241,7 +241,7 @@ def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_r
 
 
 def test_save_summary_metrics(ws, spark, make_schema, make_random):
-    schema_name = make_schema(catalog_name=TEST_CATALOG)
+    schema_name = make_schema(catalog_name=TEST_CATALOG).name
     metrics_table_name = f"{TEST_CATALOG}.{schema_name}.metrics_{make_random(6).lower()}"
 
     observer_name = "test_observer"
@@ -360,7 +360,7 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
 
 def test_save_summary_metrics_custom_metrics(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
-    schema_name = make_schema(catalog_name=catalog_name)
+    schema_name = make_schema(catalog_name=catalog_name).name
     metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
 
     custom_metrics = [
@@ -548,7 +548,7 @@ def test_save_summary_metrics_with_streaming(ws, spark, make_schema, make_volume
         ],
         TEST_SCHEMA,
     )
-    test_df.write.saveAsTable(f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}", data=test_df, mode="overwrite")
+    test_df.write.mode("overwrite").saveAsTable(input_config.location)
 
     input_df = spark.readStream.table(input_config.location)
     valid_df, quarantine_df, _ = dq_engine.apply_checks_by_metadata_and_split(input_df, TEST_CHECKS)
@@ -814,7 +814,7 @@ def test_observer_metrics_output_with_empty_checks(apply_checks_method, spark, w
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
 
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 4
+    assert spark.table(output_config.location).count() == 4, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
 
 
 @pytest.mark.parametrize(
@@ -1117,7 +1117,7 @@ def test_observer_metrics_output(apply_checks_method, spark, ws, make_schema, ma
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
 
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 4
+    assert spark.table(output_config.location).count() == 4, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
 
 
 @pytest.mark.parametrize(
@@ -1270,8 +1270,8 @@ def test_observer_metrics_output_with_quarantine(apply_checks_method, spark, ws,
     )
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 3
-    assert spark.table(quarantine_config.location).count() == 2
+    assert spark.table(output_config.location).count() == 3, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
+    assert spark.table(quarantine_config.location).count() == 2, f"Quarantine table {quarantine_config.location} has {spark.table(quarantine_config.location).count()} rows"
 
 
 @pytest.mark.parametrize(
@@ -1383,8 +1383,8 @@ def test_save_results_in_table_batch_with_metrics(apply_checks_method, spark, ws
     )
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 3
-    assert spark.table(quarantine_config.location).count() == 2
+    assert spark.table(output_config.location).count() == 3, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
+    assert spark.table(quarantine_config.location).count() == 2, f"Quarantine table {quarantine_config.location} has {spark.table(quarantine_config.location).count()} rows"
 
 
 @pytest.mark.parametrize(
@@ -1513,8 +1513,8 @@ def test_save_results_in_table_streaming_with_metrics(
     )
     actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 3
-    assert spark.table(quarantine_config.location).count() == 2
+    assert spark.table(output_config.location).count() == 3, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
+    assert spark.table(quarantine_config.location).count() == 2, f"Quarantine table {quarantine_config.location} has {spark.table(quarantine_config.location).count()} rows"
 
 
 @pytest.mark.parametrize(
@@ -1540,6 +1540,15 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
         ),
     )
 
+    input_config = InputConfig(location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}", is_streaming=True)
+    output_config = OutputConfig(
+        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
+        options={"checkPointLocation": checkpoint_location},
+        trigger={"availableNow": True},
+    )
+    metrics_config = OutputConfig(location=metrics_table_name)
+    checks_location = "fake.yml"
+
     test_df = spark.createDataFrame(
         [
             [1, "Alice", 30, 50000],
@@ -1550,15 +1559,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
         TEST_SCHEMA,
     )
 
-    test_df.write.saveAsTable(f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}")
-    input_config = InputConfig(location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}", is_streaming=True)
-    output_config = OutputConfig(
-        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
-        options={"checkPointLocation": checkpoint_location},
-        trigger={"availableNow": True},
-    )
-    metrics_config = OutputConfig(location=metrics_table_name)
-    checks_location = "fake.yml"
+    test_df.write.mode("overwrite").saveAsTable(input_config.location)
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
         checks = deserialize_checks(TEST_CHECKS)
@@ -1689,7 +1690,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
     )
 
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 4
+    assert spark.table(output_config.location).count() == 4, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
 
 
 @pytest.mark.parametrize(
@@ -1767,7 +1768,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
     expected_metrics = [
         {
             "run_id": EXTRA_PARAMS.run_id_overwrite,
-            "run_name": "test_streaming_observer",
+            "run_name": "test_streaming_observer_with_quarantine",
             "input_location": input_table_name,
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
@@ -1781,7 +1782,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
         },
         {
             "run_id": EXTRA_PARAMS.run_id_overwrite,
-            "run_name": "test_streaming_observer",
+            "run_name": "test_streaming_observer_with_quarantine",
             "input_location": input_table_name,
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
@@ -1795,7 +1796,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
         },
         {
             "run_id": EXTRA_PARAMS.run_id_overwrite,
-            "run_name": "test_streaming_observer",
+            "run_name": "test_streaming_observer_with_quarantine",
             "input_location": input_table_name,
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
@@ -1809,7 +1810,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
         },
         {
             "run_id": EXTRA_PARAMS.run_id_overwrite,
-            "run_name": "test_streaming_observer",
+            "run_name": "test_streaming_observer_with_quarantine",
             "input_location": input_table_name,
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
@@ -1823,7 +1824,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
         },
         {
             "run_id": EXTRA_PARAMS.run_id_overwrite,
-            "run_name": "test_streaming_observer",
+            "run_name": "test_streaming_observer_with_quarantine",
             "input_location": input_table_name,
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
@@ -1837,7 +1838,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
         },
         {
             "run_id": EXTRA_PARAMS.run_id_overwrite,
-            "run_name": "test_streaming_observer",
+            "run_name": "test_streaming_observer_with_quarantine",
             "input_location": input_table_name,
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
@@ -1856,8 +1857,8 @@ def test_streaming_observer_metrics_output_and_quarantine(
     )
     actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 3
-    assert spark.table(quarantine_config.location).count() == 2
+    assert spark.table(output_config.location).count() == 3, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
+    assert spark.table(quarantine_config.location).count() == 2, f"Quarantine table {quarantine_config.location} has {spark.table(quarantine_config.location).count()} rows"
 
 
 @pytest.mark.parametrize(
@@ -1907,7 +1908,6 @@ def test_streaming_observer_metrics_output_with_empty_checks(
     metrics_config = OutputConfig(location=metrics_table_name)
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        _ = deserialize_checks(TEST_CHECKS)
         dq_engine.apply_checks_and_save_in_table(
             checks=[], input_config=input_config, output_config=output_config, metrics_config=metrics_config
         )
@@ -2011,7 +2011,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(
     )
     actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 4
+    assert spark.table(output_config.location).count() == 4, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
 
 
 @pytest.mark.parametrize(
@@ -2070,7 +2070,6 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
     metrics_config = OutputConfig(location=metrics_table_name)
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        _ = deserialize_checks(TEST_CHECKS)
         dq_engine.apply_checks_and_save_in_table(
             checks=[],
             input_config=input_config,
@@ -2183,5 +2182,5 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
     actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
 
     assert_df_equality(expected_metrics_df, actual_metrics_df)
-    assert spark.table(output_config.location).count() == 4
-    assert spark.table(quarantine_config.location).count() == 0
+    assert spark.table(output_config.location).count() == 4, f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
+    assert spark.table(quarantine_config.location).count() == 0, f"Quarantine table {quarantine_config.location} has {spark.table(quarantine_config.location).count()} rows"
