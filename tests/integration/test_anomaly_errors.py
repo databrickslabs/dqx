@@ -10,11 +10,14 @@ from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.sdk import WorkspaceClient
+
 from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration.test_anomaly_utils import train_simple_2d_model
+
+pytestmark = pytest.mark.anomaly
 
 
 @pytest.fixture

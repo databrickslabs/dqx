@@ -203,7 +203,9 @@ ignore_missing_imports = true
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
-markers = []
+markers = [
+    "anomaly: anomaly detection integration tests",
+]
 
 [tool.black]
 target-version = ["py310"]

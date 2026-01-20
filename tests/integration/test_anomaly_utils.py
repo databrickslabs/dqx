@@ -74,12 +74,16 @@ All helpers automatically handle:
 from typing import Any
 
 import pyspark.sql.functions as F
-from pyspark.sql import SparkSession, DataFrame
+import pytest
+from pyspark.sql import DataFrame, SparkSession
+
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.anomaly import AnomalyEngine, AnomalyParams, has_no_anomalies
 from databricks.labs.dqx.rule import DQDatasetRule
-from databricks.labs.dqx.anomaly import has_no_anomalies, AnomalyParams, AnomalyEngine
+
 from tests.integration.test_anomaly_constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
 
+pytestmark = pytest.mark.anomaly
 
 # ============================================================================
 # Standard Training Data Patterns

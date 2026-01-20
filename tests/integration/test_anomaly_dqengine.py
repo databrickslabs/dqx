@@ -7,13 +7,20 @@ from unittest.mock import MagicMock
 import pytest
 from pyspark.sql import SparkSession
 
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
-from databricks.sdk import WorkspaceClient
-from tests.integration.test_anomaly_constants import DQENGINE_SCORE_THRESHOLD, OUTLIER_AMOUNT, OUTLIER_QUANTITY
+from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
+
+from tests.integration.test_anomaly_constants import (
+    DQENGINE_SCORE_THRESHOLD,
+    OUTLIER_AMOUNT,
+    OUTLIER_QUANTITY,
+)
 from tests.integration.test_anomaly_utils import create_anomaly_check_rule
+
+pytestmark = pytest.mark.anomaly
 
 
 @pytest.fixture

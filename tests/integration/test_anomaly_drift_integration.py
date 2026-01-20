@@ -1,16 +1,17 @@
 """Integration tests for drift detection.
 """
 
+import warnings
 from collections.abc import Callable
 from unittest.mock import MagicMock
-import warnings
 
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
+from databricks.labs.dqx.engine import DQEngine
+
 from tests.integration.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     DRIFT_THRESHOLD,
@@ -18,7 +19,12 @@ from tests.integration.test_anomaly_constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration.test_anomaly_utils import create_anomaly_check_rule, train_simple_2d_model
+from tests.integration.test_anomaly_utils import (
+    create_anomaly_check_rule,
+    train_simple_2d_model,
+)
+
+pytestmark = pytest.mark.anomaly
 
 
 @pytest.fixture

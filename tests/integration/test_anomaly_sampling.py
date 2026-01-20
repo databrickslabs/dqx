@@ -1,18 +1,23 @@
 """Integration tests for anomaly detection sampling and performance."""
 
-from collections.abc import Callable
 import warnings
+from collections.abc import Callable
 
+import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import AnomalyParams
+
 from tests.integration.test_anomaly_utils import train_large_dataset_model
+
+pytestmark = pytest.mark.anomaly
 
 
 def test_sampling_caps_large_datasets(
     spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
 ):
     """Test that sampling caps at max_rows for large datasets."""
+
     unique_id = make_random(8).lower()
     model_name = f"test_sampling_large_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
