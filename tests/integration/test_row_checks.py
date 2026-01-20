@@ -798,10 +798,13 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
 
     actual = test_df.select(
         is_not_less_than("a", 2),
+        is_not_less_than("a", "2"),
         is_not_less_than("a", F.col("b") * 2),
         is_not_less_than("b", "a"),
         is_not_less_than("c", datetime(2025, 2, 1).date()),
+        is_not_less_than("c", "2025-02-01"),
         is_not_less_than("d", datetime(2025, 2, 1)),
+        is_not_less_than("d", "2025-02-01"),
         is_not_less_than("e", 2),
         is_not_less_than(F.try_element_at("f", F.lit(1)), 2),
         is_not_less_than(F.col("g").getItem("val"), 2),
@@ -809,9 +812,10 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
     )
 
     checked_schema = (
-        "a_less_than_limit: string, a_less_than_limit: string, b_less_than_limit: string, "
-        "c_less_than_limit: string, d_less_than_limit: string, e_less_than_limit: string, "
-        "try_element_at_f_1_less_than_limit: string, "
+        "a_less_than_limit: string, a_less_than_limit: string, a_less_than_limit: string, "
+        "b_less_than_limit: string, c_less_than_limit: string, c_less_than_limit: string, "
+        "d_less_than_limit: string, d_less_than_limit: string, "
+        "e_less_than_limit: string, try_element_at_f_1_less_than_limit: string, "
         "unresolvedextractvalue_g_val_less_than_limit: string, "
         "h_less_than_limit: string"
     )
@@ -820,9 +824,12 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
         [
             [
                 "Value '1' in Column 'a' is less than limit: 2",
+                "Value '1' in Column 'a' is less than limit: 2",
                 None,
                 None,
                 "Value '2025-01-01' in Column 'c' is less than limit: 2025-02-01",
+                "Value '2025-01-01' in Column 'c' is less than limit: 2025-02-01",
+                "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01 00:00:00",
                 "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01 00:00:00",
                 "Value '1.00' in Column 'e' is less than limit: 2",
                 "Value '1' in Column 'try_element_at(f, 1)' is less than limit: 2",
@@ -831,7 +838,10 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
             ],
             [
                 None,
+                None,
                 "Value '2' in Column 'a' is less than limit: 8",
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -842,6 +852,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
             ],
             [
                 None,
+                None,
                 "Value '4' in Column 'a' is less than limit: 6",
                 "Value '3' in Column 'b' is less than limit: 4",
                 None,
@@ -850,8 +861,10 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 None,
                 None,
                 None,
+                None,
+                None,
             ],
-            [None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -873,28 +886,35 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
 
     actual = test_df.select(
         is_not_greater_than("a", 1),
+        is_not_greater_than("a", "1"),
         is_not_greater_than("a", F.col("b") * 2),
         is_not_greater_than("b", "a"),
         is_not_greater_than("c", datetime(2025, 1, 1).date()),
+        is_not_greater_than("c", "2025-01-01"),
         is_not_greater_than("d", datetime(2025, 1, 1)),
+        is_not_greater_than("d", "2025-01-01"),
         is_not_greater_than("e", 1),
         is_not_greater_than(F.try_element_at("f", F.lit(1)), 1),
         is_not_greater_than("g", 2.4),
     )
 
     checked_schema = (
-        "a_greater_than_limit: string, a_greater_than_limit: string, b_greater_than_limit: string, "
-        "c_greater_than_limit: string, d_greater_than_limit: string, e_greater_than_limit: string, "
+        "a_greater_than_limit: string, a_greater_than_limit: string, a_greater_than_limit: string, "
+        "b_greater_than_limit: string, c_greater_than_limit: string, c_greater_than_limit: string, "
+        "d_greater_than_limit: string, d_greater_than_limit: string, e_greater_than_limit: string, "
         "try_element_at_f_1_greater_than_limit: string, g_greater_than_limit: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None],
             [
+                "Value '2' in Column 'a' is greater than limit: 1",
                 "Value '2' in Column 'a' is greater than limit: 1",
                 None,
                 "Value '4' in Column 'b' is greater than limit: 2",
                 "Value '2025-02-01' in Column 'c' is greater than limit: 2025-01-01",
+                "Value '2025-02-01' in Column 'c' is greater than limit: 2025-01-01",
+                "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01 00:00:00",
                 "Value '2025-02-01 00:00:00' in Column 'd' is greater than limit: 2025-01-01 00:00:00",
                 "Value '1.01' in Column 'e' is greater than limit: 1",
                 "Value '2' in Column 'try_element_at(f, 1)' is greater than limit: 1",
@@ -902,7 +922,10 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
             ],
             [
                 "Value '8' in Column 'a' is greater than limit: 1",
+                "Value '8' in Column 'a' is greater than limit: 1",
                 "Value '8' in Column 'a' is greater than limit: 6",
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -910,7 +933,7 @@ def test_col_is_not_greater_than(spark, set_utc_timezone):
                 "Value '8' in Column 'try_element_at(f, 1)' is greater than limit: 1",
                 "Value '4.8' in Column 'g' is greater than limit: 2.4",
             ],
-            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -936,8 +959,12 @@ def test_col_is_in_range(spark, set_utc_timezone):
     end_date = datetime(2025, 3, 1)
     actual = test_df.select(
         is_in_range("a", 1, 3),
+        is_in_range("a", "1", "3"),
         is_in_range("b", start_date.date(), end_date.date()),
+        is_in_range("b", "2025-01-01", "2025-03-01"),
         is_in_range("c", start_date, end_date),
+        is_in_range("c", "2025-01-01", "2025-03-01"),
+        is_in_range("c", "2025-01-01 00:00:00", "2025-03-01 00:00:00"),
         is_in_range("d", F.col("a"), F.expr("e - 1")),
         is_in_range("f", "a", 5),
         is_in_range("g", 1, 3),
@@ -946,7 +973,9 @@ def test_col_is_in_range(spark, set_utc_timezone):
     )
 
     checked_schema = (
-        "a_not_in_range: string, b_not_in_range: string, c_not_in_range: string, "
+        "a_not_in_range: string, a_not_in_range: string, "
+        "b_not_in_range: string, b_not_in_range: string, "
+        "c_not_in_range: string, c_not_in_range: string, c_not_in_range: string, "
         "d_not_in_range: string, f_not_in_range: string, g_not_in_range: string, "
         "unresolvedextractvalue_h_val_not_in_range: string, i_not_in_range: string"
     )
@@ -954,7 +983,11 @@ def test_col_is_in_range(spark, set_utc_timezone):
         [
             [
                 "Value '0' in Column 'a' not in range: [1, 3]",
+                "Value '0' in Column 'a' not in range: [1, 3]",
                 "Value '2024-12-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
+                "Value '2024-12-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
+                "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
+                "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
                 "Value '2024-12-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
                 "Value '-1' in Column 'd' not in range: [0, 4]",
                 "Value '6' in Column 'f' not in range: [0, 5]",
@@ -962,12 +995,16 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '0' in Column 'UnresolvedExtractValue(h, val)' not in range: [1, 3]",
                 "Value '0.0' in Column 'i' not in range: [0.1, 0.7]",
             ],
-            [None, None, None, None, None, None, None, None],
-            [None, None, None, None, None, None, None, None],
-            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None, None],
             [
                 "Value '4' in Column 'a' not in range: [1, 3]",
+                "Value '4' in Column 'a' not in range: [1, 3]",
                 "Value '2025-04-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
+                "Value '2025-04-01' in Column 'b' not in range: [2025-01-01, 2025-03-01]",
+                "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
+                "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
                 "Value '2025-04-01 00:00:00' in Column 'c' not in range: [2025-01-01 00:00:00, 2025-03-01 00:00:00]",
                 "Value '2' in Column 'd' not in range: [4, 8]",
                 "Value '3' in Column 'f' not in range: [4, 5]",
@@ -975,7 +1012,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '4' in Column 'UnresolvedExtractValue(h, val)' not in range: [1, 3]",
                 "Value '0.8' in Column 'i' not in range: [0.1, 0.7]",
             ],
-            [None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -1007,8 +1044,12 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
     end_date = datetime(2025, 1, 3)
     actual = test_df.select(
         is_not_in_range("a", 1, 3),
+        is_not_in_range("a", "1", "3"),
         is_not_in_range("b", start_date.date(), end_date.date()),
+        is_not_in_range("b", "2025-01-01", "2025-01-03"),
         is_not_in_range("c", start_date, end_date),
+        is_not_in_range("c", "2025-01-01", "2025-01-03"),
+        is_not_in_range("c", "2025-01-01 00:00:00", "2025-01-03 00:00:00"),
         is_not_in_range("d", "c", F.expr("cast(b as timestamp) + INTERVAL 2 DAY")),
         is_not_in_range("e", 1, 3),
         is_not_in_range(F.try_element_at("f", F.lit(1)), 1, 3),
@@ -1016,15 +1057,20 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
     )
 
     checked_schema = (
-        "a_in_range: string, b_in_range: string, c_in_range: string, d_in_range: string, e_in_range: string, "
+        "a_in_range: string, a_in_range: string, b_in_range: string, b_in_range: string, "
+        "c_in_range: string, c_in_range: string, c_in_range: string, d_in_range: string, e_in_range: string, "
         "try_element_at_f_1_in_range: string, g_in_range: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None],
             [
                 "Value '1' in Column 'a' in range: [1, 3]",
+                "Value '1' in Column 'a' in range: [1, 3]",
                 "Value '2025-01-01' in Column 'b' in range: [2025-01-01, 2025-01-03]",
+                "Value '2025-01-01' in Column 'b' in range: [2025-01-01, 2025-01-03]",
+                "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
+                "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
                 "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
                 None,
                 "Value '1.00' in Column 'e' in range: [1, 3]",
@@ -1033,14 +1079,18 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
             ],
             [
                 "Value '3' in Column 'a' in range: [1, 3]",
+                "Value '3' in Column 'a' in range: [1, 3]",
                 None,
                 None,
+                None,
+                "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
+                "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
                 "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
                 "Value '3.00' in Column 'e' in range: [1, 3]",
                 "Value '3' in Column 'try_element_at(f, 1)' in range: [1, 3]",
                 None,
             ],
-            [None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -2834,21 +2884,26 @@ def test_is_data_fresh(spark, set_utc_timezone):
 
     actual = test_df.select(
         is_data_fresh("b", mins_threshold_b, F.lit(reference_date)),
+        is_data_fresh("b", mins_threshold_b, "2024-01-01"),
         is_data_fresh("c", mins_threshold_c, reference_date),
         is_data_fresh("d", mins_threshold_b, "b"),
     )
 
-    checked_schema = "b_is_data_fresh: string, c_is_data_fresh: string, d_is_data_fresh: string"
+    checked_schema = (
+        "b_is_data_fresh: string, b_is_data_fresh: string, c_is_data_fresh: string, d_is_data_fresh: string"
+    )
     expected = spark.createDataFrame(
         [
             [
                 "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
+                "Value '2023-01-02 00:00:00' in Column 'b' is older than 120 minutes from base timestamp '2024-01-01 00:00:00'",
                 "Value '2023-01-01' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
                 None,
             ],
-            [None, None, None],
-            [None, None, None],
+            [None, None, None, None],
+            [None, None, None, None],
             [
+                None,
                 None,
                 "Value '2022-12-31' in Column 'c' is older than 3600 minutes from base timestamp '2024-01-01 00:00:00'",
                 "Value '2023-12-31 00:00:00' in Column 'd' is older than 120 minutes from base timestamp '2023-12-31 23:59:59'",
@@ -2892,16 +2947,19 @@ def test_col_is_not_equal_to(spark, set_utc_timezone):
 
     actual = test_df.select(
         is_not_equal_to("a", 1).alias("a_equal_to_literal"),
+        is_not_equal_to("a", "1").alias("a_equal_to_str_literal"),
         is_not_equal_to("a", F.col("b")).alias("a_equal_to_column"),
         is_not_equal_to("c", datetime(2025, 1, 1).date()),
+        is_not_equal_to("c", "2025-01-01"),
         is_not_equal_to("d", datetime(2025, 1, 1)),
+        is_not_equal_to("d", "2025-01-01 00:00:00"),
         is_not_equal_to("e", Decimal("1.00")),
         is_not_equal_to(F.try_element_at("f", F.lit(1)), 1),
     )
 
     expected_schema = (
-        "a_equal_to_literal: string, a_equal_to_column: string, "
-        "c_equal_to_value: string, d_equal_to_value: string, "
+        "a_equal_to_literal: string, a_equal_to_str_literal: string, a_equal_to_column: string, "
+        "c_equal_to_value: string, c_equal_to_value: string, d_equal_to_value: string, d_equal_to_value: string, "
         "e_equal_to_value: string, try_element_at_f_1_equal_to_value: string"
     )
 
@@ -2910,21 +2968,27 @@ def test_col_is_not_equal_to(spark, set_utc_timezone):
             [
                 "Value '1' in Column 'a' is equal to value: 1",
                 "Value '1' in Column 'a' is equal to value: 1",
+                "Value '1' in Column 'a' is equal to value: 1",
                 "Value '2025-01-01' in Column 'c' is equal to value: 2025-01-01",
+                "Value '2025-01-01' in Column 'c' is equal to value: 2025-01-01",
+                "Value '2025-01-01 00:00:00' in Column 'd' is equal to value: 2025-01-01 00:00:00",
                 "Value '2025-01-01 00:00:00' in Column 'd' is equal to value: 2025-01-01 00:00:00",
                 "Value '1.00' in Column 'e' is equal to value: 1.00",
                 "Value '1' in Column 'try_element_at(f, 1)' is equal to value: 1",
             ],
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None],
             [
+                "Value '1' in Column 'a' is equal to value: 1",
                 "Value '1' in Column 'a' is equal to value: 1",
                 None,
                 None,
                 None,
                 None,
+                None,
+                None,
                 "Value '1' in Column 'try_element_at(f, 1)' is equal to value: 1",
             ],
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None],
         ],
         expected_schema,
     )
@@ -2946,39 +3010,49 @@ def test_col_is_equal_to(spark, set_utc_timezone):
 
     actual = test_df.select(
         is_equal_to("a", 1).alias("a_not_equal_to_value"),
+        is_equal_to("a", "1").alias("a_not_equal_to_str_value"),
         is_equal_to("a", F.col("b")).alias("a_not_equal_to_value_col"),
         is_equal_to("c", datetime(2025, 1, 1).date()),
+        is_equal_to("c", "2025-01-01"),
         is_equal_to("d", datetime(2025, 1, 1)),
+        is_equal_to("d", "2025-01-01 00:00:00"),
         is_equal_to("e", Decimal("1.00")),
         is_equal_to(F.try_element_at("f", F.lit(1)), 1),
     )
 
     expected_schema = (
-        "a_not_equal_to_value: string, a_not_equal_to_value_col: string, "
-        "c_not_equal_to_value: string, d_not_equal_to_value: string, "
+        "a_not_equal_to_value: string, a_not_equal_to_str_value: string, a_not_equal_to_value_col: string, "
+        "c_not_equal_to_value: string, c_not_equal_to_value: string, "
+        "d_not_equal_to_value: string, d_not_equal_to_value: string, "
         "e_not_equal_to_value: string, try_element_at_f_1_not_equal_to_value: string"
     )
 
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None],
             [
                 "Value '2' in Column 'a' is not equal to value: 1",
                 "Value '2' in Column 'a' is not equal to value: 1",
+                "Value '2' in Column 'a' is not equal to value: 1",
                 "Value '2025-02-01' in Column 'c' is not equal to value: 2025-01-01",
+                "Value '2025-02-01' in Column 'c' is not equal to value: 2025-01-01",
+                "Value '2025-02-01 00:00:00' in Column 'd' is not equal to value: 2025-01-01 00:00:00",
                 "Value '2025-02-01 00:00:00' in Column 'd' is not equal to value: 2025-01-01 00:00:00",
                 "Value '1.01' in Column 'e' is not equal to value: 1.00",
                 "Value '2' in Column 'try_element_at(f, 1)' is not equal to value: 1",
             ],
             [
                 None,
+                None,
                 "Value '1' in Column 'a' is not equal to value: 2",
+                None,
+                None,
                 None,
                 None,
                 "Value '0.99' in Column 'e' is not equal to value: 1.00",
                 None,
             ],
-            [None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None],
         ],
         expected_schema,
     )

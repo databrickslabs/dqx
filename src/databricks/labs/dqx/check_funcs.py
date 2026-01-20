@@ -3009,6 +3009,22 @@ def get_limit_expr(
         raise MissingParameterError("Limit is not provided.")
 
     if isinstance(limit, str):
+        if limit.isdigit():
+            return F.expr(limit)
+
+        try:
+            parsed_dt = datetime.datetime.fromisoformat(limit)
+
+            # Check if the string contains time component
+            has_time = ':' in limit
+
+            if has_time:
+                return F.to_timestamp(F.lit(parsed_dt))
+            return F.to_date(F.lit(parsed_dt.date()))
+        except ValueError:
+            # If parsing fails, treat as an expression
+            pass
+
         return F.expr(limit)
     if isinstance(limit, Column):
         return limit
