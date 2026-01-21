@@ -138,7 +138,7 @@ def _join_filtered_results_back(
     # Take distinct rows to avoid duplicates
     agg_exprs = [
         F.max("anomaly_score").alias("anomaly_score"),
-        F.first("_info").alias("_info"),  # Struct, take first
+        F.max_by("_info", "anomaly_score").alias("_info"),
     ]
     scored_subset_unique = scored_subset.groupBy(*merge_columns).agg(*agg_exprs)
 
