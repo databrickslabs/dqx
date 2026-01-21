@@ -30,15 +30,8 @@ from databricks.sdk.retries import retried
 from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
 from databricks.sdk.service.workspace import ImportFormat
 
-# Optional imports for anomaly detection functionality
-try:
-    from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
-
-    HAS_ANOMALY_EXTRAS = True
-except Exception:
-    # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
-    HAS_ANOMALY_EXTRAS = False
-    # AnomalyEngine not defined - callers must check HAS_ANOMALY_EXTRAS first
+# Anomaly detection imports - required for anomaly tests
+from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
 
 logger = logging.getLogger(__name__)
 

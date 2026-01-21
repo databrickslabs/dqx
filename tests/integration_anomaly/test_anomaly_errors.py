@@ -14,8 +14,8 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.errors import InvalidParameterError
 
-from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
-from tests.integration.test_anomaly_utils import train_simple_2d_model
+from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
+from tests.integration_anomaly.test_anomaly_utils import train_simple_2d_model
 
 pytestmark = pytest.mark.anomaly
 

@@ -8,12 +8,12 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import AnomalyParams
 
-from tests.integration.test_anomaly_constants import (
+from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration.test_anomaly_utils import (
+from tests.integration_anomaly.test_anomaly_utils import (
     train_simple_2d_model,
     train_simple_3d_model,
 )

@@ -12,7 +12,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 
 from tests.conftest import TEST_CATALOG
-from tests.integration.test_anomaly_utils import (
+from tests.integration_anomaly.test_anomaly_utils import (
     get_percentile_threshold_from_data,
     get_standard_2d_training_data,
     get_standard_4d_training_data,

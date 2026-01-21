@@ -9,7 +9,7 @@ from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 
-from tests.integration.test_anomaly_constants import (
+from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     DQENGINE_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,

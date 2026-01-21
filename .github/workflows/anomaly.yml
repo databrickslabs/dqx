@@ -39,13 +39,13 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
-      # Integration tests are run from within tests/integration folder.
+      # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
-      - name: Prepare code coverage configuration for integration tests
+      - name: Prepare code coverage configuration for anomaly tests
         run: |
-          cat > tests/integration/.coveragerc << EOF
+          cat > tests/integration_anomaly/.coveragerc << EOF
           [run]
-          source = ../../src
+          source = ../../../src
           relative_files = true
           EOF
 
@@ -96,7 +96,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
         run: |
-          hatch run pytest tests/integration/ -m anomaly -v -n auto --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
 
       - name: Merge coverage reports and convert them to XML
         run: |
@@ -129,13 +129,13 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.15.0
 
-      # Integration tests are run from within tests/integration folder.
+      # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
-      - name: Prepare code coverage configuration for integration tests
+      - name: Prepare code coverage configuration for anomaly tests
         run: |
-          cat > tests/integration/.coveragerc << EOF
+          cat > tests/integration_anomaly/.coveragerc << EOF
           [run]
-          source = ../../src
+          source = ../../../src
           relative_files = true
           EOF
 
@@ -184,7 +184,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
         run: |
-          hatch run pytest tests/integration/ -m anomaly -v -n auto --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
 
       - name: Merge coverage reports and convert them to XML
         run: |

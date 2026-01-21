@@ -81,7 +81,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import AnomalyEngine, AnomalyParams, has_no_anomalies
 from databricks.labs.dqx.rule import DQDatasetRule
 
-from tests.integration.test_anomaly_constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
+from tests.integration_anomaly.test_anomaly_constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
 
 pytestmark = pytest.mark.anomaly
 

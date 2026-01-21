@@ -11,11 +11,11 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 
-from tests.integration.test_anomaly_constants import (
+from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
 )
-from tests.integration.test_anomaly_utils import (
+from tests.integration_anomaly.test_anomaly_utils import (
     apply_anomaly_check_direct,
     create_anomaly_dataset_rule,
     train_simple_2d_model,

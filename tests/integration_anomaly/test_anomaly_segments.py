@@ -13,7 +13,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 
 from tests.conftest import TEST_CATALOG
-from tests.integration.test_anomaly_constants import (
+from tests.integration_anomaly.test_anomaly_constants import (
     DQENGINE_SCORE_THRESHOLD,
     SEGMENT_REGIONS,
 )
