@@ -96,7 +96,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
         run: |
-          hatch run pytest tests/integration_anomaly/ -v -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
 
       - name: Merge coverage reports and convert them to XML
         run: |
@@ -184,7 +184,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
         run: |
-          hatch run pytest tests/integration_anomaly/ -v -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
 
       - name: Merge coverage reports and convert them to XML
         run: |
