@@ -1158,6 +1158,7 @@ class DQEngine(DQEngineBase):
         metrics_observation = DQMetricsObservation(
             run_id=self._engine.run_id,
             run_name=self._engine.observer.name,
+            run_time_overwrite=self._engine.run_time_overwrite,
             error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
             warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
             input_location=input_config.location if input_config else None,
