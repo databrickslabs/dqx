@@ -278,10 +278,8 @@ def _score_segmented(
             continue
 
         segment_df = df_to_score.filter(segment_filter)
-        # Note: We don't check if segment_df is empty here to avoid triggering
-        # a count() action. Empty segments result in empty DataFrames which
-        # union() handles gracefully.
-
+        if segment_df.limit(1).count() == 0:
+            continue
         segment_scored = _score_single_segment(segment_df, segment_model, config)
         scored_dfs.append(segment_scored)
 

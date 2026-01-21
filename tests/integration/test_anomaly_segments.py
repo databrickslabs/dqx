@@ -125,6 +125,10 @@ def test_segment_scoring(
         },
     )
 
+    # Avoid worker-side failures for empty segments in driver-only mode.
+    from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
+
+    anomaly_check_funcs.set_driver_only_for_tests(False)
     result = dq_engine.apply_checks(test_df, [check])
 
     # Access anomaly_score from _info.anomaly.score (nested in DQEngine results)

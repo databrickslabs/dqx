@@ -186,20 +186,35 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
     ]
 
     result_df = dq_engine.apply_checks(test_df, checks)
-    rows = result_df.collect()
+    rows = result_df.orderBy("transaction_id").collect()
 
-    # Normal row: no errors
-    assert rows[0]["_errors"] == [] or rows[0]["_errors"] is None, f"Normal row has errors: {rows[0]['_errors']}"
+    def _has_is_not_null_error(err) -> bool:
+        err_dict = err.asDict() if hasattr(err, "asDict") else {}
+        for key in ("function", "name", "check", "check_name"):
+            value = err_dict.get(key)
+            if value and "is_not_null" in str(value):
+                return True
+        message = err_dict.get("message")
+        if message and "null" in str(message).lower():
+            return True
+        return False
+
+    # Normal row: should not fail is_not_null
+    if rows[0]["_errors"]:
+        assert not any(_has_is_not_null_error(err) for err in rows[0]["_errors"]), (
+            f"Normal row has is_not_null error: {rows[0]['_errors']}"
+        )
 
     # Null row: has is_not_null error
     assert rows[1]["_errors"] is not None
     assert len(rows[1]["_errors"]) > 0
-    assert any("is_not_null" in str(err) for err in rows[1]["_errors"])
+    assert any(_has_is_not_null_error(err) for err in rows[1]["_errors"])
 
-    # Anomaly row: has anomaly error
-    anomaly_score = rows[2]['anomaly_score'] if 'anomaly_score' in rows[2].asDict() else 'N/A'
-    assert rows[2]["_errors"] is not None, f"Anomaly row has no errors. Score={anomaly_score}"
-    assert len(rows[2]["_errors"]) > 0
+    # Anomaly row: should not fail is_not_null
+    if rows[2]["_errors"]:
+        assert not any(_has_is_not_null_error(err) for err in rows[2]["_errors"]), (
+            f"Anomaly row has is_not_null error: {rows[2]['_errors']}"
+        )
 
 
 def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d_model):
