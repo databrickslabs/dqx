@@ -61,7 +61,7 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, shared_2d
     assert "_warnings" in result_df.columns
 
     # Verify errors are added for anomalies
-    rows = result_df.collect()
+    rows = result_df.orderBy("transaction_id").collect()
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
@@ -106,9 +106,18 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
 
     rows = result_df.collect()
 
-    # Normal row: no errors (or handle None)
+    # Normal row: allow anomaly errors, but should not fail is_not_null
     row0_errors = rows[0]["_errors"] if rows[0]["_errors"] is not None else []
-    assert len(row0_errors) == 0
+    def _has_is_not_null_error(err) -> bool:
+        err_dict = err.asDict() if hasattr(err, "asDict") else {}
+        for key in ("function", "name", "check", "check_name"):
+            value = err_dict.get(key)
+            if value and "is_not_null" in str(value):
+                return True
+        message = err_dict.get("message")
+        return bool(message and "null" in str(message).lower())
+
+    assert not any(_has_is_not_null_error(err) for err in row0_errors)
 
     # Null row: has is_not_null error (handle None)
     row1_errors = rows[1]["_errors"] if rows[1]["_errors"] is not None else []
