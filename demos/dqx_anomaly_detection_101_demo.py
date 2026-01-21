@@ -139,7 +139,7 @@
 # MAGIC ```
 # MAGIC
 # MAGIC **What's included in `[anomaly]` extras:**
-# MAGIC - `scikit-learn` - Machine learning algorithms (Isolation Forest)
+# MAGIC - `scikit-learn` - Machine learning algorithms used for anomaly detection
 # MAGIC - `mlflow` - Model tracking and registry
 # MAGIC - `shap` - Feature contributions for explainability
 # MAGIC - `cloudpickle` - Model serialization
@@ -324,8 +324,9 @@ df_sales = spark.createDataFrame(sales_data, schema)
 print("📊 Sample of sales transactions:")
 display(df_sales.orderBy("date"))
 
-print(f"\n✅ Generated {df_sales.count()} sales transactions")
-print(f"   Expected anomalies: ~{int(df_sales.count() * 0.05)} (5%)")
+total_rows = df_sales.count()
+print(f"\n✅ Generated {total_rows} sales transactions")
+print(f"   Expected anomalies: ~{int(total_rows * 0.05)} (5%)")
 print(f"\n💡 Data includes:")
 print(f"   • Normal patterns: Business hours, typical amounts (170-230), reasonable quantities (4-6)")
 print(f"   • Injected anomalies: VERY extreme deviations (40-50x pricing, 100-150 quantity, multi-factor)")
@@ -402,7 +403,7 @@ print(f"\n📋 Trained Models:\n")
 
 display(
     spark.table(registry_table)
-    .filter(F.col("identity.model_name").startswith("sales_auto"))
+    .filter(F.col("identity.model_name").contains("sales_auto"))
     .select(
         "identity.model_name",
         "training.columns", 
@@ -487,26 +488,42 @@ df_scored = dq_engine.apply_checks(df_sales, checks_combined)
 error_count = F.coalesce(F.size(F.col("_errors")), F.lit(0))
 anomalies = df_scored.filter(error_count > 0)
 df_valid = df_scored.filter(error_count == 0)
+score_col = F.col("_info.anomaly.score")
+score_df = df_scored.select(score_col.alias("score")).where(score_col.isNotNull())
+p90, p95, p99 = score_df.stat.approxQuantile("score", [0.9, 0.95, 0.99], 0.0)
+percentile_band = (
+    F.when(score_col >= p99, F.lit("p99+ (top 1%)"))
+    .when(score_col >= p95, F.lit("p95-99 (top 5%)"))
+    .when(score_col >= p90, F.lit("p90-95 (top 10%)"))
+    .otherwise(F.lit("<p90 (bottom 90%)"))
+)
+total_scored = df_scored.count()
+anomalies_count = anomalies.count()
 
 print(f"✅ Quality checks complete!")
 print(f"\n📊 Results:")
-print(f"   Total transactions: {df_sales.count()}")
-print(f"   Anomalies found: {anomalies.count()} ({(anomalies.count() / df_sales.count()) * 100:.1f}%)")
+print(f"   Total transactions: {total_rows}")
+print(f"   Anomalies found: {anomalies_count} ({(anomalies_count / total_rows) * 100:.1f}%)")
 print("ℹ️  Each record receives an anomaly score.")
 print("   The score threshold decides whether a record is flagged as anomalous.")
 print("   Even records that are not flagged still get a score for analysis.")
+print("   Think of the score as a 0-1 unusualness rating: higher = more likely anomalous.")
 print(f"\n🔝 Top 10 anomalies:\n")
 
 display(anomalies.orderBy(F.col("_info.anomaly.score").desc()).select(
     "transaction_id", "date", "amount", "quantity", "category", "region",
     F.round("_info.anomaly.score", 3).alias("anomaly_score"),
+    percentile_band.alias("score_percentile"),
     F.col("_info.anomaly.contributions").alias("why_anomalous")
 ).limit(10))
+
+print("   Example pattern: high amount + off-hours timing + unusual region/category")
 
 print("\n💡 What Just Happened:")
 print("   • Rule-based checks caught known issues (nulls, out-of-range values)")
 print("   • Anomaly detection found unusual patterns you didn't explicitly define")
 print("   • The 'why_anomalous' column explains what made each record unusual")
+print("   • Percentile band shows how unusual a record is within this dataset")
 print("   • Threshold of 0.60 balances finding issues vs false alarms")
 
 
@@ -520,22 +537,12 @@ print("   • Threshold of 0.60 balances finding issues vs false alarms")
 # MAGIC Let's explore the anomalies we found and learn how to interpret anomaly scores.
 # MAGIC
 # MAGIC **What you'll learn:**
-# MAGIC - How anomaly scores work (0 to 1 scale, based on Isolation Forest)
+# MAGIC - How anomaly scores work (0 to 1 unusualness scale)
 # MAGIC - What makes a score "high" vs "normal"  
 # MAGIC - Why certain records were flagged as unusual
 # MAGIC
-# MAGIC **Important**: Anomaly scores are NOT probabilities or confidence levels! They measure how "easy" it is to separate a record from the rest of your data. Think of it as: "How different is this record from normal patterns?"
-# MAGIC
-# MAGIC ### 📊 How Isolation Forest Works
-# MAGIC
-# MAGIC The algorithm builds decision trees and measures how many "splits" are needed to isolate each record:
-# MAGIC
-# MAGIC - **Anomalies** (shown in the image diagram): Isolated near the top with few splits → High score
-# MAGIC - **Normal data**: Requires many splits deep in the tree → Low score
-# MAGIC
-# MAGIC *![](https://scikit-learn.org/stable/_images/sphx_glr_plot_isolation_forest_003.png)*
-# MAGIC
-# MAGIC This is why the score represents "isolation ease" rather than statistical confidence!
+# MAGIC **Important**: Anomaly scores are NOT probabilities or confidence levels! Think of the score as how
+# MAGIC easy it is to separate a record from the rest of your data. Easier to separate = more unusual.
 # MAGIC
 
 # COMMAND ----------
@@ -547,27 +554,44 @@ score_stats = df_scored.select("_info.anomaly.score").describe()
 display(score_stats)
 
 # Show score ranges (aligned with 0.60 threshold)
-print("📈 Score Range Breakdown:\n")
+print("📈 Score Range Breakdown (raw scores):\n")
 
 score_ranges = df_scored.select(
-    F.count(F.when(F.col("_info.anomaly.score") < 0.4, 1)).alias("normal_0.0_0.4"),
-    F.count(F.when((F.col("_info.anomaly.score") >= 0.4) & (F.col("_info.anomaly.score") < 0.6), 1)).alias("borderline_0.4_0.6"),
+    F.count(F.when(F.col("_info.anomaly.score") < 0.5, 1)).alias("normal_0.0_0.5"),
+    F.count(F.when((F.col("_info.anomaly.score") >= 0.5) & (F.col("_info.anomaly.score") < 0.6), 1)).alias("borderline_0.5_0.6"),
     F.count(F.when((F.col("_info.anomaly.score") >= 0.6) & (F.col("_info.anomaly.score") < 0.75), 1)).alias("flagged_0.6_0.75"),
     F.count(F.when(F.col("_info.anomaly.score") >= 0.75, 1)).alias("highly_anomalous_0.75_1.0"),
 ).first()
 
-total = df_scored.count()
-print(f"Normal (0.0-0.4):             {score_ranges['normal_0.0_0.4']:4d} ({score_ranges['normal_0.0_0.4']/total*100:5.1f}%) ← Not flagged")
-print(f"Borderline (0.4-0.6):         {score_ranges['borderline_0.4_0.6']:4d} ({score_ranges['borderline_0.4_0.6']/total*100:5.1f}%) ← Near threshold (not flagged)")
+total = total_scored
+print(f"Likely Normal (0.0-0.5):      {score_ranges['normal_0.0_0.5']:4d} ({score_ranges['normal_0.0_0.5']/total*100:5.1f}%) ← Not flagged")
+print(f"Near Threshold (0.5-0.6):     {score_ranges['borderline_0.5_0.6']:4d} ({score_ranges['borderline_0.5_0.6']/total*100:5.1f}%) ← Not flagged")
 print(f"Flagged (0.6-0.75):           {score_ranges['flagged_0.6_0.75']:4d} ({score_ranges['flagged_0.6_0.75']/total*100:5.1f}%) ← ANOMALIES (flagged)")
 print(f"Highly Anomalous (0.75-1.0):  {score_ranges['highly_anomalous_0.75_1.0']:4d} ({score_ranges['highly_anomalous_0.75_1.0']/total*100:5.1f}%) ← ANOMALIES (extreme)")
 
+print("\n📊 Percentile-Based Breakdown (easy to interpret):\n")
+percentile_ranges = df_scored.select(
+    F.count(F.when(score_col < p90, 1)).alias("normal_p90"),
+    F.count(F.when((score_col >= p90) & (score_col < p95), 1)).alias("borderline_p90_p95"),
+    F.count(F.when((score_col >= p95) & (score_col < p99), 1)).alias("flagged_p95_p99"),
+    F.count(F.when(score_col >= p99, 1)).alias("highly_anomalous_p99"),
+).first()
+
+print(f"Normal (<p90):                {percentile_ranges['normal_p90']:4d} ({percentile_ranges['normal_p90']/total*100:5.1f}%) ← Typical")
+print(f"Upper tail (p90-p95):         {percentile_ranges['borderline_p90_p95']:4d} ({percentile_ranges['borderline_p90_p95']/total*100:5.1f}%) ← Unusual")
+print(f"Top tail (p95-p99):           {percentile_ranges['flagged_p95_p99']:4d} ({percentile_ranges['flagged_p95_p99']/total*100:5.1f}%) ← Very unusual")
+print(f"Extreme (p99+):               {percentile_ranges['highly_anomalous_p99']:4d} ({percentile_ranges['highly_anomalous_p99']/total*100:5.1f}%) ← Extremely unusual")
+
+print(f"\nℹ️ Percentiles compare records within this dataset.")
+print(f"   p90~{p90:.3f}, p95~{p95:.3f}, p99~{p99:.3f} (top 10%, 5%, 1%)")
+print("   Percentile bands are for interpretation only; the threshold is the actual rule.")
+
 print(f"\n💡 What Do These Scores Mean?")
 print(f"   • Scores are based on how 'isolated' a record is from normal patterns")
-print(f"   • Low scores (0.0-0.4): Blends in with normal data (NOT flagged)")
-print(f"   • Borderline (0.4-0.6): Near the 0.60 threshold (NOT flagged)")
+print(f"   • Low scores (0.0-0.5): Blend in with normal data (NOT flagged)")
+print(f"   • Near-threshold (0.5-0.6): Close to 0.60 (NOT flagged)")
 print(f"   • High scores (≥0.6): Stands out as different (FLAGGED as anomalies)")
-print(f"   • This is NOT a probability - it's based on how many 'splits' are needed to isolate the record")
+print(f"   • This is NOT a probability - it is a relative unusualness score")
 print(f"   • The threshold (0.60) is tuned empirically, not a statistical significance level")
 
 
@@ -589,12 +613,12 @@ anomaly_stats = df_scored.filter(F.col("_info.anomaly.score") >= 0.6).agg(
 ).first()
 
 print("Normal Transactions (score < 0.60):")
-print(f"   Count: {normal_stats['count']} ({normal_stats['count']/df_scored.count()*100:.1f}%)")
+print(f"   Count: {normal_stats['count']} ({normal_stats['count']/total_scored*100:.1f}%)")
 print(f"   Avg Amount: ${normal_stats['avg_amount']:.2f}")
 print(f"   Avg Quantity: {normal_stats['avg_quantity']:.1f}")
 
 print("\nFlagged Anomalies (score ≥ 0.60):")
-print(f"   Count: {anomaly_stats['count']} ({anomaly_stats['count']/df_scored.count()*100:.1f}%)")
+print(f"   Count: {anomaly_stats['count']} ({anomaly_stats['count']/total_scored*100:.1f}%)")
 print(f"   Avg Amount: ${anomaly_stats['avg_amount']:.2f}")
 print(f"   Avg Quantity: {anomaly_stats['avg_quantity']:.1f}")
 
@@ -612,7 +636,7 @@ print("   • Anomalies should be ~5% with extreme or unusual patterns")
 # MAGIC
 # MAGIC The threshold controls which records get flagged as anomalies. It's like setting a "sensitivity dial":
 # MAGIC
-# MAGIC - **Lower threshold** (e.g., 0.4-0.5): More sensitive, flags more records as unusual
+# MAGIC - **Lower threshold** (e.g., 0.50-0.55): More sensitive, flags more records as unusual
 # MAGIC - **Higher threshold** (e.g., 0.65-0.75): Less sensitive, flags only very unusual records
 # MAGIC
 # MAGIC **The default of 0.60** was chosen through testing across various datasets. It balances:
@@ -634,21 +658,19 @@ print("🎚️  Testing Different Thresholds:\n")
 print("Threshold | Anomalies | % of Data | Interpretation")
 print("-" * 70)
 
-thresholds = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
-total_count = df_scored.count()
+thresholds = [0.5, 0.6, 0.7]
+total_count = total_scored
 
 for threshold in thresholds:
     anomaly_count = df_scored.filter(F.col("_info.anomaly.score") >= threshold).count()
     percentage = (anomaly_count / total_count) * 100
     
-    if threshold <= 0.3:
-        interpretation = "Very sensitive (many alerts)"
-    elif threshold <= 0.5:
-        interpretation = "Sensitive (many alerts)"
-    elif threshold <= 0.7:
-        interpretation = "Conservative (fewer alerts)"
+    if threshold <= 0.5:
+        interpretation = "Sensitive (more alerts)"
+    elif threshold <= 0.6:
+        interpretation = "Balanced (recommended)"
     else:
-        interpretation = "Very strict (critical only)"
+        interpretation = "Strict (fewer alerts)"
     
     print(f"   {threshold:.1f}   |   {anomaly_count:4d}    |  {percentage:5.1f}%  | {interpretation}")
 
@@ -664,11 +686,11 @@ print("     - Your risk tolerance (cost of missing an issue vs false alarm)")
 # COMMAND ----------
 
 # Let's look at borderline cases
-print("🔍 Examining Borderline Cases (scores 0.45-0.55):\n")
+print("🔍 Examining Borderline Cases (scores 0.50-0.60):\n")
 
 borderline = df_scored.filter(
-    (F.col("_info.anomaly.score") >= 0.45) & 
-    (F.col("_info.anomaly.score") <= 0.55)
+    (F.col("_info.anomaly.score") >= 0.50) & 
+    (F.col("_info.anomaly.score") <= 0.60)
 ).orderBy(F.col("_info.anomaly.score").desc())
 
 print(f"Found {borderline.count()} borderline transactions:\n")
@@ -918,13 +940,6 @@ dq_engine.apply_checks_and_save_in_table(
 good_df = spark.table(clean_table)
 bad_df = spark.table(quarantine_table)
 
-bad_df_with_metadata = bad_df.select(
-    "*",
-    F.current_timestamp().alias("quarantine_timestamp"),
-    F.lit("quality_check_failed").alias("quarantine_reason")
-)
-bad_df_with_metadata.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(quarantine_table)
-
 print(f"✅ Automatically saved clean and quarantined data using apply_checks_and_save_in_table():")
 print(f"   Clean records: {good_df.count()}")
 print(f"   Quarantined: {bad_df.count()}")
@@ -932,7 +947,11 @@ print(f"\n💡 Benefits of apply_checks_and_save_in_table():")
 print(f"   • Automatically routes failed checks to quarantine")
 print(f"   • Handles both anomalies AND rule violations")
 print(f"   • No manual filtering needed - just specify the checks!")
-print(f"\n📋 Access quarantined records:")
+print(f"\nTables created:")
+print(f"   Input: {table_name}")
+print(f"   Clean: {clean_table}")
+print(f"   Quarantine: {quarantine_table}")
+print(f"\n📋 Access quarantined records (includes DQX _errors/_warnings metadata):")
 print(f"   spark.table('{quarantine_table}')")
 
 
