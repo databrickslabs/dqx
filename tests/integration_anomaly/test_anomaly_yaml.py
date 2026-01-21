@@ -53,7 +53,7 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, shared_2d
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # Verify DQX metadata columns are added
@@ -101,7 +101,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     rows = result_df.collect()
@@ -156,7 +156,7 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # With high threshold (0.9), slightly unusual data should pass
@@ -195,7 +195,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, sha
         "transaction_id int, amount double, quantity double, discount double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # Verify DQX metadata is added (contributions are not added by metadata API)
@@ -233,7 +233,7 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, s
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # Should succeed without errors (drift detection is configured)
@@ -271,7 +271,7 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, share
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # With warn criticality, anomalies should be in warnings
@@ -303,7 +303,7 @@ def test_yaml_parsing_validation(spark: SparkSession):
         "amount double, quantity double",
     )
 
-    dq_engine = DQEngine(MagicMock(spec=WorkspaceClient))
+    dq_engine = DQEngine(MagicMock(spec=WorkspaceClient), spark)
 
     # Should raise error about missing columns
     with pytest.raises(Exception):  # May be TypeError or InvalidParameterError

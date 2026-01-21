@@ -41,7 +41,7 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -80,7 +80,7 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -119,7 +119,7 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -163,7 +163,7 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         # Standard DQX check
         DQRowRule(
@@ -229,7 +229,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
 
     checks = [
         DQDatasetRule(
@@ -264,7 +264,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
 
     checks = [
         DQDatasetRule(
@@ -304,7 +304,7 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -351,7 +351,7 @@ def test_info_column_structure(spark: SparkSession, mock_workspace_client, share
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -425,7 +425,7 @@ def test_info_column_with_contributions(spark: SparkSession, mock_workspace_clie
         "transaction_id int, amount double, quantity double, discount double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         DQDatasetRule(
             criticality="error",

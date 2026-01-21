@@ -57,7 +57,7 @@ def test_threshold_affects_flagging(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
 
     # Aggressive threshold (0.3) - flags more
     rule_aggressive = create_anomaly_dataset_rule(
@@ -154,7 +154,7 @@ def test_precision_recall_tradeoff(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
 
     # High threshold (low recall) - use helper
     rule_low_recall = create_anomaly_dataset_rule(
@@ -182,7 +182,7 @@ def test_threshold_edge_cases(spark, test_df_factory, mock_workspace_client, qui
 
     test_df = test_df_factory(spark)
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
 
     # Threshold 0.0 - flags everything - use helper
     rule_zero = create_anomaly_dataset_rule(model_name, registry_table, columns, score_threshold=0.0)
