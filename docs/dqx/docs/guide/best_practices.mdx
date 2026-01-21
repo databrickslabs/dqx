@@ -1,0 +1,229 @@
+---
+sidebar_position: 311
+---
+
+import Admonition from '@theme/Admonition';
+
+# Best Practices in Production
+
+This page provides practical guidance and best practices for using DQX in production, ensuring reliable, scalable, and maintainable data quality validation across your data pipelines and datasets.
+
+## Management of Data Quality Rules
+
+### Store checks in a Delta table
+
+DQX offers built-in support for storing and retrieving data quality rules (checks) from various storage backends such as Delta tables, YAML or JSON files, and others.
+It is recommended to maintain checks in a Delta table to centralize data quality checks across tables, improve maintainability and discoverability.
+
+```python
+# load checks from Delta table
+checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table"))
+
+# save checks to Delta table
+dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table", mode="overwrite"))
+```
+
+See more in [Storing Checks](/docs/guide/quality_checks_storage/).
+
+### Ensure Proper Governance of Checks Storage
+
+DQX rules directly influence data quality and, when applied to data in transit, can also impact pipeline behavior. Unauthorized or accidental changes to rules tables can have a significant downstream impact. For this reason, it is critical to enforce strong access controls and governance on all tables used to store data quality checks.
+
+**Recommended access control practices:**
+* Grant read-only access to business users and data engineers who need visibility into rules but should not modify them.
+* Restrict write and update privileges to tightly controlled groups or preferably service principals.
+* Modify rules only through approved workflows executed by a service principal, rather than allowing ad-hoc SQL updates to rules tables.
+* Avoid direct DML access (INSERT, UPDATE, DELETE) on rules tables outside of governed deployment or CI/CD processes.
+
+**Segregation and governance:**
+* Align rule storage and access patterns with enterprise security and compliance standards.
+* Maintain separate rules tables to prevent unauthorized cross-domain changes and align access with organizational structure, e.g.
+  * Domain or data product to reflect business boundaries
+  * Team ownership to align with ownership
+  * Environment (dev, test, prod) to prevent accidental cross-environment changes
+
+### Use a common set of checks for groups of tables
+
+Define reusable rule sets that apply to multiple related tables (e.g. tables belonging to the same domain, data product or schema).
+Complement these with specific checks for individual tables to capture specialized requirements.
+This helps minimize duplication while ensuring domain-specific validations are properly enforced.
+
+```python
+sales_checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="sales"))
+orders_checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.sales.orders"))
+all_checks = sales_checks + orders_checks
+```
+
+See more in [Storing Checks](/docs/guide/quality_checks_storage/).
+
+Leverage the `run_config_name` parameter to organize and retrieve checks based on table groups or individual tables.
+
+### Use Rules with Appropriate Granularity
+
+Prioritize row-level checks as they provide the best performance and granularity (check data quality of individual rows).
+Dataset-level rules are applied to group of rows and are valuable for aggregates and cross-record relationships, but should be used to supplement row-level rules.
+
+See more in [Quality Checks](/docs/reference/quality_checks/).
+
+### Use Rule Types that best fit the Purpose
+
+DQX supports different categories of quality checks. Use them appropriately:
+* Rule-based checks: deterministic rules that use built-in or custom checks rule functions.
+* AI-assisted checks: leverage probabilistic LLM-driven suggestions for creating rule-based business or technical checks using natural language as input.
+* Anomaly detection: useful for identifying outliers that are not covered by explicit rule-based checks.
+* Profiler-generated checks: use profiling to bootstrap an initial set of deterministic rule-based checks.
+
+See more in [Quality Checks](/docs/reference/quality_checks/).
+
+### Prioritize high-impact fields
+
+Focus your data quality efforts on the fields that matter most for business outcomes and downstream processes:
+* Critical business keys and identifiers (e.g., order_id, customer_id)
+* Timestamps and date fields used in analytics or SLAs
+* Columns used in joins, aggregations, or financial calculations
+* Columns with known historical quality issues that have caused problems in the past
+* Columns required to meet regulatory or compliance standards
+* Columns that directly impact customer experience or operational efficiency
+* Columns with high usage frequency in reports or dashboards
+* Columns that matter to the business
+* Liquid clustering, Z-ordering, or partition columns
+
+This ensures that quality checks focus on business-critical data, reduces noise from low-value validations, and simplifies maintenance by limiting the number of checks to manage.
+
+### Increase Rules Reuse with Custom Checks
+
+Avoid duplicating complex SQL expressions (`sql_expression` check function) across multiple rules.
+When the same validation logic needs to be applied across multiple tables, encapsulate it in a custom rule function rather than copy-pasting SQL expressions.
+This will improve maintainability and consistency across your data quality checks.
+
+See more in [Custom Quality Checks](/docs/reference/quality_checks/#creating-custom-row-level-checks).
+
+### Profile and Tune Rules over Time
+
+Bootstrap rule candidates:
+* Use the profiler to generate initial quality rules for new datasets and periodically re-profile existing datasets to detect changes or shifts in data distributions.
+* Leverage AI-assisted quality rule generation to translate technical or business requirements expressed in natural language into DQX-specific rules, accelerating rule creation.
+
+Continuously refine and tune rules:
+* Monitor data quality metrics (pass/fail rates, trends, and anomalies) to identify areas for improvement and reduce false positives while maintaining strong coverage.
+* Add or tune checks (e.g. update thresholds) immediately when production issues are detected, preventing recurring data failures.
+* Retire or relax obsolete rules as business logic or data evolves. Maintain versioning to track the history and evolution of rules.
+
+See more in [Profiling Guide](/docs/guide/data_profiling/) and [AI-Assisted Rules Generation](/docs/guide/ai_assisted_quality_checks_generation).
+
+### Consumer-Specific Rules
+
+Different consumers of the same data may have different quality expectations.
+For "gold" layer tables, you may want to define different sets of rules depending on the downstream applications (e.g. reporting, ML, data science).
+
+## Usage
+
+### Workflows vs Embedded Usage
+
+DQX offers different execution modes. Choose the one that best fits your use case:
+* Workflows for no-code data quality validation run as a background process. Suitable for post-factum monitoring only on already persisted data. Provides ease of use and quick setup, but limited flexibility.
+* Embedded usage for integrating data quality checks directly into your data pipelines. Suitable for in-transit and real-time validation during data processing. It can also be used for post-factum monitoring. Offers the best flexibility and control, but requires coding.
+
+See more in [Getting Started](/docs/guide/).
+
+### Actions on Quality Checks Failures
+
+Quarantine or Flag based on criticality:
+* For critical data, quarantine bad records (use functions with split, e.g. `apply_checks_and_split`) so they are not propagated downstream. This allows for targeted remediation (curation) of low-quality data.
+* For non-critical data, flag records (e.g. use functions without split, e.g. `apply_checks`), but allow progress with alerts or downstream monitoring.
+
+See more in [Applying Quality Checks Guide](/docs/guide/quality_checks_apply/).
+
+### Apply All Checks in One Pass
+
+For optimal performance and scalability, apply all relevant quality checks for a given DataFrame or table in a single execution pass.
+Avoid multiple sequential quality runs on the same dataset unless strictly required.
+* Quality checks are executed in a distributed manner across the Spark cluster, so grouping them minimizes redundant scans.
+* Running checks together reduces compute cost and improves overall pipeline efficiency.
+* You can group different types of checks (row-level + dataset-level + anomaly detection) and apply them at once for maximum efficiency.
+
+Example:
+```python
+# load checks for the table
+checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table"))
+
+# apply all checks in one pass
+results = dq_engine.apply_checks(df, checks)
+```
+
+### Scale Checks Across Multiple Tables
+
+When applying similar quality rules to multiple tables, use DQX methods designed for multi-table execution.
+Use built-in DQX apply methods that support applying checks across multiple tables in a single call (e.g., `apply_checks_and_save_in_tables` or `apply_checks_and_save_in_tables_for_patterns`).
+
+See more in [Applying Checks on Multiple Tables](/docs/guide/quality_checks_apply/#applying-checks-on-multiple-tables).
+
+### Implement Alerting and set up Data Quality Dashboards
+
+Establish Service Level Agreements (SLAs) for critical data quality metrics such as the percentage of rows passing key checks, and configure automated alerts to notify teams when SLAs are breached.
+This ensures that data quality issues are detected and addressed promptly.
+
+Monitor and track quality trends:
+* Leverage [DQX Dashboards](/docs/guide/quality_dashboard) for ongoing visibility into data quality metrics
+* Use the [Summary Metrics](/docs/guide/summary_metrics/) table provided by DQX to capture aggregate statistics from data quality checking. This enables you to track data quality trends over time and gain insights into data quality across all tables.
+
+## Deployment
+
+### Version Rules and Automated Deployment
+
+Deploy checks across environments systematically:
+* Check rules into Git and deploy them as Delta tables.
+* Align deployment of DQX checks with your pipeline release process (e.g. using Databricks Assets Bundle).
+* Use environment-specific configs when promoting checks from dev → qa → prod.
+* Treat data quality rules as living assets: version them, review them regularly, and evolve them alongside the data products they protect.
+
+Version your rules to track changes over time and ensure reproducibility. Leverage `user_metadata` or `run_config_name` to tag rules with version information.
+To improve traceability, you can include the location of the checks definition in the `user_metadata` of each rule.
+
+```python
+# version individual rules
+checks = """
+- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: col1
+  user_metadata:
+    version: v1
+    location: catalog.schema.checks_table
+"""
+
+# version rules set
+dq_engine.save_checks(
+    checks,
+    config=TableChecksStorageConfig(
+      location="catalog.schema.checks_table",
+      run_config_name="main.default.input_table_v1",
+      mode="overwrite"
+  )
+)
+```
+
+See more in [Installation](/docs/installation/).
+
+### Pin DQX Version
+
+To ensure consistent behavior and avoid unexpected issues from automatic upgrades, always pin DQX to a specific version when installing:
+* Pip installation: `pip install databricks-labs-dqx==0.9.3`
+* Databricks CLI: `databricks labs install dqx@v0.9.3`
+
+<Admonition type="warning" title="Upgrades">
+Review breaking changes before upgrading to avoid disruptions. See `BREAKING CHANGES!` section in [Releases](https://github.com/databrickslabs/dqx/releases).
+Always test upgrades in a non-production environment first.
+</Admonition>
+
+### Test Rules in Lower Environments
+
+Avoid production disruptions by validating new or updated rules in dev/test environments before deployment to production.
+Use sample or synthetic datasets to test edge cases and confirm rule behavior. For critical checks, incorporate automated regression tests.
+
+### Use Custom Installation Folder for Workflows
+
+Use a custom installation folder for workflows to isolate DQX dependencies from other processes in your environment.
+
+See more in [Installation](/docs/installation/).

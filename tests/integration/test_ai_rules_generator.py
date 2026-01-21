@@ -94,7 +94,10 @@ def test_generate_dq_rules_ai_assisted_with_custom_functions(ws, spark):
 
     custom_check_functions = {"not_ends_with_suffix": not_ends_with_suffix}
 
-    user_input = USER_INPUT + "\nEmail address must not end with '@gmail.com'. Use not_ends_with_suffix function."
+    user_input = USER_INPUT + (
+        "\nEmail address must not end with '@gmail.com'. "
+        "Use not_ends_with_suffix function and don't add any extra quotes for suffix."
+    )
 
     generator = DQGenerator(ws, spark, custom_check_functions=custom_check_functions)
     actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
@@ -131,7 +134,7 @@ def test_generate_dq_rules_ai_assisted_with_is_not_equal_to_str(ws, spark):
 
 
 def test_generate_dq_rules_ai_assisted_with_sql_expression(ws, spark):
-    user_input = "Users email must not end with @gmail.com checked using sql expression, skip msg."
+    user_input = "Users email must not end with @gmail.com checked using sql expression with 'NOT LIKE', skip msg."
 
     generator = DQGenerator(ws, spark)
     actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)

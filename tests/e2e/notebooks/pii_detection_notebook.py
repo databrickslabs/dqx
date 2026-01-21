@@ -33,8 +33,13 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
+import yaml
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.rule import DQRowRule
 import pyspark.sql.functions as F
 from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
+from databricks.labs.dqx.check_funcs import is_not_null
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
 from chispa import assert_df_equality
 
@@ -222,3 +227,75 @@ def test_does_not_contain_pii_with_custom_nlp_config_dict():
     assert_df_equality(actual, expected, transforms=transforms)
 
 test_does_not_contain_pii_with_custom_nlp_config_dict()
+
+# COMMAND ----------
+# DBTITLE 1,test_does_not_contain_pii_apply_checks_by_metadata_and_split
+
+def test_does_not_contain_pii_apply_checks_by_metadata_and_split():
+    checks = yaml.safe_load("""
+    - criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          column: val
+    - criticality: error
+      check:
+        function: does_not_contain_pii
+        arguments:
+          column: val
+    """)
+
+    # Initialize the DQX engine:
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Create some sample data:
+    data = [
+        ["My name is John Smith"],
+        ["The sky is blue, road runner"],
+        ["Jane Smith sent an email to sara@info.com"],
+        [None],
+    ]
+    df = spark.createDataFrame(data, "val string")
+
+    # Run the checks and display the output:
+    valid_df, invalid_df = dq_engine.apply_checks_by_metadata_and_split(df, checks)
+    assert valid_df.count() == 1
+    assert invalid_df.count() == 3
+
+test_does_not_contain_pii_apply_checks_by_metadata_and_split()
+
+# COMMAND ----------
+# DBTITLE 1,test_does_not_contain_pii_apply_checks_and_split
+
+def test_does_not_contain_pii_apply_checks_and_split():
+    checks = [
+        DQRowRule(
+            criticality="error",
+            check_func=is_not_null,
+            column="val",
+        ),
+        DQRowRule(
+            criticality="error",
+            check_func=does_not_contain_pii,
+            column="val",
+        )
+    ]
+
+    # Initialize the DQX engine:
+    dq_engine = DQEngine(WorkspaceClient())
+
+    # Create some sample data:
+    data = [
+        ["My name is John Smith"],
+        ["The sky is blue, road runner"],
+        ["Jane Smith sent an email to sara@info.com"],
+        [None],
+    ]
+    df = spark.createDataFrame(data, "val string")
+
+    # Run the checks and display the output:
+    valid_df, invalid_df = dq_engine.apply_checks_and_split(df, checks)
+    assert valid_df.count() == 1
+    assert invalid_df.count() == 3
+
+test_does_not_contain_pii_apply_checks_and_split()

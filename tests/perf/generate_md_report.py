@@ -24,7 +24,7 @@ data = json.loads(baseline_path.read_text())
 lines = []
 lines.append("---\n")
 lines.append("title: Benchmarks\n")
-lines.append("sidebar_position: 13\n")
+lines.append("sidebar_position: 507\n")
 lines.append("---\n")
 
 lines.append("# Performance Benchmarks Report\n")
