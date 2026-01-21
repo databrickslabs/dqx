@@ -3,6 +3,7 @@ import os
 import logging
 from concurrent import futures
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any
@@ -346,24 +347,28 @@ class DQEngineCore(DQEngineCoreBase):
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
 
-    def _preselect_schema_validation_columns(self, df: DataFrame, checks: list[DQRule]) -> list[DQRule]:
-        """Determine columns for schema validation checks."""
-        for check in checks:
-            if check.check_func is not check_funcs.has_valid_schema:
-                continue
+    def _preselect_schema_validation_columns(self, df: DataFrame, check: DQRule) -> DQRule:
+        """
+        Determines the selected columns for schema validation checks. This is required when using `has_valid_schema` to
+        ignore columns added during quality checking. This includes:
+        * DQX result columns (e.g. '_warnings' and '_errors')
+        * Internal columns used for aggregate checks
 
-            # Default columns to all columns of the current DataFrame if not explicitly set
-            if not check.check_func_kwargs.get("columns"):
-                check.check_func_kwargs["columns"] = [
-                    col for col in df.columns if col not in set(self._result_column_names.values())
-                ]
-                # Clear cached rule check so the updated columns are used when evaluating.
-                try:
-                    object.__delattr__(check, "check")
-                except AttributeError:
-                    pass
+        Args:
+            df: Input DataFrame
+            check: DQRule to be modified
+        """
 
-        return checks
+        # Default columns to all columns of the current DataFrame if not explicitly set
+        if check.check_func_kwargs.get("columns"):
+            return check
+
+        if check.check_func_args and len(check.check_func_args) >= 3:
+            return check
+
+        rule_kwargs = check.check_func_kwargs.copy()
+        rule_kwargs["columns"] = [col for col in df.columns if col not in set(self._result_column_names.values())]
+        return replace(check, check_func_kwargs=rule_kwargs)
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of DataFrame.
@@ -405,13 +410,17 @@ class DQEngineCore(DQEngineCoreBase):
             empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
             return df.select("*", empty_result)
 
-        checks = self._preselect_schema_validation_columns(df, checks)
         check_conditions = []
         current_df = df
 
         for check in checks:
+            normalized_check = (
+                self._preselect_schema_validation_columns(df, check)
+                if check.check_func is check_funcs.has_valid_schema
+                else check
+            )
             manager = DQRuleManager(
-                check=check,
+                check=normalized_check,
                 df=current_df,
                 spark=self.spark,
                 run_id=self.run_id,
