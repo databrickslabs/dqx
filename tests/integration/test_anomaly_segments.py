@@ -7,7 +7,8 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly import has_no_anomalies, check_funcs as anomaly_check_funcs
+from databricks.labs.dqx.anomaly.trainer import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 
@@ -126,8 +127,6 @@ def test_segment_scoring(
     )
 
     # Avoid worker-side failures for empty segments in driver-only mode.
-    from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
-
     anomaly_check_funcs.set_driver_only_for_tests(False)
     result = dq_engine.apply_checks(test_df, [check])
 
@@ -177,6 +176,7 @@ def test_multi_column_segments(
         segment_by=["region", "product_type"],
         model_name=f"test_multi_segments_{suffix}",
         registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        params=AnomalyParams(sample_fraction=1.0),
     )
 
     # Verify 4 segment models created (2 regions × 2 products)

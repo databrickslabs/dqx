@@ -201,9 +201,9 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
 
     # Normal row: should not fail is_not_null
     if rows[0]["_errors"]:
-        assert not any(_has_is_not_null_error(err) for err in rows[0]["_errors"]), (
-            f"Normal row has is_not_null error: {rows[0]['_errors']}"
-        )
+        assert not any(
+            _has_is_not_null_error(err) for err in rows[0]["_errors"]
+        ), f"Normal row has is_not_null error: {rows[0]['_errors']}"
 
     # Null row: has is_not_null error
     assert rows[1]["_errors"] is not None
@@ -212,9 +212,9 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
 
     # Anomaly row: should not fail is_not_null
     if rows[2]["_errors"]:
-        assert not any(_has_is_not_null_error(err) for err in rows[2]["_errors"]), (
-            f"Anomaly row has is_not_null error: {rows[2]['_errors']}"
-        )
+        assert not any(
+            _has_is_not_null_error(err) for err in rows[2]["_errors"]
+        ), f"Anomaly row has is_not_null error: {rows[2]['_errors']}"
 
 
 def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d_model):
