@@ -542,9 +542,6 @@ def anomaly_registry_prefix(anomaly_registry_schema):
 @pytest.fixture
 def shared_2d_model(ws, spark, make_schema, make_random):
     """Function-scoped 2D anomaly model for testing."""
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
-
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
     model_name = f"test_2d_{suffix}"
@@ -568,9 +565,6 @@ def shared_2d_model(ws, spark, make_schema, make_random):
 @pytest.fixture
 def shared_3d_model(ws, spark, make_schema, make_random):
     """Function-scoped 3D anomaly model for testing."""
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
-
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
     model_name = f"test_3d_{suffix}"
@@ -594,9 +588,6 @@ def shared_3d_model(ws, spark, make_schema, make_random):
 @pytest.fixture
 def shared_4d_model(ws, spark, make_schema, make_random):
     """Function-scoped 4D anomaly model for testing."""
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
-
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
     model_name = f"test_4d_{suffix}"
@@ -646,9 +637,6 @@ def test_df_factory():
 @pytest.fixture
 def anomaly_scorer():
     """Helper to score DataFrames with anomaly check."""
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
-
     def _score(
         test_df,
         model_name: str,
@@ -688,9 +676,6 @@ def quick_model_factory(ws, spark, make_random, make_schema):
 
     Returns a callable that accepts spark and training parameters.
     """
-    if not HAS_ANOMALY:
-        pytest.skip("Anomaly extras not installed")
-
     def _train(
         session,
         train_size: int = 50,
