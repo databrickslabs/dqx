@@ -59,9 +59,6 @@ def product_info():
 @pytest.fixture
 def anomaly_engine(ws, spark):
     """Provide an AnomalyEngine instance for tests."""
-    if not HAS_ANOMALY_EXTRAS:
-        pytest.skip("Anomaly extras not installed")
-
     return AnomalyEngine(ws, spark)
 
 

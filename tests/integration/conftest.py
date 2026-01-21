@@ -637,6 +637,7 @@ def test_df_factory():
 @pytest.fixture
 def anomaly_scorer():
     """Helper to score DataFrames with anomaly check."""
+
     def _score(
         test_df,
         model_name: str,
@@ -676,6 +677,7 @@ def quick_model_factory(ws, spark, make_random, make_schema):
 
     Returns a callable that accepts spark and training parameters.
     """
+
     def _train(
         session,
         train_size: int = 50,
