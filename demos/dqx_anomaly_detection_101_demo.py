@@ -30,7 +30,7 @@
 # MAGIC
 # MAGIC These are issues **you can anticipate** and write rules for:
 # MAGIC
-# MAGIC | Issue Type | Example | Solution |
+# MAGIC | Issue Type | Example | DQX Rule |
 # MAGIC |------------|---------|----------|
 # MAGIC | Null values | `amount` is NULL | `is_not_null(column="amount")` |
 # MAGIC | Out of range | Price is negative | `is_in_range(column="price", min=0)` |
@@ -73,27 +73,30 @@
 # MAGIC
 # MAGIC #### Built-in Quality Monitoring (Unity Catalog)
 # MAGIC
-# MAGIC Unity Catalog includes **table-level** anomaly detection:
-# MAGIC - Monitors column statistics and distributions
-# MAGIC - Alerts on schema changes, cardinality shifts
-# MAGIC - Tracks null rate changes over time
-# MAGIC - Great for monitoring table health
+# MAGIC Unity Catalog includes **table-level** anomaly detection by analyzing table metadata and state:
+# MAGIC - Monitors table freshness by analyzing the history of table commits.
+# MAGIC - Monitors table completeness by tracking historical row counts and alerts if the current row count falls outside the predicted range.
+# MAGIC - Focuses on row count and commit timing metrics, but not table content (data).
+# MAGIC - Great for monitoring table health for completeness and freshness.
+# MAGIC
+# MAGIC More [here](https://docs.databricks.com/aws/en/data-quality-monitoring/).
 # MAGIC
 # MAGIC #### When to Use DQX Anomaly Detection
 # MAGIC
-# MAGIC DQX provides **row-level** anomaly detection:
-# MAGIC - Detect unusual individual **records/transactions**
+# MAGIC DQX provides **row-level** anomaly detection by analyzing the actual data content:
+# MAGIC - **Detects unusual patterns in individual records/transactions** by analyzing the data content across the dataset.
+# MAGIC - **Provides row-level anomaly reporting** with a detailed log identifying the specific records or transactions flagged as anomalous.
 # MAGIC - **Multi-column pattern** detection (e.g., price + quantity + time)
 # MAGIC - **Custom models per segment** (e.g., different regions, categories)
 # MAGIC - **Feature contributions** to understand WHY records are anomalous
-# MAGIC - **Integration** with existing DQX quality pipelines
+# MAGIC - **Integrated** and executable with other DQX quality rules types
 # MAGIC
 # MAGIC #### Complementary Approach
 # MAGIC
 # MAGIC ```
 # MAGIC ┌─────────────────────────────────────────────────────────┐
 # MAGIC │  Rule-Based Checks (Known Unknowns)                     │
-# MAGIC │  • is_not_null, is_in_range, regex validation          │
+# MAGIC │  • is_not_null, is_in_range, regex validation           │
 # MAGIC │  • Schema validation, referential integrity             │
 # MAGIC └─────────────────────────────────────────────────────────┘
 # MAGIC                            +
@@ -104,22 +107,21 @@
 # MAGIC │  DQX: Row-level anomaly detection                       │
 # MAGIC └─────────────────────────────────────────────────────────┘
 # MAGIC                            +
-# MAGIC ┌─────────────────────────────────────────────────────────┐
-# MAGIC │  Unity Catalog Monitoring (Table Health)                │
-# MAGIC │  • Schema drift, cardinality changes                    │
-# MAGIC │  • Column statistics, metadata tracking                 │
-# MAGIC │  UC: Table freshness and completeness                   │
-# MAGIC └─────────────────────────────────────────────────────────┘
+# MAGIC ┌───────────────────────────────────────────────────────────────┐
+# MAGIC │  Unity Catalog Monitoring (Table Health)                      │
+# MAGIC │  • Metadata and table state tracking (e.g. commits, row count)│
+# MAGIC │  Table freshness and completeness for Unity Catalog tables    │
+# MAGIC └───────────────────────────────────────────────────────────────┘
 # MAGIC ```
 # MAGIC
 # MAGIC ### Key Takeaways
 # MAGIC
-# MAGIC - 💡 **Anomaly detection finds issues you didn't know to look for**
+# MAGIC - 💡 **Anomaly detection finds issues in the data you didn't know to look for**
 # MAGIC - 💡 **Complements (doesn't replace) rule-based checks - use both!**
-# MAGIC - 💡 **Unity Catalog monitors table freshness and completeness, DQX monitors data inside the tables**
+# MAGIC - 💡 **Unity Catalog monitors table freshness and completeness of tables, DQX monitors data inside the tables**
 # MAGIC - 💡 **Together, they provide comprehensive quality coverage**
 # MAGIC
-# MAGIC Let's see how easy it is to add anomaly detection to your pipeline! 🚀
+# MAGIC Let's see how easy it is to add DQX anomaly detection to your pipeline! 🚀
 # MAGIC
 
 # COMMAND ----------
@@ -160,7 +162,7 @@ else:
 
 # Configure widgets for catalog and schema
 dbutils.widgets.text("demo_catalog", "main", "Catalog Name")
-dbutils.widgets.text("demo_schema", "dqx_demo", "Schema Name")
+dbutils.widgets.text("demo_schema", "default", "Schema Name")
 
 
 # COMMAND ----------
@@ -170,7 +172,7 @@ dbutils.widgets.text("demo_schema", "dqx_demo", "Schema Name")
 # MAGIC
 # MAGIC ## Configuration: Catalog and Schema
 # MAGIC
-# MAGIC Configure where to store demo data and models. By default, uses `main` catalog and `dqx_demo` schema.
+# MAGIC Configure where to store demo data and models. By default, uses `main` catalog and `default` schema.
 # MAGIC You can change these using the widgets above if needed.
 # MAGIC
 # MAGIC ---
@@ -183,7 +185,6 @@ dbutils.widgets.text("demo_schema", "dqx_demo", "Schema Name")
 # COMMAND ----------
 
 # Imports
-from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import *
 from datetime import datetime, timedelta
@@ -192,22 +193,21 @@ import numpy as np
 
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
 from databricks.labs.dqx.check_funcs import is_not_null, is_in_range
 from databricks.sdk import WorkspaceClient
 
 # Initialize
-spark = SparkSession.builder.getOrCreate()
 ws = WorkspaceClient()
 anomaly_engine = AnomalyEngine(ws)
 dq_engine = DQEngine(ws)
 
-# Set seeds for reproducibility
+# Set seeds for reproducibility for demo purposes
 random.seed(42)
 np.random.seed(42)
 
 print("✅ Setup complete!")
-print(f"   Spark version: {spark.version}")
 
 
 # COMMAND ----------
@@ -342,9 +342,6 @@ schema_name = dbutils.widgets.get("demo_schema")
 print(f"📂 Using catalog: {catalog}")
 print(f"📂 Using schema: {schema_name}\n")
 
-# Create schema if it doesn't exist
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog}.{schema_name}")
-
 # Save data to table
 table_name = f"{catalog}.{schema_name}.sales_transactions"
 df_sales.write.mode("overwrite").saveAsTable(table_name)
@@ -368,7 +365,7 @@ print(f"✅ Registry ready for new models")
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 2: Combined Quality Checks - Rule-Based + ML Anomaly Detection
+# MAGIC ## Section 2: Combined Quality Checks: Rule-Based + ML Anomaly Detection
 # MAGIC
 # MAGIC Let's build a comprehensive quality pipeline that combines:
 # MAGIC 1. **Rule-based checks** (known unknowns): nulls, ranges, formats
@@ -379,9 +376,9 @@ print(f"✅ Registry ready for new models")
 # MAGIC - Auto-detect if segmentation is needed (e.g., separate models per region)
 # MAGIC - Train ensemble models (2 models by default for robustness)
 # MAGIC - Score all transactions with both rule-based AND anomaly checks
-# MAGIC - Provide feature contributions to explain WHY records are flagged
+# MAGIC - Provide feature contributions to explain WHY records are flagged as anomalous
 # MAGIC
-# MAGIC **You provide**: Just the data and rules  
+# MAGIC **You provide**: Just the data and rules of your choice 
 # MAGIC **DQX provides**: Everything else, optimized for performance!
 # MAGIC
 
@@ -487,14 +484,17 @@ checks_combined = [
 ]
 
 df_scored = dq_engine.apply_checks(df_sales, checks_combined)
-
-# Get records flagged as anomalies
-anomalies = df_scored.filter(F.size(F.col("_errors")) > 0)
+error_count = F.coalesce(F.size(F.col("_errors")), F.lit(0))
+anomalies = df_scored.filter(error_count > 0)
+df_valid = df_scored.filter(error_count == 0)
 
 print(f"✅ Quality checks complete!")
 print(f"\n📊 Results:")
-print(f"   Total transactions: {df_scored.count()}")
-print(f"   Anomalies found: {anomalies.count()} ({(anomalies.count() / df_scored.count()) * 100:.1f}%)")
+print(f"   Total transactions: {df_sales.count()}")
+print(f"   Anomalies found: {anomalies.count()} ({(anomalies.count() / df_sales.count()) * 100:.1f}%)")
+print("ℹ️  Each record receives an anomaly score.")
+print("   The score threshold decides whether a record is flagged as anomalous.")
+print("   Even records that are not flagged still get a score for analysis.")
 print(f"\n🔝 Top 10 anomalies:\n")
 
 display(anomalies.orderBy(F.col("_info.anomaly.score").desc()).select(
@@ -621,6 +621,9 @@ print("   • Anomalies should be ~5% with extreme or unusual patterns")
 # MAGIC
 # MAGIC **Remember**: This is NOT a statistical confidence level! It's a cutoff on the "isolation score" that determines what's unusual enough to investigate.
 # MAGIC
+# MAGIC **Important**: We already computed scores for every record. You can change the threshold and re-filter the
+# MAGIC results without re-running the anomaly check.
+# MAGIC
 # MAGIC Let's see how changing the threshold affects results!
 # MAGIC
 
@@ -731,7 +734,7 @@ display(
 
 print(f"\n💡 Key Differences:")
 print(f"   • Auto model: Discovered columns automatically + may have segmentation")
-print(f"   • Manual model: You explicitly chose 3 columns (amount, quantity, date)")
+print(f"   • Manual model: You explicitly chose 3 columns (amount, quantity)")
 print(f"\n💡 When to use each approach:")
 print(f"   • Auto-discovery: Exploration, quick start, don't know what matters")
 print(f"   • Manual selection: Production, control features, domain knowledge")
@@ -901,11 +904,20 @@ else:
 # Automatically separate clean data from anomalies
 print("📦 Separating clean data from anomalies...\n")
 
-# Split data into good and bad records
-good_df, bad_df = dq_engine.apply_checks_and_split(df_sales, checks_combined)
-
-# Save quarantined records (anomalies + rule violations)
+# Save clean and quarantined records using the built-in helper
+clean_table = f"{catalog}.{schema_name}.sales_transactions_clean"
 quarantine_table = f"{catalog}.{schema_name}.sales_anomalies_quarantine"
+
+dq_engine.apply_checks_and_save_in_table(
+    checks=checks_combined,
+    input_config=InputConfig(location=table_name),
+    output_config=OutputConfig(location=clean_table, mode="overwrite"),
+    quarantine_config=OutputConfig(location=quarantine_table, mode="overwrite"),
+)
+
+good_df = spark.table(clean_table)
+bad_df = spark.table(quarantine_table)
+
 bad_df_with_metadata = bad_df.select(
     "*",
     F.current_timestamp().alias("quarantine_timestamp"),
@@ -913,10 +925,10 @@ bad_df_with_metadata = bad_df.select(
 )
 bad_df_with_metadata.write.mode("overwrite").saveAsTable(quarantine_table)
 
-print(f"✅ Automatically split data using apply_checks_and_split():")
+print(f"✅ Automatically saved clean and quarantined data using apply_checks_and_save_in_table():")
 print(f"   Clean records: {good_df.count()}")
 print(f"   Quarantined: {bad_df.count()}")
-print(f"\n💡 Benefits of apply_checks_and_split():")
+print(f"\n💡 Benefits of apply_checks_and_save_in_table():")
 print(f"   • Automatically routes failed checks to quarantine")
 print(f"   • Handles both anomalies AND rule violations")
 print(f"   • No manual filtering needed - just specify the checks!")
@@ -953,33 +965,6 @@ print(f"   • Production-ready out-of-the-box!")
 # MAGIC ---
 # MAGIC
 # MAGIC ## Summary & Next Steps
-# MAGIC
-# MAGIC ### 🎓 What You Learned
-# MAGIC
-# MAGIC 1. **✅ Anomaly Detection Concepts**
-# MAGIC    - Known unknowns (rule-based checks) vs Unknown unknowns (ML anomaly detection)
-# MAGIC    - Unity Catalog monitors tables, DQX monitors individual records
-# MAGIC    - Use both approaches together for comprehensive quality
-# MAGIC
-# MAGIC 2. **✅ Zero-Config Quick Start**
-# MAGIC    - Train models with auto-discovery (no column selection needed)
-# MAGIC    - Score data with one function call
-# MAGIC    - Detect unusual patterns automatically
-# MAGIC
-# MAGIC 3. **✅ Interpret Results**
-# MAGIC    - Anomaly scores range 0-1 (0.5 threshold)
-# MAGIC    - Adjust threshold based on precision/recall needs
-# MAGIC    - Compare normal vs anomalous patterns
-# MAGIC
-# MAGIC 4. **✅ Control & Tune**
-# MAGIC    - Manual column selection for production
-# MAGIC    - Threshold tuning for sensitivity
-# MAGIC    - Feature contributions for investigation
-# MAGIC
-# MAGIC 5. **✅ Production Integration**
-# MAGIC    - Quarantine workflow for anomalies
-# MAGIC    - Combine with traditional DQ checks
-# MAGIC    - Easy integration with existing pipelines
 # MAGIC
 # MAGIC ### 💡 Key Takeaways
 # MAGIC
