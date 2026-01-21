@@ -644,7 +644,7 @@ for threshold in thresholds:
     if threshold <= 0.3:
         interpretation = "Very sensitive (many alerts)"
     elif threshold <= 0.5:
-        interpretation = "Balanced (recommended start)"
+        interpretation = "Sensitive (many alerts)"
     elif threshold <= 0.7:
         interpretation = "Conservative (fewer alerts)"
     else:
@@ -923,7 +923,7 @@ bad_df_with_metadata = bad_df.select(
     F.current_timestamp().alias("quarantine_timestamp"),
     F.lit("quality_check_failed").alias("quarantine_reason")
 )
-bad_df_with_metadata.write.mode("overwrite").saveAsTable(quarantine_table)
+bad_df_with_metadata.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(quarantine_table)
 
 print(f"✅ Automatically saved clean and quarantined data using apply_checks_and_save_in_table():")
 print(f"   Clean records: {good_df.count()}")
