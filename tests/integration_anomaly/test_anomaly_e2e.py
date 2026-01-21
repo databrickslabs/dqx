@@ -66,7 +66,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table, ["amount", "quantity"])
     checks = [
         DQDatasetRule(
@@ -116,7 +116,7 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     threshold = 1.0
     checks = [
         DQDatasetRule(
@@ -176,7 +176,7 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, ma
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     threshold = 1.0
     checks = [
         DQDatasetRule(
@@ -232,7 +232,7 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table, ["amount", "quantity"])
     checks = [
         DQDatasetRule(
@@ -337,7 +337,7 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
         "transaction_id int, amount double, quantity double, discount double, weight double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     threshold = get_percentile_threshold_from_data(
         train_df, model_name, registry_table, ["amount", "quantity", "discount", "weight"]
     )

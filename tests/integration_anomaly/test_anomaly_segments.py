@@ -112,7 +112,7 @@ def test_segment_scoring(
     ]
     test_df = spark.createDataFrame(test_data, "row_id int, region string, amount double")
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     check = DQDatasetRule(
         criticality="error",
         check_func=has_no_anomalies,
@@ -221,7 +221,7 @@ def test_unknown_segment_handling(
     ]
     test_df = spark.createDataFrame(test_data, "row_id int, region string, amount double")
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     check = DQDatasetRule(
         criticality="error",
         check_func=has_no_anomalies,

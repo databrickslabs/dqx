@@ -55,7 +55,7 @@ def test_drift_detection_warns_on_distribution_shift(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -105,7 +105,7 @@ def test_no_drift_warning_on_similar_distribution(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -149,7 +149,7 @@ def test_drift_detection_disabled_when_threshold_none(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -193,7 +193,7 @@ def test_drift_detection_skipped_on_small_batch(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client)
+    dq_engine = DQEngine(mock_workspace_client, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
