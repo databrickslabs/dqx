@@ -7,7 +7,7 @@ import mlflow
 import pyspark.sql.functions as F
 import pytest
 
-from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
 
 from tests.conftest import TEST_CATALOG
@@ -16,6 +16,7 @@ from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_QUANTITY,
 )
 from tests.integration_anomaly.test_anomaly_utils import (
+    _create_anomaly_apply_fn,
     get_standard_2d_training_data,
     get_standard_3d_training_data,
     get_standard_4d_training_data,
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.fixture(autouse=True)
-def enable_driver_only_scoring_for_anomaly_tests(request):
+def enable_driver_only_scoring_for_anomaly_tests():
     """Enable driver-only scoring for all anomaly tests to avoid cluster library requirements."""
     anomaly_check_funcs.set_driver_only_for_tests(True)
     try:
@@ -190,14 +191,11 @@ def anomaly_scorer():
         extract_score: bool = True,
         **check_kwargs,
     ):
-        if merge_columns is None:
-            merge_columns = ["transaction_id"]
-
-        _, apply_fn = has_no_anomalies(
-            merge_columns=merge_columns,
-            columns=columns,
-            model=model_name,
+        apply_fn = _create_anomaly_apply_fn(
+            model_name=model_name,
             registry_table=registry_table,
+            columns=columns,
+            merge_columns=merge_columns,
             **check_kwargs,
         )
 

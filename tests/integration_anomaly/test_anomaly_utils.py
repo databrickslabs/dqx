@@ -85,6 +85,44 @@ from tests.integration_anomaly.test_anomaly_constants import OUTLIER_AMOUNT, OUT
 
 pytestmark = pytest.mark.anomaly
 
+
+# ============================================================================
+# Shared Helper Functions
+# ============================================================================
+
+
+def _create_anomaly_apply_fn(
+    model_name: str, registry_table: str, columns: list[str], merge_columns: list[str] | None = None, **check_kwargs
+):
+    """
+    Create apply function from has_no_anomalies check.
+
+    This is a shared helper to reduce code duplication between
+    the anomaly_scorer fixture and score_with_anomaly_check function.
+
+    Args:
+        model_name: Name of the trained model
+        registry_table: Registry table path
+        columns: Column names to check for anomalies
+        merge_columns: Columns to merge results on (default: ["transaction_id"])
+        **check_kwargs: Additional arguments for has_no_anomalies
+
+    Returns:
+        Apply function from has_no_anomalies check
+    """
+    if merge_columns is None:
+        merge_columns = ["transaction_id"]
+
+    _, apply_fn = has_no_anomalies(
+        merge_columns=merge_columns,
+        columns=columns,
+        model=model_name,
+        registry_table=registry_table,
+        **check_kwargs,
+    )
+    return apply_fn
+
+
 # ============================================================================
 # Standard Training Data Patterns
 # ============================================================================
@@ -815,14 +853,11 @@ def score_with_anomaly_check(
             test_df, "my_model", "main.default.registry", ["amount", "quantity"]
         )
     """
-    if merge_columns is None:
-        merge_columns = ["transaction_id"]
-
-    _, apply_fn = has_no_anomalies(
-        merge_columns=merge_columns,
-        columns=columns,
-        model=model_name,
+    apply_fn = _create_anomaly_apply_fn(
+        model_name=model_name,
         registry_table=registry_table,
+        columns=columns,
+        merge_columns=merge_columns,
         score_threshold=score_threshold,
     )
     result_df = apply_fn(df)

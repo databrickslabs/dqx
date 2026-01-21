@@ -437,4 +437,3 @@ def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, 
 def assert_output_df(spark, expected_output, output_config):
     checked_df = spark.table(output_config.location)
     assert_df_equality(checked_df, expected_output, ignore_nullable=True)
-    """Function-scoped 2D anomaly model for testing."""
