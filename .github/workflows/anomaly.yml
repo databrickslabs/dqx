@@ -72,6 +72,8 @@ jobs:
           token = dummy
           EOF
           echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
+          # Set cluster ID without printing to logs
+          echo "DATABRICKS_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
           echo "DATABRICKS_CONFIG_FILE=$dummy_profile" >> $GITHUB_ENV
 
@@ -85,6 +87,7 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_HOST: ${{ env.DATABRICKS_HOST }}
+          DATABRICKS_CLUSTER_ID: ${{ env.DATABRICKS_CLUSTER_ID }}
           DATABRICKS_AUTH_TYPE: ${{ env.DATABRICKS_AUTH_TYPE }}
           DATABRICKS_CONFIG_FILE: ${{ env.DATABRICKS_CONFIG_FILE }}
           MLFLOW_ENABLE_DB_SDK: "true"
