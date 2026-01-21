@@ -34,7 +34,7 @@ DQX anomaly detection is optimized for production use with sensible defaults:
 
 | **Parameter** | **Default** | **Rationale** |
 |---------------|-------------|---------------|
-| `expected_anomaly_rate` | **0.05 (5%)** | Realistic for most production scenarios (quality issues, moderate fraud) |
+| `expected_anomaly_rate` | **0.02 (2%)** | Realistic for most production scenarios (quality issues, moderate fraud) |
 | `score_threshold` | **0.60** | Balanced precision/recall for production use |
 | `ensemble_size` | **2** | Reduces variance and provides confidence scores |
 | `include_contributions` | **True** | Explainability for actionable anomaly investigation |
@@ -47,14 +47,14 @@ The `expected_anomaly_rate` parameter tells the model what percentage of your da
 |--------------|------------------|-------------|
 | Financial fraud | 1-2% | `expected_anomaly_rate=0.01` |
 | Manufacturing defects | 2-5% | `expected_anomaly_rate=0.03` |
-| Data quality issues | 3-7% | `expected_anomaly_rate=0.05` (default) |
+| Data quality issues | 3-7% | `expected_anomaly_rate=0.02` (default) |
 | Exploration / Unknown | 10% | `expected_anomaly_rate=0.10` |
 
 ```python
 # Fraud detection (expecting ~1% anomalies)
 anomaly_engine.train(df, model_name="fraud_detector", expected_anomaly_rate=0.01)
 
-# Quality monitoring (default 5%)
+# Quality monitoring (default 2%)
 anomaly_engine.train(df, model_name="quality_monitor")  # Uses 0.05
 ```
 
@@ -332,7 +332,7 @@ from databricks.sdk import WorkspaceClient
 
 anomaly_engine = AnomalyEngine(WorkspaceClient())
 
-# Train with explicit columns (uses default expected_anomaly_rate=0.05)
+# Train with explicit columns (uses default expected_anomaly_rate=0.02)
 anomaly_engine.train(
     df=spark.table("catalog.schema.orders"),
     model_name="orders_monitor",
@@ -1054,4 +1054,3 @@ This installs: MLflow, scikit-learn, SHAP, and cloudpickle. On ML Runtimes and S
 ## Looking ahead
 
 The API is designed to support additional algorithms in the future (e.g., alternative anomaly detectors, ensemble methods) without changing how you define checks.
-
