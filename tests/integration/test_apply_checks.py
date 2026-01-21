@@ -8825,7 +8825,7 @@ def test_apply_checks_with_has_valid_schema_ignores_result_columns(ws, spark):
                 "y",
                 [
                     {
-                        "name": "v1_is_null",
+                        "name": "v1_is_not_null",
                         "message": "Column 'v1' value is null",
                         "columns": ["v1"],
                         "filter": None,
@@ -8873,7 +8873,7 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
         ),
     ]
 
-    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+    checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
     expected = spark.createDataFrame(
