@@ -13,7 +13,6 @@
 # MAGIC
 # MAGIC **Dataset**: Simple sales transactions (universally relatable, no domain expertise required)
 # MAGIC
-# MAGIC **Time**: 12-17 minutes
 # MAGIC
 
 # COMMAND ----------
