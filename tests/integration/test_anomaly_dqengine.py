@@ -76,7 +76,7 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
 
     # Test with in-cluster points and clear outliers
     test_df = spark.createDataFrame(
-        [(1, 110.0, 12.0), (2, 150.0, 15.0), (3, OUTLIER_AMOUNT, OUTLIER_QUANTITY), (4, 8888.0, 100.0)],
+        [(1, 110.0, 12.0), (2, 150.0, 20.0), (3, OUTLIER_AMOUNT, OUTLIER_QUANTITY), (4, 8888.0, 100.0)],
         "transaction_id int, amount double, quantity double",
     )
 
@@ -332,7 +332,7 @@ def test_info_column_structure(spark: SparkSession, mock_workspace_client, share
     columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(1, 150.0, 15.0)],  # Normal data
+        [(1, 150.0, 20.0)],  # Normal data
         "transaction_id int, amount double, quantity double",
     )
 
@@ -406,7 +406,7 @@ def test_info_column_with_contributions(spark: SparkSession, mock_workspace_clie
     columns = shared_3d_model["columns"]
 
     test_df = spark.createDataFrame(
-        [(1, 150.0, 15.0, 0.15)],  # Normal data
+        [(1, 150.0, 20.0, 0.2)],  # Normal data
         "transaction_id int, amount double, quantity double, discount double",
     )
 

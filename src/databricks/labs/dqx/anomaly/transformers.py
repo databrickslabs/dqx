@@ -54,6 +54,7 @@ class SparkFeatureMetadata:
     categorical_frequency_maps: dict[str, dict[str, float]]  # col_name -> (value -> frequency)
     onehot_categories: dict[str, list[str]]  # col_name -> [distinct_values] for OneHot encoding
     engineered_feature_names: list[str]  # Final feature names after engineering
+    categorical_cardinality_threshold: int = 20  # Threshold used for categorical encoding
 
     def to_json(self) -> str:
         """Serialize to JSON for storage."""
@@ -63,6 +64,7 @@ class SparkFeatureMetadata:
                 "categorical_frequency_maps": self.categorical_frequency_maps,
                 "onehot_categories": self.onehot_categories,
                 "engineered_feature_names": self.engineered_feature_names,
+                "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
             }
         )
 
@@ -70,6 +72,8 @@ class SparkFeatureMetadata:
     def from_json(cls, json_str: str) -> "SparkFeatureMetadata":
         """Deserialize from JSON."""
         data = json.loads(json_str)
+        if "categorical_cardinality_threshold" not in data:
+            data["categorical_cardinality_threshold"] = 20
         return cls(**data)
 
 
@@ -772,6 +776,7 @@ def apply_feature_engineering(
         categorical_frequency_maps=frequency_maps,
         onehot_categories=onehot_categories,
         engineered_feature_names=actual_engineered_features,
+        categorical_cardinality_threshold=categorical_cardinality_threshold,
     )
 
     return result_df, metadata
