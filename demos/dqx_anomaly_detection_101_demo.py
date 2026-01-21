@@ -213,7 +213,13 @@ print("✅ Setup complete!")
 # COMMAND ----------
 
 # Generate simple sales transaction data
-def generate_sales_data(num_rows=1000, anomaly_rate=0.05):
+def generate_sales_data(
+    num_rows=1000,
+    anomaly_rate=0.02,
+    dq_null_amount_rate=0.01,
+    dq_null_quantity_rate=0.005,
+    dq_negative_amount_rate=0.005,
+):
     """
     Generate sales transaction data with injected anomalies.
     
@@ -223,7 +229,7 @@ def generate_sales_data(num_rows=1000, anomaly_rate=0.05):
     - Business hours: 9am-6pm weekdays
     - Regional consistency
     
-    Anomalies (5% - matches default expected_anomaly_rate):
+    Anomalies (2% - matches default expected_anomaly_rate):
     - Pricing errors (VERY extreme: 40-50x or 1/40 of normal amounts)
     - Quantity spikes (bulk orders 100-150 items = 20-30x normal)
     - Timing anomalies (off-hours + 5-8x amount + 25-40 quantity)
@@ -258,8 +264,28 @@ def generate_sales_data(num_rows=1000, anomaly_rate=0.05):
         if date.weekday() >= 5:  # Saturday=5, Sunday=6
             date = date - timedelta(days=date.weekday() - 4)  # Move to Friday
         
-        # Inject anomalies (VERY extreme to reliably exceed 0.60 threshold)
-        if random.random() < anomaly_rate:
+        # Inject a few simple DQ issues (nulls/negatives) for rule-based checks
+        dq_issue_roll = random.random()
+        dq_issue_type = None
+        if dq_issue_roll < dq_null_amount_rate:
+            dq_issue_type = "null_amount"
+        elif dq_issue_roll < dq_null_amount_rate + dq_null_quantity_rate:
+            dq_issue_type = "null_quantity"
+        elif dq_issue_roll < dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate:
+            dq_issue_type = "negative_amount"
+
+        if dq_issue_type == "null_amount":
+            amount = None
+            quantity = max(1, int(np.random.normal(pattern["quantity"], 1)))
+        elif dq_issue_type == "null_quantity":
+            amount = round(pattern["base_amount"] * random.uniform(0.85, 1.15), 2)
+            quantity = None
+        elif dq_issue_type == "negative_amount":
+            amount = -abs(round(pattern["base_amount"] * random.uniform(0.5, 1.5), 2))
+            quantity = max(1, int(np.random.normal(pattern["quantity"], 1)))
+
+        # Inject anomalies (unusual patterns not caught by simple rules)
+        elif random.random() < anomaly_rate:
             # Bias towards more extreme anomaly types for better detection
             anomaly_type = random.choices(
                 ["pricing", "quantity", "timing", "multi_factor"],
@@ -298,9 +324,11 @@ def generate_sales_data(num_rows=1000, anomaly_rate=0.05):
             amount = round(pattern["base_amount"] * random.uniform(0.85, 1.15), 2)
             quantity = max(1, int(np.random.normal(pattern["quantity"], 1)))
         
-        # Ensure valid ranges
-        amount = max(10, min(10000, amount))
-        quantity = max(1, min(150, quantity))  # Allow bulk orders up to 150
+        # Ensure valid ranges (skip for injected nulls/negatives)
+        if amount is not None and dq_issue_type != "negative_amount":
+            amount = max(10, min(10000, amount))
+        if quantity is not None:
+            quantity = max(1, min(150, quantity))  # Allow bulk orders up to 150
         
         data.append((transaction_id, date, amount, quantity, category, region))
     
@@ -308,13 +336,25 @@ def generate_sales_data(num_rows=1000, anomaly_rate=0.05):
 
 # Generate data
 print("🔄 Generating sales transaction data...\n")
-sales_data = generate_sales_data(num_rows=1000, anomaly_rate=0.05)
+anomaly_rate = 0.02
+dq_null_amount_rate = 0.01
+dq_null_quantity_rate = 0.005
+dq_negative_amount_rate = 0.005
+dq_issue_rate = dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate
+
+sales_data = generate_sales_data(
+    num_rows=1000,
+    anomaly_rate=anomaly_rate,
+    dq_null_amount_rate=dq_null_amount_rate,
+    dq_null_quantity_rate=dq_null_quantity_rate,
+    dq_negative_amount_rate=dq_negative_amount_rate,
+)
 
 schema = StructType([
     StructField("transaction_id", StringType(), False),
     StructField("date", TimestampType(), False),
-    StructField("amount", DoubleType(), False),
-    StructField("quantity", IntegerType(), False),
+    StructField("amount", DoubleType(), True),
+    StructField("quantity", IntegerType(), True),
     StructField("category", StringType(), False),
     StructField("region", StringType(), False),
 ])
@@ -326,12 +366,14 @@ display(df_sales.orderBy("date"))
 
 total_rows = df_sales.count()
 print(f"\n✅ Generated {total_rows} sales transactions")
-print(f"   Expected anomalies: ~{int(total_rows * 0.05)} (5%)")
+print(f"   Expected anomalies: ~{int(total_rows * anomaly_rate)} ({anomaly_rate*100:.0f}%)")
+print(f"   Expected rule-based issues: ~{int(total_rows * dq_issue_rate)} ({dq_issue_rate*100:.1f}%)")
 print(f"\n💡 Data includes:")
 print(f"   • Normal patterns: Business hours, typical amounts (170-230), reasonable quantities (4-6)")
-print(f"   • Injected anomalies: VERY extreme deviations (40-50x pricing, 100-150 quantity, multi-factor)")
+print(f"   • Injected anomalies: unusual multi-column patterns (e.g., timing + amount + quantity)")
+print(f"   • Injected DQ issues: a few nulls and negative amounts (caught by rules)")
 print(f"\n🎯 Anomaly detection will identify patterns that deviate significantly from normal behavior")
-print(f"\n📌 Note: 5% anomaly rate matches the model's default 'expected_anomaly_rate' parameter")
+print(f"\n📌 Note: 2% anomaly rate matches the model's default 'expected_anomaly_rate' parameter")
 
 
 # COMMAND ----------
@@ -470,6 +512,7 @@ checks_combined = [
     DQRowRule(check_func=is_not_null, check_func_kwargs={"column": "transaction_id"}),
     DQRowRule(check_func=is_not_null, check_func_kwargs={"column": "amount"}),
     DQRowRule(check_func=is_in_range, check_func_kwargs={"column": "amount", "min_limit": 0, "max_limit": 100000}),
+    DQRowRule(check_func=is_not_null, check_func_kwargs={"column": "quantity"}),
     DQRowRule(check_func=is_in_range, check_func_kwargs={"column": "quantity", "min_limit": 1, "max_limit": 1000}),
     
     # ML anomaly detection for unusual patterns
@@ -565,7 +608,7 @@ score_ranges = df_scored.select(
 
 total = total_scored
 print(f"Likely Normal (0.0-0.5):      {score_ranges['normal_0.0_0.5']:4d} ({score_ranges['normal_0.0_0.5']/total*100:5.1f}%) ← Not flagged")
-print(f"Near Threshold (0.5-0.6):     {score_ranges['borderline_0.5_0.6']:4d} ({score_ranges['borderline_0.5_0.6']/total*100:5.1f}%) ← Not flagged")
+print(f"Near Threshold (0.5-<0.6):    {score_ranges['borderline_0.5_0.6']:4d} ({score_ranges['borderline_0.5_0.6']/total*100:5.1f}%) ← Not flagged")
 print(f"Flagged (0.6-0.75):           {score_ranges['flagged_0.6_0.75']:4d} ({score_ranges['flagged_0.6_0.75']/total*100:5.1f}%) ← ANOMALIES (flagged)")
 print(f"Highly Anomalous (0.75-1.0):  {score_ranges['highly_anomalous_0.75_1.0']:4d} ({score_ranges['highly_anomalous_0.75_1.0']/total*100:5.1f}%) ← ANOMALIES (extreme)")
 
@@ -589,7 +632,7 @@ print("   Percentile bands are for interpretation only; the threshold is the act
 print(f"\n💡 What Do These Scores Mean?")
 print(f"   • Scores are based on how 'isolated' a record is from normal patterns")
 print(f"   • Low scores (0.0-0.5): Blend in with normal data (NOT flagged)")
-print(f"   • Near-threshold (0.5-0.6): Close to 0.60 (NOT flagged)")
+print(f"   • Near-threshold (0.5-<0.6): Close to 0.60 (NOT flagged)")
 print(f"   • High scores (≥0.6): Stands out as different (FLAGGED as anomalies)")
 print(f"   • This is NOT a probability - it is a relative unusualness score")
 print(f"   • The threshold (0.60) is tuned empirically, not a statistical significance level")
@@ -686,11 +729,11 @@ print("     - Your risk tolerance (cost of missing an issue vs false alarm)")
 # COMMAND ----------
 
 # Let's look at borderline cases
-print("🔍 Examining Borderline Cases (scores 0.50-0.60):\n")
+print("🔍 Examining Borderline Cases (scores 0.50-<0.60):\n")
 
 borderline = df_scored.filter(
     (F.col("_info.anomaly.score") >= 0.50) & 
-    (F.col("_info.anomaly.score") <= 0.60)
+    (F.col("_info.anomaly.score") < 0.60)
 ).orderBy(F.col("_info.anomaly.score").desc())
 
 print(f"Found {borderline.count()} borderline transactions:\n")

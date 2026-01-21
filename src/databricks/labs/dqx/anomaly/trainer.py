@@ -116,7 +116,7 @@ class AnomalyEngine(DQEngineBase):
         registry_table: str | None = None,
         params: AnomalyParams | None = None,
         exclude_columns: list[str] | None = None,
-        expected_anomaly_rate: float = 0.05,
+        expected_anomaly_rate: float = 0.02,
         row_id_columns: list[str] | None = None,
     ) -> str:
         """
@@ -142,7 +142,7 @@ class AnomalyEngine(DQEngineBase):
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
-            expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.05 = 5%).
+            expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.02 = 2%).
                                   This helps the model calibrate what's "normal" vs "unusual".
                                   Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
                                   Note: This is ignored if params.algorithm_config.contamination is explicitly set.
@@ -160,7 +160,7 @@ class AnomalyEngine(DQEngineBase):
             the base name is returned for simplified API usage.
 
         Examples:
-            # Auto-discovery with default 5% expected anomaly rate (simplest)
+            # Auto-discovery with default 2% expected anomaly rate (simplest)
             anomaly_engine.train(df, model_name="my_model")
 
             # Exclude ID fields (recommended)
@@ -319,7 +319,7 @@ def _apply_expected_anomaly_rate(params: AnomalyParams | None, expected_anomaly_
 
     Args:
         params: Existing AnomalyParams or None
-        expected_anomaly_rate: Expected fraction of anomalies (e.g., 0.05 for 5%)
+        expected_anomaly_rate: Expected fraction of anomalies (e.g., 0.02 for 2%)
 
     Returns:
         AnomalyParams with contamination set appropriately
