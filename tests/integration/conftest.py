@@ -539,9 +539,9 @@ def anomaly_registry_prefix(anomaly_registry_schema):
     return f"{TEST_CATALOG}.{anomaly_registry_schema.name}"
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shared_2d_model(ws, spark, make_schema, make_random):
-    """Function-scoped 2D anomaly model for testing."""
+    """Session-scoped 2D anomaly model for testing - trains once, reused across all tests."""
     if not HAS_ANOMALY:
         pytest.skip("Anomaly extras not installed")
 
@@ -565,9 +565,9 @@ def shared_2d_model(ws, spark, make_schema, make_random):
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shared_3d_model(ws, spark, make_schema, make_random):
-    """Function-scoped 3D anomaly model for testing."""
+    """Session-scoped 3D anomaly model for testing - trains once, reused across all tests."""
     if not HAS_ANOMALY:
         pytest.skip("Anomaly extras not installed")
 
@@ -591,9 +591,9 @@ def shared_3d_model(ws, spark, make_schema, make_random):
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def shared_4d_model(ws, spark, make_schema, make_random):
-    """Function-scoped 4D anomaly model for testing."""
+    """Session-scoped 4D anomaly model for testing - trains once, reused across all tests."""
     if not HAS_ANOMALY:
         pytest.skip("Anomaly extras not installed")
 

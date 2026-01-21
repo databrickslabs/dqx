@@ -108,6 +108,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
 
     # Normal row: allow anomaly errors, but should not fail is_not_null
     row0_errors = rows[0]["_errors"] if rows[0]["_errors"] is not None else []
+
     def _has_is_not_null_error(err) -> bool:
         err_dict = err.asDict() if hasattr(err, "asDict") else {}
         for key in ("function", "name", "check", "check_name"):
