@@ -84,7 +84,7 @@ def enable_driver_only_scoring_for_anomaly_tests(request):
         anomaly_check_funcs.set_driver_only_for_tests(False)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(autouse=True)
 def configure_mlflow_tracking():
     """Configure MLflow to use Databricks workspace tracking backend for integration tests."""
     if not HAS_MLFLOW:
@@ -112,7 +112,7 @@ def configure_mlflow_tracking():
             os.environ["MLFLOW_EXPERIMENT_ID"] = experiment.experiment_id
         logger.info(f"MLflow configured: tracking_uri={tracking_uri} registry_uri={registry_uri}")
     except Exception as e:
-        logger.warning(f"Failed to configure MLflow: {e}")
+        logger.error(f"Failed to configure MLflow: {e}")
         raise
 
     yield
