@@ -142,7 +142,7 @@ test_coverage   = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --d
 integration     = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 1200 --durations 20"
 e2e             = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 perf            = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
-anomaly         = "pytest tests/integration/ -m anomaly -v -n auto --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5"
+anomaly         = "pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5"
 fmt             = ["black .",
                     "ruff check . --fix",
                     "mypy .",
@@ -205,9 +205,6 @@ ignore_missing_imports = true
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
-markers = [
-    "anomaly: anomaly detection integration tests",
-]
 
 [tool.black]
 target-version = ["py310"]

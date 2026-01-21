@@ -8,12 +8,12 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
 
-from tests.integration.test_anomaly_constants import (
+from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration.test_anomaly_utils import apply_anomaly_check_direct
+from tests.integration_anomaly.test_anomaly_utils import apply_anomaly_check_direct
 
 pytestmark = pytest.mark.anomaly
 

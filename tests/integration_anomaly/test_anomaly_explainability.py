@@ -12,7 +12,7 @@ shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min t
 import pytest
 from pyspark.sql import SparkSession
 
-from tests.integration.test_anomaly_constants import (
+from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,

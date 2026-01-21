@@ -11,7 +11,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
 
-from tests.integration.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
+from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 
 pytestmark = pytest.mark.anomaly
 

@@ -6,7 +6,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly.profiler import auto_discover
 
 from tests.conftest import TEST_CATALOG
-from tests.integration.test_anomaly_constants import SEGMENT_REGIONS
+from tests.integration_anomaly.test_anomaly_constants import SEGMENT_REGIONS
 
 pytestmark = pytest.mark.anomaly
 
