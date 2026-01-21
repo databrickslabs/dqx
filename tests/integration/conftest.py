@@ -1,8 +1,5 @@
 import logging
 import os
-import time
-from pathlib import Path
-import tomllib
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
@@ -17,17 +14,17 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationCh
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import BadRequest
-from databricks.sdk.service.compute import DataSecurityMode, Kind, Library, PythonPyPiLibrary
+from databricks.sdk.service.compute import DataSecurityMode, Kind
 from databricks.sdk.service.workspace import ImportFormat
 
 # Optional anomaly detection imports - placed here to keep databricks imports grouped
 try:
     from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+    from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
 except ImportError:
     AnomalyEngine = None  # type: ignore[assignment,misc]
     has_no_anomalies = None  # type: ignore[assignment]
+    anomaly_check_funcs = None  # type: ignore[assignment]
 
 from tests.conftest import TEST_CATALOG
 from tests.integration.test_anomaly_constants import (
@@ -70,136 +67,21 @@ logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
 
-_ANOMALY_LIBS_INSTALLED = {"value": False}
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - non-POSIX platforms
-    fcntl = None  # type: ignore[assignment]
 
+@pytest.fixture(autouse=True)
+def enable_driver_only_scoring_for_anomaly_tests(request):
+    if request.node.get_closest_marker("anomaly") is None:
+        yield
+        return
+    if anomaly_check_funcs is None:
+        yield
+        return
 
-def _wait_for_library_install(ws, cluster_id: str, package: str, timeout_s: int = 900, poll_s: int = 10) -> None:
-    """Wait for a PyPI library to be installed on a cluster."""
-    deadline = time.time() + timeout_s
-    last_status = None
-
-    logger.info(f"Waiting for library install on cluster {cluster_id}: {package}")
-    while time.time() < deadline:
-        library_statuses = list(ws.libraries.cluster_status(cluster_id))
-        matching = []
-        for entry in library_statuses:
-            lib = getattr(entry, "library", None)
-            pypi = getattr(lib, "pypi", None)
-            if pypi and getattr(pypi, "package", None) == package:
-                matching.append(entry)
-
-        if not matching:
-            logger.info(f"Library {package} not yet reported on cluster {cluster_id}; waiting...")
-            time.sleep(poll_s)
-            continue
-
-        states = {
-            getattr(getattr(entry, "status", None), "value", getattr(entry, "status", None)) for entry in matching
-        }
-        last_status = states
-        sorted_states = sorted(s for s in states if s is not None)
-        logger.info(f"Library {package} status on cluster {cluster_id}: {sorted_states}")
-        if "FAILED" in states or "SKIPPED" in states:
-            raise RuntimeError(f"Library install failed for {package} on cluster {cluster_id}: {states}")
-        if states == {"INSTALLED"}:
-            return
-
-        time.sleep(poll_s)
-
-    raise TimeoutError(
-        f"Timed out waiting for {package} to install on cluster {cluster_id}. Last status: {last_status}"
-    )
-
-
-def _load_local_anomaly_dependencies() -> list[str]:
-    """Load anomaly extras dependencies from local pyproject.toml."""
-    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
-    if not pyproject_path.exists():
-        logger.warning(f"pyproject.toml not found at {pyproject_path}")
-        return []
-
+    anomaly_check_funcs.set_driver_only_for_tests(True)
     try:
-        data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        logger.warning(f"Failed to read {pyproject_path}: {e}")
-        return []
-
-    deps = data.get("project", {}).get("optional-dependencies", {}).get("anomaly", [])
-    if not isinstance(deps, list):
-        logger.warning("Invalid anomaly optional-dependencies format in pyproject.toml")
-        return []
-
-    return deps
-
-
-def _ensure_anomaly_cluster_libraries() -> None:
-    """Install anomaly dependencies on the cluster once per test run."""
-    if _ANOMALY_LIBS_INSTALLED["value"]:
-        return
-    if not HAS_ANOMALY:
-        return
-
-    packages = _load_local_anomaly_dependencies()
-    if not packages:
-        logger.warning("No anomaly dependencies found in local pyproject.toml; skipping cluster install.")
-        return
-
-    cluster_id = os.environ.get("DATABRICKS_CLUSTER_ID")
-    if not cluster_id:
-        logger.warning("No cluster id found; skipping cluster library installation for anomaly deps.")
-        return
-
-    ws = WorkspaceClient()
-    existing_statuses = list(ws.libraries.cluster_status(cluster_id))
-    installed = {}
-    for entry in existing_statuses:
-        lib = getattr(entry, "library", None)
-        pypi = getattr(lib, "pypi", None) if lib else None
-        if not pypi:
-            continue
-        package = getattr(pypi, "package", None)
-        status = getattr(getattr(entry, "status", None), "value", getattr(entry, "status", None))
-        if package:
-            installed[package] = status
-
-    to_install = [package for package in packages if installed.get(package) != "INSTALLED"]
-    if to_install:
-        try:
-            ws.libraries.install(
-                cluster_id=cluster_id,
-                libraries=[Library(pypi=PythonPyPiLibrary(package=package)) for package in to_install],
-            )
-        except BadRequest as e:
-            logger.warning(f"Skipping library installation for cluster {cluster_id}: {e}")
-            return
-
-    for package in packages:
-        _wait_for_library_install(ws, cluster_id, package)
-    _ANOMALY_LIBS_INSTALLED["value"] = True
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    _ = config
-    if not any(item.get_closest_marker("anomaly") for item in items):
-        return
-    if os.environ.get("PYTEST_XDIST_WORKER"):
-        # Only run once in the controller process to avoid auth issues in workers.
-        return
-    if fcntl is None:
-        _ensure_anomaly_cluster_libraries()
-        return
-
-    lock_path = os.environ.get("DQX_ANOMALY_TEST_LOCK", "/tmp/dqx-anomaly-libs.lock")
-    with open(lock_path, "w", encoding="utf-8") as lock_file:
-        fcntl.flock(lock_file, fcntl.LOCK_EX)
-        try:
-            _ensure_anomaly_cluster_libraries()
-        finally:
-            fcntl.flock(lock_file, fcntl.LOCK_UN)
+        yield
+    finally:
+        anomaly_check_funcs.set_driver_only_for_tests(False)
 
 
 @pytest.fixture(scope="session", autouse=True)

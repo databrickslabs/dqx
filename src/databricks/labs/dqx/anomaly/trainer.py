@@ -1102,7 +1102,7 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
     engineered_df, updated_metadata = apply_feature_engineering(
         df.select(*feature_cols),
         column_infos,
-        categorical_cardinality_threshold=20,  # Use same threshold as training
+        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
         frequency_maps=feature_metadata.categorical_frequency_maps,
         onehot_categories=feature_metadata.onehot_categories,
     )

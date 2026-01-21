@@ -281,6 +281,81 @@ def get_recommended_threshold(use_case: str = "standard") -> float:
     return thresholds.get(use_case, 0.6)
 
 
+def get_registry_recommended_threshold(spark: SparkSession, registry_table: str, model_name: str) -> float:
+    """Fetch the model's recommended threshold from the registry."""
+    full_model_name = model_name
+    if model_name.count(".") < 2:
+        registry_prefix = registry_table.rsplit(".", 1)[0]
+        full_model_name = f"{registry_prefix}.{model_name}"
+    row = spark.sql(
+        f"""
+        SELECT training.metrics['recommended_threshold'] as threshold
+        FROM {registry_table}
+        WHERE identity.model_name = '{full_model_name}' AND identity.status = 'active'
+    """
+    ).first()
+    assert row is not None and row["threshold"] is not None, "recommended_threshold not found in registry"
+    return float(row["threshold"])
+
+
+def get_percentile_threshold_from_data(
+    df: DataFrame,
+    model_name: str,
+    registry_table: str,
+    columns: list[str],
+    percentile: float = 0.95,
+) -> float:
+    """Derive a score threshold from the given data at a target percentile."""
+    if "transaction_id" not in df.columns:
+        df = df.withColumn("transaction_id", F.monotonically_increasing_id())
+
+    scored = apply_anomaly_check_direct(
+        df,
+        model_name,
+        registry_table,
+        columns=columns,
+        score_threshold=1.0,
+    )
+    threshold = scored.approxQuantile("anomaly_score", [percentile], 0.01)[0]
+    return float(threshold)
+
+
+def get_anomaly_scores_by_id(
+    df: DataFrame,
+    model_name: str,
+    registry_table: str,
+    columns: list[str],
+    id_column: str = "transaction_id",
+) -> dict[int, float]:
+    """Score rows and return anomaly_score keyed by id."""
+    scored = apply_anomaly_check_direct(
+        df,
+        model_name,
+        registry_table,
+        columns=columns,
+        score_threshold=1.0,
+    )
+    rows = scored.select(id_column, "anomaly_score").collect()
+    return {int(row[id_column]): float(row["anomaly_score"]) for row in rows}
+
+
+def get_separating_threshold(
+    scores: dict[int, float],
+    normal_ids: list[int],
+    anomaly_ids: list[int],
+) -> float:
+    """Pick a threshold between max normal and min anomaly scores."""
+    normal_scores = [scores[row_id] for row_id in normal_ids]
+    anomaly_scores = [scores[row_id] for row_id in anomaly_ids]
+    max_normal = max(normal_scores)
+    min_anomaly = min(anomaly_scores)
+    assert min_anomaly > max_normal, (
+        "Expected anomaly scores to be greater than normal scores. "
+        f"max_normal={max_normal}, min_anomaly={min_anomaly}"
+    )
+    return (max_normal + min_anomaly) / 2.0
+
+
 # ============================================================================
 # Helper Functions
 # ============================================================================

@@ -319,7 +319,7 @@ jobs:
   integration_anomaly_serverless:
     # Run anomaly-specific tests only when anomaly module changes (serverless)
     needs: detect_changes
-    if: false
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork && needs.detect_changes.outputs.anomaly == 'true'
     environment: tool
     runs-on: larger
     env:

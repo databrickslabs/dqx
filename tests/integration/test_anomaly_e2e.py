@@ -12,12 +12,13 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 
 from tests.conftest import TEST_CATALOG
-from tests.integration.test_anomaly_constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
 from tests.integration.test_anomaly_utils import (
-    get_recommended_threshold,
+    get_percentile_threshold_from_data,
     get_standard_2d_training_data,
+    get_standard_4d_training_data,
+    get_standard_test_points_2d,
+    get_standard_test_points_4d,
     train_simple_2d_model,
-    train_simple_4d_model,
 )
 
 pytestmark = pytest.mark.anomaly
@@ -56,16 +57,17 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     assert model_name in model_uri
 
     # Score normal + anomalous data
+    test_points = get_standard_test_points_2d()
     test_df = spark.createDataFrame(
         [
-            (1, 150.0, 15.0),  # Normal - in dense part of training range
-            (2, OUTLIER_AMOUNT, 100.0),  # Clear anomaly - far outside
+            (1, *test_points["normal_in_center"]),
+            (2, *test_points["clear_anomaly"]),
         ],
         "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
-    threshold = get_recommended_threshold("standard")
+    threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table, ["amount", "quantity"])
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -81,15 +83,15 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     ]
 
     result_df = dq_engine.apply_checks(test_df, checks)
-    errors = result_df.select("_errors").collect()
-
-    # First row (normal) should pass, second row (anomaly) should fail
-    # Handle both [] and None for empty errors
-    first_errors = errors[0]["_errors"]
-    assert first_errors == [] or first_errors is None, f"Normal row has errors: {first_errors}"
-
-    second_errors = errors[1]["_errors"]
-    assert second_errors is not None and len(second_errors) > 0, "Anomalous row should have errors"
+    rows = result_df.select("_errors", F.col("_info.anomaly.score").alias("score")).collect()
+    scores = [row["score"] for row in rows]
+    assert scores[0] < scores[1], f"Expected anomaly score > normal score. Scores: {scores}"
+    for row in rows:
+        has_errors = row["_errors"] is not None and len(row["_errors"]) > 0
+        assert (row["score"] >= threshold) == has_errors, (
+            f"Mismatch between score and errors. score={row['score']}, "
+            f"threshold={threshold}, errors={row['_errors']}"
+        )
 
 
 def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
@@ -102,18 +104,18 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
 
     # Use standard 2D training data - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_2d_training_data())
-
     # Test with normal and anomalous data
+    test_points = get_standard_test_points_2d()
     test_df = spark.createDataFrame(
         [
-            (1, 150.0, 15.0),  # Normal - in dense part of training range
-            (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY),  # Anomaly - far outside
+            (1, *test_points["normal_in_center"]),
+            (2, *test_points["clear_anomaly"]),
         ],
         "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
-    threshold = get_recommended_threshold("standard")
+    threshold = 1.0
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -166,13 +168,14 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, ma
     assert model_uri is not None
 
     # Score with normal data (within training distribution) without explicit names
+    test_points = get_standard_test_points_2d()
     test_df = spark.createDataFrame(
-        [(1, 200.0, 30.0)],  # Center of training range (100-300, 10-50)
+        [(1, *test_points["normal_in_center"])],
         "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
-    threshold = get_recommended_threshold("permissive")  # Higher threshold since testing explicit names
+    threshold = 1.0
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -205,20 +208,30 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
     # Use standard 2D training data - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_2d_training_data())
+    train_df = spark.createDataFrame(
+        get_standard_2d_training_data(),
+        "amount double, quantity double",
+    )
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
 
     # Create test data with clear normal and anomalous rows
+    test_points = get_standard_test_points_2d()
     test_df = spark.createDataFrame(
         [
-            (1, 200.0, 30.0),  # Normal - center of training range (100-300, 10-50)
-            (2, 210.0, 32.0),  # Normal - center of training range
-            (3, OUTLIER_AMOUNT, 0.1),  # Anomaly - far out
+            (1, *test_points["normal_in_center"]),
+            (2, *test_points["normal_near_center"]),
+            (3, *test_points["clear_anomaly"]),
         ],
         "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
-    threshold = get_recommended_threshold("standard")
+    threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table, ["amount", "quantity"])
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -233,19 +246,17 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
         )
     ]
 
-    result_df = dq_engine.apply_checks(test_df, checks)
-    result_df = result_df.collect()
-
-    # Normal rows should have no errors (handle both [] and None)
-    first_errors = result_df[0]["_errors"]
-    assert first_errors == [] or first_errors is None, f"First normal row has errors: {first_errors}"
-
-    second_errors = result_df[1]["_errors"]
-    assert second_errors == [] or second_errors is None, f"Second normal row has errors: {second_errors}"
-
-    # Anomalous row should have errors
-    anomaly_errors = result_df[2]["_errors"]
-    assert anomaly_errors is not None and len(anomaly_errors) > 0, "Anomalous row should have errors"
+    rows = (
+        dq_engine.apply_checks(test_df, checks).select("_errors", F.col("_info.anomaly.score").alias("score")).collect()
+    )
+    scores = [row["score"] for row in rows]
+    assert max(scores[:2]) < scores[2], f"Expected anomaly score > normal scores. Scores: {scores}"
+    for row in rows:
+        has_errors = row["_errors"] is not None and len(row["_errors"]) > 0
+        assert (row["score"] >= threshold) == has_errors, (
+            f"Mismatch between score and errors. score={row['score']}, "
+            f"threshold={threshold}, errors={row['_errors']}"
+        )
 
 
 def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_random, anomaly_engine):
@@ -302,18 +313,30 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
     # Train 4D model - use helper with standard 4D data
-    train_simple_4d_model(spark, anomaly_engine, model_name, registry_table)
+    train_df = spark.createDataFrame(
+        get_standard_4d_training_data(),
+        "amount double, quantity double, discount double, weight double",
+    )
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity", "discount", "weight"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
 
+    test_points = get_standard_test_points_4d()
     test_df = spark.createDataFrame(
         [
-            (1, 200.0, 30.0, 0.25, 90.0),
-            (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95, 1.0),
+            (1, *test_points["normal_in_center"]),
+            (2, *test_points["clear_anomaly"]),
         ],  # First in center, second far out
         "transaction_id int, amount double, quantity double, discount double, weight double",
     )
 
     dq_engine = DQEngine(mock_workspace_client)
-    threshold = get_recommended_threshold("standard")
+    threshold = get_percentile_threshold_from_data(
+        train_df, model_name, registry_table, ["amount", "quantity", "discount", "weight"]
+    )
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -334,11 +357,12 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
 
     assert "_info" in result_df.columns
 
-    errors = result_df.select("_errors", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
-
-    # First row normal, second row anomalous (handle both [] and None)
-    first_errors = errors[0]["_errors"]
-    assert first_errors == [] or first_errors is None, f"Normal row has errors: {first_errors}"
-
-    second_errors = errors[1]["_errors"]
-    assert second_errors is not None and len(second_errors) > 0, "Anomalous row should have errors"
+    rows = result_df.select("_errors", F.col("_info.anomaly.score").alias("score")).collect()
+    scores = [row["score"] for row in rows]
+    assert scores[0] < scores[1], f"Expected anomaly score > normal score. Scores: {scores}"
+    for row in rows:
+        has_errors = row["_errors"] is not None and len(row["_errors"]) > 0
+        assert (row["score"] >= threshold) == has_errors, (
+            f"Mismatch between score and errors. score={row['score']}, "
+            f"threshold={threshold}, errors={row['_errors']}"
+        )

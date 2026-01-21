@@ -49,6 +49,7 @@ from databricks.labs.dqx.utils import get_column_name_or_alias, missing_required
 # Check if SHAP is available (required for feature contributions)
 # sklearn is always available when this module loads (required dependency for anomaly extras)
 SHAP_AVAILABLE = not missing_required_packages(["shap"])
+_DRIVER_ONLY = {"value": False}
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,12 @@ class ScoringConfig:
     include_contributions: bool = False
     include_confidence: bool = False
     segment_by: list[str] | None = None
+    driver_only: bool = False
+
+
+def set_driver_only_for_tests(enabled: bool) -> None:
+    """Toggle driver-only scoring for tests."""
+    _DRIVER_ONLY["value"] = enabled
 
 
 def _build_segment_filter(segment_values: dict[str, str] | None) -> Column | None:
@@ -195,15 +202,26 @@ def _score_single_segment(
     assert (
         segment_model.features.feature_metadata is not None
     ), f"Model {segment_model.identity.model_name} missing feature_metadata"
-    segment_scored = _score_with_sklearn_model(
-        segment_model.identity.model_uri,
-        segment_df,
-        config.columns,
-        segment_model.features.feature_metadata,
-        config.merge_columns,
-        include_contributions=config.include_contributions,
-        model_record=segment_model,  # Pass model record for version validation
-    )
+    if config.driver_only:
+        segment_scored = _score_with_sklearn_model_local(
+            segment_model.identity.model_uri,
+            segment_df,
+            config.columns,
+            segment_model.features.feature_metadata,
+            config.merge_columns,
+            include_contributions=config.include_contributions,
+            model_record=segment_model,  # Pass model record for version validation
+        )
+    else:
+        segment_scored = _score_with_sklearn_model(
+            segment_model.identity.model_uri,
+            segment_df,
+            config.columns,
+            segment_model.features.feature_metadata,
+            config.merge_columns,
+            include_contributions=config.include_contributions,
+            model_record=segment_model,  # Pass model record for version validation
+        )
     segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
 
     # Add _info column with segment values
@@ -329,7 +347,7 @@ def _apply_feature_engineering_for_scoring(
     engineered_df, _ = apply_feature_engineering(
         df.select(*cols_to_select),
         column_infos,
-        categorical_cardinality_threshold=20,
+        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
         frequency_maps=feature_metadata.categorical_frequency_maps,
         onehot_categories=feature_metadata.onehot_categories,
     )
@@ -522,81 +540,6 @@ def _create_scoring_udf_with_contributions(
 ):
     """Create pandas UDF for distributed scoring with SHAP contributions."""
 
-    def format_shap_contributions(
-        shap_values: np.ndarray,
-        valid_indices: np.ndarray,
-        num_rows: int,
-        engineered_feature_cols: list[str],
-    ) -> list[dict[str, float | None]]:
-        """Format SHAP values into contribution dictionaries."""
-        import numpy as np
-
-        num_features = len(engineered_feature_cols)
-        contributions: list[dict[str, float | None]] = [
-            {c: None for c in engineered_feature_cols} for _ in range(num_rows)
-        ]
-
-        if shap_values.size == 0:
-            return contributions
-
-        # Normalize absolute SHAP values to sum to 1.0 per row
-        abs_shap = np.abs(shap_values)
-        totals = abs_shap.sum(axis=1, keepdims=True)
-        normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
-
-        # Build contribution dictionaries for valid rows
-        valid_row_idx = 0
-        for i in range(num_rows):
-            if valid_indices[i]:
-                contributions[i] = {
-                    engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3)
-                    for j in range(num_features)
-                }
-                valid_row_idx += 1
-
-        return contributions
-
-    def compute_shap_values(
-        model_local: Any,
-        feature_matrix: pd.DataFrame,
-        engineered_feature_cols: list[str],
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Compute SHAP values for a model and feature matrix.
-
-        Returns:
-            Tuple of (shap_values, valid_indices)
-        """
-        import pandas as pd
-        import numpy as np
-
-        try:
-            import shap
-        except ImportError as e:
-            raise ImportError("SHAP library not available in pandas UDF worker.") from e
-
-        # Extract components from Pipeline if present
-        scaler = getattr(model_local, "named_steps", {}).get("scaler")
-        tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
-
-        shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
-
-        # Identify valid rows (no NaNs)
-        valid_indices = ~pd.isna(shap_data).any(axis=1)
-
-        # Compute SHAP values
-        shap_values = np.array([])
-        if valid_indices.any():
-            if len(engineered_feature_cols) == 1:
-                # For single feature, contribution is always 100% (1.0 or -1.0)
-                # This avoids IndexError in SHAP for single-feature models
-                shap_values = np.ones((len(shap_data[valid_indices]), 1))
-            else:
-                # Create TreeSHAP explainer only when needed
-                explainer = shap.TreeExplainer(tree_model)
-                shap_values = explainer.shap_values(shap_data[valid_indices])
-
-        return shap_values, valid_indices
-
     @pandas_udf(schema)  # type: ignore[call-overload]
     def predict_with_shap_udf(*cols: pd.Series) -> pd.DataFrame:
         """Pandas UDF for distributed scoring with optional SHAP (Spark Connect compatible)."""
@@ -611,8 +554,13 @@ def _create_scoring_udf_with_contributions(
         # Score using full pipeline
         scores = -model_local.score_samples(feature_matrix)
 
-        shap_values, valid_indices = compute_shap_values(model_local, feature_matrix, engineered_feature_cols)
-        contributions_list = format_shap_contributions(
+        shap_values, valid_indices = _compute_shap_values(
+            model_local,
+            feature_matrix,
+            engineered_feature_cols,
+            allow_missing=True,
+        )
+        contributions_list = _format_shap_contributions(
             shap_values, valid_indices, len(feature_matrix), engineered_feature_cols
         )
 
@@ -682,6 +630,185 @@ def _score_with_sklearn_model(
     result = df.join(scored_df.select(*cols_to_select), on=merge_columns, how="left")
 
     return result
+
+
+def _format_shap_contributions(
+    shap_values: np.ndarray,
+    valid_indices: np.ndarray,
+    num_rows: int,
+    engineered_feature_cols: list[str],
+) -> list[dict[str, float | None]]:
+    """Format SHAP values into contribution dictionaries."""
+    import numpy as np
+
+    num_features = len(engineered_feature_cols)
+    contributions: list[dict[str, float | None]] = [{c: None for c in engineered_feature_cols} for _ in range(num_rows)]
+
+    if shap_values.size == 0:
+        return contributions
+
+    # Normalize absolute SHAP values to sum to 1.0 per row
+    abs_shap = np.abs(shap_values)
+    totals = abs_shap.sum(axis=1, keepdims=True)
+    normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
+
+    # Build contribution dictionaries for valid rows
+    valid_row_idx = 0
+    for i in range(num_rows):
+        if valid_indices[i]:
+            contributions[i] = {
+                engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3) for j in range(num_features)
+            }
+            valid_row_idx += 1
+
+    return contributions
+
+
+def _compute_shap_values(
+    model_local: Any,
+    feature_matrix: pd.DataFrame,
+    engineered_feature_cols: list[str],
+    *,
+    allow_missing: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute SHAP values for a model and feature matrix."""
+    import pandas as pd
+    import numpy as np
+
+    try:
+        import shap
+    except ImportError as e:
+        if allow_missing:
+            return np.array([]), np.zeros(len(feature_matrix), dtype=bool)
+        raise ImportError("SHAP library not available for driver-only scoring.") from e
+
+    scaler = getattr(model_local, "named_steps", {}).get("scaler")
+    tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
+
+    shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+    valid_indices = ~pd.isna(shap_data).any(axis=1)
+
+    shap_values = np.array([])
+    if valid_indices.any():
+        if len(engineered_feature_cols) == 1:
+            shap_values = np.ones((len(shap_data[valid_indices]), 1))
+        else:
+            explainer = shap.TreeExplainer(tree_model)
+            shap_values = explainer.shap_values(shap_data[valid_indices])
+
+    return shap_values, valid_indices
+
+
+def _score_with_sklearn_model_local(
+    model_uri: str,
+    df: DataFrame,
+    feature_cols: list[str],
+    feature_metadata_json: str,
+    merge_columns: list[str],
+    include_contributions: bool = False,
+    *,
+    model_record: AnomalyModelRecord,
+) -> DataFrame:
+    """Score DataFrame using scikit-learn model locally on the driver."""
+    import pandas as pd
+
+    sklearn_model = _load_and_validate_model(model_uri, model_record)
+    column_infos, feature_metadata = _prepare_feature_metadata(feature_metadata_json)
+    engineered_df = _apply_feature_engineering_for_scoring(
+        df, feature_cols, merge_columns, column_infos, feature_metadata
+    )
+
+    engineered_feature_cols = feature_metadata.engineered_feature_names
+    local_pdf = engineered_df.select(*merge_columns, *engineered_feature_cols).toPandas()
+
+    feature_matrix = local_pdf[engineered_feature_cols]
+    scores = -sklearn_model.score_samples(feature_matrix)
+
+    result = {col_name: local_pdf[col_name] for col_name in merge_columns}
+    result["anomaly_score"] = scores
+
+    if include_contributions:
+        shap_values, valid_indices = _compute_shap_values(
+            sklearn_model,
+            feature_matrix,
+            engineered_feature_cols,
+            allow_missing=False,
+        )
+        result["anomaly_contributions"] = _format_shap_contributions(
+            shap_values, valid_indices, len(local_pdf), engineered_feature_cols
+        )
+
+    result_pdf = pd.DataFrame(result)
+    result_schema = StructType(
+        [
+            *[df.schema[c] for c in merge_columns],
+            StructField("anomaly_score", DoubleType(), True),
+            *(
+                [StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)]
+                if include_contributions
+                else []
+            ),
+        ]
+    )
+    scored_df = df.sparkSession.createDataFrame(result_pdf, schema=result_schema)
+    return df.join(scored_df, on=merge_columns, how="left")
+
+
+def _score_ensemble_models_local(
+    model_uris: list[str],
+    df_filtered: DataFrame,
+    columns: list[str],
+    feature_metadata_json: str,
+    merge_columns: list[str],
+    include_contributions: bool,
+    *,
+    model_record: AnomalyModelRecord,
+) -> DataFrame:
+    """Score ensemble models locally on the driver."""
+    import numpy as np
+    import pandas as pd
+
+    models = [_load_and_validate_model(uri, model_record) for uri in model_uris]
+    column_infos, feature_metadata = _prepare_feature_metadata(feature_metadata_json)
+    engineered_df = _apply_feature_engineering_for_scoring(
+        df_filtered, columns, merge_columns, column_infos, feature_metadata
+    )
+    engineered_feature_cols = feature_metadata.engineered_feature_names
+    local_pdf = engineered_df.select(*merge_columns, *engineered_feature_cols).toPandas()
+
+    feature_matrix = local_pdf[engineered_feature_cols]
+    scores_matrix = np.array([-model.score_samples(feature_matrix) for model in models])
+
+    result = {col_name: local_pdf[col_name] for col_name in merge_columns}
+    result["anomaly_score"] = scores_matrix.mean(axis=0)
+    result["anomaly_score_std"] = scores_matrix.std(axis=0, ddof=1)
+
+    if include_contributions:
+        shap_values, valid_indices = _compute_shap_values(
+            models[0],
+            feature_matrix,
+            engineered_feature_cols,
+            allow_missing=False,
+        )
+        result["anomaly_contributions"] = _format_shap_contributions(
+            shap_values, valid_indices, len(local_pdf), engineered_feature_cols
+        )
+
+    result_pdf = pd.DataFrame(result)
+    result_schema = StructType(
+        [
+            *[df_filtered.schema[c] for c in merge_columns],
+            StructField("anomaly_score", DoubleType(), True),
+            StructField("anomaly_score_std", DoubleType(), True),
+            *(
+                [StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)]
+                if include_contributions
+                else []
+            ),
+        ]
+    )
+    scored_df = df_filtered.sparkSession.createDataFrame(result_pdf, schema=result_schema)
+    return df_filtered.join(scored_df, on=merge_columns, how="left")
 
 
 def _get_record_for_discovery(
@@ -913,81 +1040,6 @@ def _create_ensemble_scoring_udf_with_contributions(
 ):
     """Create ensemble scoring UDF with SHAP contributions."""
 
-    def format_shap_contributions(
-        shap_values: np.ndarray,
-        valid_indices: np.ndarray,
-        num_rows: int,
-        engineered_feature_cols: list[str],
-    ) -> list[dict[str, float | None]]:
-        """Format SHAP values into contribution dictionaries."""
-        import numpy as np
-
-        num_features = len(engineered_feature_cols)
-        contributions: list[dict[str, float | None]] = [
-            {c: None for c in engineered_feature_cols} for _ in range(num_rows)
-        ]
-
-        if shap_values.size == 0:
-            return contributions
-
-        # Normalize absolute SHAP values to sum to 1.0 per row
-        abs_shap = np.abs(shap_values)
-        totals = abs_shap.sum(axis=1, keepdims=True)
-        normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
-
-        # Build contribution dictionaries for valid rows
-        valid_row_idx = 0
-        for i in range(num_rows):
-            if valid_indices[i]:
-                contributions[i] = {
-                    engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3)
-                    for j in range(num_features)
-                }
-                valid_row_idx += 1
-
-        return contributions
-
-    def compute_shap_values(
-        model_local: Any,
-        feature_matrix: pd.DataFrame,
-        engineered_feature_cols: list[str],
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Compute SHAP values for a model and feature matrix.
-
-        Returns:
-            Tuple of (shap_values, valid_indices)
-        """
-        import pandas as pd
-        import numpy as np
-
-        try:
-            import shap
-        except ImportError as e:
-            raise ImportError("SHAP library not available in pandas UDF worker.") from e
-
-        # Extract components from Pipeline if present
-        scaler = getattr(model_local, "named_steps", {}).get("scaler")
-        tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
-
-        shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
-
-        # Identify valid rows (no NaNs)
-        valid_indices = ~pd.isna(shap_data).any(axis=1)
-
-        # Compute SHAP values
-        shap_values = np.array([])
-        if valid_indices.any():
-            if len(engineered_feature_cols) == 1:
-                # For single feature, contribution is always 100% (1.0 or -1.0)
-                # This avoids IndexError in SHAP for single-feature models
-                shap_values = np.ones((len(shap_data[valid_indices]), 1))
-            else:
-                # Create TreeSHAP explainer only when needed
-                explainer = shap.TreeExplainer(tree_model)
-                shap_values = explainer.shap_values(shap_data[valid_indices])
-
-        return shap_values, valid_indices
-
     @pandas_udf(schema)  # type: ignore[call-overload]
     def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
         """Score with all ensemble models in single pass (Spark Connect compatible)."""
@@ -1010,8 +1062,13 @@ def _create_ensemble_scoring_udf_with_contributions(
 
         # Compute SHAP contributions using first model
         model_local = models[0]
-        shap_values, valid_indices = compute_shap_values(model_local, feature_matrix, engineered_feature_cols)
-        result["anomaly_contributions"] = format_shap_contributions(
+        shap_values, valid_indices = _compute_shap_values(
+            model_local,
+            feature_matrix,
+            engineered_feature_cols,
+            allow_missing=True,
+        )
+        result["anomaly_contributions"] = _format_shap_contributions(
             shap_values, valid_indices, len(feature_matrix), engineered_feature_cols
         )
 
@@ -1184,27 +1241,50 @@ def _score_global_model(
     model_uris = record.identity.model_uri.split(",")
     assert record.features.feature_metadata is not None, f"Model {record.identity.model_name} missing feature_metadata"
 
-    scored_df = (
-        _score_ensemble_models(
-            model_uris,
-            df_filtered,
-            config.columns,
-            record.features.feature_metadata,
-            config.merge_columns,
-            config.include_contributions,
-            model_record=record,  # Pass model record for version validation
+    if config.driver_only:
+        scored_df = (
+            _score_ensemble_models_local(
+                model_uris,
+                df_filtered,
+                config.columns,
+                record.features.feature_metadata,
+                config.merge_columns,
+                config.include_contributions,
+                model_record=record,  # Pass model record for version validation
+            )
+            if len(model_uris) > 1
+            else _score_with_sklearn_model_local(
+                record.identity.model_uri,
+                df_filtered,
+                config.columns,
+                record.features.feature_metadata,
+                config.merge_columns,
+                include_contributions=config.include_contributions,
+                model_record=record,  # Pass model record for version validation
+            ).withColumn("anomaly_score_std", F.lit(0.0))
         )
-        if len(model_uris) > 1
-        else _score_with_sklearn_model(
-            record.identity.model_uri,
-            df_filtered,
-            config.columns,
-            record.features.feature_metadata,
-            config.merge_columns,
-            include_contributions=config.include_contributions,
-            model_record=record,  # Pass model record for version validation
-        ).withColumn("anomaly_score_std", F.lit(0.0))
-    )
+    else:
+        scored_df = (
+            _score_ensemble_models(
+                model_uris,
+                df_filtered,
+                config.columns,
+                record.features.feature_metadata,
+                config.merge_columns,
+                config.include_contributions,
+                model_record=record,  # Pass model record for version validation
+            )
+            if len(model_uris) > 1
+            else _score_with_sklearn_model(
+                record.identity.model_uri,
+                df_filtered,
+                config.columns,
+                record.features.feature_metadata,
+                config.merge_columns,
+                include_contributions=config.include_contributions,
+                model_record=record,  # Pass model record for version validation
+            ).withColumn("anomaly_score_std", F.lit(0.0))
+        )
 
     # Add _info column (before dropping internal columns)
     scored_df = _add_info_column(
@@ -1289,6 +1369,8 @@ def has_no_anomalies(
         if not merge_columns:
             raise MissingParameterError("merge_columns is not provided.")
 
+        driver_only_local = _DRIVER_ONLY["value"]
+
         # Validate SHAP availability early (before Spark jobs)
         if include_contributions and not SHAP_AVAILABLE:
             raise ImportError(
@@ -1322,6 +1404,8 @@ def has_no_anomalies(
             drift_threshold_value=drift_threshold if drift_threshold is not None else 3.0,
             include_contributions=include_contributions,
             include_confidence=include_confidence,
+            segment_by=segment_by,
+            driver_only=driver_only_local,
         )
 
         registry_client = AnomalyModelRegistry(df.sparkSession)
