@@ -668,7 +668,8 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
     "apply_checks_method",
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
-def test_observer_metrics_output_with_empty_checks(apply_checks_method, spark, ws, make_schema, make_random):
+def test_observer_metrics_output_with_empty_checks(skip_if_classic_compute, apply_checks_method, spark, ws, make_schema, make_random):
+    # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -811,8 +812,10 @@ def test_observer_metrics_output_with_empty_checks(apply_checks_method, spark, w
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
 def test_observer_metrics_output_with_quarantine_with_empty_checks(
+    skip_if_classic_compute,
     apply_checks_method, spark, ws, make_schema, make_random
 ):
+    # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -963,7 +966,8 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
     "apply_checks_method",
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
-def test_observer_metrics_output(apply_checks_method, spark, ws, make_schema, make_random):
+def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, spark, ws, make_schema, make_random):
+    # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -1115,7 +1119,8 @@ def test_observer_metrics_output(apply_checks_method, spark, ws, make_schema, ma
     "apply_checks_method",
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
-def test_observer_metrics_output_with_quarantine(apply_checks_method, spark, ws, make_schema, make_random):
+def test_observer_metrics_output_with_quarantine(skip_if_classic_compute, apply_checks_method, spark, ws, make_schema, make_random):
+    # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
@@ -1273,7 +1278,8 @@ def test_observer_metrics_output_with_quarantine(apply_checks_method, spark, ws,
     "apply_checks_method",
     [DQEngine.apply_checks_and_split, DQEngine.apply_checks_by_metadata_and_split],
 )
-def test_save_results_in_table_batch_with_metrics(apply_checks_method, spark, ws, make_schema, make_random):
+def test_save_results_in_table_batch_with_metrics(skip_if_classic_compute, apply_checks_method, spark, ws, make_schema, make_random):
+    # NOTE: This test is skipped during the 'integration' workflow. Data quality summary metrics are not supported on classic compute in Dedicated access mode for DBR versions < 17.
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
