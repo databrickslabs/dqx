@@ -352,7 +352,7 @@ class DQEngineCore(DQEngineCoreBase):
         Determines the selected columns for schema validation checks. This is required when using `has_valid_schema` to
         ignore columns added during quality checking. This includes:
         * DQX result columns (e.g. '_warnings' and '_errors')
-        * Internal columns used for aggregate checks
+        * Internal columns used for dataset-level checks
 
         Args:
             df: Input DataFrame
