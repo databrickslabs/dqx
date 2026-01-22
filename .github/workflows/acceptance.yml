@@ -191,7 +191,7 @@ jobs:
           timeout: 2h
           codegen_path: tests/e2e/.codegen.json
         env:
-          REF_NAME: ${{ github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch
+          REF_NAME: ${{ github.head_ref || github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch (head_ref for PRs, ref_name for push events)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
@@ -247,7 +247,7 @@ jobs:
           timeout: 2h
           codegen_path: tests/e2e/.codegen.json
         env:
-          REF_NAME: ${{ github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch
+          REF_NAME: ${{ github.head_ref || github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch (head_ref for PRs, ref_name for push events)
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
