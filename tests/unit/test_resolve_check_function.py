@@ -1,6 +1,9 @@
 import textwrap
+import sys
+import importlib
 
 import pytest
+from databricks.labs import dqx
 from databricks.labs.dqx.checks_resolver import resolve_check_function, resolve_custom_check_functions_from_path
 from databricks.labs.dqx.errors import InvalidCheckError
 
@@ -101,3 +104,31 @@ def test_resolve_custom_check_functions_from_path_with_dependency(tmp_path):
 
     func = resolve_custom_check_functions_from_path({"main_func": str(main_path)})["main_func"]
     assert func() == "dependency ok"
+
+
+def test_pii_module_import_failure(monkeypatch):
+    """Test that the code handles gracefully when PII module is not available."""
+    # Save the original module state
+    original_pii_module = sys.modules.get('databricks.labs.dqx.pii')
+
+    # Remove the PII module from sys.modules to simulate ImportError
+    monkeypatch.setitem(sys.modules, 'databricks.labs.dqx.pii', None)
+
+    # Force module reload to trigger the import logic
+    importlib.reload(dqx.checks_resolver)
+
+    # Verify that PII_ENABLED is False when import fails
+    assert dqx.checks_resolver.PII_ENABLED is False
+
+    # Verify that standard check functions still work
+    func = dqx.checks_resolver.resolve_check_function('is_not_null')
+    assert func is not None
+
+    # Verify that a non-existent function (like PII) cannot be resolved when PII is disabled
+    func = dqx.checks_resolver.resolve_check_function('some_missing_func', fail_on_missing=False)
+    assert func is None
+
+    # Restore the module to its original state
+    if original_pii_module is not None:
+        sys.modules['databricks.labs.dqx.pii'] = original_pii_module
+    importlib.reload(dqx.checks_resolver)

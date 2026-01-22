@@ -134,7 +134,7 @@ def test_generate_dq_rules_ai_assisted_with_is_not_equal_to_str(ws, spark):
 
 
 def test_generate_dq_rules_ai_assisted_with_sql_expression(ws, spark):
-    user_input = "Users email must not end with @gmail.com checked using sql expression, skip msg."
+    user_input = "Users email must not end with @gmail.com checked using sql expression with 'NOT LIKE', skip msg."
 
     generator = DQGenerator(ws, spark)
     actual_checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
