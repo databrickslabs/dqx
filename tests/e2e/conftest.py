@@ -1,5 +1,6 @@
 import logging
 import os
+import subprocess
 from datetime import timedelta
 from pathlib import Path
 import pytest
@@ -13,12 +14,47 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 
+def _get_local_git_branch() -> str | None:
+    """Get the current git branch name, or None if not available."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:
+        return None
+
+
 @pytest.fixture
 def library_ref() -> str:
-    test_library_ref = "git+https://github.com/databrickslabs/dqx"
-    if os.getenv("REF_NAME"):
-        test_library_ref = f"{test_library_ref}.git@refs/pull/{os.getenv('REF_NAME')}"
-    return test_library_ref
+    """
+    Returns a git reference to DQX library for testing.
+
+    In GitHub Actions: uses REF_NAME env var (branch name from github.head_ref for PRs, github.ref_name for push)
+    Locally: automatically detects and uses current git branch
+    Default: main branch
+
+    Note: For local testing, the code must be pushed to GitHub (branch or PR).
+    """
+    base_ref = "git+https://github.com/databrickslabs/dqx"
+    is_github_actions = os.getenv("GITHUB_ACTIONS") == "true"
+
+    ref_name = None
+
+    if is_github_actions:
+        # In CI: use REF_NAME env var (set to github.head_ref for PRs, github.ref_name for push)
+        ref_name = os.getenv("REF_NAME")
+        if ref_name:
+            return f"{base_ref}.git@{ref_name}"
+    else:
+        # Local behavior: use current git branch
+        ref_name = _get_local_git_branch()
+        if ref_name and ref_name != "HEAD":
+            return f"{base_ref}.git@{ref_name}"
+
+    # Default to main branch
+    return base_ref
 
 
 def new_classic_job_cluster(ws=None):
