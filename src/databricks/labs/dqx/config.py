@@ -255,7 +255,6 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
         run_config_name: The name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
             The *overwrite* mode will only replace checks for the specific run config and not all checks in the table.
-        rule_set_fingerprint: Optional fingerprint to identify the rule set version.
     """
 
     location: str

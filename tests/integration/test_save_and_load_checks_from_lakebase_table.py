@@ -1,13 +1,11 @@
-import pytest
 import time
+import pytest
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
 
 from tests.conftest import compare_checks
 from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHECKS as TEST_CHECKS
-
-
 
 
 def test_load_checks_when_lakebase_table_does_not_exist(
@@ -219,11 +217,55 @@ def test_save_and_load_checks_from_lakebase_without_rule_set_fingerprint(
         location=lakebase_location, client_id=lakebase_client_id, instance_name=instance.name
     )
 
-    FIRST_CHECKS=TEST_CHECKS[0:2]
-    SECOND_CHECKS=TEST_CHECKS[2:]
-    dq_engine.save_checks(checks=FIRST_CHECKS, config=config)
-    time.sleep(3)
-    dq_engine.save_checks(checks=SECOND_CHECKS, config=config)
+    dq_engine.save_checks(checks=TEST_CHECKS[0:2], config=config)
+    time.sleep(2)
+    dq_engine.save_checks(checks=TEST_CHECKS[2:], config=config)
     checks = dq_engine.load_checks(config=config)
 
-    compare_checks(checks, SECOND_CHECKS)
+    compare_checks(checks, TEST_CHECKS[2:])
+
+
+def test_save_and_load_checks_from_lakebase_with_rule_set_fingerprint(
+    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
+):
+    dq_engine = DQEngine(ws, spark)
+
+    instance = make_lakebase_instance()
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+
+    config_save = LakebaseChecksStorageConfig(
+        location=lakebase_location, client_id=lakebase_client_id, instance_name=instance.name
+    )
+
+    dq_engine.save_checks(checks=TEST_CHECKS[0:2], config=config_save)
+    time.sleep(3)
+    dq_engine.save_checks(checks=TEST_CHECKS[2:], config=config_save)
+    config_load = LakebaseChecksStorageConfig(
+        location=lakebase_location,
+        client_id=lakebase_client_id,
+        instance_name=instance.name,
+        rule_set_fingerprint="6e87f7de59b32771760892ce94586ff6",
+    )
+    checks = dq_engine.load_checks(config=config_load)
+
+    compare_checks(checks, TEST_CHECKS[0:2])
+
+
+def test_save_and_load_checks_from_lakebase_rule_set_fingerprint_already_exists(
+    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
+):
+    dq_engine = DQEngine(ws, spark)
+
+    instance = make_lakebase_instance()
+    lakebase_location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(
+        location=lakebase_location, client_id=lakebase_client_id, instance_name=instance.name
+    )
+
+    dq_engine.save_checks(checks=TEST_CHECKS[0:2], config=config)
+    time.sleep(3)
+    dq_engine.save_checks(checks=TEST_CHECKS[0:2], config=config)
+    checks = dq_engine.load_checks(config=config)
+
+    compare_checks(checks, TEST_CHECKS[0:2])

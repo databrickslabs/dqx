@@ -86,6 +86,7 @@ def serialize_checks_from_dataframe(
         )
 
     checks = []
+    print(check_rows)
     for row in check_rows:
         check_dict = {
             "name": row.name,
@@ -143,7 +144,8 @@ def deserialize_checks_to_dataframe(
     created_at = datetime.now()
     rule_set_fingerprint = generate_rule_set_fingerprint(dq_rule_checks)
     dq_rule_rows = []
-
+    print(checks)
+    print(dq_rule_checks)
     for dq_rule_check in dq_rule_checks:
         arguments = dq_rule_check.check_func_kwargs
 
@@ -155,7 +157,6 @@ def deserialize_checks_to_dataframe(
 
         # row_filter is resolved from the check filter so not need to include
         json_arguments = {k: json.dumps(v) for k, v in arguments.items() if k not in {"row_filter"}}
-        # add rule fingerprint to rule set in order to compute rule set fingerprint
 
         dq_rule_rows.append(
             [
@@ -170,7 +171,7 @@ def deserialize_checks_to_dataframe(
                 created_at,
             ]
         )
-
+    print(dq_rule_rows)
     return spark.createDataFrame(dq_rule_rows, CHECKS_TABLE_SCHEMA)
 
 
@@ -179,19 +180,23 @@ def generate_rule_set_fingerprint(checks: list[DQRule]) -> str:
     return str(hash(tuple(sorted(rule_dicts))))
 
 
-def generate_rule_set_fingerprint_from_dict(checks: list[dict]) -> tuple[list[dict], str]:
+def generate_hash(input_object: Any) -> str:
+    return hashlib.md5(json.dumps(input_object, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def generate_rule_set_fingerprint_from_dict(checks: list[dict]) -> list[dict]:
     rule_set = []
-    for check in checks:        
-        rule_fingerprint = hashlib.md5(json.dumps(check, sort_keys=True).encode("utf-8")).hexdigest()
+    for check in checks:
+        rule_fingerprint = generate_hash(check)
         check['rule_fingerprint'] = rule_fingerprint
         rule_set.append(rule_fingerprint)
-    rule_set_fingerprint = str(hash(tuple(sorted(rule_set))))
+    rule_set_fingerprint = generate_hash(rule_set)
     created_at = datetime.now()
     for check in checks:
         check['rule_set_fingerprint'] = rule_set_fingerprint
         check['created_at'] = created_at
-    print(checks,created_at)
-    return checks, rule_set_fingerprint
+
+    return checks
 
 
 def deserialize_checks(checks: list[dict], custom_checks: dict[str, Callable] | None = None) -> list[DQRule]:

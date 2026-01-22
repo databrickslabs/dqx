@@ -18,7 +18,6 @@ from sqlalchemy import (
     insert,
     select,
     delete,
-    null,
     event,
     text,
     inspect,
@@ -51,6 +50,8 @@ from databricks.labs.dqx.checks_serializer import (
     serialize_checks_from_dataframe,
     deserialize_checks_to_dataframe,
     serialize_checks_to_bytes,
+    deserialize_checks,
+    serialize_checks,
     get_file_deserializer,
     FILE_SERIALIZERS,
 )
@@ -271,8 +272,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             List of normalized dq rules (checks).
         """
+        des_checks = deserialize_checks(checks)
+        ser_checks = serialize_checks(des_checks)
+        enriched_checks = generate_rule_set_fingerprint_from_dict(ser_checks)
+        print(enriched_checks)
         normalized_checks = []
-        for check in checks:
+        for check in enriched_checks:
             user_metadata = check.get("user_metadata")
             normalized_check = {
                 "name": check.get("name"),
@@ -281,6 +286,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 "filter": check.get("filter"),
                 "run_config_name": check.get("run_config_name", config.run_config_name),
                 "user_metadata": user_metadata,
+                "rule_fingerprint": check.get("rule_fingerprint"),
+                "rule_set_fingerprint": check.get("rule_set_fingerprint"),
+                "created_at": check.get("created_at"),
             }
             normalized_checks.append(normalized_check)
         return normalized_checks
@@ -329,7 +337,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 logger.info(f"Deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'")
 
             normalized_checks = self._normalize_checks(checks, config)
-            enriched_checks, rule_set_fingerprint = generate_rule_set_fingerprint_from_dict(normalized_checks)
+            rule_set_fingerprint = normalized_checks[0].get("rule_set_fingerprint")
             exists_rule_set = (
                 select(table.c.rule_set_fingerprint)
                 .where(
@@ -342,9 +350,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 logger.info(f"Checks with rule_set_fingerprint {rule_set_fingerprint} already exist — skipping")
                 return
             insert_stmt = insert(table)
-            conn.execute(insert_stmt, enriched_checks)
+            conn.execute(insert_stmt, normalized_checks)
             logger.info(
-                f"Inserted {len(enriched_checks)} checks to {config.database_name}.{config.schema_name}.{config.table_name} "
+                f"Inserted {len(normalized_checks)} checks to {config.database_name}.{config.schema_name}.{config.table_name} "
                 f"with run_config_name='{config.run_config_name}'"
             )
 
@@ -367,11 +375,11 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             List of dq rules.
         """
         stmt = text(
-                    f"""SELECT  *
+            f"""SELECT  *
                         FROM {config.schema_name}.{config.table_name} 
                         WHERE run_config_name = '{config.run_config_name}'"""
-                )
-        
+        )
+
         if self._rule_set_columns_exists(engine, config.schema_name, config.table_name):
             logger.info("Rule version columns exist in the table.")
             if config.rule_set_fingerprint:
@@ -395,9 +403,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                         LIMIT 1)
                 """
                 )
-           
+
         with engine.connect() as conn:
-                   
+
             result = conn.execute(stmt)
             checks = result.mappings().all()
             logger.info(
@@ -410,9 +418,25 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                     f"for run_config_name='{config.run_config_name}'. "
                     f"Make sure the profiler has run successfully and saved checks to this location."
                 )
-            checks_dict= [dict(check) for check in checks]
-            forbidden_keys = ["rule_fingerprint", "rule_set_fingerprint", "created_at"]
-            return [{k: v for k, v in d.items() if k not in forbidden_keys} for d in checks_dict]
+            checks_dict = [dict(check) for check in checks]
+            print(checks_dict)
+            return self._create_dict_with_selected_check_columns(checks_dict)
+
+    @staticmethod
+    def _create_dict_with_selected_check_columns(checks: list[dict]) -> list[dict]:
+        checks_list = []
+        for check in checks:
+            check_dict = {
+                "name": check.get("name"),
+                "criticality": check.get("criticality"),
+                "check": check.get("check"),
+            }
+            if check.get("filter") is not None:
+                check_dict["filter"] = check["filter"]
+            if check.get("user_metadata") is not None:
+                check_dict["user_metadata"] = check["user_metadata"]
+            checks_list.append(check_dict)
+        return checks_list
 
     @staticmethod
     def _rule_set_columns_exists(engine, schema, table) -> bool:
@@ -421,7 +445,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             return False
         cols = inspector.get_columns(table, schema=schema)
         existing_column_names = {col['name'] for col in cols}
-        rule_set_columns = ["rule_fingerprint", "rule_set_fingerprint", "created_at"]        
+        rule_set_columns = ["rule_fingerprint", "rule_set_fingerprint", "created_at"]
         return all(x in existing_column_names for x in rule_set_columns)
 
     def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
