@@ -8,6 +8,8 @@ from functools import cached_property
 from io import BytesIO
 from typing import Any
 
+# Apply numba/coverage patches before any other imports that might trigger numba
+import tests.compat  # noqa: F401
 
 import pytest
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
@@ -31,6 +33,7 @@ from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
 from databricks.sdk.service.workspace import ImportFormat
 
 # Anomaly detection imports - required for anomaly tests
+# Imported after patches are applied to ensure compatibility
 from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
 
 logger = logging.getLogger(__name__)
