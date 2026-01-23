@@ -13,7 +13,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, register_for_schema_preselection
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -1925,6 +1925,7 @@ def is_data_fresh_per_time_window(
 
 
 @register_rule("dataset")
+@register_for_schema_preselection("columns")
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
     ref_df_name: str | None = None,

@@ -1,6 +1,7 @@
 import copy
-import os
+import inspect
 import logging
+import os
 from concurrent import futures
 from collections.abc import Callable
 from dataclasses import replace
@@ -15,7 +16,6 @@ from pyspark.sql import DataFrame, Observation, SparkSession
 from pyspark.sql.streaming import StreamingQuery
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
-from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.config_serializer import ConfigSerializer
@@ -39,6 +39,7 @@ from databricks.labs.dqx.rule import (
     ColumnArguments,
     DefaultColumnNames,
     DQRule,
+    SCHEMA_PRESELECTION_REGISTRY,
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
@@ -358,16 +359,20 @@ class DQEngineCore(DQEngineCoreBase):
             df: Input DataFrame
             check: DQRule to be modified
         """
-
-        # Default columns to all columns of the current DataFrame if not explicitly set
-        if check.check_func_kwargs.get("columns"):
+        if check.check_func.__name__ not in SCHEMA_PRESELECTION_REGISTRY:
             return check
 
-        if check.check_func_args and len(check.check_func_args) >= 3:
+        schema_argument = SCHEMA_PRESELECTION_REGISTRY[check.check_func.__name__]
+        if check.check_func_kwargs.get(schema_argument):
             return check
+
+        if check.check_func_args:
+            check_func_signature = inspect.signature(check.check_func)
+            if check_func_signature.parameters.get(schema_argument):
+                return check
 
         rule_kwargs = check.check_func_kwargs.copy()
-        rule_kwargs["columns"] = [col for col in df.columns if col not in set(self._result_column_names.values())]
+        rule_kwargs[schema_argument] = [col for col in df.columns if col not in set(self._result_column_names.values())]
         return replace(check, check_func_kwargs=rule_kwargs)
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
@@ -414,11 +419,7 @@ class DQEngineCore(DQEngineCoreBase):
         current_df = df
 
         for check in checks:
-            normalized_check = (
-                self._preselect_schema_validation_columns(df, check)
-                if check.check_func is check_funcs.has_valid_schema
-                else check
-            )
+            normalized_check = self._preselect_schema_validation_columns(df, check)
             manager = DQRuleManager(
                 check=normalized_check,
                 df=current_df,

@@ -16,11 +16,20 @@ logger = logging.getLogger(__name__)
 
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
+SCHEMA_PRESELECTION_REGISTRY: dict[str, str] = {}
 
 
 def register_rule(rule_type: str) -> Callable:
     def wrapper(func: Callable) -> Callable:
         CHECK_FUNC_REGISTRY[func.__name__] = rule_type
+        return func
+
+    return wrapper
+
+
+def register_for_schema_preselection(schema_argument: str) -> Callable:
+    def wrapper(func: Callable) -> Callable:
+        SCHEMA_PRESELECTION_REGISTRY[func.__name__] = schema_argument
         return func
 
     return wrapper
