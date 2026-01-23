@@ -6,7 +6,6 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 from tempfile import TemporaryDirectory
-from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
@@ -17,8 +16,7 @@ from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
 logger = logging.getLogger(__name__)
 
 
-def test_run_dqx_demo_library(make_notebook, make_schema, make_job, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_demo_library(ws, make_notebook, make_schema, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_library.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -47,8 +45,7 @@ def test_run_dqx_demo_library(make_notebook, make_schema, make_job, library_ref)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_library")
 
 
-def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, make_job, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_manufacturing_demo(ws, make_notebook, make_directory, make_schema, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_manufacturing_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -73,8 +70,7 @@ def test_run_dqx_manufacturing_demo(make_notebook, make_directory, make_schema, 
     logging.info(f"Job run {run.run_id} completed successfully for dqx_manufacturing_demo")
 
 
-def test_run_dqx_quick_start_demo_library(make_notebook, make_job, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_quick_start_demo_library(ws, make_notebook, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_quick_start_demo_library.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -92,8 +88,7 @@ def test_run_dqx_quick_start_demo_library(make_notebook, make_job, library_ref):
     logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
 
 
-def test_run_dqx_demo_pii_detection(make_notebook, make_job, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_demo_pii_detection(ws, make_notebook, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_pii_detection.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -114,14 +109,25 @@ def test_run_dqx_demo_pii_detection(make_notebook, make_job, library_ref):
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
-def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_dlt_demo(ws, make_notebook, make_schema, make_pipeline, make_job, library_ref):
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
+
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_dlt_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
     pipeline = make_pipeline(
+        # DLT / Lakeflow support 3 modes of execution:
+        # * Full Unity Catalog (UC) mode, the so called DPM (Direct Publishing Mode).
+        #   This mode supports write to arbitrary catalogs and schemas, and performs additional checks, e.g.
+        #   prevent usage of collect() or schema inspection
+        # * non-UC mode (legacy) where neither catalog & schema nor target are provided
+        # * UC legacy mode which specifies the target schema where all datasets defined in the pipeline are published
+        # As part of this test we use the latest full UC mode.
+        catalog=catalog,
+        schema=schema,
         libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))],
         environment=PipelinesEnvironment(dependencies=[library_ref]),
     )
@@ -137,7 +143,7 @@ def test_run_dqx_dlt_demo(make_notebook, make_pipeline, make_job, library_ref):
     logging.info(f"Job run {run.run_id} completed successfully for dqx_dlt_demo")
 
 
-def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_job):
+def test_run_dqx_demo_tool(ws, installation_ctx, make_schema, make_notebook, make_job):
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     installation_ctx.replace(
@@ -152,7 +158,6 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     install_path = installation_ctx.installation.install_folder()
 
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_tool.py"
-    ws = WorkspaceClient()
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
@@ -175,8 +180,7 @@ def test_run_dqx_demo_tool(installation_ctx, make_schema, make_notebook, make_jo
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_tool")
 
 
-def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp_path, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_streaming_demo_native(ws, make_notebook, make_schema, make_job, tmp_path, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_native.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -205,8 +209,7 @@ def test_run_dqx_streaming_demo_native(make_notebook, make_schema, make_job, tmp
     logging.info(f"Job run {run.run_id} completed successfully for dqx_streaming_demo")
 
 
-def test_run_dqx_streaming_demo_diy(make_notebook, make_job, tmp_path, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_streaming_demo_diy(ws, make_notebook, make_job, tmp_path, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_streaming_demo_diy.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -263,9 +266,7 @@ def test_run_dqx_demo_asset_bundle(make_schema, make_random, library_ref):
         subprocess.run([cli_path, "bundle", "destroy", "--auto-approve"], check=True, capture_output=True, cwd=path)
 
 
-def test_run_dqx_multi_table_demo(make_notebook, make_schema, make_job, library_ref):
-
-    ws = WorkspaceClient()
+def test_run_dqx_multi_table_demo(ws, make_notebook, make_schema, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_multi_table_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -288,8 +289,7 @@ def test_run_dqx_multi_table_demo(make_notebook, make_schema, make_job, library_
     logging.info(f"Job run {run.run_id} completed successfully for dqx_multi_table_demo")
 
 
-def test_run_dqx_demo_summary_metrics(make_notebook, make_schema, make_job, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_demo_summary_metrics(ws, make_notebook, make_schema, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_summary_metrics.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -318,8 +318,7 @@ def test_run_dqx_demo_summary_metrics(make_notebook, make_schema, make_job, libr
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_summary_metrics")
 
 
-def test_run_dqx_ai_assisted_quality_checks_generation(make_notebook, make_job, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_ai_assisted_quality_checks_generation(ws, make_notebook, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_ai_assisted_checks_generation.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -337,9 +336,8 @@ def test_run_dqx_ai_assisted_quality_checks_generation(make_notebook, make_job, 
     logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
 
 
-def test_run_dqx_demo_datacontract_odcs(make_notebook, make_job, library_ref):
+def test_run_dqx_demo_datacontract_odcs(ws, make_notebook, make_job, library_ref):
     """Test the ODCS v3.x data contract demo notebook."""
-    ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_datacontract_odcs.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
@@ -357,8 +355,7 @@ def test_run_dqx_demo_datacontract_odcs(make_notebook, make_job, library_ref):
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_datacontract_odcs")
 
 
-def test_run_dqx_demo_llm_pk_detection(make_notebook, make_job, library_ref):
-    ws = WorkspaceClient()
+def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref):
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_llm_pk_detection.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
