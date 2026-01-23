@@ -109,7 +109,13 @@ def test_run_dqx_demo_pii_detection(ws, make_notebook, make_job, library_ref):
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_pii_detection")
 
 
-def test_run_dqx_dlt_demo(ws, make_notebook, make_schema, make_pipeline, make_job, library_ref):
+def test_run_dqx_dlt_demo_serverless(
+    skip_if_runtime_not_serverless_compatible, ws, make_notebook, make_schema, make_pipeline, make_job, library_ref
+):
+    """
+    Test running the DLT demo notebook in a serverless pipeline.
+    No need to trigger from non-serverless runtime, since the dlt pipeline use own cluster anyway.
+    """
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
 
@@ -128,6 +134,7 @@ def test_run_dqx_dlt_demo(ws, make_notebook, make_schema, make_pipeline, make_jo
         # As part of this test we use the latest full UC mode.
         catalog=catalog,
         schema=schema,
+        enable_serverless_compute=True,
         libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))],
         environment=PipelinesEnvironment(dependencies=[library_ref]),
     )
