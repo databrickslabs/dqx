@@ -2,12 +2,18 @@
 Workflow to train anomaly detection models on Databricks.
 """
 
-from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 from databricks.labs.dqx.io import read_input_data
 from databricks.sdk import WorkspaceClient
+
+try:
+    from databricks.labs.dqx.anomaly import AnomalyEngine
+
+    ANOMALY_ENABLED = True
+except Exception:
+    ANOMALY_ENABLED = False
 
 
 class AnomalyTrainerWorkflow(Workflow):
@@ -21,6 +27,12 @@ class AnomalyTrainerWorkflow(Workflow):
         """
         Train anomaly detection model for the configured run.
         """
+        if not ANOMALY_ENABLED or AnomalyEngine is None:
+            raise MissingParameterError(
+                "Anomaly detection requires optional dependencies. "
+                "Install them with: pip install 'databricks-labs-dqx[anomaly]'"
+            )
+
         run_config = ctx.run_config
         anomaly_config = run_config.anomaly_config
         if not anomaly_config:

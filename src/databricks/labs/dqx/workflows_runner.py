@@ -8,21 +8,13 @@ from databricks.sdk.config import with_user_agent_extra
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.anomaly.anomaly_workflow import AnomalyTrainerWorkflow
 from databricks.labs.dqx.profiler.profiler_workflow import ProfilerWorkflow
 from databricks.labs.dqx.quality_checker.quality_checker_workflow import DataQualityWorkflow
 from databricks.labs.dqx.quality_checker.e2e_workflow import EndToEndWorkflow
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.workflow_task import Task, Workflow
 from databricks.labs.dqx.installer.logs import TaskLogger
-
-# Optional anomaly detection support
-try:
-    from databricks.labs.dqx.anomaly.anomaly_workflow import AnomalyTrainerWorkflow
-
-    ANOMALY_ENABLED = True
-except Exception:
-    # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
-    ANOMALY_ENABLED = False
 
 logger = logging.getLogger(__name__)
 
@@ -56,14 +48,12 @@ class WorkflowsRunner:
             override_clusters=config.quality_checker_override_clusters,
         )
 
-        # Conditionally add anomaly trainer if dependencies are installed
         workflows = [profiler, quality_checker]
-        if ANOMALY_ENABLED:
-            anomaly_trainer = AnomalyTrainerWorkflow(
-                spark_conf=config.quality_checker_spark_conf,
-                override_clusters=config.quality_checker_override_clusters,
-            )
-            workflows.append(anomaly_trainer)
+        anomaly_trainer = AnomalyTrainerWorkflow(
+            spark_conf=config.quality_checker_spark_conf,
+            override_clusters=config.quality_checker_override_clusters,
+        )
+        workflows.append(anomaly_trainer)
 
         e2e = EndToEndWorkflow(
             profiler,
