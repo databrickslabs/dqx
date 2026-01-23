@@ -59,7 +59,7 @@ def skip_if_classic_compute(debug_env):
     """
     Skips the test if the cluster is a classic compute cluster.
     """
-    if debug_env.get("DATABRICKS_COMPUTE_ID"):
+    if debug_env.get("DATABRICKS_CLUSTER_ID"):
         pytest.skip("This test requires a serverless compute cluster")
 
 

@@ -1417,7 +1417,7 @@ def test_save_results_in_table_streaming_with_metrics(
         ],
         TEST_SCHEMA,
     )
-    input_df.write.saveAsTable(input_table_name)
+    input_df.write.format("delta").saveAsTable(input_table_name)
     test_df = spark.readStream.table(input_table_name)
 
     if apply_checks_method == DQEngine.apply_checks_and_split:
