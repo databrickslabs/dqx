@@ -8869,6 +8869,18 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
             name="has_valid_schema",
             criticality="warn",
             check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={"expected_schema": "id int", "columns": ["id"], "strict": True}
+        ),
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_args=["id int", None, None, ["id"], True]
+        ),
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
             check_func_kwargs={"expected_schema": "id int, col1 timestamp", "strict": True},
         ),
     ]
