@@ -83,7 +83,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     ]
 
     result_df = dq_engine.apply_checks(test_df, checks)
-    rows = result_df.select("_errors", F.col("_info.anomaly.score").alias("score")).collect()
+    rows = result_df.select("_errors", F.col("_dq_info.anomaly.score").alias("score")).collect()
     flagged = 0
     for row in rows:
         has_errors = row["_errors"] is not None and len(row["_errors"]) > 0
@@ -134,12 +134,12 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
 
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Verify anomaly_score column exists (nested in _info.anomaly.score)
+    # Verify anomaly_score column exists (nested in _dq_info.anomaly.score)
 
-    assert "_info" in result_df.columns
+    assert "_dq_info" in result_df.columns
 
     # Verify scores are present by accessing nested field
-    rows = result_df.select(F.col("_info.anomaly.score").alias("anomaly_score")).collect()
+    rows = result_df.select(F.col("_dq_info.anomaly.score").alias("anomaly_score")).collect()
     assert all(row["anomaly_score"] is not None for row in rows)
 
 
@@ -357,11 +357,11 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
 
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Verify anomaly_score exists (nested in _info.anomaly.score)
+    # Verify anomaly_score exists (nested in _dq_info.anomaly.score)
 
-    assert "_info" in result_df.columns
+    assert "_dq_info" in result_df.columns
 
-    rows = result_df.select("_errors", F.col("_info.anomaly.score").alias("score")).collect()
+    rows = result_df.select("_errors", F.col("_dq_info.anomaly.score").alias("score")).collect()
     flagged = 0
     for row in rows:
         has_errors = row["_errors"] is not None and len(row["_errors"]) > 0

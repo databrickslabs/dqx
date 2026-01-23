@@ -456,20 +456,20 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
-        # Rename _info column to configured name if present (dataset-level checks like has_no_anomalies create it)
+        # Rename _dq_info column to configured name if present (dataset-level checks like has_no_anomalies create it)
         info_col_name = self._result_column_names[ColumnArguments.INFO]
-        if "_info" in result_df.columns and info_col_name != "_info":
-            result_df = result_df.withColumnRenamed("_info", info_col_name)
+        if "_dq_info" in result_df.columns and info_col_name != "_dq_info":
+            result_df = result_df.withColumnRenamed("_dq_info", info_col_name)
 
         # Drop temporary columns added by dataset-level checks (e.g., sql_query condition columns)
         # These are internal columns used to build the check condition but shouldn't appear in final output
-        # Preserve legitimate columns like _info (from has_no_anomalies, only if present) and result columns (_errors, _warnings)
+        # Preserve legitimate columns like _dq_info (from has_no_anomalies, only if present) and result columns (_errors, _warnings)
         columns_to_drop = [
             col
             for col in result_df.columns
             if col not in original_columns
             and col != dest_col
-            and col != info_col_name  # Preserve _info only if it exists (has_no_anomalies adds it)
+            and col != info_col_name  # Preserve _dq_info only if it exists (has_no_anomalies adds it)
             and col != self._result_column_names[ColumnArguments.ERRORS]
             and col != self._result_column_names[ColumnArguments.WARNINGS]
         ]

@@ -76,14 +76,14 @@ def has_no_anomalies(
     Output columns:
     - _errors or _warnings: Standard DQX result column based on criticality setting
       (customizable via ExtraParams.result_column_names)
-    - _info: Structured anomaly metadata
-      - _info.anomaly.score: Anomaly score (0-1)
-      - _info.anomaly.is_anomaly: Boolean flag
-      - _info.anomaly.threshold: Threshold used
-      - _info.anomaly.model: Model name
-      - _info.anomaly.segment: Segment values (if segmented)
-      - _info.anomaly.contributions: SHAP values (if requested)
-      - _info.anomaly.confidence_std: Ensemble std (if requested)
+    - _dq_info: Structured anomaly metadata
+      - _dq_info.anomaly.score: Anomaly score (0-1)
+      - _dq_info.anomaly.is_anomaly: Boolean flag
+      - _dq_info.anomaly.threshold: Threshold used
+      - _dq_info.anomaly.model: Model name
+      - _dq_info.anomaly.segment: Segment values (if segmented)
+      - _dq_info.anomaly.contributions: SHAP values (if requested)
+      - _dq_info.anomaly.confidence_std: Ensemble std (if requested)
 
     Args:
         merge_columns: Primary key columns (e.g., ["activity_id"]) for joining results.
@@ -97,16 +97,16 @@ def has_no_anomalies(
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
         include_contributions: Include SHAP feature contributions for explainability (default True).
             Requires SHAP library. Performance-optimized with native batching.
-        include_confidence: Include ensemble confidence scores in _info and top-level (default False).
+        include_confidence: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 2).
 
     Returns:
         Tuple of condition expression and apply function.
 
     Example:
-        Access anomaly metadata via _info column:
-        >>> df_scored.select("_info.anomaly.score", "_info.anomaly.is_anomaly")
-        >>> df_scored.filter(col("_info.anomaly.is_anomaly"))
+        Access anomaly metadata via _dq_info column:
+        >>> df_scored.select("_dq_info.anomaly.score", "_dq_info.anomaly.is_anomaly")
+        >>> df_scored.filter(col("_dq_info.anomaly.is_anomaly"))
     """
 
     def apply(df: DataFrame) -> DataFrame:
@@ -171,14 +171,14 @@ def has_no_anomalies(
 
         return _score_global_model(df, record, config)
 
-    # Create condition directly from _info.anomaly.is_anomaly (no intermediate column needed)
+    # Create condition directly from _dq_info.anomaly.is_anomaly (no intermediate column needed)
     message = F.concat_ws(
         "",
         F.lit("Anomaly score "),
-        F.round(F.col("_info").anomaly.score, 3).cast("string"),
+        F.round(F.col("_dq_info").anomaly.score, 3).cast("string"),
         F.lit(f" exceeded threshold {score_threshold}"),
     )
-    condition_expr = F.col("_info").anomaly.is_anomaly
+    condition_expr = F.col("_dq_info").anomaly.is_anomaly
     return make_condition(condition_expr, message, "has_anomalies"), apply
 
 
@@ -257,8 +257,8 @@ def _join_filtered_results_back(
     merge_columns: list[str],
 ) -> DataFrame:
     """Join scored results back to original DataFrame (for row_filter case)."""
-    # Get score columns to join (only anomaly_score and _info now)
-    score_cols_to_join = ["anomaly_score", "_info"]
+    # Get score columns to join (only anomaly_score and _dq_info now)
+    score_cols_to_join = ["anomaly_score", "_dq_info"]
 
     # Select only merge columns + score columns
     scored_subset = result.select(*merge_columns, *score_cols_to_join)
@@ -266,7 +266,7 @@ def _join_filtered_results_back(
     # Take distinct rows to avoid duplicates
     agg_exprs = [
         F.max("anomaly_score").alias("anomaly_score"),
-        F.max_by("_info", "anomaly_score").alias("_info"),
+        F.max_by("_dq_info", "anomaly_score").alias("_dq_info"),
     ]
     scored_subset_unique = scored_subset.groupBy(*merge_columns).agg(*agg_exprs)
 
@@ -289,7 +289,7 @@ def _create_null_scored_dataframe(
     if include_contributions:
         result = result.withColumn("anomaly_contributions", F.lit(None).cast(MapType(StringType(), DoubleType())))
 
-    # Add null _info column with proper schema (direct struct, not array)
+    # Add null _dq_info column with proper schema (direct struct, not array)
     null_anomaly_info = F.lit(None).cast(
         StructType(
             [
@@ -306,7 +306,7 @@ def _create_null_scored_dataframe(
     )
 
     info_struct = F.struct(null_anomaly_info.alias("anomaly"))
-    result = result.withColumn("_info", info_struct)
+    result = result.withColumn("_dq_info", info_struct)
 
     return result
 
@@ -419,10 +419,10 @@ def _score_segmented(
         for sdf in scored_dfs[1:]:
             result = result.union(sdf)
 
-    # Drop internal columns that are now in _info (after union, before join)
+    # Drop internal columns that are now in _dq_info (after union, before join)
     result = result.drop("anomaly_score_std")  # Always drop (null if not ensemble)
     if config.include_contributions:
-        result = result.drop("anomaly_contributions")  # Drop top-level, use _info instead
+        result = result.drop("anomaly_contributions")  # Drop top-level, use _dq_info instead
 
     # Always join back to original DataFrame to include unscored rows
     # (rows with segment combinations not seen during training will have null scores)
@@ -432,7 +432,7 @@ def _score_segmented(
         # Even without row_filter, join back to include all rows (including unscored segments)
         result = _join_filtered_results_back(df_to_score, result, config.merge_columns)
 
-    # Drop internal anomaly_score column (use _info.anomaly.score instead)
+    # Drop internal anomaly_score column (use _dq_info.anomaly.score instead)
     result = result.drop("anomaly_score")
 
     return result
@@ -484,8 +484,8 @@ def _apply_feature_engineering_for_scoring(
 def _create_udf_schema(include_contributions: bool) -> StructType:
     """Create schema for scoring UDF output.
 
-    The anomaly_score is used internally for populating _info.anomaly.score.
-    Users should check _info.anomaly.is_anomaly for anomaly status.
+    The anomaly_score is used internally for populating _dq_info.anomaly.score.
+    Users should check _dq_info.anomaly.is_anomaly for anomaly status.
     """
     schema_fields = [
         StructField("anomaly_score", DoubleType(), True),
@@ -1283,7 +1283,7 @@ def _add_info_column(
     include_contributions: bool = False,
     include_confidence: bool = False,
 ) -> DataFrame:
-    """Add _info struct column with anomaly metadata.
+    """Add _dq_info struct column with anomaly metadata.
 
     Args:
         df: Scored DataFrame with anomaly_score, prediction, etc.
@@ -1294,7 +1294,7 @@ def _add_info_column(
         include_confidence: Whether anomaly_score_std is available.
 
     Returns:
-        DataFrame with _info column added.
+        DataFrame with _dq_info column added.
     """
     # Build anomaly info struct
     anomaly_info_fields = {
@@ -1328,10 +1328,10 @@ def _add_info_column(
     # Create anomaly info struct and wrap in array
     anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()])
 
-    # Create _info struct with anomaly (direct struct, not array - single result per row)
+    # Create _dq_info struct with anomaly (direct struct, not array - single result per row)
     info_struct = F.struct(anomaly_info.alias("anomaly"))
 
-    return df.withColumn("_info", info_struct)
+    return df.withColumn("_dq_info", info_struct)
 
 
 def _score_global_model(
@@ -1412,7 +1412,7 @@ def _score_global_model(
             ).withColumn("anomaly_score_std", F.lit(0.0))
         )
 
-    # Add _info column (before dropping internal columns)
+    # Add _dq_info column (before dropping internal columns)
     scored_df = _add_info_column(
         scored_df,
         config.model_name,
@@ -1422,15 +1422,15 @@ def _score_global_model(
         include_confidence=config.include_confidence,
     )
 
-    # Post-process: drop internal columns that are now in _info
+    # Post-process: drop internal columns that are now in _dq_info
     scored_df = scored_df.drop("anomaly_score_std")  # Always drop (null if not ensemble)
     if config.include_contributions:
-        scored_df = scored_df.drop("anomaly_contributions")  # Drop top-level, use _info instead
+        scored_df = scored_df.drop("anomaly_contributions")  # Drop top-level, use _dq_info instead
 
     if config.row_filter:
         scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns)
 
-    # Drop internal anomaly_score column (use _info.anomaly.score instead)
+    # Drop internal anomaly_score column (use _dq_info.anomaly.score instead)
     scored_df = scored_df.drop("anomaly_score")
 
     return scored_df

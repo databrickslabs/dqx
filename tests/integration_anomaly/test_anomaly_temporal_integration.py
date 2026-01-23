@@ -84,9 +84,9 @@ def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
     result_df = apply_fn(test_df_with_temporal)
 
     # Verify scoring works - check _info column exists
-    assert "_info" in result_df.columns
+    assert "_dq_info" in result_df.columns
     row = result_df.collect()[0]
-    assert row["_info"]["anomaly"]["score"] is not None
+    assert row["_dq_info"]["anomaly"]["score"] is not None
 
 
 def test_multiple_temporal_features(
@@ -146,9 +146,9 @@ def test_multiple_temporal_features(
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df_with_temporal)
-    assert "_info" in result_df.columns
+    assert "_dq_info" in result_df.columns
     row = result_df.collect()[0]
-    assert row["_info"]["anomaly"]["score"] is not None
+    assert row["_dq_info"]["anomaly"]["score"] is not None
 
 
 def test_temporal_pattern_detection(
@@ -205,9 +205,9 @@ def test_temporal_pattern_detection(
     result_normal = apply_fn(test_normal_with_temporal)
     result_unusual = apply_fn(test_unusual_with_temporal)
 
-    # Get anomaly scores from _info.anomaly.score
-    score_normal = result_normal.select(F.col("_info.anomaly.score")).collect()[0][0]
-    score_unusual = result_unusual.select(F.col("_info.anomaly.score")).collect()[0][0]
+    # Get anomaly scores from _dq_info.anomaly.score
+    score_normal = result_normal.select(F.col("_dq_info.anomaly.score")).collect()[0][0]
+    score_unusual = result_unusual.select(F.col("_dq_info.anomaly.score")).collect()[0][0]
 
     # Verify both have valid scores (model learned temporal features)
     assert score_normal is not None
@@ -262,9 +262,9 @@ def test_weekend_feature(
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df_with_temporal)
-    assert "_info" in result_df.columns
+    assert "_dq_info" in result_df.columns
     row = result_df.collect()[0]
-    assert row["_info"]["anomaly"]["score"] is not None
+    assert row["_dq_info"]["anomaly"]["score"] is not None
 
 
 def test_missing_timestamp_column_behavior(spark: SparkSession):

@@ -116,7 +116,7 @@ def test_partial_nulls(spark: SparkSession, shared_3d_model, test_df_factory):
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df)
-    rows = result_df.select("transaction_id", F.col("_info.anomaly.score").alias("anomaly_score")).collect()
+    rows = result_df.select("transaction_id", F.col("_dq_info.anomaly.score").alias("anomaly_score")).collect()
 
     # All rows should have scores (nulls are imputed to 0)
     assert rows[0]["anomaly_score"] is not None

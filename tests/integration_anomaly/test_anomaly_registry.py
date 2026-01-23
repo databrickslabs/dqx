@@ -60,8 +60,8 @@ def test_explicit_model_names(
     # Verify model can be loaded with explicit name - use helper
     result_df = score_with_anomaly_check(df, model_name, registry_table, ["amount", "quantity"])
 
-    # Verify _info column exists (anomaly_score is now internal, use _info.anomaly.score)
-    assert "_info" in result_df.columns
+    # Verify _dq_info column exists (anomaly_score is now internal, use _dq_info.anomaly.score)
+    assert "_dq_info" in result_df.columns
 
 
 def test_multiple_models_in_same_registry(
