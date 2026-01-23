@@ -129,7 +129,9 @@ def test_segment_scoring(
     result = dq_engine.apply_checks(test_df, [check])
 
     # Access anomaly_score from _dq_info.anomaly.score (nested in DQEngine results)
-    result_with_score = result.select("row_id", "region", "amount", F.col("_dq_info.anomaly.score").alias("anomaly_score"))
+    result_with_score = result.select(
+        "row_id", "region", "amount", F.col("_dq_info.anomaly.score").alias("anomaly_score")
+    )
     rows = result_with_score.collect()
     assert len(rows) == 4
 
