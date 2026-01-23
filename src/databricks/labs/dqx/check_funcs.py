@@ -2624,12 +2624,12 @@ def _add_numeric_tolerance_condition(
 def _match_values_with_tolerance(df_col: Column, ref_col: Column, abs_tolerance: float, rel_tolerance: float) -> Column:
     """
     Check if two numeric column values match within specified absolute and/or relative tolerance.
-    
+
     This function implements a flexible tolerance-based comparison that supports both absolute
     and relative tolerance thresholds. When both tolerances are provided, values are considered
     matching if EITHER tolerance condition is satisfied (OR logic), making the comparison more
     permissive and accommodating different scales of values.
-    
+
     Args:
         df_col: First column to compare (typically the data column).
         ref_col: Second column to compare (typically the reference/limit column).
@@ -2638,31 +2638,31 @@ def _match_values_with_tolerance(df_col: Column, ref_col: Column, abs_tolerance:
         rel_tolerance: Relative tolerance threshold. Values match if
             abs(a - b) <= rel_tolerance * max(abs(a), abs(b)).
             Use 0.0 to disable relative tolerance checking.
-    
+
     Returns:
         A Spark Column expression that evaluates to True if the values match within tolerance,
         False otherwise.
-    
+
     Tolerance Logic:
         - **Absolute tolerance**: Checks if the absolute difference is within a fixed threshold
         - **Relative tolerance**: Checks if the difference is within a percentage of the larger
         **Combined (OR logic)**: When both are specified, values match if EITHER condition passes
-    
+
     Examples:
         With abs_tolerance=0.01, rel_tolerance=0.0:
             - 100 vs 100.005 -> True (diff=0.005 <= 0.01)
             - 100.02 vs 100.0 -> False (diff=0.02 > 0.01)
-        
+
         With abs_tolerance=0.0, rel_tolerance=0.01 (1%):
             - 100 vs 101 -> True (diff=1, rel_tolerance=1.01, 1 <= 1.01)
             - 100 vs 105 -> False (diff=5, rel_tolerance=1.05, 5 > 1.05)
-        
+
         With abs_tolerance=0.5, rel_tolerance=0.01 (both specified -- OR logic):
             - 100 vs 100.3 -> True (abs: 0.3 <= 0.5 ✓, rel: 0.3 <= 1.0 ✓)
             - 100 vs 101 -> True (abs: 1 > 0.5 ✗, rel: 1 <= 1.01 ✓) -- passes via relative
             - 1 vs 1.4 -> True (abs: 0.4 <= 0.5 ✓, rel: 0.4 > 0.014 ✗) -- passes via absolute
             - 100 vs 105 -> False (abs: 5 > 0.5 ✗, rel: 5 > 1.05 ✗) -- fails both
-    
+
     Note:
         The OR logic means that when both tolerances are specified, the comparison is more
         lenient than if only one tolerance were used.
@@ -2874,6 +2874,46 @@ def _validate_aggregate_return_type(
         )
 
 
+def _build_aggregate_check_metadata(
+    aggr_col_str_norm: str,
+    aggr_type: str,
+    group_by: list[str | Column] | None,
+    compare_op_name: str,
+) -> tuple[str, str | None]:
+    """
+    Build metadata for aggregation comparison checks.
+
+    Args:
+        aggr_col_str_norm: Normalized string representation of the aggregation column.
+        aggr_type: Type of aggregation (e.g., 'sum', 'avg').
+        group_by: Optional list of columns or Column expressions to group by.
+        compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+
+    Returns:
+        A tuple of:
+            - A unique name for the aggregation comparison check.
+            - A string representation of the group by columns, or None if not applicable.
+    """
+    group_by_list_str = (
+        ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
+        if group_by
+        else None
+    )
+    group_by_str = (
+        "_".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
+        if group_by
+        else None
+    )
+
+    name = (
+        f"{aggr_col_str_norm}_{aggr_type.lower()}_group_by_{group_by_str}_{compare_op_name}_limit".lstrip("_")
+        if group_by_str
+        else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
+    )
+
+    return name, group_by_list_str
+
+
 def _is_aggr_compare(
     column: str | Column,
     limit: int | float | str | Column,
@@ -2884,6 +2924,8 @@ def _is_aggr_compare(
     compare_op: Callable[[Column, Column], Column],
     compare_op_label: str,
     compare_op_name: str,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Helper to build aggregation comparison checks with a given operator.
@@ -2904,6 +2946,8 @@ def _is_aggr_compare(
         compare_op: Comparison operator (e.g., operator.gt, operator.lt).
         compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+        abs_tolerance: Optional absolute tolerance for numeric comparisons.
+        rel_tolerance: Optional relative tolerance for numeric comparisons.
 
     Returns:
         A tuple of:
@@ -2911,9 +2955,15 @@ def _is_aggr_compare(
             - A closure that applies the aggregation check logic.
 
     Raises:
-        InvalidParameterError: If an aggregate returns non-numeric types or is not found.
+        InvalidParameterError: If an aggregate returns non-numeric types or is not found, or if tolerances are negative.
         MissingParameterError: If required parameters for specific aggregates are not provided.
     """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
     # Warn if using non-curated aggregate function
     is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
     if not is_curated:
@@ -2926,24 +2976,7 @@ def _is_aggr_compare(
         )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
-
-    group_by_list_str = (
-        ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
-        if group_by
-        else None
-    )
-    group_by_str = (
-        "_".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
-        if group_by
-        else None
-    )
-
-    name = (
-        f"{aggr_col_str_norm}_{aggr_type.lower()}_group_by_{group_by_str}_{compare_op_name}_limit".lstrip("_")
-        if group_by_str
-        else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
-    )
-
+    name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
     limit_expr = get_limit_expr(limit)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -3007,7 +3040,24 @@ def _is_aggr_compare(
 
             df = df.crossJoin(agg_df)  # bring the metric across all rows
 
-        df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
+        # Apply tolerance-based comparison for equality checks
+        if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and compare_op in (py_operator.ne, py_operator.eq):
+            tolerance_match = _match_values_with_tolerance(F.col(metric_col), limit_expr, abs_tolerance, rel_tolerance)
+
+            # Adjust based on compare_op:
+            # - py_operator.ne is used for is_aggr_equal (condition fails when NOT equal)
+            # - py_operator.eq is used for is_aggr_not_equal (condition fails when equal)
+            if compare_op == py_operator.ne:
+                # is_aggr_equal case: fail when values don't match within tolerance
+                condition_result = ~tolerance_match
+            else:  # compare_op == py_operator.eq
+                # is_aggr_not_equal case: fail when values match within tolerance
+                condition_result = tolerance_match
+
+            df = df.withColumn(condition_col, condition_result)
+        else:
+            # Exact comparison (backward compatible) or non-equality operators
+            df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 
         return df
 
