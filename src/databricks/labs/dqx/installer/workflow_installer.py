@@ -385,7 +385,7 @@ class WorkflowDeployment(InstallationMixin):
             remote_wheels_with_extras = remote_wheels
             if use_serverless:
                 # installing extras from a file is only possible with serverless
-                remote_wheels_with_extras = [f"{wheel}[llm,pii]" for wheel in remote_wheels]
+                remote_wheels_with_extras = [f"{wheel}[llm,pii,anomaly]" for wheel in remote_wheels]
             settings = self._job_settings(task.workflow, remote_wheels_with_extras, use_serverless, task.spark_conf)
             if task.override_clusters:
                 settings = self._apply_cluster_overrides(
