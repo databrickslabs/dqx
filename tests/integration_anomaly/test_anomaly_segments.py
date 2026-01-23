@@ -128,8 +128,8 @@ def test_segment_scoring(
 
     result = dq_engine.apply_checks(test_df, [check])
 
-    # Access anomaly_score from _info.anomaly.score (nested in DQEngine results)
-    result_with_score = result.select("row_id", "region", "amount", F.col("_info.anomaly.score").alias("anomaly_score"))
+    # Access anomaly_score from _dq_info.anomaly.score (nested in DQEngine results)
+    result_with_score = result.select("row_id", "region", "amount", F.col("_dq_info.anomaly.score").alias("anomaly_score"))
     rows = result_with_score.collect()
     assert len(rows) == 4
 
@@ -236,8 +236,8 @@ def test_unknown_segment_handling(
 
     result = dq_engine.apply_checks(test_df, [check])
 
-    # APAC row should have null score (access from _info.anomaly.score)
+    # APAC row should have null score (access from _dq_info.anomaly.score)
 
-    result_with_score = result.select("*", F.col("_info.anomaly.score").alias("anomaly_score"))
+    result_with_score = result.select("*", F.col("_dq_info.anomaly.score").alias("anomaly_score"))
     apac_row = [row for row in result_with_score.collect() if row.region == "APAC"][0]
     assert apac_row.anomaly_score is None

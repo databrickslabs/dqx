@@ -74,11 +74,11 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_
     )
     row = result_df.collect()[0]
 
-    # Verify contributions exist in _info.anomaly.contributions
-    assert row["_info"]["anomaly"]["contributions"] is not None
+    # Verify contributions exist in _dq_info.anomaly.contributions
+    assert row["_dq_info"]["anomaly"]["contributions"] is not None
 
-    # Extract contributions map from _info.anomaly.contributions
-    contribs = row["_info"]["anomaly"]["contributions"]
+    # Extract contributions map from _dq_info.anomaly.contributions
+    contribs = row["_dq_info"]["anomaly"]["contributions"]
 
     # Verify contributions contain feature names
     assert contribs is not None

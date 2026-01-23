@@ -202,7 +202,7 @@ def anomaly_scorer():
         result_df = apply_fn(test_df)
 
         if extract_score:
-            return result_df.select("*", F.col("_info.anomaly.score").alias("anomaly_score"))
+            return result_df.select("*", F.col("_dq_info.anomaly.score").alias("anomaly_score"))
         return result_df
 
     return _score

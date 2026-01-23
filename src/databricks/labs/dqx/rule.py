@@ -38,7 +38,7 @@ class DefaultColumnNames(Enum):
 
     ERRORS = "_errors"
     WARNINGS = "_warnings"
-    INFO = "_info"
+    INFO = "_dq_info"
 
 
 class ColumnArguments(Enum):

@@ -640,14 +640,14 @@ checks = [
         model="my_model",
         columns=["amount", "quantity", "discount"],
         score_threshold=0.5,
-        include_contributions=True,  # adds contributions to _info.anomaly.contributions
+        include_contributions=True,  # adds contributions to _dq_info.anomaly.contributions
     )
 ]
 ```
 
 **Output example**:
 ```
-| amount | quantity | discount | _info                                                |
+| amount | quantity | discount | _dq_info                                             |
 |--------|----------|----------|------------------------------------------------------|
 | 9999   | 1        | 0.95     | {anomaly: {score: 0.87, is_anomaly: true, ...}}     |
 ```
@@ -656,17 +656,17 @@ checks = [
 ```python
 from pyspark.sql import functions as F
 
-# Access score and contributions via _info column
+# Access score and contributions via _dq_info column
 df_scored.select(
     "amount", 
     "quantity",
-    "_info.anomaly.score",
-    "_info.anomaly.is_anomaly",
-    "_info.anomaly.contributions"
+    "_dq_info.anomaly.score",
+    "_dq_info.anomaly.is_anomaly",
+    "_dq_info.anomaly.contributions"
 )
 
 # Filter anomalies
-df_scored.filter(F.col("_info.anomaly.is_anomaly"))
+df_scored.filter(F.col("_dq_info.anomaly.is_anomaly"))
 ```
 
 Top contributors are shown as percentages summing to 1.0. Use this to:
@@ -794,7 +794,7 @@ Consider retraining: anomaly_engine.train(...)
 **Behavior**:
 - Rows with 'LATAM' are **not scored** (NULL anomaly_score)
 - No error raised, scoring continues
-- After join, unscored rows have NULL in `_info.anomaly`
+- After join, unscored rows have NULL in `_dq_info.anomaly`
 
 **Action**: Retrain model including new segments when they appear
 
@@ -930,15 +930,15 @@ dq_engine.save_results_in_table(
 
 **Quarantine DataFrame includes**:
 - Original columns
-- `_info` column with anomaly metadata:
-  - `_info.anomaly.score`: Anomaly score (0-1)
-  - `_info.anomaly.is_anomaly`: Boolean flag
-  - `_info.anomaly.threshold`: Threshold used
-  - `_info.anomaly.contributions`: SHAP values (if `include_contributions=True`)
-  - `_info.anomaly.model`: Model name used
+- `_dq_info` column with anomaly metadata:
+  - `_dq_info.anomaly.score`: Anomaly score (0-1)
+  - `_dq_info.anomaly.is_anomaly`: Boolean flag
+  - `_dq_info.anomaly.threshold`: Threshold used
+  - `_dq_info.anomaly.contributions`: SHAP values (if `include_contributions=True`)
+  - `_dq_info.anomaly.model`: Model name used
 - DQX metadata columns (`_errors`, `_warnings`, etc.)
 
-**💡 Customizing column names:** You can customize the `_info` column name (along with `_errors` and `_warnings`) via `ExtraParams`. 
+**💡 Customizing column names:** You can customize the `_dq_info` column name (along with `_errors` and `_warnings`) via `ExtraParams`. 
 See [Customizing result columns](/docs/guide/additional_configuration#customizing-result-columns) for details.
 
 **Using with Delta Live Tables**:

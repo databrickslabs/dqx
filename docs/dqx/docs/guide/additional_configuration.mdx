@@ -85,14 +85,14 @@ override the values set in the engine.
 
 ## Customizing result columns
 
-By default, DQX appends `_errors`, `_warnings`, and `_info` result columns to the output DataFrame or Table to flag quality issues.
+By default, DQX appends `_errors`, `_warnings`, and `_dq_info` result columns to the output DataFrame or Table to flag quality issues.
 You can customize the names of these result columns by specifying extra parameters when creating the engine.
 
 | Default Column | Purpose | Customization Key |
 |----------------|---------|-------------------|
 | `_errors` | Array of critical quality check failures | `errors` |
 | `_warnings` | Array of warning-level quality check issues | `warnings` |
-| `_info` | Structured metadata from dataset-level checks (e.g., anomaly detection) | `info` |
+| `_dq_info` | Structured metadata from dataset-level checks (e.g., anomaly detection) | `info` |
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -127,7 +127,7 @@ You can customize the names of these result columns by specifying extra paramete
 </Tabs>
 
 <Admonition type="info" title="Info column usage">
-The `_info` column is created by dataset-level checks that produce structured metadata, such as `has_no_anomalies`. 
+The `_dq_info` column is created by dataset-level checks that produce structured metadata, such as `has_no_anomalies`. 
 It contains detailed information like anomaly scores, thresholds, and feature contributions.
 See [Anomaly Detection](/docs/guide/anomaly_detection) for details.
 </Admonition>

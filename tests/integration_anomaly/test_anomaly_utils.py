@@ -587,7 +587,7 @@ def apply_anomaly_check_direct(
         **kwargs: Additional has_no_anomalies kwargs
 
     Returns:
-        DataFrame with anomaly_score column (extracted from _info.anomaly.score)
+        DataFrame with anomaly_score column (extracted from _dq_info.anomaly.score)
 
     Example:
         result_df = apply_anomaly_check_direct(
@@ -605,8 +605,8 @@ def apply_anomaly_check_direct(
     )
     result_df = apply_fn(test_df)
 
-    # Extract _info.anomaly.score as top-level anomaly_score column for test convenience
-    return result_df.withColumn("anomaly_score", F.col("_info.anomaly.score"))
+    # Extract _dq_info.anomaly.score as top-level anomaly_score column for test convenience
+    return result_df.withColumn("anomaly_score", F.col("_dq_info.anomaly.score"))
 
 
 def train_simple_2d_model(

@@ -531,7 +531,7 @@ df_scored = dq_engine.apply_checks(df_sales, checks_combined)
 error_count = F.coalesce(F.size(F.col("_errors")), F.lit(0))
 anomalies = df_scored.filter(error_count > 0)
 df_valid = df_scored.filter(error_count == 0)
-score_col = F.col("_info.anomaly.score")
+score_col = F.col("_dq_info.anomaly.score")
 score_df = df_scored.select(score_col.alias("score")).where(score_col.isNotNull())
 p90, p95, p99 = score_df.stat.approxQuantile("score", [0.9, 0.95, 0.99], 0.0)
 percentile_band = (
@@ -553,11 +553,11 @@ print("   Even records that are not flagged still get a score for analysis.")
 print("   Think of the score as a 0-1 unusualness rating: higher = more likely anomalous.")
 print(f"\n🔝 Top 10 anomalies:\n")
 
-display(anomalies.orderBy(F.col("_info.anomaly.score").desc()).select(
+display(anomalies.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
     "transaction_id", "date", "amount", "quantity", "category", "region",
-    F.round("_info.anomaly.score", 3).alias("anomaly_score"),
+    F.round("_dq_info.anomaly.score", 3).alias("anomaly_score"),
     percentile_band.alias("score_percentile"),
-    F.col("_info.anomaly.contributions").alias("why_anomalous")
+    F.col("_dq_info.anomaly.contributions").alias("why_anomalous")
 ).limit(10))
 
 print("   Example pattern: high amount + off-hours timing + unusual region/category")
@@ -593,17 +593,17 @@ print("   • Threshold of 0.60 balances finding issues vs false alarms")
 # Analyze score distribution
 print("📊 Anomaly Score Distribution:\n")
 
-score_stats = df_scored.select("_info.anomaly.score").describe()
+score_stats = df_scored.select("_dq_info.anomaly.score").describe()
 display(score_stats)
 
 # Show score ranges (aligned with 0.60 threshold)
 print("📈 Score Range Breakdown (raw scores):\n")
 
 score_ranges = df_scored.select(
-    F.count(F.when(F.col("_info.anomaly.score") < 0.5, 1)).alias("normal_0.0_0.5"),
-    F.count(F.when((F.col("_info.anomaly.score") >= 0.5) & (F.col("_info.anomaly.score") < 0.6), 1)).alias("borderline_0.5_0.6"),
-    F.count(F.when((F.col("_info.anomaly.score") >= 0.6) & (F.col("_info.anomaly.score") < 0.75), 1)).alias("flagged_0.6_0.75"),
-    F.count(F.when(F.col("_info.anomaly.score") >= 0.75, 1)).alias("highly_anomalous_0.75_1.0"),
+    F.count(F.when(F.col("_dq_info.anomaly.score") < 0.5, 1)).alias("normal_0.0_0.5"),
+    F.count(F.when((F.col("_dq_info.anomaly.score") >= 0.5) & (F.col("_dq_info.anomaly.score") < 0.6), 1)).alias("borderline_0.5_0.6"),
+    F.count(F.when((F.col("_dq_info.anomaly.score") >= 0.6) & (F.col("_dq_info.anomaly.score") < 0.75), 1)).alias("flagged_0.6_0.75"),
+    F.count(F.when(F.col("_dq_info.anomaly.score") >= 0.75, 1)).alias("highly_anomalous_0.75_1.0"),
 ).first()
 
 total = total_scored
@@ -643,13 +643,13 @@ print(f"   • The threshold (0.60) is tuned empirically, not a statistical sign
 # Compare normal vs anomalous transactions (using 0.60 threshold)
 print("🔍 Normal vs Anomalous Transaction Comparison:\n")
 
-normal_stats = df_scored.filter(F.col("_info.anomaly.score") < 0.6).agg(
+normal_stats = df_scored.filter(F.col("_dq_info.anomaly.score") < 0.6).agg(
     F.avg("amount").alias("avg_amount"),
     F.avg("quantity").alias("avg_quantity"),
     F.count("*").alias("count")
 ).first()
 
-anomaly_stats = df_scored.filter(F.col("_info.anomaly.score") >= 0.6).agg(
+anomaly_stats = df_scored.filter(F.col("_dq_info.anomaly.score") >= 0.6).agg(
     F.avg("amount").alias("avg_amount"),
     F.avg("quantity").alias("avg_quantity"),
     F.count("*").alias("count")
@@ -705,7 +705,7 @@ thresholds = [0.5, 0.6, 0.7]
 total_count = total_scored
 
 for threshold in thresholds:
-    anomaly_count = df_scored.filter(F.col("_info.anomaly.score") >= threshold).count()
+    anomaly_count = df_scored.filter(F.col("_dq_info.anomaly.score") >= threshold).count()
     percentage = (anomaly_count / total_count) * 100
     
     if threshold <= 0.5:
@@ -732,14 +732,14 @@ print("     - Your risk tolerance (cost of missing an issue vs false alarm)")
 print("🔍 Examining Borderline Cases (scores 0.50-<0.60):\n")
 
 borderline = df_scored.filter(
-    (F.col("_info.anomaly.score") >= 0.50) & 
-    (F.col("_info.anomaly.score") < 0.60)
-).orderBy(F.col("_info.anomaly.score").desc())
+    (F.col("_dq_info.anomaly.score") >= 0.50) & 
+    (F.col("_dq_info.anomaly.score") < 0.60)
+).orderBy(F.col("_dq_info.anomaly.score").desc())
 
 print(f"Found {borderline.count()} borderline transactions:\n")
 display(borderline.select(
     "transaction_id", "amount", "quantity", "category", "region",
-    F.round("_info.anomaly.score", 3).alias("score")
+    F.round("_dq_info.anomaly.score", 3).alias("score")
 ).limit(10))
 
 print("\n💡 These are on the edge - slight threshold changes will include/exclude them")
@@ -831,9 +831,9 @@ print(f"⚠️  Manual model found {anomalies_manual.count()} anomalies")
 print(f"   (Auto model found {anomalies.count()} anomalies)")
 print(f"\n🔝 Top 5 anomalies from manual model:\n")
 
-display(anomalies_manual.orderBy(F.col("_info.anomaly.score").desc()).select(
+display(anomalies_manual.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
     "transaction_id", "amount", "quantity", "date",
-    F.round("_info.anomaly.score", 3).alias("score")
+    F.round("_dq_info.anomaly.score", 3).alias("score")
 ).limit(5))
 
 print("\n💡 Results may differ slightly because we're using different features")
@@ -880,15 +880,15 @@ print("\n🎯 Top Anomalies with Explanations:\n")
 # Filter by _errors column (standard DQX pattern) to get flagged anomalies
 anomalies_explained = df_with_contrib.filter(
     F.size(F.col("_errors")) > 0
-).orderBy(F.col("_info.anomaly.score").desc()).limit(5)
+).orderBy(F.col("_dq_info.anomaly.score").desc()).limit(5)
 
 display(anomalies_explained.select(
     "transaction_id",
     "amount",
     "quantity",
     F.date_format("date", "yyyy-MM-dd HH:mm").alias("date"),
-    F.round("_info.anomaly.score", 3).alias("score"),
-    F.col("_info.anomaly.contributions").alias("contributions")
+    F.round("_dq_info.anomaly.score", 3).alias("score"),
+    F.col("_dq_info.anomaly.contributions").alias("contributions")
 ))
 
 print("\n💡 How to Read Contributions:")
@@ -916,8 +916,8 @@ anomalies_flattened = anomalies_explained.select(
     "amount",
     "quantity",
     "date",
-    F.col("_info.anomaly.score").alias("score"),
-    F.col("_info.anomaly.contributions").alias("contributions")
+    F.col("_dq_info.anomaly.score").alias("score"),
+    F.col("_dq_info.anomaly.contributions").alias("contributions")
 )
 
 top_anomaly = anomalies_flattened.first()
