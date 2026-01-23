@@ -37,20 +37,14 @@ class SettingsManager:
                 decoded = base64.b64decode(resp.content).decode("utf-8")
                 data = yaml.safe_load(decoded)
                 if data and "install_folder" in data:
-                    return InstallationSettings(
-                        install_folder=data["install_folder"],
-                        is_default=False
-                    )
+                    return InstallationSettings(install_folder=data["install_folder"], is_default=False)
         except ResourceDoesNotExist:
             pass
         except Exception as e:
             logger.warning(f"Failed to read app settings: {e}")
 
         # Return default if not found or error
-        return InstallationSettings(
-            install_folder=self.get_default_install_folder(),
-            is_default=True
-        )
+        return InstallationSettings(install_folder=self.get_default_install_folder(), is_default=True)
 
     def save_settings(self, settings: InstallationSettings) -> InstallationSettings:
         default_folder = self.get_default_install_folder()
@@ -58,7 +52,7 @@ class SettingsManager:
         path_str = settings.install_folder.strip()
 
         if not path_str.endswith(".yml") and not path_str.endswith(".yaml"):
-             raise ValueError("Configuration path must be a valid .yml or .yaml file")
+            raise ValueError("Configuration path must be a valid .yml or .yaml file")
 
         # Normalize for comparison
         # If the user provided path is exactly the default folder (without config.yml),
@@ -66,7 +60,7 @@ class SettingsManager:
 
         is_default = False
         if path_str == default_folder or path_str == f"{default_folder}/config.yml":
-             is_default = True
+            is_default = True
 
         if is_default:
             # It is default, remove app.yml if exists
@@ -78,8 +72,7 @@ class SettingsManager:
                 logger.warning(f"Failed to delete app settings: {e}")
 
             return InstallationSettings(
-                install_folder=default_folder, # Return the folder by default? Or explicit path?
-                is_default=True
+                install_folder=default_folder, is_default=True  # Return the folder by default? Or explicit path?
             )
         # Ensure .dqx folder exists (where app.yml lives)
         # Workspace API 'mkdirs'
@@ -93,13 +86,7 @@ class SettingsManager:
         encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
 
         self.ws.workspace.import_(
-            self.app_settings_path,
-            content=encoded_content,
-            format=ImportFormat.SOURCE,
-            overwrite=True
+            self.app_settings_path, content=encoded_content, format=ImportFormat.SOURCE, overwrite=True
         )
 
-        return InstallationSettings(
-            install_folder=path_str,
-            is_default=False
-        )
+        return InstallationSettings(install_folder=path_str, is_default=False)

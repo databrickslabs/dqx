@@ -8,9 +8,7 @@ from .logger import logger
 
 def add_not_found_handler(app: FastAPI):
     async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-        logger.info(
-            f"HTTP exception handler called for request {request.url.path} with status code {exc.status_code}"
-        )
+        logger.info(f"HTTP exception handler called for request {request.url.path} with status code {exc.status_code}")
         if exc.status_code == 404:
             path = request.url.path
             accept = request.headers.get("accept", "")

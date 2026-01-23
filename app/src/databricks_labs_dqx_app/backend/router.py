@@ -33,8 +33,8 @@ def get_install_folder(ws: WorkspaceClient, path: str | None) -> str:
     # If the user provided a full file path ending in .yml, we strip it.
     folder = folder.strip()
     if folder.endswith(".yml") or folder.endswith(".yaml"):
-         if "/" in folder:
-             folder = folder.rsplit("/", 1)[0]
+        if "/" in folder:
+            folder = folder.rsplit("/", 1)[0]
 
     return folder
 
@@ -55,10 +55,7 @@ def get_settings(obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]):
 
 
 @api.post("/settings", response_model=InstallationSettings, operation_id="save_settings")
-def save_settings(
-    settings: InstallationSettings,
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]
-):
+def save_settings(settings: InstallationSettings, obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]):
     try:
         return SettingsManager(obo_ws).save_settings(settings)
     except ValueError as e:
@@ -68,7 +65,7 @@ def save_settings(
 @api.get("/config", response_model=ConfigOut, operation_id="config")
 def get_config(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    path: str | None = Query(None, description="Path to the configuration folder")
+    path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ConfigOut:
     # ask user which configuration should be used in the UI
     # there is always just one single configuration config.yml per the whole workspace.
@@ -85,7 +82,7 @@ def get_config(
 def save_config(
     body: ConfigIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    path: str | None = Query(None, description="Path to the configuration folder")
+    path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ConfigOut:
     install_folder = get_install_folder(obo_ws, path)
     serializer = ConfigSerializer(obo_ws)
@@ -97,7 +94,7 @@ def save_config(
 def get_run_config(
     name: str,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    path: str | None = Query(None, description="Path to the configuration folder")
+    path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> RunConfigOut:
     # per each run config there is a separate, single unique checks_location.
     # checks_location can be a workspace file path or a table name.
@@ -116,19 +113,21 @@ def get_run_config(
 def save_run_config(
     body: RunConfigIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    path: str | None = Query(None, description="Path to the configuration folder")
+    path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> RunConfigOut:
     install_folder = get_install_folder(obo_ws, path)
     serializer = ConfigSerializer(obo_ws)
     serializer.save_run_config(body.config, install_folder=install_folder)
-    return RunConfigOut(config=serializer.load_run_config(run_config_name=body.config.name, install_folder=install_folder))
+    return RunConfigOut(
+        config=serializer.load_run_config(run_config_name=body.config.name, install_folder=install_folder)
+    )
 
 
 @api.delete("/config/run/{name}", response_model=ConfigOut, operation_id="delete_run_config")
 def delete_run_config(
     name: str,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    path: str | None = Query(None, description="Path to the configuration folder")
+    path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ConfigOut:
     install_folder = get_install_folder(obo_ws, path)
     serializer = ConfigSerializer(obo_ws)
@@ -154,7 +153,7 @@ def get_run_checks(
     name: str,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     engine: Annotated[DQEngine, Depends(get_dqx_engine)],
-    path: str | None = Query(None, description="Path to the configuration folder")
+    path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ChecksOut:
     install_folder = get_install_folder(obo_ws, path)
     serializer = ConfigSerializer(obo_ws)
@@ -186,7 +185,7 @@ def save_run_checks(
     body: ChecksIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     engine: Annotated[DQEngine, Depends(get_dqx_engine)],
-    path: str | None = Query(None, description="Path to the configuration folder")
+    path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ChecksOut:
     install_folder = get_install_folder(obo_ws, path)
     serializer = ConfigSerializer(obo_ws)

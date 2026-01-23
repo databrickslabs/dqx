@@ -21,13 +21,9 @@ def get_obo_ws(
     """
 
     if not token:
-        raise ValueError(
-            "OBO token is not provided in the header X-Forwarded-Access-Token"
-        )
+        raise ValueError("OBO token is not provided in the header X-Forwarded-Access-Token")
 
-    return WorkspaceClient(
-        token=token, auth_type="pat"
-    )  # set pat explicitly to avoid issues with SP client
+    return WorkspaceClient(token=token, auth_type="pat")  # set pat explicitly to avoid issues with SP client
 
 
 def get_dqx_engine(obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)]) -> DQEngine:

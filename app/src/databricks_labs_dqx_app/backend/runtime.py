@@ -13,4 +13,5 @@ class Runtime:
         # in development it usually uses the DATABRICKS_CONFIG_PROFILE
         return WorkspaceClient()
 
+
 rt = Runtime()

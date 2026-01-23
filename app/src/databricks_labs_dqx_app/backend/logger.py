@@ -21,9 +21,7 @@ class CustomFormatter(logging.Formatter):
         super().__init__()
         self.use_colors = use_colors
 
-    def _abbreviate_location(
-        self, module: str, func_name: str, max_length: int = 20
-    ) -> str:
+    def _abbreviate_location(self, module: str, func_name: str, max_length: int = 20) -> str:
         """
         Abbreviate module and function name to fit within max_length.
 
@@ -57,9 +55,7 @@ class CustomFormatter(logging.Formatter):
 
             # If still too long, truncate function name
             if len(location) > max_length:
-                available_for_func = (
-                    max_length - len(abbreviated_module) - 1
-                )  # -1 for the dot
+                available_for_func = max_length - len(abbreviated_module) - 1  # -1 for the dot
                 if available_for_func > 0:
                     location = f"{abbreviated_module}.{func_name[:available_for_func]}"
                 else:
@@ -102,10 +98,7 @@ class CustomFormatter(logging.Formatter):
         message = record.getMessage()
 
         # Create the pipe-separated format
-        log_line = (
-            f"{timestamp} | {app_name:12s} | {colored_level} | "
-            f"{location:20s} | {message}"
-        )
+        log_line = f"{timestamp} | {app_name:12s} | {colored_level} | " f"{location:20s} | {message}"
 
         # Add exception info if present
         if record.exc_info:
