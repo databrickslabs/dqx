@@ -1621,6 +1621,8 @@ def is_aggr_equal(
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     aggr_params: dict[str, Any] | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1639,6 +1641,8 @@ def is_aggr_equal(
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
+        abs_tolerance: Optional absolute tolerance for equality comparison of numeric aggregations.
+        rel_tolerance: Optional relative tolerance for equality comparison of numeric aggregations.
 
     Returns:
         A tuple of:
@@ -1655,6 +1659,8 @@ def is_aggr_equal(
         compare_op=py_operator.ne,
         compare_op_label="not equal to",
         compare_op_name="not_equal_to",
+        abs_tolerance=abs_tolerance,
+        rel_tolerance=rel_tolerance,
     )
 
 
@@ -1666,6 +1672,8 @@ def is_aggr_not_equal(
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     aggr_params: dict[str, Any] | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1684,6 +1692,8 @@ def is_aggr_not_equal(
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
+        abs_tolerance: Optional absolute tolerance for equality comparison of numeric aggregations.
+        rel_tolerance: Optional relative tolerance for equality comparison of numeric aggregations.
 
     Returns:
         A tuple of:
@@ -1700,6 +1710,8 @@ def is_aggr_not_equal(
         compare_op=py_operator.eq,
         compare_op_label="equal to",
         compare_op_name="equal_to",
+        abs_tolerance=abs_tolerance,
+        rel_tolerance=rel_tolerance,
     )
 
 
@@ -2610,6 +2622,53 @@ def _add_numeric_tolerance_condition(
 
 
 def _match_values_with_tolerance(df_col: Column, ref_col: Column, abs_tolerance: float, rel_tolerance: float) -> Column:
+    """
+    Check if two numeric column values match within specified absolute and/or relative tolerance.
+    
+    This function implements a flexible tolerance-based comparison that supports both absolute
+    and relative tolerance thresholds. When both tolerances are provided, values are considered
+    matching if EITHER tolerance condition is satisfied (OR logic), making the comparison more
+    permissive and accommodating different scales of values.
+    
+    Args:
+        df_col: First column to compare (typically the data column).
+        ref_col: Second column to compare (typically the reference/limit column).
+        abs_tolerance: Absolute tolerance threshold. Values match if abs(a - b) <= abs_tolerance.
+            Use 0.0 to disable absolute tolerance checking.
+        rel_tolerance: Relative tolerance threshold. Values match if
+            abs(a - b) <= rel_tolerance * max(abs(a), abs(b)).
+            Use 0.0 to disable relative tolerance checking.
+    
+    Returns:
+        A Spark Column expression that evaluates to True if the values match within tolerance,
+        False otherwise.
+    
+    Tolerance Logic:
+        - **Absolute tolerance**: Checks if the absolute difference is within a fixed threshold
+        - **Relative tolerance**: Checks if the difference is within a percentage of the larger
+        **Combined (OR logic)**: When both are specified, values match if EITHER condition passes
+    
+    Examples:
+        With abs_tolerance=0.01, rel_tolerance=0.0:
+            - 100 vs 100.005 -> True (diff=0.005 <= 0.01)
+            - 100.02 vs 100.0 -> False (diff=0.02 > 0.01)
+        
+        With abs_tolerance=0.0, rel_tolerance=0.01 (1%):
+            - 100 vs 101 -> True (diff=1, rel_tolerance=1.01, 1 <= 1.01)
+            - 100 vs 105 -> False (diff=5, rel_tolerance=1.05, 5 > 1.05)
+        
+        With abs_tolerance=0.5, rel_tolerance=0.01 (both specified -- OR logic):
+            - 100 vs 100.3 -> True (abs: 0.3 <= 0.5 ✓, rel: 0.3 <= 1.0 ✓)
+            - 100 vs 101 -> True (abs: 1 > 0.5 ✗, rel: 1 <= 1.01 ✓) -- passes via relative
+            - 1 vs 1.4 -> True (abs: 0.4 <= 0.5 ✓, rel: 0.4 > 0.014 ✗) -- passes via absolute
+            - 100 vs 105 -> False (abs: 5 > 0.5 ✗, rel: 5 > 1.05 ✗) -- fails both
+    
+    Note:
+        The OR logic means that when both tolerances are specified, the comparison is more
+        lenient than if only one tolerance were used.
+        - Relative tolerance is scaled by the maximum absolute value of the two numbers,
+        making it suitable for comparing values of different magnitudes
+    """
     abs_diff = F.abs(df_col - ref_col)
     tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
     return (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
