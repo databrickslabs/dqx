@@ -29,7 +29,7 @@ WidgetType = Literal[
 class WithUISchema:
     """
     Typed annotation for rjsf uiSchema properties.
-    
+
     Usage:
         location: Annotated[str, WithUISchema(widget="tableSelector", placeholder="catalog.schema.table")]
     """
@@ -50,7 +50,7 @@ class WithUISchema:
     order: int | None = None
     visible_if: dict[str, Any] | None = None
     options: dict[str, Any] | None = None
-    
+
     def to_ui_dict(self) -> dict[str, Any]:
         """Convert to rjsf uiSchema format with 'ui:' prefixed keys."""
         mapping = {
@@ -70,23 +70,23 @@ class WithUISchema:
             "visible_if": "ui:visibleIf",
             "options": "ui:options",
         }
-        
+
         result = {}
         for f in fields(self):
             value = getattr(self, f.name)
             if value and f.name in mapping:
                 result[mapping[f.name]] = value
-        
+
         if self.hidden:
             result["ui:widget"] = "hidden"
-            
+
         return result
-    
+
     def __get_pydantic_core_schema__(
         self, source_type: Any, handler: GetCoreSchemaHandler
     ) -> core_schema.CoreSchema:
         return handler(source_type)
-    
+
     def __get_pydantic_json_schema__(
         self, _core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
     ) -> JsonSchemaValue:
@@ -118,18 +118,18 @@ class InputConfig(BaseModel):
         placeholder="catalog.schema.table",
         section="Source"
     )]
-    
+
     format: Annotated[Literal["delta", "parquet", "csv", "json"], WithUISchema(
         widget="select",
         enum_names=("Delta Lake", "Parquet", "CSV", "JSON"),
         section="Source"
     )] = "delta"
-    
+
     is_streaming: Annotated[bool, WithUISchema(
         help="Enable for streaming sources",
         section="Source"
     )] = False
-    
+
     options: SparkOptions = Field(default_factory=dict)
 ```
 
@@ -144,7 +144,7 @@ def get_config_schema(config_type: str) -> dict:
     model = models.get(config_type)
     if not model:
         raise HTTPException(404)
-    
+
     schema = model.model_json_schema()
     ui_schema = extract_ui_schema(schema)  # Extracts ui:* into separate dict
     return {"schema": schema, "uiSchema": ui_schema}
@@ -164,9 +164,9 @@ def extract_ui_schema(schema: dict) -> dict:
 ```tsx
 // app/src/databricks_labs_dqx_app/ui/components/ConfigForm.tsx
 
-import { withTheme } from '@rjsf/core';
-import { Theme as ShadcnTheme } from '@rjsf/shadcn';
-import validator from '@rjsf/validator-ajv8';
+import { withTheme } from "@rjsf/core";
+import { Theme as ShadcnTheme } from "@rjsf/shadcn";
+import validator from "@rjsf/validator-ajv8";
 
 const Form = withTheme(ShadcnTheme);
 
@@ -178,8 +178,8 @@ const customWidgets = {
 
 export function ConfigForm({ configType, initialData, onSubmit }) {
   const { data } = useQuery({
-    queryKey: ['schema', configType],
-    queryFn: () => fetch(`/api/schema/${configType}`).then(r => r.json()),
+    queryKey: ["schema", configType],
+    queryFn: () => fetch(`/api/schema/${configType}`).then((r) => r.json()),
   });
 
   if (!data) return <Skeleton />;

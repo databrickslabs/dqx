@@ -50,3 +50,7 @@ version = "{version}"
 [tool.hatch.build]
 artifacts = ["src/databricks_labs_dqx_app/__dist__", "src/databricks_labs_dqx_app/_metadata.py"]
 exclude = ["src/databricks_labs_dqx_app/ui"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

@@ -1,5 +1,6 @@
-from .config import conf, AppConfig
 from databricks.sdk import WorkspaceClient
+
+from .config import AppConfig, conf
 
 
 class Runtime:

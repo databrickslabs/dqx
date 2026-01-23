@@ -1,24 +1,25 @@
 from typing import Annotated
-from fastapi import APIRouter, Depends, Query, HTTPException
+
+from databricks.labs.dqx.config_serializer import ConfigSerializer
+from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceDoesNotExist
 from databricks.sdk.service.iam import User as UserOut
-from databricks.labs.dqx.config_serializer import ConfigSerializer
-from databricks.labs.dqx.engine import DQEngine
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .dependencies import get_obo_ws, get_dqx_engine
 from .config import conf
-from .settings import SettingsManager
+from .dependencies import get_dqx_engine, get_obo_ws
 from .models import (
-    VersionOut, 
-    ConfigOut, 
-    ConfigIn, 
-    RunConfigOut, 
-    RunConfigIn,
-    ChecksOut,
     ChecksIn,
-    InstallationSettings
+    ChecksOut,
+    ConfigIn,
+    ConfigOut,
+    InstallationSettings,
+    RunConfigIn,
+    RunConfigOut,
+    VersionOut,
 )
+from .settings import SettingsManager
 
 api = APIRouter(prefix=conf.api_prefix)
 
@@ -27,14 +28,14 @@ def get_install_folder(ws: WorkspaceClient, path: str | None) -> str:
     folder = path
     if not folder:
         folder = SettingsManager(ws).get_settings().install_folder
-    
+
     # ConfigSerializer expects a folder path and appends config.yml internally (via underlying blueprint/installation)
     # If the user provided a full file path ending in .yml, we strip it.
     folder = folder.strip()
     if folder.endswith(".yml") or folder.endswith(".yaml"):
          if "/" in folder:
              folder = folder.rsplit("/", 1)[0]
-    
+
     return folder
 
 
@@ -98,7 +99,7 @@ def get_run_config(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     path: str | None = Query(None, description="Path to the configuration folder")
 ) -> RunConfigOut:
-    # per each run config there is a separate, single unique checks_location. 
+    # per each run config there is a separate, single unique checks_location.
     # checks_location can be a workspace file path or a table name.
     # it also can be a volume file path.
     # it also can be a delta table name.
@@ -131,19 +132,19 @@ def delete_run_config(
 ) -> ConfigOut:
     install_folder = get_install_folder(obo_ws, path)
     serializer = ConfigSerializer(obo_ws)
-    
+
     try:
         config = serializer.load_config(install_folder=install_folder)
     except ResourceDoesNotExist:
         raise HTTPException(status_code=404, detail=f"Configuration not found at {install_folder}")
-    
+
     # Filter out the run config with the given name
     original_count = len(config.run_configs)
     config.run_configs = [rc for rc in config.run_configs if rc.name != name]
-    
+
     if len(config.run_configs) == original_count:
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
-        
+
     serializer.save_config(config, install_folder=install_folder)
     return ConfigOut(config=config)
 
@@ -161,7 +162,7 @@ def get_run_checks(
         run_config = serializer.load_run_config(run_config_name=name, install_folder=install_folder)
     except ResourceDoesNotExist:
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
-    
+
     # Use the factory to get the handler and storage config
     # Accessing protected member _checks_handler_factory as it seems to be the way to get the storage config
     # properly constructed from the RunConfig
@@ -171,9 +172,9 @@ def get_run_checks(
         return ChecksOut(checks=checks)
     except Exception as e:
         # Checks might not exist yet, or other issues
-        # If it's just missing, maybe return empty list? 
+        # If it's just missing, maybe return empty list?
         # But for now let's propagate or return empty if we want to allow empty checks
-        # If checks are missing, engine might raise. 
+        # If checks are missing, engine might raise.
         # But let's assume engine handles missing checks by returning empty list or raising.
         # If it raises ResourceDoesNotExist, we might want 404.
         raise HTTPException(status_code=500, detail=str(e))
@@ -193,8 +194,8 @@ def save_run_checks(
         run_config = serializer.load_run_config(run_config_name=name, install_folder=install_folder)
     except ResourceDoesNotExist:
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
-    
+
     _, storage_config = engine._checks_handler_factory.create_for_run_config(run_config)
-    
+
     engine.save_checks(body.checks, storage_config)
     return ChecksOut(checks=body.checks)

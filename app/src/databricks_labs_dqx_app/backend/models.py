@@ -1,7 +1,9 @@
+from typing import Any
+
+from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+
 from .. import __version__
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
 
 
 class VersionOut(BaseModel):
@@ -29,11 +31,11 @@ class RunConfigIn(BaseModel):
 
 
 class ChecksOut(BaseModel):
-    checks: List[Dict[str, Any]]
+    checks: list[dict[str, Any]]
 
 
 class ChecksIn(BaseModel):
-    checks: List[Dict[str, Any]]
+    checks: list[dict[str, Any]]
 
 
 class InstallationSettings(BaseModel):

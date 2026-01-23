@@ -1,8 +1,9 @@
+from typing import Annotated
+
+from databricks.connect import DatabricksSession
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from fastapi import Depends, Header
-from typing import Annotated
-from databricks.connect import DatabricksSession
 
 
 def get_obo_ws(

@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+
 from .config import conf
+from .logger import logger
 from .router import api
 from .utils import add_not_found_handler
-from .logger import logger
 
 
 @asynccontextmanager
