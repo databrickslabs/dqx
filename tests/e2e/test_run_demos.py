@@ -134,7 +134,6 @@ def test_run_dqx_dlt_demo(
         # As part of this test we use the latest full UC mode.
         catalog=catalog,
         schema=schema,
-        enable_serverless_compute=True,
         libraries=[PipelineLibrary(notebook=NotebookLibrary(notebook_path))],
         environment=PipelinesEnvironment(dependencies=[library_ref]),
     )
