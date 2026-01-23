@@ -549,7 +549,10 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
 
 @register_rule("row")
 def is_equal_to(
-    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+    column: str | Column,
+    value: int | float | str | datetime.date | datetime.datetime | Column | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> Column:
     """Check whether the values in the input column are equal to the given value.
 
@@ -557,13 +560,41 @@ def is_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
             The value to compare with. Can be a literal or a Spark Column. Defaults to None.
-
+        abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
+                Example: abs(a - b) <= tolerance
+                With tolerance=0.01:
+                    2.001 and 2.0099 → equal (diff = 0.0089)
+                    2.001 and 2.02 → not equal (diff = 0.019)
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
+                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+                With tolerance=0.01 (1%):
+                    100 vs 101 → equal (diff = 1, tolerance = 1)
+                    100 vs 102 → not equal (diff = 2, tolerance = 1)
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
+
+    Raises:
+        InvalidParameterError: If absolute or relative tolerances are negative.
+
+    Note:
+        If both tolerances are provided, the value is considered equal if it meets either tolerance condition.
     """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
-    condition = col_expr != value_expr
+
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float)):
+        # Use tolerance-based comparison for numeric columns
+        tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
+        condition = ~tolerance_match
+    else:
+        # Exact equality comparison (backwards compatible)
+        condition = col_expr != value_expr
 
     return make_condition(
         condition,
@@ -580,7 +611,10 @@ def is_equal_to(
 
 @register_rule("row")
 def is_not_equal_to(
-    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+    column: str | Column,
+    value: int | float | str | datetime.date | datetime.datetime | Column | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> Column:
     """Check whether the values in the input column are not equal to the given value.
 
@@ -588,13 +622,42 @@ def is_not_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
             The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+        abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
+                Example: abs(a - b) <= tolerance
+                With tolerance=0.01:
+                    2.001 and 2.0099 → equal (diff = 0.0089)
+                    2.001 and 2.02 → not equal (diff = 0.019)
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
+                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+                With tolerance=0.01 (1%):
+                    100 vs 101 → equal (diff = 1, tolerance = 1)
+                    100 vs 102 → not equal (diff = 2, tolerance = 1)
 
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
+
+    Raises:
+        InvalidParameterError: If absolute or relative tolerances are negative.
+
+    Note:
+        If both tolerances are provided, the value is considered equal if it meets either tolerance condition.
     """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
-    condition = col_expr == value_expr
+
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float)):
+        # Use tolerance-based comparison for numeric columns
+        tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
+        condition = tolerance_match
+    else:
+        # Exact equality comparison (backwards compatible)
+        condition = col_expr == value_expr
 
     return make_condition(
         condition,
