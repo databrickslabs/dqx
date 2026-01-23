@@ -38,6 +38,7 @@ from databricks.labs.dqx.rule import (
     ColumnArguments,
     DefaultColumnNames,
     DQRule,
+    DQDatasetRule,
     CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
@@ -126,6 +127,8 @@ class DQEngineCore(DQEngineCoreBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
+        self._validate_result_column_collisions(df, checks)
+
         if not checks:
             observed_result = self._observe_metrics(self._append_empty_checks(df))
             if isinstance(observed_result, tuple):
@@ -154,6 +157,37 @@ class DQEngineCore(DQEngineCoreBase):
             return observed_df, observation
 
         return observed_result
+
+    def _validate_result_column_collisions(self, df: DataFrame, checks: list[DQRule]) -> None:
+        df_columns = set(df.columns)
+        errors_col = self._result_column_names[ColumnArguments.ERRORS]
+        warnings_col = self._result_column_names[ColumnArguments.WARNINGS]
+
+        result_collisions = [col for col in (errors_col, warnings_col) if col in df_columns]
+        if result_collisions:
+            collisions_str = ", ".join(result_collisions)
+            raise InvalidParameterError(
+                "Input DataFrame contains reserved DQX result columns: "
+                f"{collisions_str}. Rename input columns or configure extra_params.result_column_names."
+            )
+
+        has_dataset_checks = any(isinstance(check, DQDatasetRule) for check in checks)
+        if not has_dataset_checks:
+            return
+
+        info_col = self._result_column_names[ColumnArguments.INFO]
+        info_collisions = []
+        if "_dq_info" in df_columns:
+            info_collisions.append("_dq_info")
+        if info_col in df_columns and info_col != "_dq_info":
+            info_collisions.append(info_col)
+
+        if info_collisions:
+            collisions_str = ", ".join(info_collisions)
+            raise InvalidParameterError(
+                "Input DataFrame contains reserved DQX info columns: "
+                f"{collisions_str}. Rename input columns or configure extra_params.result_column_names."
+            )
 
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None

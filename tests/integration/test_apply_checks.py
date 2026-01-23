@@ -46,6 +46,14 @@ def test_apply_checks_on_empty_checks(ws, spark):
     assert_df_equality(good, expected_df)
 
 
+def test_apply_checks_raises_on_result_column_collision(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1]], "_errors int")
+
+    with pytest.raises(InvalidParameterError, match="reserved DQX result columns"):
+        dq_engine.apply_checks(test_df, [])
+
+
 def test_apply_checks_and_split_on_empty_checks(ws, spark):
     dq_engine = DQEngine(ws)
     test_df = spark.createDataFrame([[1, 3, None], [2, 4, None]], SCHEMA)
@@ -2787,6 +2795,22 @@ def custom_dataset_check_func_with_ref_dfs(column: str) -> tuple[Column, Callabl
         ),
         closure,
     )
+
+
+def test_apply_checks_raises_on_info_column_collision(ws, spark):
+    dq_engine = DQEngine(ws)
+    test_df = spark.createDataFrame([[1, 2, 3, "info"]], "a int, b int, c int, _dq_info string")
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=custom_dataset_check_func,
+            column="a",
+            check_func_kwargs={"group_by": "c"},
+        )
+    ]
+
+    with pytest.raises(InvalidParameterError, match="reserved DQX info columns"):
+        dq_engine.apply_checks(test_df, checks)
 
 
 def test_apply_checks_with_sql_query(ws, spark):
