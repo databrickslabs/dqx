@@ -6,7 +6,6 @@ from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 from databricks.labs.dqx.io import read_input_data
-from databricks.sdk import WorkspaceClient
 
 try:
     from databricks.labs.dqx.anomaly import AnomalyEngine
@@ -46,8 +45,7 @@ class AnomalyTrainerWorkflow(Workflow):
 
         df = read_input_data(ctx.spark, run_config.input_config)
 
-        ws = WorkspaceClient()
-        anomaly_engine = AnomalyEngine(ws, ctx.spark)
+        anomaly_engine = AnomalyEngine(ctx.workspace_client, ctx.spark)
         anomaly_engine.train(
             df=df,
             columns=anomaly_config.columns,
