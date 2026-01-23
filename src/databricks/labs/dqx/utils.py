@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
-COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
+COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$", re.DOTALL)
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
 
 
