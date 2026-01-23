@@ -36,7 +36,7 @@ from databricks.sdk.service.workspace import ImportFormat
 
 # Anomaly detection imports - required for anomaly tests
 # Imported after patches are applied to ensure compatibility
-from databricks.labs.dqx.anomaly.trainer import AnomalyEngine
+from databricks.labs.dqx.anomaly import AnomalyEngine
 
 logger = logging.getLogger(__name__)
 
