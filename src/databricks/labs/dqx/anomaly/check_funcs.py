@@ -54,6 +54,134 @@ _DRIVER_ONLY = {"value": False}
 logger = logging.getLogger(__name__)
 
 
+@register_rule("dataset")
+def has_no_anomalies(
+    merge_columns: list[str],
+    columns: list[str | Column] | None = None,
+    segment_by: list[str] | None = None,
+    model: str | None = None,
+    registry_table: str | None = None,
+    score_threshold: float = 0.60,
+    row_filter: str | None = None,
+    drift_threshold: float | None = None,
+    include_contributions: bool = True,
+    include_confidence: bool = False,
+) -> tuple[Column, Any]:
+    """Check that records are not anomalous according to a trained model(s).
+
+    Auto-discovery:
+    - columns=None: Inferred from model registry
+    - segment_by=None: Inferred from model registry (checks if model is segmented)
+
+    Output columns:
+    - _errors or _warnings: Standard DQX result column based on criticality setting
+      (customizable via ExtraParams.result_column_names)
+    - _info: Structured anomaly metadata
+      - _info.anomaly.score: Anomaly score (0-1)
+      - _info.anomaly.is_anomaly: Boolean flag
+      - _info.anomaly.threshold: Threshold used
+      - _info.anomaly.model: Model name
+      - _info.anomaly.segment: Segment values (if segmented)
+      - _info.anomaly.contributions: SHAP values (if requested)
+      - _info.anomaly.confidence_std: Ensemble std (if requested)
+
+    Args:
+        merge_columns: Primary key columns (e.g., ["activity_id"]) for joining results.
+        columns: Columns to check for anomalies (auto-inferred if omitted).
+        segment_by: Segment columns (auto-inferred from model if omitted).
+        model: Model name (REQUIRED). Provide the base model name returned from train().
+        registry_table: Registry table (auto-derived if omitted).
+        score_threshold: Anomaly score threshold (default 0.60). Records with score >= threshold
+            are flagged as anomalous. Higher threshold = stricter detection (fewer anomalies).
+        row_filter: Optional SQL expression to filter rows before scoring.
+        drift_threshold: Drift detection threshold (default 3.0, None to disable).
+        include_contributions: Include SHAP feature contributions for explainability (default True).
+            Requires SHAP library. Performance-optimized with native batching.
+        include_confidence: Include ensemble confidence scores in _info and top-level (default False).
+            Automatically available when training with ensemble_size > 1 (default is 2).
+
+    Returns:
+        Tuple of condition expression and apply function.
+
+    Example:
+        Access anomaly metadata via _info column:
+        >>> df_scored.select("_info.anomaly.score", "_info.anomaly.is_anomaly")
+        >>> df_scored.filter(col("_info.anomaly.is_anomaly"))
+    """
+
+    def apply(df: DataFrame) -> DataFrame:
+        if not merge_columns:
+            raise MissingParameterError("merge_columns is not provided.")
+
+        driver_only_local = _DRIVER_ONLY["value"]
+
+        # Validate SHAP availability early (before Spark jobs)
+        if include_contributions and not SHAP_AVAILABLE:
+            raise ImportError(
+                "Feature contributions require SHAP library (not included in base DQX installation).\n\n"
+                "To install SHAP:\n"
+                "  Option 1 - Install DQX with anomaly extras (recommended):\n"
+                "    %pip install 'databricks-labs-dqx[anomaly]'\n"
+                "    dbutils.library.restartPython()\n\n"
+                "  Option 2 - Install SHAP separately:\n"
+                "    %pip install 'shap>=0.42.0,<0.46'\n"
+                "    dbutils.library.restartPython()\n\n"
+                "  Option 3 - Use anomaly detection without explanations:\n"
+                "    has_no_anomalies(..., include_contributions=False)"
+            )
+
+        # Auto-discover configuration
+        nonlocal columns, segment_by
+        normalized_columns, segment_by, model_name, registry = _discover_model_and_config(
+            df, model, registry_table, columns, segment_by
+        )
+
+        # Create scoring configuration
+        config = ScoringConfig(
+            columns=normalized_columns,
+            model_name=model_name,
+            registry_table=registry,
+            score_threshold=score_threshold,
+            merge_columns=merge_columns,
+            row_filter=row_filter,
+            drift_threshold=drift_threshold,
+            drift_threshold_value=drift_threshold if drift_threshold is not None else 3.0,
+            include_contributions=include_contributions,
+            include_confidence=include_confidence,
+            segment_by=segment_by,
+            driver_only=driver_only_local,
+        )
+
+        registry_client = AnomalyModelRegistry(df.sparkSession)
+
+        # Route to segmented or global scoring
+        if segment_by:
+            return _score_segmented(df, config, registry_client)
+
+        # Try global model first
+        record = registry_client.get_active_model(registry, model_name)
+        if not record:
+            # Fallback to segmented scoring
+            result = _try_segmented_scoring_fallback(df, config, registry_client)
+            if result is not None:
+                return result
+            raise InvalidParameterError(
+                f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
+            )
+
+        return _score_global_model(df, record, config)
+
+    # Create condition directly from _info.anomaly.is_anomaly (no intermediate column needed)
+    message = F.concat_ws(
+        "",
+        F.lit("Anomaly score "),
+        F.round(F.col("_info").anomaly.score, 3).cast("string"),
+        F.lit(f" exceeded threshold {score_threshold}"),
+    )
+    condition_expr = F.col("_info").anomaly.is_anomaly
+    return make_condition(condition_expr, message, "has_anomalies"), apply
+
+
 @dataclass
 class ScoringConfig:
     """Configuration for anomaly scoring."""
@@ -1306,131 +1434,3 @@ def _score_global_model(
     scored_df = scored_df.drop("anomaly_score")
 
     return scored_df
-
-
-@register_rule("dataset")
-def has_no_anomalies(
-    merge_columns: list[str],
-    columns: list[str | Column] | None = None,
-    segment_by: list[str] | None = None,
-    model: str | None = None,
-    registry_table: str | None = None,
-    score_threshold: float = 0.60,
-    row_filter: str | None = None,
-    drift_threshold: float | None = None,
-    include_contributions: bool = True,
-    include_confidence: bool = False,
-) -> tuple[Column, Any]:
-    """Check that records are not anomalous according to a trained model(s).
-
-    Auto-discovery:
-    - columns=None: Inferred from model registry
-    - segment_by=None: Inferred from model registry (checks if model is segmented)
-
-    Output columns:
-    - _errors or _warnings: Standard DQX result column based on criticality setting
-      (customizable via ExtraParams.result_column_names)
-    - _info: Structured anomaly metadata
-      - _info.anomaly.score: Anomaly score (0-1)
-      - _info.anomaly.is_anomaly: Boolean flag
-      - _info.anomaly.threshold: Threshold used
-      - _info.anomaly.model: Model name
-      - _info.anomaly.segment: Segment values (if segmented)
-      - _info.anomaly.contributions: SHAP values (if requested)
-      - _info.anomaly.confidence_std: Ensemble std (if requested)
-
-    Args:
-        merge_columns: Primary key columns (e.g., ["activity_id"]) for joining results.
-        columns: Columns to check for anomalies (auto-inferred if omitted).
-        segment_by: Segment columns (auto-inferred from model if omitted).
-        model: Model name (REQUIRED). Provide the base model name returned from train().
-        registry_table: Registry table (auto-derived if omitted).
-        score_threshold: Anomaly score threshold (default 0.60). Records with score >= threshold
-            are flagged as anomalous. Higher threshold = stricter detection (fewer anomalies).
-        row_filter: Optional SQL expression to filter rows before scoring.
-        drift_threshold: Drift detection threshold (default 3.0, None to disable).
-        include_contributions: Include SHAP feature contributions for explainability (default True).
-            Requires SHAP library. Performance-optimized with native batching.
-        include_confidence: Include ensemble confidence scores in _info and top-level (default False).
-            Automatically available when training with ensemble_size > 1 (default is 2).
-
-    Returns:
-        Tuple of condition expression and apply function.
-
-    Example:
-        Access anomaly metadata via _info column:
-        >>> df_scored.select("_info.anomaly.score", "_info.anomaly.is_anomaly")
-        >>> df_scored.filter(col("_info.anomaly.is_anomaly"))
-    """
-
-    def apply(df: DataFrame) -> DataFrame:
-        if not merge_columns:
-            raise MissingParameterError("merge_columns is not provided.")
-
-        driver_only_local = _DRIVER_ONLY["value"]
-
-        # Validate SHAP availability early (before Spark jobs)
-        if include_contributions and not SHAP_AVAILABLE:
-            raise ImportError(
-                "Feature contributions require SHAP library (not included in base DQX installation).\n\n"
-                "To install SHAP:\n"
-                "  Option 1 - Install DQX with anomaly extras (recommended):\n"
-                "    %pip install 'databricks-labs-dqx[anomaly]'\n"
-                "    dbutils.library.restartPython()\n\n"
-                "  Option 2 - Install SHAP separately:\n"
-                "    %pip install 'shap>=0.42.0,<0.46'\n"
-                "    dbutils.library.restartPython()\n\n"
-                "  Option 3 - Use anomaly detection without explanations:\n"
-                "    has_no_anomalies(..., include_contributions=False)"
-            )
-
-        # Auto-discover configuration
-        nonlocal columns, segment_by
-        normalized_columns, segment_by, model_name, registry = _discover_model_and_config(
-            df, model, registry_table, columns, segment_by
-        )
-
-        # Create scoring configuration
-        config = ScoringConfig(
-            columns=normalized_columns,
-            model_name=model_name,
-            registry_table=registry,
-            score_threshold=score_threshold,
-            merge_columns=merge_columns,
-            row_filter=row_filter,
-            drift_threshold=drift_threshold,
-            drift_threshold_value=drift_threshold if drift_threshold is not None else 3.0,
-            include_contributions=include_contributions,
-            include_confidence=include_confidence,
-            segment_by=segment_by,
-            driver_only=driver_only_local,
-        )
-
-        registry_client = AnomalyModelRegistry(df.sparkSession)
-
-        # Route to segmented or global scoring
-        if segment_by:
-            return _score_segmented(df, config, registry_client)
-
-        # Try global model first
-        record = registry_client.get_active_model(registry, model_name)
-        if not record:
-            # Fallback to segmented scoring
-            result = _try_segmented_scoring_fallback(df, config, registry_client)
-            if result is not None:
-                return result
-            raise InvalidParameterError(
-                f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
-            )
-
-        return _score_global_model(df, record, config)
-
-    # Create condition directly from _info.anomaly.is_anomaly (no intermediate column needed)
-    message = F.concat_ws(
-        "",
-        F.lit("Anomaly score "),
-        F.round(F.col("_info").anomaly.score, 3).cast("string"),
-        F.lit(f" exceeded threshold {score_threshold}"),
-    )
-    condition_expr = F.col("_info").anomaly.is_anomaly
-    return make_condition(condition_expr, message, "has_anomalies"), apply
