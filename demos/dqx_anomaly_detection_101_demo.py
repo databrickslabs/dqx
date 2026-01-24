@@ -205,11 +205,11 @@ print("✅ Setup complete!")
 
 # Generate simple sales transaction data
 def generate_sales_data(
-    num_rows=1000,
-    anomaly_rate=0.02,
-    dq_null_amount_rate=0.01,
-    dq_null_quantity_rate=0.005,
-    dq_negative_amount_rate=0.005,
+    num_rows:int=1000,
+    anomaly_rate:float=0.02,
+    dq_null_amount_rate:float=0.01,
+    dq_null_quantity_rate:float=0.005,
+    dq_negative_amount_rate:float=0.005,
 ):
     """
     Generate sales transaction data with injected anomalies.
