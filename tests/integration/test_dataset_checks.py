@@ -2776,7 +2776,7 @@ def test_has_valid_schema_with_ref_df_name(spark: SparkSession):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_has_valid_schema_with_ignore_columns(spark: SparkSession):
+def test_has_valid_schema_with_exclude_columns(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["str1", 1, 100.0, "extra"],
@@ -2786,7 +2786,7 @@ def test_has_valid_schema_with_ignore_columns(spark: SparkSession):
     )
 
     expected_schema = "a string, b int, c double"
-    condition, apply_method = has_valid_schema(expected_schema, ignore_columns=["d"], strict=True)
+    condition, apply_method = has_valid_schema(expected_schema, exclude_columns=["d"], strict=True)
     actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
 
@@ -2800,7 +2800,7 @@ def test_has_valid_schema_with_ignore_columns(spark: SparkSession):
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
 
 
-def test_has_valid_schema_with_ignore_columns_as_expression(spark: SparkSession):
+def test_has_valid_schema_with_exclude_columns_as_expression(spark: SparkSession):
     test_df = spark.createDataFrame(
         [
             ["str1", 1, 100.0, "extra"],
@@ -2810,7 +2810,7 @@ def test_has_valid_schema_with_ignore_columns_as_expression(spark: SparkSession)
     )
 
     expected_schema = "a string, b int, c double"
-    condition, apply_method = has_valid_schema(expected_schema, ignore_columns=[F.col("d")], strict=True)
+    condition, apply_method = has_valid_schema(expected_schema, exclude_columns=[F.col("d")], strict=True)
     actual_apply_df = apply_method(test_df, spark, {})
     actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
 

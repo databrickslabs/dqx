@@ -1932,7 +1932,7 @@ def has_valid_schema(
     ref_table: str | None = None,
     columns: list[str | Column] | None = None,
     strict: bool = False,
-    ignore_columns: list[str | Column] | None = None,
+    exclude_columns: list[str | Column] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a schema compatibility check condition and closure for dataset-level validation.
@@ -1942,7 +1942,7 @@ def has_valid_schema(
     In strict mode, validates that the schema matches exactly (same columns, same order, same types)
     for the columns specified in columns or for all columns if columns is not specified.
 
-    All columns in the `ignore_columns` list will be ignored even if the column is present in the `columns` list.
+    All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.
 
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
@@ -1952,7 +1952,7 @@ def has_valid_schema(
         strict: Whether to perform strict schema validation (default: False).
             - False: Validates that all expected columns exist with compatible types (allows extra columns)
             - True: Validates exact schema match (same columns, same order, same types)
-        ignore_columns: Optional list of columns in the checked DataFrame schema to
+        exclude_columns: Optional list of columns in the checked DataFrame schema to
             ignore for validation.
 
     Returns:
@@ -1982,10 +1982,10 @@ def has_valid_schema(
     if columns:
         column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
-    ignore_column_names: list[str] | None = None
-    if ignore_columns:
-        ignore_column_names = [
-            get_column_name_or_alias(col) if not isinstance(col, str) else col for col in ignore_columns
+    exclude_column_names: list[str] | None = None
+    if exclude_columns:
+        exclude_column_names = [
+            get_column_name_or_alias(col) if not isinstance(col, str) else col for col in exclude_columns
         ]
 
     expected_schema = _get_schema(expected_schema or types.StructType(), column_names)
@@ -2016,8 +2016,8 @@ def has_valid_schema(
             _expected_schema = expected_schema
 
         selected_column_names = column_names if column_names else df.columns
-        if ignore_column_names:
-            ignore_set = set(ignore_column_names)
+        if exclude_column_names:
+            ignore_set = set(exclude_column_names)
             selected_column_names = [col for col in selected_column_names if col not in ignore_set]
         actual_schema = df.select(*selected_column_names).schema
 
