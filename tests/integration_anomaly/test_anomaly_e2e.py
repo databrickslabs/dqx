@@ -249,7 +249,9 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
     ]
 
     rows = (
-        dq_engine.apply_checks(test_df, checks).select("_errors", F.col("_info.anomaly.score").alias("score")).collect()
+        dq_engine.apply_checks(test_df, checks)
+        .select("_errors", F.col("_dq_info.anomaly.score").alias("score"))
+        .collect()
     )
     flagged = 0
     for row in rows:

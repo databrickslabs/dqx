@@ -189,19 +189,27 @@ def test_anomaly_params_all_custom():
 # ============================================================================
 
 
-def test_anomaly_config_accepts_params():
-    """Test AnomalyConfig with custom AnomalyParams."""
-    params = AnomalyParams(sample_fraction=0.5)
-    cfg = AnomalyConfig(columns=["a", "b"], params=params)
+def test_anomaly_config_defaults():
+    """Test AnomalyConfig defaults."""
+    cfg = AnomalyConfig()
+    assert cfg.columns is None
+    assert cfg.segment_by is None
+    assert cfg.model_name is None
+    assert cfg.registry_table is None
+
+
+def test_anomaly_config_with_columns_and_segments():
+    """Test AnomalyConfig with custom columns and segmentation."""
+    cfg = AnomalyConfig(
+        columns=["a", "b"],
+        segment_by=["region"],
+        model_name="demo_model",
+        registry_table="main.default.dqx_anomaly_models",
+    )
     assert cfg.columns == ["a", "b"]
-    assert cfg.params.sample_fraction == 0.5
-
-
-def test_anomaly_config_with_default_params():
-    """Test AnomalyConfig allows None params (auto-discovered at runtime)."""
-    cfg = AnomalyConfig(columns=["col1", "col2"])
-    assert cfg.columns == ["col1", "col2"]
-    assert cfg.params is None  # Defaults to None, filled at runtime
+    assert cfg.segment_by == ["region"]
+    assert cfg.model_name == "demo_model"
+    assert cfg.registry_table == "main.default.dqx_anomaly_models"
 
 
 def test_anomaly_config_with_single_column():
@@ -278,18 +286,17 @@ def test_feature_engineering_config_edge_case_thresholds():
 
 
 # ============================================================================
-# Integration Tests: Multiple Config Combinations
+# Config Combination Tests
 # ============================================================================
 
 
-def test_full_config_stack():
-    """Test complete configuration stack with all custom values."""
+def test_feature_engineering_config_with_algo_config():
+    """Test feature engineering config remains independent of algorithm config."""
     algo_config = IsolationForestConfig(
         contamination=0.12,
         num_trees=250,
         random_seed=777,
     )
-
     params = AnomalyParams(
         sample_fraction=0.4,
         max_rows=750_000,
@@ -297,47 +304,13 @@ def test_full_config_stack():
         ensemble_size=5,
         algorithm_config=algo_config,
     )
-
     feature_config = FeatureEngineeringConfig(
         categorical_cardinality_threshold=15,
         max_input_columns=12,
         max_engineered_features=80,
     )
 
-    anomaly_config = AnomalyConfig(
-        columns=["amount", "quantity", "discount"],
-        params=params,
-    )
-
-    # Verify full stack
-    assert anomaly_config.columns == ["amount", "quantity", "discount"]
-    assert anomaly_config.params.sample_fraction == 0.4
-    assert anomaly_config.params.max_rows == 750_000
-    assert anomaly_config.params.train_ratio == 0.85
-    assert anomaly_config.params.ensemble_size == 5
-    assert anomaly_config.params.algorithm_config.contamination == 0.12
-    assert anomaly_config.params.algorithm_config.num_trees == 250
-    assert anomaly_config.params.algorithm_config.random_seed == 777
+    assert params.algorithm_config.contamination == 0.12
+    assert params.algorithm_config.num_trees == 250
     assert feature_config.categorical_cardinality_threshold == 15
     assert feature_config.max_input_columns == 12
-
-
-def test_config_immutability_pattern():
-    """Test that configs can be created and used without mutation."""
-    # Create base config
-    params1 = AnomalyParams(sample_fraction=0.3)
-
-    # Create config using base
-    cfg1 = AnomalyConfig(columns=["a", "b"], params=params1)
-
-    # Create another config with different params
-    params2 = AnomalyParams(sample_fraction=0.5)
-    cfg2 = AnomalyConfig(columns=["c", "d"], params=params2)
-
-    # Original should be unchanged
-    assert cfg1.params.sample_fraction == 0.3
-    assert cfg1.columns == ["a", "b"]
-
-    # New config should have its own values
-    assert cfg2.params.sample_fraction == 0.5
-    assert cfg2.columns == ["c", "d"]

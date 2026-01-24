@@ -20,6 +20,7 @@ from tests.integration_anomaly.test_anomaly_utils import (
     get_standard_2d_training_data,
     get_standard_3d_training_data,
     get_standard_4d_training_data,
+    train_model_with_params,
 )
 
 # Must be set before configuring MLflow
@@ -213,7 +214,7 @@ def quick_model_factory(ws, spark, make_random, make_schema):
     """
     Factory for training lightweight models with custom parameters.
 
-    Use when tests need specific training params (e.g., AnomalyParams, segment_by).
+    Use when tests need specific training params (internal, e.g., AnomalyParams, segment_by).
     For simple 2D scoring tests, prefer function-scoped shared_2d_model instead.
 
     Returns a callable that accepts spark and training parameters.
@@ -237,7 +238,7 @@ def quick_model_factory(ws, spark, make_random, make_schema):
             train_size (int): Number of training rows (default: 50)
             columns (list[str] | None): Column names (default: ["amount", "quantity"])
             train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
-            params (AnomalyParams | None): AnomalyParams for custom training config
+            params (AnomalyParams | None): Internal training params (test-only)
             segment_by (list[str] | None): Segment columns for segmented models
             catalog (str): Catalog name
             schema (str | None): Schema name
@@ -270,14 +271,24 @@ def quick_model_factory(ws, spark, make_random, make_schema):
         # Create engine with shared ws client
         engine = AnomalyEngine(ws, session)
 
-        full_model_name = engine.train(
-            df=train_df,
-            columns=columns,
-            model_name=model_name,
-            registry_table=registry_table,
-            params=params,
-            segment_by=segment_by,
-        )
+        if params is None:
+            full_model_name = engine.train(
+                df=train_df,
+                columns=columns,
+                model_name=model_name,
+                registry_table=registry_table,
+                segment_by=segment_by,
+            )
+        else:
+            full_model_name = train_model_with_params(
+                spark=session,
+                df=train_df,
+                model_name=model_name,
+                registry_table=registry_table,
+                columns=columns,
+                params=params,
+                segment_by=segment_by,
+            )
 
         return full_model_name, registry_table, columns
 

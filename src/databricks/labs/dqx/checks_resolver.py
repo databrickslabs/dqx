@@ -5,32 +5,33 @@ import os
 import sys
 from collections.abc import Callable
 from contextlib import contextmanager
-from functools import lru_cache
+from types import ModuleType
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
-
-try:
-    from databricks.labs.dqx.pii import pii_detection_funcs as pii_check_funcs
-
-    PII_ENABLED = True
-except ImportError:
-    PII_ENABLED = False
 
 from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
 
+_OPTIONAL_CHECK_MODULES: tuple[str, ...] = (
+    "databricks.labs.dqx.anomaly.check_funcs",
+    "databricks.labs.dqx.pii.pii_detection_funcs",
+)
+_optional_modules_cache: dict[str, ModuleType | None] = {}
 
-@lru_cache(maxsize=1)
-def _load_anomaly_check_funcs():
-    """Lazy-load anomaly check functions to avoid circular import issues."""
+
+def _load_optional_check_module(module_path: str) -> ModuleType | None:
+    cached = _optional_modules_cache.get(module_path, None)
+    if cached is not None or module_path in _optional_modules_cache:
+        return cached
     try:
-        return importlib.import_module("databricks.labs.dqx.anomaly.check_funcs")
-    except Exception as e:
-        # Catches ImportError (missing dependencies) and MlflowException (auth issues in CI)
-        logger.debug(f"Anomaly detection disabled due to import error: {e}")
-        return None
+        module = importlib.import_module(module_path)
+    except ImportError as exc:
+        logger.debug(f"Optional check module '{module_path}' is unavailable.", exc_info=exc)
+        module = None
+    _optional_modules_cache[module_path] = module
+    return module
 
 
 def resolve_check_function(
@@ -55,14 +56,14 @@ def resolve_check_function(
     if not func:
         # try to resolve using predefined geo checks, requires Databricks serverless or DBR >= 17.1
         func = getattr(geo_check_funcs, function_name, None)
-    if not func and PII_ENABLED:
-        # try to resolve using predefined pii detection checks
-        func = getattr(pii_check_funcs, function_name, None)
     if not func:
-        # resolve using anomaly checks, requires anomaly extras (mlflow, scikit-learn)
-        anomaly_funcs = _load_anomaly_check_funcs()  # Lazy load to avoid circular imports
-        if anomaly_funcs is not None:
-            func = getattr(anomaly_funcs, function_name, None)
+        for module_path in _OPTIONAL_CHECK_MODULES:
+            module = _load_optional_check_module(module_path)
+            if not module:
+                continue
+            func = getattr(module, function_name, None)
+            if func:
+                break
     if not func and custom_check_functions:
         func = custom_check_functions.get(function_name)  # returns None if not found
     if fail_on_missing and not func:

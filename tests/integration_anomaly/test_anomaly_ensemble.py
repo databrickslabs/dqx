@@ -6,7 +6,7 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.anomaly import AnomalyParams
+from databricks.labs.dqx.config import AnomalyParams
 
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
@@ -95,12 +95,12 @@ def test_ensemble_scoring_with_confidence(
         extract_score=False,
     )
 
-    # Check that confidence column exists in _info
+    # Check that confidence column exists in _dq_info
     row = result_df.collect()[0]
-    assert row["_info"]["anomaly"]["confidence_std"] is not None
+    assert row["_dq_info"]["anomaly"]["confidence_std"] is not None
 
     # Check that scores vary (std > 0 for some rows)
-    std_values = [r["_info"]["anomaly"]["confidence_std"] for r in result_df.collect()]
+    std_values = [r["_dq_info"]["anomaly"]["confidence_std"] for r in result_df.collect()]
     assert any(std is not None and std > 0 for std in std_values)
 
 
@@ -146,7 +146,7 @@ def test_ensemble_with_feature_contributions(
         extract_score=False,
     )
 
-    # Check both confidence and contributions exist in _info
+    # Check both confidence and contributions exist in _dq_info
     row = result_df.collect()[0]
-    assert row["_info"]["anomaly"]["confidence_std"] is not None
-    assert row["_info"]["anomaly"]["contributions"] is not None
+    assert row["_dq_info"]["anomaly"]["confidence_std"] is not None
+    assert row["_dq_info"]["anomaly"]["contributions"] is not None

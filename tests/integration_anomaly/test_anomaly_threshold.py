@@ -8,7 +8,7 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.anomaly import AnomalyParams
+from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 
 from tests.integration_anomaly.test_anomaly_constants import (

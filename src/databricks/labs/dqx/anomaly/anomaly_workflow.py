@@ -6,6 +6,7 @@ from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
 from databricks.labs.dqx.io import read_input_data
+from databricks.labs.dqx.utils import normalize_col_str
 
 try:
     from databricks.labs.dqx.anomaly import AnomalyEngine
@@ -40,8 +41,10 @@ class AnomalyTrainerWorkflow(Workflow):
         if not run_config.input_config:
             raise InvalidConfigError("input_config is required to run the anomaly trainer workflow.")
 
-        if not anomaly_config.model_name:
-            raise InvalidConfigError("model_name is required in anomaly_config.")
+        model_name = anomaly_config.model_name
+        if not model_name:
+            run_name = normalize_col_str(run_config.name or "default") or "default"
+            model_name = f"dqx_anomaly_{run_name}"
 
         df = read_input_data(ctx.spark, run_config.input_config)
 
@@ -50,7 +53,6 @@ class AnomalyTrainerWorkflow(Workflow):
             df=df,
             columns=anomaly_config.columns,
             segment_by=anomaly_config.segment_by,
-            model_name=anomaly_config.model_name,
+            model_name=model_name,
             registry_table=anomaly_config.registry_table,
-            params=anomaly_config.params,
         )

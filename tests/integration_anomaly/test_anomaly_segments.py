@@ -8,7 +8,7 @@ from pyspark.sql import SparkSession
 
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import has_no_anomalies
-from databricks.labs.dqx.anomaly.trainer import AnomalyParams
+from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 
@@ -17,6 +17,7 @@ from tests.integration_anomaly.test_anomaly_constants import (
     DQENGINE_SCORE_THRESHOLD,
     SEGMENT_REGIONS,
 )
+from tests.integration_anomaly.test_anomaly_utils import train_model_with_params
 
 pytestmark = pytest.mark.anomaly
 
@@ -170,12 +171,13 @@ def test_multi_column_segments(
     df.write.saveAsTable(table_name)
 
     # Train with multiple segment columns
-    anomaly_engine.train(
+    train_model_with_params(
+        spark=spark,
         df=spark.table(table_name),
-        columns=["amount"],
-        segment_by=["region", "product_type"],
         model_name=f"test_multi_segments_{suffix}",
         registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        columns=["amount"],
+        segment_by=["region", "product_type"],
         params=AnomalyParams(sample_fraction=1.0),
     )
 

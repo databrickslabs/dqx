@@ -776,7 +776,9 @@ def _format_shap_contributions(
     # Normalize absolute SHAP values to sum to 1.0 per row
     abs_shap = np.abs(shap_values)
     totals = abs_shap.sum(axis=1, keepdims=True)
-    normalized = np.where(totals > 0, abs_shap / totals, 1.0 / num_features)
+    normalized = np.divide(abs_shap, totals, out=np.zeros_like(abs_shap), where=totals > 0)
+    if num_features > 0:
+        normalized[totals.squeeze(axis=1) == 0] = 1.0 / num_features
 
     # Build contribution dictionaries for valid rows
     valid_row_idx = 0

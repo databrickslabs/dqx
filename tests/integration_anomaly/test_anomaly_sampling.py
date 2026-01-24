@@ -6,9 +6,9 @@ from collections.abc import Callable
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import AnomalyParams
+from databricks.labs.dqx.config import AnomalyParams
 
-from tests.integration_anomaly.test_anomaly_utils import train_large_dataset_model
+from tests.integration_anomaly.test_anomaly_utils import train_large_dataset_model, train_model_with_params
 
 pytestmark = pytest.mark.anomaly
 
@@ -187,6 +187,7 @@ def test_performance_with_many_columns(
 ):
     """Test that training completes in reasonable time with many columns."""
     # Create dataset with 10 columns
+    _ = anomaly_engine
     df = spark.range(1000).selectExpr(
         "cast(id as double) as col1",
         "2.0 as col2",
@@ -210,11 +211,12 @@ def test_performance_with_many_columns(
     )
 
     # This should complete without timing out
-    model_uri = anomaly_engine.train(
+    model_uri = train_model_with_params(
+        spark=spark,
         df=df,
-        columns=[f"col{i}" for i in range(1, 11)],
         model_name=model_name,
         registry_table=registry_table,
+        columns=[f"col{i}" for i in range(1, 11)],
         params=params,
     )
 

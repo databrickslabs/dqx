@@ -114,8 +114,8 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
     )
     row = result_df.collect()[0]
 
-    # Extract contributions map from _info.anomaly.contributions
-    contribs = row["_info"]["anomaly"]["contributions"]
+    # Extract contributions map from _dq_info.anomaly.contributions
+    contribs = row["_dq_info"]["anomaly"]["contributions"]
 
     # Filter out None values before summing
     total = sum(v for v in contribs.values() if v is not None)
@@ -151,8 +151,8 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
     )
     row = result_df.collect()[0]
 
-    # Extract contributions map from _info.anomaly.contributions
-    contribs = row["_info"]["anomaly"]["contributions"]
+    # Extract contributions map from _dq_info.anomaly.contributions
+    contribs = row["_dq_info"]["anomaly"]["contributions"]
 
     # Verify all features are represented
     assert "amount" in contribs
@@ -218,8 +218,8 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
     )
     row = result_df.collect()[0]
 
-    # Extract contributions map from _info.anomaly.contributions
-    contribs = row["_info"]["anomaly"]["contributions"]
+    # Extract contributions map from _dq_info.anomaly.contributions
+    contribs = row["_dq_info"]["anomaly"]["contributions"]
 
     # Filter out None values
     valid_contribs = {k: v for k, v in contribs.items() if v is not None}

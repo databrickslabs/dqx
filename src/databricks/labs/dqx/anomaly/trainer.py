@@ -220,6 +220,43 @@ def _prepare_training_config(
     return derived_model_name, derived_registry_table
 
 
+def train_model_with_params(
+    spark: SparkSession,
+    df: DataFrame,
+    columns: list[str],
+    model_name: str,
+    registry_table: str,
+    params: AnomalyParams,
+    segment_by: list[str] | None = None,
+    row_id_columns: list[str] | None = None,
+    expected_anomaly_rate: float = 0.02,
+) -> str:
+    """
+    Train a model with explicit params (internal/test helper).
+    """
+    _validate_spark_version(spark)
+    _validate_columns(df, columns, params)
+
+    derived_model_name, derived_registry_table = _prepare_training_config(
+        model_name, registry_table, spark, columns, segment_by
+    )
+    params = _apply_expected_anomaly_rate(params, expected_anomaly_rate)
+
+    if segment_by:
+        return _train_segmented(
+            spark,
+            df,
+            columns,
+            segment_by,
+            derived_model_name,
+            derived_registry_table,
+            params,
+            row_id_columns,
+        )
+
+    return _train_global(spark, df, columns, derived_model_name, derived_registry_table, params, row_id_columns)
+
+
 def _register_single_model_to_mlflow(
     model: Any,
     train_df: DataFrame,
