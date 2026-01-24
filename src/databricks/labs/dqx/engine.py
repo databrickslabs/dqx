@@ -39,7 +39,7 @@ from databricks.labs.dqx.rule import (
     ColumnArguments,
     DefaultColumnNames,
     DQRule,
-    SCHEMA_PRESELECTION_REGISTRY,
+    CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
@@ -350,29 +350,34 @@ class DQEngineCore(DQEngineCoreBase):
 
     def _preselect_original_columns(self, df: DataFrame, check: DQRule) -> DQRule:
         """
-        Determines the selected columns for schema validation checks. This is required when using `has_valid_schema` to
-        ignore columns added during quality checking. This includes:
-        * DQX result columns (e.g. '_warnings' and '_errors')
-        * Internal columns used for dataset-level checks
+        Certain data quality checks (such as has_valid_schema) require access to the DataFrame's original schema—before
+        any DQX metadata columns, e.g.
+         * DQX result columns (e.g. '_warnings' and '_errors')
+         * Internal columns added by dataset-level checks
+        To enable this, check functions that need the original schema must be registered with
+        the register_for_original_columns_preselection decorator.
 
         Args:
             df: Input DataFrame
-            check: DQRule to be modified
+            check: Updated DQRule
         """
-        if check.check_func.__name__ not in SCHEMA_PRESELECTION_REGISTRY:
+        # check func does not require original columns
+        if check.check_func.__name__ not in CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION:
             return check
 
-        schema_argument = SCHEMA_PRESELECTION_REGISTRY[check.check_func.__name__]
-        if check.check_func_kwargs.get(schema_argument):
+        # columns already provided in the check func kwargs
+        if check.check_func_kwargs.get("columns"):
             return check
 
+        # columns already provided in the check func args
         if check.check_func_args:
             check_func_signature = inspect.signature(check.check_func)
-            if check_func_signature.parameters.get(schema_argument):
+            if check_func_signature.parameters.get("columns"):
                 return check
 
+        # preselect original columns
         rule_kwargs = check.check_func_kwargs.copy()
-        rule_kwargs[schema_argument] = [col for col in df.columns if col not in set(self._result_column_names.values())]
+        rule_kwargs["columns"] = [col for col in df.columns if col not in set(self._result_column_names.values())]
         return replace(check, check_func_kwargs=rule_kwargs)
 
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
@@ -419,6 +424,7 @@ class DQEngineCore(DQEngineCoreBase):
         current_df = df
 
         for check in checks:
+            # each check pass may add new columns to the df and certain checks require original columns
             normalized_check = self._preselect_original_columns(df, check)
             manager = DQRuleManager(
                 check=normalized_check,

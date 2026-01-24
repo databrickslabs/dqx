@@ -13,7 +13,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-from databricks.labs.dqx.rule import register_rule, register_for_schema_preselection
+from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -1925,14 +1925,14 @@ def is_data_fresh_per_time_window(
 
 
 @register_rule("dataset")
-@register_for_schema_preselection("columns")
+@register_for_original_columns_preselection()
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
     ref_df_name: str | None = None,
     ref_table: str | None = None,
     columns: list[str | Column] | None = None,
     strict: bool = False,
-    ignore_columns: list[str] | None = None,
+    ignore_columns: list[str | Column] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a schema compatibility check condition and closure for dataset-level validation.
@@ -1952,7 +1952,7 @@ def has_valid_schema(
         strict: Whether to perform strict schema validation (default: False).
             - False: Validates that all expected columns exist with compatible types (allows extra columns)
             - True: Validates exact schema match (same columns, same order, same types)
-        ignore_columns: Optional list of column names in the checked DataFrame schema to
+        ignore_columns: Optional list of columns in the checked DataFrame schema to
             ignore for validation.
 
     Returns:
