@@ -2017,7 +2017,8 @@ def has_valid_schema(
 
         selected_column_names = column_names if column_names else df.columns
         if ignore_column_names:
-            selected_column_names = [col for col in selected_column_names if col not in ignore_column_names]
+            ignore_set = set(ignore_column_names)
+            selected_column_names = [col for col in selected_column_names if col not in ignore_set]
         actual_schema = df.select(*selected_column_names).schema
 
         if strict:

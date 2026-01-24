@@ -348,7 +348,7 @@ class DQEngineCore(DQEngineCoreBase):
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
 
-    def _preselect_schema_validation_columns(self, df: DataFrame, check: DQRule) -> DQRule:
+    def _preselect_original_columns(self, df: DataFrame, check: DQRule) -> DQRule:
         """
         Determines the selected columns for schema validation checks. This is required when using `has_valid_schema` to
         ignore columns added during quality checking. This includes:
@@ -419,7 +419,7 @@ class DQEngineCore(DQEngineCoreBase):
         current_df = df
 
         for check in checks:
-            normalized_check = self._preselect_schema_validation_columns(df, check)
+            normalized_check = self._preselect_original_columns(df, check)
             manager = DQRuleManager(
                 check=normalized_check,
                 df=current_df,
