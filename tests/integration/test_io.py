@@ -165,6 +165,23 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
     assert_df_equality(expected_df.sort("c"), result_df.sort("c"))
 
 
+def test_save_dataframe_as_table_with_partition_by(spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_config = OutputConfig(location=table_name, mode="overwrite", partition_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2], [1, 3]], data_schema)
+    save_dataframe_as_table(input_df, output_config)
+
+    result_df = spark.table(table_name)
+    assert_df_equality(input_df, result_df)
+
+    table_detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
+    assert table_detail["partitionColumns"] == ["a"]
+
+
 def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make_volume):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
