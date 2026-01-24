@@ -8799,6 +8799,194 @@ def test_apply_checks_with_is_data_fresh_per_time_window(ws, spark, set_utc_time
     assert_df_equality(checked.sort("id"), expected, ignore_nullable=True)
 
 
+def test_apply_checks_with_has_valid_schema_ignores_result_columns(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, v1 int, v2 string"
+    test_df = spark.createDataFrame(
+        [
+            [1, 10, "x"],
+            [2, None, "y"],
+        ],
+        schema,
+    )
+
+    checks = [
+        DQRowRule(
+            name="v1_is_not_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="v1",
+        ),
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, v2 string",
+                "strict": True,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                10,
+                "x",
+                None,
+                None,
+            ],
+            [
+                2,
+                None,
+                "y",
+                [
+                    {
+                        "name": "v1_is_not_null",
+                        "message": "Column 'v1' value is null",
+                        "columns": ["v1"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark, set_utc_timezone):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, col1 timestamp"
+    test_df = spark.createDataFrame(
+        [
+            [1, datetime(2025, 1, 1)],
+            [1, datetime(2025, 1, 1)],
+            [2, datetime(2025, 1, 2)],
+            [3, None],
+        ],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="aggr_count_not_equal_to_limit",
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            check_func_kwargs={"aggr_type": "count", "column": "id", "limit": 1},
+        ),
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={"expected_schema": "id int", "columns": ["id"], "strict": True},
+        ),
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_args=["id int", None, None, ["id"], True],
+        ),
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={"expected_schema": "id int, col1 timestamp", "strict": True},
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                datetime(2025, 1, 1),
+                [
+                    {
+                        "name": "aggr_count_not_equal_to_limit",
+                        "message": "Count value 4 in column 'id' is not equal to limit: 1",
+                        "columns": ["id"],
+                        "filter": None,
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                1,
+                datetime(2025, 1, 1),
+                [
+                    {
+                        "name": "aggr_count_not_equal_to_limit",
+                        "message": "Count value 4 in column 'id' is not equal to limit: 1",
+                        "columns": ["id"],
+                        "filter": None,
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                2,
+                datetime(2025, 1, 2),
+                [
+                    {
+                        "name": "aggr_count_not_equal_to_limit",
+                        "message": "Count value 4 in column 'id' is not equal to limit: 1",
+                        "columns": ["id"],
+                        "filter": None,
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+            [
+                3,
+                None,
+                [
+                    {
+                        "name": "aggr_count_not_equal_to_limit",
+                        "message": "Count value 4 in column 'id' is not equal to limit: 1",
+                        "columns": ["id"],
+                        "filter": None,
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
 def test_apply_checks_and_save_in_tables_for_patterns_missing_output_suffix(ws, spark):
     dq_engine = DQEngine(ws)
 
