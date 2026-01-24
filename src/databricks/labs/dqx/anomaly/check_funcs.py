@@ -42,7 +42,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     reconstruct_column_infos,
 )
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.utils import get_column_name_or_alias, missing_required_packages
 
@@ -55,6 +55,7 @@ logger = logging.getLogger(__name__)
 
 
 @register_rule("dataset")
+@register_for_original_columns_preselection()
 def has_no_anomalies(
     merge_columns: list[str],
     columns: list[str | Column] | None = None,
