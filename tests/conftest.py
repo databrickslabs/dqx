@@ -59,20 +59,8 @@ def skip_if_classic_compute(debug_env):
     """
     Skips the test if the cluster is a classic compute cluster.
     """
-    if debug_env.get("DATABRICKS_CLUSTER_ID"):
+    if not debug_env.get("DATABRICKS_SERVERLESS_COMPUTE_ID"):
         pytest.skip("This test requires a serverless compute cluster")
-
-
-def skip_if_runtime_not_serverless_compatible(ws, debug_env):
-    """
-    Skip the test if the cluster runtime does not support serverless clusters.
-
-    Args:
-        ws (WorkspaceClient): Workspace client to interact with Databricks.
-        debug_env (dict): Test environment variables.
-    """
-    if not os.getenv("DATABRICKS_SERVERLESS_COMPUTE_ID"):
-        pytest.skip("Skipping test: not running on a serverless cluster")
 
 
 @pytest.fixture
