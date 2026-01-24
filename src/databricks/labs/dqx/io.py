@@ -111,8 +111,8 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
             table namespace or a storage path starting with /, s3:/, abfss:/, or gs:/)
     """
     if df.isStreaming:
-        stream_writer = df.writeStream.format(output_config.format).outputMode(output_config.mode).options(
-            **output_config.options
+        stream_writer = (
+            df.writeStream.format(output_config.format).outputMode(output_config.mode).options(**output_config.options)
         )
         if output_config.partition_by:
             stream_writer = stream_writer.partitionBy(*output_config.partition_by)
