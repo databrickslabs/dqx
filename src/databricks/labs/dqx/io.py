@@ -100,6 +100,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
             - mode: Write mode ('overwrite', 'append', etc.)
             - format: Data format (default: 'delta')
             - options: Additional Spark write options as dict (e.g., "mergeSchema", "overwriteSchema")
+            - partition_by: Optional list of columns to partition by
             - trigger: (Streaming only) Trigger configuration dict (e.g., "availableNow", "processingTime")
 
     Returns:
@@ -110,9 +111,11 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
             table namespace or a storage path starting with /, s3:/, abfss:/, or gs:/)
     """
     if df.isStreaming:
-        stream_writer = (
-            df.writeStream.format(output_config.format).outputMode(output_config.mode).options(**output_config.options)
+        stream_writer = df.writeStream.format(output_config.format).outputMode(output_config.mode).options(
+            **output_config.options
         )
+        if output_config.partition_by:
+            stream_writer = stream_writer.partitionBy(*output_config.partition_by)
 
         if output_config.trigger:
             logger.info(f"Setting streaming trigger: {output_config.trigger}")
@@ -124,6 +127,8 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
         return _write_stream(stream_writer, output_config)
 
     batch_writer = df.write.format(output_config.format).mode(output_config.mode).options(**output_config.options)
+    if output_config.partition_by:
+        batch_writer = batch_writer.partitionBy(*output_config.partition_by)
     _write_batch(batch_writer, output_config)
     return None
 
