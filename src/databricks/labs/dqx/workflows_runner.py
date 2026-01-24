@@ -47,22 +47,17 @@ class WorkflowsRunner:
             spark_conf=config.quality_checker_spark_conf,
             override_clusters=config.quality_checker_override_clusters,
         )
-
-        workflows = [profiler, quality_checker]
-        anomaly_trainer = AnomalyTrainerWorkflow(
-            spark_conf=config.quality_checker_spark_conf,
-            override_clusters=config.quality_checker_override_clusters,
-        )
-        workflows.append(anomaly_trainer)
-
         e2e = EndToEndWorkflow(
             profiler,
             quality_checker,
             spark_conf=config.e2e_spark_conf,
             override_clusters=config.e2e_override_clusters,
         )
-        workflows.append(e2e)
-        return cls(workflows)
+        anomaly_trainer = AnomalyTrainerWorkflow(
+            spark_conf=config.quality_checker_spark_conf,
+            override_clusters=config.quality_checker_override_clusters,
+        )
+        return cls([profiler, quality_checker, e2e, anomaly_trainer])
 
     def tasks(self) -> list[Task]:
         """Return all tasks."""
