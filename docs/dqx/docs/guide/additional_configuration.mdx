@@ -92,7 +92,7 @@ You can customize the names of these result columns by specifying extra paramete
 |----------------|---------|-------------------|
 | `_errors` | Array of critical quality check failures | `errors` |
 | `_warnings` | Array of warning-level quality check issues | `warnings` |
-| `_dq_info` | Structured metadata from dataset-level checks (e.g., anomaly detection) | `info` |
+| `_dq_info` | Structured metadata from produced by certain dataset-level checks (e.g., anomaly detection) | `info` |
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -104,7 +104,7 @@ You can customize the names of these result columns by specifying extra paramete
     custom_column_names = {
         "errors": "dq_errors",
         "warnings": "dq_warnings",
-        "info": "dq_info"  # used by anomaly detection checks
+        "info": "dq_info"  # used for some checks, e.g. anomaly detection
     }
 
     # use ExtraParams to configure one or more optional parameters

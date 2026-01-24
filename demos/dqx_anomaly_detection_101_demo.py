@@ -168,15 +168,6 @@ dbutils.widgets.text("demo_schema", "default", "Schema Name")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ---
-# MAGIC
-# MAGIC ## Configuration: Catalog and Schema
-# MAGIC
-# MAGIC Configure where to store demo data and models. By default, uses `main` catalog and `default` schema.
-# MAGIC You can change these using the widgets above if needed.
-# MAGIC
-# MAGIC ---
-# MAGIC
 # MAGIC ## Section 1: Setup & Data Generation
 # MAGIC
 # MAGIC First, let's set up our environment and create simple sales transaction data.
@@ -431,9 +422,10 @@ print(f"✅ Registry ready for new models")
 print("🎯 Training anomaly detection model...")
 print("   DQX will automatically discover patterns in your data\n")
 
+model_name_auto = "sales_auto"
 model_uri_auto = anomaly_engine.train(
     df=spark.table(table_name),
-    model_name="sales_auto",
+    model_name=model_name_auto,
     registry_table=registry_table
 )
 
@@ -445,7 +437,7 @@ print(f"\n📋 Trained Models:\n")
 
 display(
     spark.table(registry_table)
-    .filter(F.col("identity.model_name").contains("sales_auto"))
+    .filter(F.col("identity.model_name").contains(model_name_auto))
     .select(
         "identity.model_name",
         "training.columns", 
@@ -503,6 +495,18 @@ print("   • Each row is a trained model ready to score new data")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### Applying Quality Checks
+# MAGIC
+# MAGIC Now that we have our anomaly detection model trained, let's apply it alongside traditional rule-based checks to score all transactions.
+# MAGIC The anomalies will be reported in the _warn and _error columns similar to other DQX checks.
+# MAGIC In addition, _info column will contain anomaly score (0-1) and feature contributions explaining WHY it was flagged.
+# MAGIC For analysis purposes, the score will be present in all records, not just anomalies.
+# MAGIC This allows you to understand the "unusualness" of every record, and tune the threshold as needed.
+# MAGIC
+
+# COMMAND ----------
+
 # Apply quality checks: combine rule-based + ML anomaly detection
 print("🔍 Applying quality checks to all transactions...\n")
 
@@ -520,7 +524,7 @@ checks_combined = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "merge_columns": ["transaction_id"],
-            "model": "sales_auto",
+            "model": model_name_auto,
             "registry_table": registry_table
             # Default: 2 models for confidence, explains why data is anomalous, threshold 0.60
         }
@@ -528,10 +532,12 @@ checks_combined = [
 ]
 
 df_scored = dq_engine.apply_checks(df_sales, checks_combined)
-error_count = F.coalesce(F.size(F.col("_errors")), F.lit(0))
-anomalies = df_scored.filter(error_count > 0)
-df_valid = df_scored.filter(error_count == 0)
-score_col = F.col("_dq_info.anomaly.score")
+
+display(df_scored)
+
+df_anomalies = dq_engine.get_invalid(df_scored)
+score_col = F.col("_info.anomaly.score")
+
 score_df = df_scored.select(score_col.alias("score")).where(score_col.isNotNull())
 p90, p95, p99 = score_df.stat.approxQuantile("score", [0.9, 0.95, 0.99], 0.0)
 percentile_band = (
@@ -541,7 +547,7 @@ percentile_band = (
     .otherwise(F.lit("<p90 (bottom 90%)"))
 )
 total_scored = df_scored.count()
-anomalies_count = anomalies.count()
+anomalies_count = df_anomalies.count()
 
 print(f"✅ Quality checks complete!")
 print(f"\n📊 Results:")
@@ -753,7 +759,7 @@ print("   Review these to calibrate your threshold for your use case")
 # MAGIC
 # MAGIC ## Section 5: Manual Column Selection (Optional - Advanced)
 # MAGIC
-# MAGIC **Note**: This section is optional and shows advanced features. Feel free to skip to Section 7 for production patterns!
+# MAGIC **Note**: This section shows optional advanced features. Feel free to skip to Section 7 for production patterns!
 # MAGIC
 # MAGIC Auto-discovery is great for exploration, but for production you might want explicit control over which features the model uses.
 # MAGIC
@@ -765,10 +771,11 @@ print("   Review these to calibrate your threshold for your use case")
 # Train with manual column selection
 print("🎯 Training model with manual column selection...\n")
 
+model_name_manual = "sales_manual"
 model_uri_manual = anomaly_engine.train(
     df=spark.table(table_name),
     columns=["amount", "quantity"],  # Explicitly specify numeric columns only
-    model_name="sales_manual",
+    model_name=model_name_manual,
     registry_table=registry_table
 )
 
@@ -784,8 +791,8 @@ print(f"   View both models side-by-side in the registry:\n")
 display(
     spark.table(registry_table)
     .filter(
-        (F.col("identity.model_name") == "sales_auto") | 
-        (F.col("identity.model_name") == "sales_manual")
+        (F.col("identity.model_name") == model_name_auto) |
+        (F.col("identity.model_name") == model_name_manual)
     )
     .select(
         "identity.model_name",
@@ -816,22 +823,21 @@ checks_manual = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "merge_columns": ["transaction_id"],
-            "model": "sales_manual",
+            "model": model_name_manual,
             "score_threshold": 0.5,
             "registry_table": registry_table
         }
     )
 ]
 
-df_scored_manual = dq_engine.apply_checks(df_sales, checks_manual)
-# Filter by _errors column (standard DQX pattern) to get flagged anomalies
-anomalies_manual = df_scored_manual.filter(F.size(F.col("_errors")) > 0)
+df_valid, df_anomalies_manual = dq_engine.apply_checks_and_split(df_sales, checks_manual)
 
-print(f"⚠️  Manual model found {anomalies_manual.count()} anomalies")
-print(f"   (Auto model found {anomalies.count()} anomalies)")
+print(f"⚠️  Manual model found {df_anomalies_manual.count()} anomalies")
+print(f"   (Auto model found {df_anomalies.count()} anomalies)")
 print(f"\n🔝 Top 5 anomalies from manual model:\n")
 
-display(anomalies_manual.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
+
+display(df_anomalies_manual.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
     "transaction_id", "amount", "quantity", "date",
     F.round("_dq_info.anomaly.score", 3).alias("score")
 ).limit(5))
@@ -864,7 +870,7 @@ checks_with_contrib = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "merge_columns": ["transaction_id"],
-            "model": "sales_manual",
+            "model": model_name_manual,
             "score_threshold": 0.5,
             "include_contributions": True,  # Add this to get explanations!
             "registry_table": registry_table
@@ -1092,8 +1098,4 @@ print(f"   • Production-ready out-of-the-box!")
 # MAGIC - ✅ How to integrate it into production
 # MAGIC
 # MAGIC **Start detecting anomalies in your data today!** 🚀
-# MAGIC
-# MAGIC ---
-# MAGIC
-# MAGIC *Questions? Feedback? Open an issue on [GitHub](https://github.com/databrickslabs/dqx) or contact the DQX team!*
 # MAGIC
