@@ -379,9 +379,8 @@ def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_llm_pk_detection")
 
 
-def test_run_dqx_anomaly_detection_101_demo(make_notebook, make_job, library_ref):
+def test_run_dqx_anomaly_detection_101_demo(ws, make_notebook, make_job, library_ref):
     """Test the anomaly detection 101 demo notebook."""
-    ws = WorkspaceClient()
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_anomaly_detection_101_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
