@@ -2,7 +2,7 @@ import abc
 from functools import cached_property
 from dataclasses import dataclass, field, asdict
 
-from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
+from databricks.labs.dqx.checks_formats import FILE_SERIALIZERS
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
 __all__ = [
@@ -146,10 +146,8 @@ class AnomalyConfig:
 
     columns: list[str] | None = None  # Auto-discovered if omitted
     segment_by: list[str] | None = None  # Auto-discovered if omitted (when columns also omitted)
-    model_name: str | None = None
+    model_name: str | None = None  # Optional in workflows; defaults to dqx_anomaly_<run_config.name>
     registry_table: str | None = None
-    params: AnomalyParams | None = None
-    temporal_config: TemporalAnomalyConfig | None = None
 
 
 @dataclass

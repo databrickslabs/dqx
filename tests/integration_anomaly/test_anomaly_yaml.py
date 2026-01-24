@@ -104,7 +104,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
     dq_engine = DQEngine(mock_workspace_client, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
-    rows = result_df.collect()
+    rows = result_df.orderBy("transaction_id").collect()
 
     # Normal row: allow anomaly errors, but should not fail is_not_null
     row0_errors = rows[0]["_errors"] if rows[0]["_errors"] is not None else []

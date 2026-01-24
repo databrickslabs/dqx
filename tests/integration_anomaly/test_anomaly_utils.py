@@ -40,7 +40,7 @@ Use these to eliminate boilerplate in test model training:
 5. **train_large_dataset_model()** - Efficient large dataset training
    - Use for: Sampling tests, performance tests
    - Example: `train_large_dataset_model(spark, engine, "model", "registry", num_rows=200_000)`
-   - With params: `train_large_dataset_model(..., params=AnomalyParams(sample_fraction=0.5))`
+   - With internal params: `train_large_dataset_model(..., params=AnomalyParams(sample_fraction=0.5))`
 
 ### Scoring Helpers
 6. **score_with_anomaly_check()** - Score DataFrame and collect results
@@ -68,7 +68,7 @@ All helpers automatically handle:
 - DataFrame creation from data
 - Column specification
 - Model name and registry table parameters
-- Optional AnomalyParams configuration
+- Optional internal training parameters (test-only)
 """
 
 from typing import Any
@@ -78,7 +78,9 @@ import pytest
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.sdk import WorkspaceClient
-from databricks.labs.dqx.anomaly import AnomalyEngine, AnomalyParams, has_no_anomalies
+from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+from databricks.labs.dqx.anomaly import trainer as anomaly_trainer
+from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.rule import DQDatasetRule
 
 from tests.integration_anomaly.test_anomaly_constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
@@ -121,6 +123,31 @@ def _create_anomaly_apply_fn(
         **check_kwargs,
     )
     return apply_fn
+
+
+def train_model_with_params(
+    spark: SparkSession,
+    df: DataFrame,
+    model_name: str,
+    registry_table: str,
+    columns: list[str],
+    params: AnomalyParams,
+    segment_by: list[str] | None = None,
+    row_id_columns: list[str] | None = None,
+) -> str:
+    """
+    Train a model with internal params (test-only).
+    """
+    return anomaly_trainer.train_model_with_params(
+        spark=spark,
+        df=df,
+        columns=columns,
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+        segment_by=segment_by,
+        row_id_columns=row_id_columns,
+    )
 
 
 # ============================================================================
@@ -629,7 +656,7 @@ def train_simple_2d_model(
         model_name (str): Model name
         registry_table (str): Registry table path
         train_size (int): Number of training rows (default: 50, ignored if train_data provided)
-        params (AnomalyParams | None): Optional AnomalyParams
+        params (AnomalyParams | None): Optional internal training params (test-only)
         train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
 
     Example:
@@ -641,7 +668,17 @@ def train_simple_2d_model(
 
     train_df = spark.createDataFrame(train_data, "amount double, quantity double")
 
-    anomaly_engine.train(
+    if params is None:
+        anomaly_engine.train(
+            df=train_df,
+            columns=["amount", "quantity"],
+            model_name=model_name,
+            registry_table=registry_table,
+        )
+        return
+
+    train_model_with_params(
+        spark=spark,
         df=train_df,
         columns=["amount", "quantity"],
         model_name=model_name,
@@ -670,7 +707,7 @@ def train_simple_3d_model(
         model_name (str): Model name
         registry_table (str): Registry table path
         train_size (int): Number of training rows (default: 50, ignored if train_data provided)
-        params (AnomalyParams | None): Optional AnomalyParams
+        params (AnomalyParams | None): Optional internal training params (test-only)
         train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
 
     Example:
@@ -681,7 +718,17 @@ def train_simple_3d_model(
 
     train_df = spark.createDataFrame(train_data, "amount double, quantity double, discount double")
 
-    anomaly_engine.train(
+    if params is None:
+        anomaly_engine.train(
+            df=train_df,
+            columns=["amount", "quantity", "discount"],
+            model_name=model_name,
+            registry_table=registry_table,
+        )
+        return
+
+    train_model_with_params(
+        spark=spark,
         df=train_df,
         columns=["amount", "quantity", "discount"],
         model_name=model_name,
@@ -708,7 +755,7 @@ def train_simple_4d_model(
         anomaly_engine (AnomalyEngine): AnomalyEngine instance
         model_name (str): Model name
         registry_table (str): Registry table path
-        params (AnomalyParams | None): Optional AnomalyParams
+        params (AnomalyParams | None): Optional internal training params (test-only)
         train_data (list[tuple] | None): Custom training data tuples (defaults to get_standard_4d_training_data())
 
     Example:
@@ -720,7 +767,17 @@ def train_simple_4d_model(
 
     train_df = spark.createDataFrame(train_data, "amount double, quantity double, discount double, weight double")
 
-    anomaly_engine.train(
+    if params is None:
+        anomaly_engine.train(
+            df=train_df,
+            columns=["amount", "quantity", "discount", "weight"],
+            model_name=model_name,
+            registry_table=registry_table,
+        )
+        return
+
+    train_model_with_params(
+        spark=spark,
         df=train_df,
         columns=["amount", "quantity", "discount", "weight"],
         model_name=model_name,
@@ -754,7 +811,7 @@ def train_segmented_model(
         feature_columns (list[str]): Feature columns for training (e.g., ["amount", "discount"])
         data (list[tuple]): Training data tuples
         schema (str): DataFrame schema string (e.g., "region string, amount double, discount double")
-        params (AnomalyParams | None): Optional AnomalyParams
+        params (AnomalyParams | None): Optional internal training params (test-only)
 
     Example:
         data = [(region, base + i * 0.5, base * 0.8) for region in ["US", "EU"] for i in range(200)]
@@ -768,13 +825,24 @@ def train_segmented_model(
     """
     train_df = spark.createDataFrame(data, schema)
 
-    anomaly_engine.train(
+    if params is None:
+        anomaly_engine.train(
+            df=train_df,
+            columns=feature_columns,
+            segment_by=segment_columns,
+            model_name=model_name,
+            registry_table=registry_table,
+        )
+        return
+
+    train_model_with_params(
+        spark=spark,
         df=train_df,
         columns=feature_columns,
-        segment_by=segment_columns,
         model_name=model_name,
         registry_table=registry_table,
         params=params,
+        segment_by=segment_columns,
     )
 
 
@@ -800,7 +868,7 @@ def train_large_dataset_model(
         registry_table (str): Registry table path
         num_rows (int): Number of rows to generate
         columns (list[str] | None): Column names (default: ["amount", "quantity"])
-        params (AnomalyParams | None): Optional AnomalyParams
+        params (AnomalyParams | None): Optional internal training params (test-only)
 
     Example:
         train_large_dataset_model(spark, engine, "model", "registry", num_rows=200_000)
@@ -815,7 +883,17 @@ def train_large_dataset_model(
     # Generate large dataset efficiently using spark.range
     train_df = spark.range(num_rows).selectExpr("cast(id as double) as amount", "2.0 as quantity")
 
-    anomaly_engine.train(
+    if params is None:
+        anomaly_engine.train(
+            df=train_df,
+            columns=columns,
+            model_name=model_name,
+            registry_table=registry_table,
+        )
+        return
+
+    train_model_with_params(
+        spark=spark,
         df=train_df,
         columns=columns,
         model_name=model_name,

@@ -229,6 +229,8 @@ def setup_workflows_with_custom_folder(
 
 
 class TestInstallationMixin(InstallationMixin):
+    __test__ = False
+
     def get_my_username(self):
         return self._my_username
 

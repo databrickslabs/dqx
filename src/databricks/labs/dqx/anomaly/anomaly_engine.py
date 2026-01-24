@@ -74,7 +74,6 @@ class AnomalyEngine(DQEngineBase):
         columns: list[str] | None = None,
         segment_by: list[str] | None = None,
         registry_table: str | None = None,
-        params: AnomalyParams | None = None,
         exclude_columns: list[str] | None = None,
         expected_anomaly_rate: float = 0.02,
         row_id_columns: list[str] | None = None,
@@ -98,14 +97,13 @@ class AnomalyEngine(DQEngineBase):
             columns: Columns to use for anomaly detection (auto-discovered if omitted).
             segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
             registry_table: Optional registry table; auto-derived if not provided.
-            params: Optional tuning parameters; defaults applied if omitted.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
             expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.02 = 2%).
                                   This helps the model calibrate what's "normal" vs "unusual".
                                   Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
-                                  Note: This is ignored if params.algorithm_config.contamination is explicitly set.
+                                  This sets the model contamination default.
             row_id_columns: Unique identifier columns (optional). These are preserved for
                           validation/feature-importance shuffling but are NOT used for training.
 
@@ -159,6 +157,7 @@ class AnomalyEngine(DQEngineBase):
         if not columns:
             raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
 
+        params = AnomalyParams()
         validation_warnings = _validate_columns(df, columns, params)
 
         # Show validation warnings

@@ -963,6 +963,9 @@ else:
 # MAGIC - How to route anomalies to a quarantine table for investigation
 # MAGIC - Best practices for production data quality pipelines
 # MAGIC
+# MAGIC **Workflow tip**: If you train via YAML workflow and omit `model_name`, it defaults to
+# MAGIC `dqx_anomaly_<run_config.name>` (e.g., `dqx_anomaly_orders`).
+# MAGIC
 
 # COMMAND ----------
 
