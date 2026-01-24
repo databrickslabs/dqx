@@ -127,5 +127,5 @@ def test_validate_result_column_collisions_info_for_dataset_rule():
     df.columns = ["_dq_info", "a"]
     checks = [DQDatasetRule(check_func=_dummy_dataset_check, column="a")]
 
-    with pytest.raises(InvalidParameterError, match="reserved DQX info columns"):
+    with pytest.raises(InvalidParameterError, match="reserved DQX result columns"):
         engine.apply_checks(df, checks)
