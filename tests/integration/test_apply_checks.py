@@ -4546,6 +4546,18 @@ def test_apply_checks_with_sql_expression(ws, spark):
             "criticality": "error",
             "check": {
                 "function": "sql_expression",
+                "arguments": {
+                    # expression with new line
+                    "expression": """col2 
+not 
+  like \"val%\""""
+                },
+            },
+        },
+        {
+            "criticality": "error",
+            "check": {
+                "function": "sql_expression",
                 "column": "col1",  # should be skipped
                 "arguments": {"expression": "col2 not like 'val%'"},
             },
@@ -4573,6 +4585,16 @@ def test_apply_checks_with_sql_expression(ws, spark):
                     {
                         "name": "not_col1_not_like_val",
                         "message": "Value is not matching expression: col1 not like \"val%\"",
+                        "columns": None,
+                        "filter": None,
+                        "function": "sql_expression",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                    {
+                        "name": "not_col2_not_like_val",
+                        "message": "Value is not matching expression: col2 \nnot \n  like \"val%\"",
                         "columns": None,
                         "filter": None,
                         "function": "sql_expression",
