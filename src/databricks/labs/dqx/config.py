@@ -43,8 +43,8 @@ class OutputConfig:
     format: str = "delta"
     mode: str = "append"
     options: dict[str, str] = field(default_factory=dict)
-    partition_by: list[str] = field(default_factory=list)
     trigger: dict[str, str | bool] = field(default_factory=dict)
+    partition_by: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         """
