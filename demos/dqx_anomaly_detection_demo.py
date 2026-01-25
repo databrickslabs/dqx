@@ -1,6 +1,6 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 📊 Simple Anomaly Detection Demo
+# MAGIC # 📊 Anomaly Detection Demo
 # MAGIC
 # MAGIC ## Learn Anomaly Detection in 15 Minutes
 # MAGIC
@@ -500,7 +500,7 @@ print("   • Each row is a trained model ready to score new data")
 # MAGIC
 # MAGIC Now that we have our anomaly detection model trained, let's apply it alongside traditional rule-based checks to score all transactions.
 # MAGIC The anomalies will be reported in the _warn and _error columns similar to other DQX checks.
-# MAGIC In addition, _info column will contain anomaly score (0-1) and feature contributions explaining WHY it was flagged.
+# MAGIC In addition, _dq_info column will contain anomaly score (0-1) and feature contributions explaining WHY it was flagged.
 # MAGIC For analysis purposes, the score will be present in all records, not just anomalies.
 # MAGIC This allows you to understand the "unusualness" of every record, and tune the threshold as needed.
 # MAGIC
@@ -536,7 +536,7 @@ df_scored = dq_engine.apply_checks(df_sales, checks_combined)
 display(df_scored)
 
 df_anomalies = dq_engine.get_invalid(df_scored)
-score_col = F.col("_info.anomaly.score")
+score_col = F.col("_dq_info.anomaly.score")
 
 score_df = df_scored.select(score_col.alias("score")).where(score_col.isNotNull())
 p90, p95, p99 = score_df.stat.approxQuantile("score", [0.9, 0.95, 0.99], 0.0)
