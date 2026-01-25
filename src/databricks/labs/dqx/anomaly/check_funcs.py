@@ -53,7 +53,6 @@ logger = logging.getLogger(__name__)
 
 
 @register_rule("dataset")
-@register_for_original_columns_preselection()
 def has_no_anomalies(
     merge_columns: list[str],
     columns: list[str | Column] | None = None,
@@ -994,8 +993,10 @@ def _discover_model_and_config(
 
         if columns is None:
             columns = list(record.training.columns)
+            logger.info(f"Auto-discovered columns from model '{model_name_local}': {columns}")
         if segment_by is None:
             segment_by = record.segmentation.segment_by
+            logger.info(f"Auto-discovered segment_by from model '{model_name_local}': {segment_by}")
 
     # Validate and normalize
     assert columns is not None, "columns should be set by now"
