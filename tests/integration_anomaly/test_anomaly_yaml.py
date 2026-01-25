@@ -54,6 +54,44 @@ def test_yaml_based_checks(ws, spark: SparkSession, shared_2d_model):
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
+def test_yaml_based_checks_columns_autodiscovery(ws, spark: SparkSession, shared_2d_model):
+    # Use shared pre-trained model (no training needed!)
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+
+    # Define checks in YAML format
+    checks_yaml = f"""
+    - criticality: error
+      check:
+        function: has_no_anomalies
+        arguments:
+          merge_columns:
+          - transaction_id
+          model: {model_name}
+          registry_table: {registry_table}
+          score_threshold: {DEFAULT_SCORE_THRESHOLD}
+    """
+
+    checks = yaml.safe_load(checks_yaml)
+
+    # Use values within training range (100-300 for amount, 10-50 for quantity)
+    test_df = spark.createDataFrame(
+        [(1, 150.0, 20.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],  # Normal + extreme anomaly
+        "transaction_id int, amount double, quantity double",
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    # Verify DQX metadata columns are added
+    assert "_errors" in result_df.columns
+    assert "_warnings" in result_df.columns
+
+    # Verify errors are added for anomalies
+    rows = result_df.orderBy("transaction_id").collect()
+    assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
+
+
 def test_yaml_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
     """Test YAML with multiple anomaly and standard checks."""
     # Use shared pre-trained model (no training needed!)

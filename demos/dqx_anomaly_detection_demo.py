@@ -810,7 +810,7 @@ display(
 
 print(f"\n💡 Key Differences:")
 print(f"   • Auto model: Discovered columns automatically + may have segmentation")
-print(f"   • Manual model: You explicitly chose 3 columns (amount, quantity)")
+print(f"   • Manual model: You explicitly chose 2 columns (amount, quantity)")
 print(f"\n💡 When to use each approach:")
 print(f"   • Auto-discovery: Exploration, quick start, don't know what matters")
 print(f"   • Manual selection: Production, control features, domain knowledge")
