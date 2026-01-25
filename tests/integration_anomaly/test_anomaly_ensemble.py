@@ -1,6 +1,5 @@
 """Integration tests for ensemble anomaly detection."""
 
-import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import AnomalyParams
@@ -14,8 +13,6 @@ from tests.integration_anomaly.test_anomaly_utils import (
     train_simple_2d_model,
     train_simple_3d_model,
 )
-
-pytestmark = pytest.mark.anomaly
 
 
 def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):

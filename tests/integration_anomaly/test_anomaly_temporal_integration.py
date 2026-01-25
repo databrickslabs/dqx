@@ -11,8 +11,6 @@ from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
 
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 
-pytestmark = pytest.mark.anomaly
-
 
 @pytest.fixture
 def temporal_model(ws, spark, anomaly_registry_prefix):

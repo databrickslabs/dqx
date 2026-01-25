@@ -1,11 +1,8 @@
 from datetime import datetime, timezone
 
-import pytest
 
 from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.schema import dq_result_schema
-
-pytestmark = pytest.mark.anomaly
 
 # Shared constants for anomaly integration tests to keep expectations deterministic.
 REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"

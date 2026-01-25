@@ -11,8 +11,6 @@ from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_QUANTITY,
 )
 
-pytestmark = pytest.mark.anomaly
-
 
 def test_yaml_based_checks(ws, spark: SparkSession, shared_2d_model):
     """Test applying anomaly checks defined in YAML."""

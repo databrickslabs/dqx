@@ -24,8 +24,6 @@ from tests.integration_anomaly.test_anomaly_utils import (
     train_simple_3d_model,
 )
 
-pytestmark = pytest.mark.anomaly
-
 
 def test_explicit_model_names(
     spark: SparkSession,

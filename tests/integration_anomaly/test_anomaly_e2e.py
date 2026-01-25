@@ -1,7 +1,6 @@
 """Integration tests for anomaly detection end-to-end flow."""
 
 import pyspark.sql.functions as F
-import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -17,8 +16,6 @@ from tests.integration_anomaly.test_anomaly_utils import (
     get_standard_test_points_4d,
     train_simple_2d_model,
 )
-
-pytestmark = pytest.mark.anomaly
 
 
 def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):

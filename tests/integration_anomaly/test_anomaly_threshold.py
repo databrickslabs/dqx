@@ -3,7 +3,6 @@
 from collections.abc import Callable
 
 import pyspark.sql.functions as F
-import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import AnomalyParams
@@ -18,8 +17,6 @@ from tests.integration_anomaly.test_anomaly_utils import (
     create_anomaly_dataset_rule,
     train_simple_2d_model,
 )
-
-pytestmark = pytest.mark.anomaly
 
 
 def test_threshold_affects_flagging(
