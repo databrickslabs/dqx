@@ -379,14 +379,22 @@ def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_llm_pk_detection")
 
 
-def test_run_dqx_anomaly_detection_demo(ws, make_notebook, make_job, library_ref):
-    """Test the anomaly detection demo notebook."""
+def test_run_dqx_anomaly_detection_demo(ws, make_notebook, make_schema, make_job, library_ref):
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
     path = Path(__file__).parent.parent.parent / "demos" / "dqx_anomaly_detection_demo.py"
     with open(path, "rb") as f:
         notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
 
     notebook_path = notebook.as_fuse().as_posix()
-    notebook_task = NotebookTask(notebook_path=notebook_path, base_parameters={"test_library_ref": library_ref})
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={
+            "demo_catalog": catalog,
+            "demo_schema": schema,
+            "test_library_ref": library_ref,
+        },
+    )
     job = make_job(tasks=[Task(task_key="dqx_anomaly_detection_demo", notebook_task=notebook_task)])
 
     waiter = ws.jobs.run_now_and_wait(job.job_id)
@@ -399,7 +407,7 @@ def test_run_dqx_anomaly_detection_demo(ws, make_notebook, make_job, library_ref
 
 
 def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     project_dir = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_dbt"
 

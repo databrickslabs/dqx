@@ -3,7 +3,6 @@
 from collections.abc import Callable
 
 import pyspark.sql.functions as F
-import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -14,8 +13,6 @@ from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_QUANTITY,
 )
 from tests.integration_anomaly.test_anomaly_utils import apply_anomaly_check_direct
-
-pytestmark = pytest.mark.anomaly
 
 
 def test_training_filters_nulls(

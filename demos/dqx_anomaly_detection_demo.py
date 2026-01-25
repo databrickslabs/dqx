@@ -160,9 +160,12 @@ else:
 
 # COMMAND ----------
 
+default_catalog = "main"
+default_schema = "default"
+
 # Configure widgets for catalog and schema
-dbutils.widgets.text("demo_catalog", "main", "Catalog Name")
-dbutils.widgets.text("demo_schema", "default", "Schema Name")
+dbutils.widgets.text("demo_catalog", default_catalog, "Catalog Name")
+dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
 
 
 # COMMAND ----------

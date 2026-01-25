@@ -3,14 +3,11 @@
 import warnings
 from collections.abc import Callable
 
-import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import AnomalyParams
 
 from tests.integration_anomaly.test_anomaly_utils import train_large_dataset_model, train_model_with_params
-
-pytestmark = pytest.mark.anomaly
 
 
 def test_sampling_caps_large_datasets(

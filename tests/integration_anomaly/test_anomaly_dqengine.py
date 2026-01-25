@@ -2,7 +2,6 @@
 Integration tests for anomaly detection with DQEngine.
 """
 
-import pytest
 from pyspark.sql import SparkSession
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -15,8 +14,6 @@ from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_QUANTITY,
 )
 from tests.integration_anomaly.test_anomaly_utils import create_anomaly_check_rule
-
-pytestmark = pytest.mark.anomaly
 
 
 def test_apply_checks_by_metadata(ws, spark: SparkSession, shared_2d_model):

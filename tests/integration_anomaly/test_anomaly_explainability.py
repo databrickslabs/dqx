@@ -9,7 +9,6 @@ OPTIMIZATION: These tests use session-scoped shared fixtures (shared_2d_model, s
 shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min to ~10 min (83% savings).
 """
 
-import pytest
 from pyspark.sql import SparkSession
 
 from tests.integration_anomaly.test_anomaly_constants import (
@@ -17,8 +16,6 @@ from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-
-pytestmark = pytest.mark.anomaly
 
 
 def test_feature_importance_stored(spark: SparkSession, shared_2d_model):

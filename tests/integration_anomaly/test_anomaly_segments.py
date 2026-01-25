@@ -1,7 +1,6 @@
 """Integration tests for segment-based anomaly detection."""
 
 import pyspark.sql.functions as F
-import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
@@ -15,8 +14,6 @@ from tests.integration_anomaly.test_anomaly_constants import (
     SEGMENT_REGIONS,
 )
 from tests.integration_anomaly.test_anomaly_utils import train_model_with_params
-
-pytestmark = pytest.mark.anomaly
 
 
 def test_explicit_segment_training(

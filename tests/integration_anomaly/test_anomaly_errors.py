@@ -14,8 +14,6 @@ from databricks.labs.dqx.errors import InvalidParameterError
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.test_anomaly_utils import train_simple_2d_model
 
-pytestmark = pytest.mark.anomaly
-
 
 def test_column_mismatch_error(
     ws, spark: SparkSession, make_random, anomaly_engine, test_df_factory, anomaly_registry_prefix
