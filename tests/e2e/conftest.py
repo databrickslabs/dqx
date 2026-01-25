@@ -40,13 +40,10 @@ def library_ref() -> str:
     base_ref = "git+https://github.com/databrickslabs/dqx"
     is_github_actions = os.getenv("GITHUB_ACTIONS") == "true"
 
-    ref_name = None
-
     if is_github_actions:
-        # In CI: use REF_NAME env var (set to github.head_ref for PRs, github.ref_name for push)
         ref_name = os.getenv("REF_NAME")
         if ref_name:
-            return f"{base_ref}.git@{ref_name}"
+            return f"{base_ref}.git@refs/pull/{ref_name}"
     else:
         # Local behavior: use current git branch
         ref_name = _get_local_git_branch()

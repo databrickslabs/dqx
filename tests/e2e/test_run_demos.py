@@ -339,7 +339,7 @@ def test_run_dqx_ai_assisted_quality_checks_generation(ws, make_notebook, make_j
         timeout=timedelta(minutes=30),
         callback=lambda r: validate_run_status(r, ws),
     )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_ai_assisted_checks_generation")
 
 
 def test_run_dqx_demo_datacontract_odcs(ws, make_notebook, make_job, library_ref):
