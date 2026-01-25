@@ -3114,3 +3114,51 @@ def test_has_valid_schema_with_ref_df_name(spark: SparkSession):
         "a string, b string, has_invalid_schema string",
     )
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_with_exclude_columns(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra"],
+            ["str2", 2, 200.0, "data"],
+        ],
+        "a string, b int, c double, d string",
+    )
+
+    expected_schema = "a string, b int, c double"
+    condition, apply_method = has_valid_schema(expected_schema, exclude_columns=["d"], strict=True)
+    actual_apply_df = apply_method(test_df, spark, {})
+    actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra", None],
+            ["str2", 2, 200.0, "data", None],
+        ],
+        "a string, b int, c double, d string, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_with_exclude_columns_as_expression(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra"],
+            ["str2", 2, 200.0, "data"],
+        ],
+        "a string, b int, c double, d string",
+    )
+
+    expected_schema = "a string, b int, c double"
+    condition, apply_method = has_valid_schema(expected_schema, exclude_columns=[F.col("d")], strict=True)
+    actual_apply_df = apply_method(test_df, spark, {})
+    actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra", None],
+            ["str2", 2, 200.0, "data", None],
+        ],
+        "a string, b int, c double, d string, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
