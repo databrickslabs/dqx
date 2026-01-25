@@ -1,26 +1,17 @@
 """Integration tests for temporal features in anomaly detection."""
 
-from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
 
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 
 pytestmark = pytest.mark.anomaly
-
-
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-
-    return MagicMock(spec=WorkspaceClient)
 
 
 @pytest.fixture
@@ -89,9 +80,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
     assert row["_dq_info"]["anomaly"]["score"] is not None
 
 
-def test_multiple_temporal_features(
-    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, anomaly_registry_prefix
-):
+def test_multiple_temporal_features(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test training with multiple temporal features."""
     unique_id = make_random(8).lower()
     model_name = f"test_multi_temporal_{make_random(4).lower()}"
@@ -151,9 +140,7 @@ def test_multiple_temporal_features(
     assert row["_dq_info"]["anomaly"]["score"] is not None
 
 
-def test_temporal_pattern_detection(
-    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, anomaly_registry_prefix
-):
+def test_temporal_pattern_detection(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test that model learns time-based patterns."""
     unique_id = make_random(8).lower()
     model_name = f"test_temporal_pattern_{make_random(4).lower()}"
@@ -216,9 +203,7 @@ def test_temporal_pattern_detection(
     # differentiate between hours. A real use case would have varied amounts per hour.
 
 
-def test_weekend_feature(
-    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, anomaly_registry_prefix
-):
+def test_weekend_feature(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test is_weekend temporal feature."""
     unique_id = make_random(8).lower()
     model_name = f"test_weekend_{make_random(4).lower()}"

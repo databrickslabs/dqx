@@ -1,12 +1,9 @@
 """Integration tests for segment-based anomaly detection."""
 
-from unittest.mock import MagicMock
-
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
@@ -22,16 +19,8 @@ from tests.integration_anomaly.test_anomaly_utils import train_model_with_params
 pytestmark = pytest.mark.anomaly
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-
-    return MagicMock(spec=WorkspaceClient)
-
-
 def test_explicit_segment_training(
     spark: SparkSession,
-    mock_workspace_client,
     make_schema,
     make_random,
     anomaly_engine,
@@ -74,8 +63,8 @@ def test_explicit_segment_training(
 
 
 def test_segment_scoring(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_schema,
     make_random,
     anomaly_engine,
@@ -113,7 +102,7 @@ def test_segment_scoring(
     ]
     test_df = spark.createDataFrame(test_data, "row_id int, region string, amount double")
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     check = DQDatasetRule(
         criticality="error",
         check_func=has_no_anomalies,
@@ -148,7 +137,6 @@ def test_segment_scoring(
 
 def test_multi_column_segments(
     spark: SparkSession,
-    mock_workspace_client,
     make_schema,
     make_random,
     anomaly_engine,
@@ -188,8 +176,8 @@ def test_multi_column_segments(
 
 
 def test_unknown_segment_handling(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_schema,
     make_random,
     anomaly_engine,
@@ -225,7 +213,7 @@ def test_unknown_segment_handling(
     ]
     test_df = spark.createDataFrame(test_data, "row_id int, region string, amount double")
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     check = DQDatasetRule(
         criticality="error",
         check_func=has_no_anomalies,

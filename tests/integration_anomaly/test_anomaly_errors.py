@@ -5,12 +5,9 @@ model training, and Delta table access. Pure parameter validation errors
 are covered by unit tests (tests/unit/test_anomaly_validation.py).
 """
 
-from unittest.mock import MagicMock
-
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.errors import InvalidParameterError
 
@@ -20,14 +17,8 @@ from tests.integration_anomaly.test_anomaly_utils import train_simple_2d_model
 pytestmark = pytest.mark.anomaly
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-    return MagicMock(spec=WorkspaceClient)
-
-
 def test_column_mismatch_error(
-    spark: SparkSession, mock_workspace_client, make_random, anomaly_engine, test_df_factory, anomaly_registry_prefix
+    ws, spark: SparkSession, make_random, anomaly_engine, test_df_factory, anomaly_registry_prefix
 ):
     """Test error when scoring columns don't match training columns."""
     unique_id = make_random(8).lower()
@@ -59,8 +50,8 @@ def test_column_mismatch_error(
 
 
 def test_column_order_independence(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random,
     anomaly_engine,
     test_df_factory,
@@ -115,7 +106,7 @@ def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine,
 
 
 def test_missing_registry_table_for_scoring_error(
-    spark: SparkSession, mock_workspace_client, make_random, test_df_factory, anomaly_registry_prefix
+    ws, spark: SparkSession, make_random, test_df_factory, anomaly_registry_prefix
 ):
     """Test error when registry table doesn't exist during scoring."""
     unique_id = make_random(8).lower()

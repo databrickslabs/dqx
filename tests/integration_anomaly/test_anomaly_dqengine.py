@@ -2,12 +2,8 @@
 Integration tests for anomaly detection with DQEngine.
 """
 
-from unittest.mock import MagicMock
-
 import pytest
 from pyspark.sql import SparkSession
-
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
@@ -23,13 +19,7 @@ from tests.integration_anomaly.test_anomaly_utils import create_anomaly_check_ru
 pytestmark = pytest.mark.anomaly
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for DQEngine."""
-    return MagicMock(spec=WorkspaceClient)
-
-
-def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_apply_checks_by_metadata(ws, spark: SparkSession, shared_2d_model):
     """Test that apply_checks_by_metadata adds anomaly scores and DQX metadata."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -41,7 +31,7 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -67,7 +57,7 @@ def test_apply_checks_by_metadata(spark: SparkSession, mock_workspace_client, sh
     assert has_error, "Expected at least one row to have anomaly error"
 
 
-def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
     """Test that apply_checks_by_metadata_and_split correctly splits valid/quarantine."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -80,7 +70,7 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -107,7 +97,7 @@ def test_apply_checks_and_split(spark: SparkSession, mock_workspace_client, shar
     assert "amount" in quarantine_df.columns
 
 
-def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_quarantine_dataframe_structure(ws, spark: SparkSession, shared_2d_model):
     """Test that quarantine DataFrame has expected structure."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -119,7 +109,7 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -147,7 +137,7 @@ def test_quarantine_dataframe_structure(spark: SparkSession, mock_workspace_clie
     assert row["quantity"] == OUTLIER_QUANTITY
 
 
-def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_multiple_checks_combined(ws, spark: SparkSession, shared_2d_model):
     """Test combining anomaly check with other DQX checks."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -163,7 +153,7 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         # Standard DQX check
         DQRowRule(
@@ -217,7 +207,7 @@ def test_multiple_checks_combined(spark: SparkSession, mock_workspace_client, sh
         ), f"Anomaly row has is_not_null error: {rows[2]['_errors']}"
 
 
-def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_criticality_error(ws, spark: SparkSession, shared_2d_model):
     """Test anomaly check with criticality='error'."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -229,7 +219,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
 
     checks = [
         DQDatasetRule(
@@ -252,7 +242,7 @@ def test_criticality_error(spark: SparkSession, mock_workspace_client, shared_2d
     assert "_errors" in quarantine_df.columns
 
 
-def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     """Test anomaly check with criticality='warn'."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -264,7 +254,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
 
     checks = [
         DQDatasetRule(
@@ -291,7 +281,7 @@ def test_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_
     assert anomalous_row["_warnings"] is not None or anomalous_row["_errors"] is not None
 
 
-def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_get_valid_and_invalid_helpers(ws, spark: SparkSession, shared_2d_model):
     """Test that get_valid() and get_invalid() helpers work with anomaly checks."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -304,7 +294,7 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -339,7 +329,7 @@ def test_get_valid_and_invalid_helpers(spark: SparkSession, mock_workspace_clien
     assert "_dq_info" in valid_df.columns or "_dq_info" in invalid_df.columns
 
 
-def test_info_column_structure(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
     """Test that _dq_info.anomaly has all expected fields with correct structure."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -351,7 +341,7 @@ def test_info_column_structure(spark: SparkSession, mock_workspace_client, share
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         DQDatasetRule(
             criticality="error",
@@ -413,7 +403,7 @@ def test_info_column_structure(spark: SparkSession, mock_workspace_client, share
     assert anomaly.confidence_std is None, "confidence_std should be None when not requested"
 
 
-def test_info_column_with_contributions(spark: SparkSession, mock_workspace_client, shared_3d_model):
+def test_info_column_with_contributions(ws, spark: SparkSession, shared_3d_model):
     """Test that _dq_info.anomaly includes contributions when requested."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
@@ -425,7 +415,7 @@ def test_info_column_with_contributions(spark: SparkSession, mock_workspace_clie
         "transaction_id int, amount double, quantity double, discount double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         DQDatasetRule(
             criticality="error",

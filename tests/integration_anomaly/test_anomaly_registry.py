@@ -4,12 +4,10 @@ import logging
 import warnings
 from collections.abc import Callable
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
 
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRegistry,
@@ -29,16 +27,8 @@ from tests.integration_anomaly.test_anomaly_utils import (
 pytestmark = pytest.mark.anomaly
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-
-    return MagicMock(spec=WorkspaceClient)
-
-
 def test_explicit_model_names(
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     anomaly_registry_prefix,
@@ -66,7 +56,6 @@ def test_explicit_model_names(
 
 def test_multiple_models_in_same_registry(
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     test_df_factory,
@@ -179,8 +168,8 @@ def test_active_model_retrieval(
 
 
 def test_model_staleness_warning(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     test_df_factory,

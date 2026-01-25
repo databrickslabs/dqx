@@ -1,12 +1,9 @@
 """Integration tests for anomaly detection end-to-end flow."""
 
-from unittest.mock import MagicMock
-
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
@@ -24,14 +21,7 @@ from tests.integration_anomaly.test_anomaly_utils import (
 pytestmark = pytest.mark.anomaly
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-
-    return MagicMock(spec=WorkspaceClient)
-
-
-def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
+def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test basic training and scoring workflow."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -66,7 +56,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table, ["amount", "quantity"])
     checks = [
         DQDatasetRule(
@@ -96,7 +86,7 @@ def test_basic_train_and_score(spark: SparkSession, mock_workspace_client, make_
     assert flagged >= 1, "Expected at least one row to be flagged as anomalous"
 
 
-def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
+def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test that anomaly scores are added to the DataFrame."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -116,7 +106,7 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     threshold = 1.0
     checks = [
         DQDatasetRule(
@@ -143,7 +133,7 @@ def test_anomaly_scores_are_added(spark: SparkSession, mock_workspace_client, ma
     assert all(row["anomaly_score"] is not None for row in rows)
 
 
-def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, make_random, make_schema, anomaly_engine):
+def test_auto_derivation_of_names(ws, spark: SparkSession, make_random, make_schema, anomaly_engine):
     """Test that model_name and registry_table can be omitted for scoring."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -176,7 +166,7 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, ma
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     threshold = 1.0
     checks = [
         DQDatasetRule(
@@ -201,7 +191,7 @@ def test_auto_derivation_of_names(spark: SparkSession, mock_workspace_client, ma
     assert errors is None or len(errors) == 0, f"Expected no errors, got: {errors}"
 
 
-def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
+def test_threshold_flagging(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test that anomalous rows are flagged based on score_threshold."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -232,7 +222,7 @@ def test_threshold_flagging(spark: SparkSession, mock_workspace_client, make_sch
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table, ["amount", "quantity"])
     checks = [
         DQDatasetRule(
@@ -310,7 +300,7 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
     registry_df.select("features.feature_importance").limit(1).collect()  # Will error if field doesn't exist
 
 
-def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schema, make_random, anomaly_engine):
+def test_multiple_columns(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):
     """Test training and scoring with multiple columns."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
@@ -339,7 +329,7 @@ def test_multiple_columns(spark: SparkSession, mock_workspace_client, make_schem
         "transaction_id int, amount double, quantity double, discount double, weight double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     threshold = get_percentile_threshold_from_data(
         train_df, model_name, registry_table, ["amount", "quantity", "discount", "weight"]
     )
