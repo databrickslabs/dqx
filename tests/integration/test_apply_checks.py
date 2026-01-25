@@ -2809,7 +2809,7 @@ def test_apply_checks_raises_on_info_column_collision(ws, spark):
         )
     ]
 
-    with pytest.raises(InvalidParameterError, match="reserved DQX info columns"):
+    with pytest.raises(InvalidParameterError, match="reserved DQX result columns"):
         dq_engine.apply_checks(test_df, checks)
 
 

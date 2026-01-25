@@ -2,8 +2,6 @@
 Check functions for anomaly detection.
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 import warnings
@@ -306,8 +304,15 @@ def _create_null_scored_dataframe(
         )
     )
 
-    info_struct = F.struct(null_anomaly_info.alias("anomaly"))
-    result = result.withColumn("_dq_info", info_struct)
+    # TODO this logic has to be moved out of the check function
+    # the function should take as argument unique _dq_info
+    # the engine will merge the _dq_info fields
+    if "_dq_info" in result.columns:
+        # Add or replace the 'anomaly' field in the existing struct
+        result = result.withColumn("_dq_info", F.col("_dq_info").withField("anomaly", null_anomaly_info))
+    else:
+        # Create a new struct with only the 'anomaly' field
+        result = result.withColumn("_dq_info", F.struct(null_anomaly_info.alias("anomaly")))
 
     return result
 

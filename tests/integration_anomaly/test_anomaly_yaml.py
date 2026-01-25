@@ -1,12 +1,7 @@
-"""Integration tests for YAML-based anomaly detection configuration."""
-
-from unittest.mock import MagicMock
-
 import pytest
 import yaml
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 
 from tests.integration_anomaly.test_anomaly_constants import (
@@ -19,14 +14,7 @@ from tests.integration_anomaly.test_anomaly_constants import (
 pytestmark = pytest.mark.anomaly
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-
-    return MagicMock(spec=WorkspaceClient)
-
-
-def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_yaml_based_checks(ws, spark: SparkSession, shared_2d_model):
     """Test applying anomaly checks defined in YAML."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -38,8 +26,11 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, shared_2d
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns: [transaction_id]
-          columns: [amount, quantity]
+          merge_columns:
+          - transaction_id
+          columns:
+          - amount
+          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DEFAULT_SCORE_THRESHOLD}
@@ -53,7 +44,7 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, shared_2d
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # Verify DQX metadata columns are added
@@ -65,7 +56,7 @@ def test_yaml_based_checks(spark: SparkSession, mock_workspace_client, shared_2d
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
-def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_yaml_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
     """Test YAML with multiple anomaly and standard checks."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -82,8 +73,11 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns: [transaction_id]
-          columns: [amount, quantity]
+          merge_columns:
+          - transaction_id
+          columns:
+          - amount
+          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DQENGINE_SCORE_THRESHOLD}
@@ -101,7 +95,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     rows = result_df.orderBy("transaction_id").collect()
@@ -129,7 +123,7 @@ def test_yaml_with_multiple_checks(spark: SparkSession, mock_workspace_client, s
     assert len(row2_errors) > 0
 
 
-def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
     """Test YAML configuration with custom score_threshold."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -141,8 +135,11 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns: [transaction_id]
-          columns: [amount, quantity]
+          merge_columns:
+          - transaction_id
+          columns:
+          - amount
+          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: 0.9
@@ -156,7 +153,7 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # With high threshold (0.9), slightly unusual data should pass
@@ -167,7 +164,7 @@ def test_yaml_with_custom_threshold(spark: SparkSession, mock_workspace_client, 
     assert all(count == 0 for count in error_counts) or sum(error_counts) <= 1
 
 
-def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, shared_3d_model):
+def test_yaml_with_contributions(ws, spark: SparkSession, shared_3d_model):
     """Test YAML configuration with include_contributions flag."""
     # Use shared pre-trained 3D model (no training needed!)
     model_name = shared_3d_model["model_name"]
@@ -179,8 +176,12 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, sha
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns: [transaction_id]
-          columns: [amount, quantity, discount]
+          merge_columns:
+          - transaction_id
+          columns:
+          - amount
+          - quantity
+          - discount
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DEFAULT_SCORE_THRESHOLD}
@@ -195,7 +196,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, sha
         "transaction_id int, amount double, quantity double, discount double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # Verify DQX metadata is added (contributions are not added by metadata API)
@@ -205,7 +206,7 @@ def test_yaml_with_contributions(spark: SparkSession, mock_workspace_client, sha
     assert len(rows[0]["_errors"]) > 0
 
 
-def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_yaml_with_drift_threshold(ws, spark: SparkSession, shared_2d_model):
     """Test YAML configuration with drift_threshold."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -217,8 +218,11 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, s
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns: [transaction_id]
-          columns: [amount, quantity]
+          merge_columns:
+          - transaction_id
+          columns:
+          - amount
+          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DQENGINE_SCORE_THRESHOLD}
@@ -233,7 +237,7 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, s
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # Should succeed without errors (drift detection is configured)
@@ -244,7 +248,7 @@ def test_yaml_with_drift_threshold(spark: SparkSession, mock_workspace_client, s
     assert len(row_errors) == 0
 
 
-def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, shared_2d_model):
+def test_yaml_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     """Test YAML with criticality='warn'."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -256,8 +260,11 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, share
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns: [transaction_id]
-          columns: [amount, quantity]
+          merge_columns:
+          - transaction_id
+          columns:
+          - amount
+          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DQENGINE_SCORE_THRESHOLD}
@@ -271,7 +278,7 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, share
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # With warn criticality, anomalies should be in warnings
@@ -281,7 +288,7 @@ def test_yaml_criticality_warn(spark: SparkSession, mock_workspace_client, share
     assert rows[1]["_warnings"] is not None or rows[1]["_errors"] is not None
 
 
-def test_yaml_parsing_validation(spark: SparkSession):
+def test_yaml_parsing_validation(ws, spark: SparkSession):
     """Test that invalid YAML is caught."""
     # Invalid YAML (missing required argument)
     checks_yaml = """
@@ -303,7 +310,7 @@ def test_yaml_parsing_validation(spark: SparkSession):
         "amount double, quantity double",
     )
 
-    dq_engine = DQEngine(MagicMock(spec=WorkspaceClient), spark)
+    dq_engine = DQEngine(ws, spark)
 
     # Should raise error about missing columns
     with pytest.raises(Exception):  # May be TypeError or InvalidParameterError
