@@ -535,6 +535,33 @@ df_scored = dq_engine.apply_checks(df_sales, checks_combined)
 
 display(df_scored)
 
+print("\n💡 What Just Happened:")
+print("   • Rule-based checks caught known issues (nulls, out-of-range values)")
+print("   • Anomaly detection found unusual patterns you didn't explicitly define")
+print("   • The 'why_anomalous' column explains what made each record unusual")
+print("   • Percentile band shows how unusual a record is within this dataset")
+print("   • Threshold of 0.60 balances finding issues vs false alarms")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC
+# MAGIC ## Section 3: Understanding Your Results
+# MAGIC
+# MAGIC Let's explore the anomalies we found and learn how to interpret anomaly scores.
+# MAGIC
+# MAGIC **What you'll learn:**
+# MAGIC - How anomaly scores work (0 to 1 unusualness scale)
+# MAGIC - What makes a score "high" vs "normal"  
+# MAGIC - Why certain records were flagged as unusual
+# MAGIC
+# MAGIC **Important**: Anomaly scores are NOT probabilities or confidence levels! Think of the score as how
+# MAGIC easy it is to separate a record from the rest of your data. Easier to separate = more unusual.
+# MAGIC
+
+# COMMAND ----------
+
 df_anomalies = dq_engine.get_invalid(df_scored)
 score_col = F.col("_dq_info.anomaly.score")
 
@@ -567,32 +594,6 @@ display(df_anomalies.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
 ).limit(10))
 
 print("   Example pattern: high amount + off-hours timing + unusual region/category")
-
-print("\n💡 What Just Happened:")
-print("   • Rule-based checks caught known issues (nulls, out-of-range values)")
-print("   • Anomaly detection found unusual patterns you didn't explicitly define")
-print("   • The 'why_anomalous' column explains what made each record unusual")
-print("   • Percentile band shows how unusual a record is within this dataset")
-print("   • Threshold of 0.60 balances finding issues vs false alarms")
-
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ---
-# MAGIC
-# MAGIC ## Section 3: Understanding Your Results
-# MAGIC
-# MAGIC Let's explore the anomalies we found and learn how to interpret anomaly scores.
-# MAGIC
-# MAGIC **What you'll learn:**
-# MAGIC - How anomaly scores work (0 to 1 unusualness scale)
-# MAGIC - What makes a score "high" vs "normal"  
-# MAGIC - Why certain records were flagged as unusual
-# MAGIC
-# MAGIC **Important**: Anomaly scores are NOT probabilities or confidence levels! Think of the score as how
-# MAGIC easy it is to separate a record from the rest of your data. Easier to separate = more unusual.
-# MAGIC
 
 # COMMAND ----------
 
