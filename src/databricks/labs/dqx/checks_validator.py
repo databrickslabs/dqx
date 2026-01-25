@@ -1,7 +1,6 @@
 import logging
 import functools as ft
 import inspect
-import typing
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import UnionType
@@ -11,7 +10,6 @@ from databricks.labs.dqx.checks_resolver import resolve_check_function
 from databricks.labs.dqx.rule import Criticality
 
 logger = logging.getLogger(__name__)
-_TYPING_UNION = getattr(typing, "Union", None)
 
 
 @dataclass(frozen=True)
@@ -237,7 +235,7 @@ class ChecksValidator:
         if expected_type is inspect.Parameter.empty:
             return True  # no type hint, assume valid
 
-        if origin in (UnionType, _TYPING_UNION):
+        if origin is UnionType:
             # Handle Optional[X] as Union[X, NoneType]
             return ChecksValidator._check_union_type(args, value)
 
@@ -252,17 +250,7 @@ class ChecksValidator:
 
         if origin:
             return isinstance(value, origin)
-
-        # Handle special typing constructs that cannot be used with isinstance()
-        if expected_type is Any:
-            return True  # Any type is always valid
-
-        try:
-            return isinstance(value, expected_type)
-        except TypeError as exc:
-            # Surface unsupported runtime checks instead of silently passing.
-            logger.warning(f"Cannot validate type {expected_type} at runtime", exc_info=exc)
-            return False
+        return isinstance(value, expected_type)
 
     @staticmethod
     def _check_union_type(args, value):
