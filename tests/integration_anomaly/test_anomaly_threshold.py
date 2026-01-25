@@ -1,13 +1,11 @@
 """Integration tests for anomaly threshold selection."""
 
 from collections.abc import Callable
-from unittest.mock import MagicMock
 
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 
@@ -24,16 +22,9 @@ from tests.integration_anomaly.test_anomaly_utils import (
 pytestmark = pytest.mark.anomaly
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-
-    return MagicMock(spec=WorkspaceClient)
-
-
 def test_threshold_affects_flagging(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     anomaly_registry_prefix,
@@ -57,7 +48,7 @@ def test_threshold_affects_flagging(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
 
     # Aggressive threshold (0.3) - flags more
     rule_aggressive = create_anomaly_dataset_rule(
@@ -130,8 +121,8 @@ def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick
 
 
 def test_precision_recall_tradeoff(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     anomaly_registry_prefix,
@@ -154,7 +145,7 @@ def test_precision_recall_tradeoff(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
 
     # High threshold (low recall) - use helper
     rule_low_recall = create_anomaly_dataset_rule(
@@ -176,13 +167,13 @@ def test_precision_recall_tradeoff(
     assert flagged_high_recall >= flagged_low_recall
 
 
-def test_threshold_edge_cases(spark, test_df_factory, mock_workspace_client, quick_model_factory):
+def test_threshold_edge_cases(ws, spark, test_df_factory, quick_model_factory):
     """Test edge case thresholds (0.0 and 1.0)."""
     model_name, registry_table, columns = quick_model_factory(spark)
 
     test_df = test_df_factory(spark)
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
 
     # Threshold 0.0 - flags everything - use helper
     rule_zero = create_anomaly_dataset_rule(model_name, registry_table, columns, score_threshold=0.0)

@@ -1,11 +1,8 @@
 """Integration tests for ensemble anomaly detection."""
 
-from unittest.mock import MagicMock
-
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.config import AnomalyParams
 
 from tests.integration_anomaly.test_anomaly_constants import (
@@ -19,13 +16,6 @@ from tests.integration_anomaly.test_anomaly_utils import (
 )
 
 pytestmark = pytest.mark.anomaly
-
-
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-
-    return MagicMock(spec=WorkspaceClient)
 
 
 def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
@@ -55,8 +45,8 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine, ano
 
 
 def test_ensemble_scoring_with_confidence(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random,
     anomaly_engine,
     test_df_factory,
@@ -105,8 +95,8 @@ def test_ensemble_scoring_with_confidence(
 
 
 def test_ensemble_with_feature_contributions(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random,
     anomaly_engine,
     test_df_factory,

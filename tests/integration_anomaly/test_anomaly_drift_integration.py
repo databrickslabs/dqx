@@ -3,12 +3,10 @@
 
 import warnings
 from collections.abc import Callable
-from unittest.mock import MagicMock
 
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.engine import DQEngine
 
@@ -27,15 +25,9 @@ from tests.integration_anomaly.test_anomaly_utils import (
 pytestmark = pytest.mark.anomaly
 
 
-@pytest.fixture
-def mock_workspace_client():
-    """Create a mock WorkspaceClient for testing."""
-    return MagicMock(spec=WorkspaceClient)
-
-
 def test_drift_detection_warns_on_distribution_shift(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     anomaly_registry_prefix,
@@ -55,7 +47,7 @@ def test_drift_detection_warns_on_distribution_shift(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -84,8 +76,8 @@ def test_drift_detection_warns_on_distribution_shift(
 
 
 def test_no_drift_warning_on_similar_distribution(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     anomaly_registry_prefix,
@@ -105,7 +97,7 @@ def test_no_drift_warning_on_similar_distribution(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -128,8 +120,8 @@ def test_no_drift_warning_on_similar_distribution(
 
 
 def test_drift_detection_disabled_when_threshold_none(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     anomaly_registry_prefix,
@@ -149,7 +141,7 @@ def test_drift_detection_disabled_when_threshold_none(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
@@ -172,8 +164,8 @@ def test_drift_detection_disabled_when_threshold_none(
 
 
 def test_drift_detection_skipped_on_small_batch(
+    ws,
     spark: SparkSession,
-    mock_workspace_client,
     make_random: Callable[[int], str],
     anomaly_engine,
     anomaly_registry_prefix,
@@ -193,7 +185,7 @@ def test_drift_detection_skipped_on_small_batch(
         "transaction_id int, amount double, quantity double",
     )
 
-    dq_engine = DQEngine(mock_workspace_client, spark)
+    dq_engine = DQEngine(ws, spark)
     checks = [
         create_anomaly_check_rule(
             model_name=model_name,
