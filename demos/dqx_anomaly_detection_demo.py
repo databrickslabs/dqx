@@ -559,7 +559,7 @@ print("   Even records that are not flagged still get a score for analysis.")
 print("   Think of the score as a 0-1 unusualness rating: higher = more likely anomalous.")
 print(f"\n🔝 Top 10 anomalies:\n")
 
-display(anomalies.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
+display(df_anomalies.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
     "transaction_id", "date", "amount", "quantity", "category", "region",
     F.round("_dq_info.anomaly.score", 3).alias("anomaly_score"),
     percentile_band.alias("score_percentile"),
