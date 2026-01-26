@@ -119,6 +119,7 @@ dependencies = [
     "pyparsing~=3.2.3",
     "jmespath~=1.0.1",
     "psycopg2-binary~=2.9.10",
+    "fastapi>=0.119.0",
 ]
 
 python="3.12" # must match the version required by databricks-connect and python version on the test clusters
@@ -195,6 +196,7 @@ ignore_missing_imports = true
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
+pythonpath = ["src", "app/src"]
 
 [tool.black]
 target-version = ["py310"]
@@ -232,6 +234,9 @@ exclude_lines = [
 # PyLint configuration is adapted from Google Python Style Guide with modifications.
 # Sources https://google.github.io/styleguide/pylintrc
 # License: https://github.com/google/styleguide/blob/gh-pages/LICENSE
+
+# Add app/src to sys.path for pylint to find databricks_labs_dqx_app
+init-hook = "import sys; sys.path.insert(0, 'app/src')"
 
 # Clear in-memory caches upon conclusion of linting. Useful if running pylint in
 # a server-like mode.
