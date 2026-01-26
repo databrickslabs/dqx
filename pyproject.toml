@@ -681,7 +681,8 @@ disable = [
     "rewrite-as-for-loop",
     "redundant-returns-doc",
     # dbx pylint is not up-to-date, e.g. spark.catalog.tableExists is compatible with UC since DBR 14+
-    "incompatible-with-uc"
+    "incompatible-with-uc",
+    "no-spark-argument-in-function",
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can

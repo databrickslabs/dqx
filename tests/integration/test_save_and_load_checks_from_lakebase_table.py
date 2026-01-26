@@ -169,7 +169,7 @@ def test_save_and_load_checks_from_lakebase_table_with_user_installation(
 
 
 def test_profiler_workflow_save_to_lakebase(
-    ws, spark, setup_workflows, make_lakebase_instance, lakebase_client_id, make_random
+    ws, spark_keep_alive, setup_workflows, make_lakebase_instance, lakebase_client_id, make_random
 ):
     installation_ctx, run_config = setup_workflows()
 
@@ -187,7 +187,7 @@ def test_profiler_workflow_save_to_lakebase(
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
 
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
     checks = dq_engine.load_checks(
         config=LakebaseChecksStorageConfig(
             location=lakebase_location,
