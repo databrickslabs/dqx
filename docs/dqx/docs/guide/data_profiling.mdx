@@ -230,6 +230,49 @@ You can also generate Lakeflow Pipelines expectation statements from profiler re
   </TabItem>
 </Tabs>
 
+### AI-Assisted DLT Rules Generation
+
+You can also generate Lakeflow Pipelines rules directly from natural language requirements or summary statistics using AI-assisted generation:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+
+    # Step 1: Profile the data to generate summary statistics
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
+    input_df = spark.read.table("catalog1.schema1.sales_data")
+    summary_stats, profiles = profiler.profile(input_df)
+
+    # Step 2: Generate AI-assisted DLT rules
+    dlt_generator = DQDltGenerator(workspace_client=ws, spark=spark)
+
+    # Generate DLT rules with user input and summary stats
+    dlt_rules = dlt_generator.generate_dlt_rules_ai_assisted(
+        user_input="Validate sales data for anomalies and business rules",
+        summary_stats=summary_stats,
+        language="SQL"
+    )
+
+    # Or generate from summary stats alone
+    dlt_rules = dlt_generator.generate_dlt_rules_ai_assisted(
+        summary_stats=summary_stats,
+        language="SQL"
+    )
+
+    print("AI-Generated DLT Rules:")
+    for rule in dlt_rules:
+        print(rule)
+    ```
+  </TabItem>
+</Tabs>
+
+For more details on AI-assisted DLT rules generation, see the [AI-Assisted Quality Checks Generation](/docs/guide/ai_assisted_quality_checks_generation) guide.
+
 ## No-code approach (Profiler Workflow)
 
 You can run profiler workflow to profile tables and generate quality checks candidates.
