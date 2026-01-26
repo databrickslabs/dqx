@@ -1401,7 +1401,7 @@ def test_save_results_in_table_batch_with_metrics(
     [DQEngine.apply_checks_and_split, DQEngine.apply_checks_by_metadata_and_split],
 )
 def test_save_results_in_table_streaming_with_metrics(
-    apply_checks_method, spark, ws, make_schema, make_volume, make_random
+    skip_if_classic_compute, apply_checks_method, spark, ws, make_schema, make_volume, make_random
 ):
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
