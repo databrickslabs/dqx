@@ -3,12 +3,11 @@
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQDatasetRule
 
 from tests.conftest import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_utils import (
+    create_anomaly_check_rule,
     get_percentile_threshold_from_data,
     get_standard_2d_training_data,
     get_standard_4d_training_data,
@@ -54,18 +53,12 @@ def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random
     )
 
     dq_engine = DQEngine(ws, spark)
-    threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table, ["amount", "quantity"])
+    threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": ["amount", "quantity"],
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": threshold,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=threshold,
         )
     ]
 
@@ -106,16 +99,10 @@ def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_ran
     dq_engine = DQEngine(ws, spark)
     threshold = 1.0
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": ["amount", "quantity"],
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": threshold,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=threshold,
         )
     ]
 
@@ -166,16 +153,10 @@ def test_auto_derivation_of_names(ws, spark: SparkSession, make_random, make_sch
     dq_engine = DQEngine(ws, spark)
     threshold = 1.0
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": ["amount", "quantity"],
-                "model": model_name,  # Use explicit model name
-                "registry_table": registry_table,  # Use explicit registry
-                "score_threshold": threshold,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=threshold,
         )
     ]
 
@@ -220,18 +201,12 @@ def test_threshold_flagging(ws, spark: SparkSession, make_schema, make_random, a
     )
 
     dq_engine = DQEngine(ws, spark)
-    threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table, ["amount", "quantity"])
+    threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": ["amount", "quantity"],
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": threshold,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=threshold,
         )
     ]
 
@@ -327,20 +302,12 @@ def test_multiple_columns(ws, spark: SparkSession, make_schema, make_random, ano
     )
 
     dq_engine = DQEngine(ws, spark)
-    threshold = get_percentile_threshold_from_data(
-        train_df, model_name, registry_table, ["amount", "quantity", "discount", "weight"]
-    )
+    threshold = get_percentile_threshold_from_data(train_df, model_name, registry_table)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": ["amount", "quantity", "discount", "weight"],
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": threshold,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=threshold,
         )
     ]
 

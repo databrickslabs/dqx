@@ -187,16 +187,12 @@ def anomaly_scorer():
         test_df,
         model_name: str,
         registry_table: str,
-        columns: list[str],
-        merge_columns: list[str] | None = None,
         extract_score: bool = True,
         **check_kwargs,
     ):
         apply_fn = _create_anomaly_apply_fn(
             model_name=model_name,
             registry_table=registry_table,
-            columns=columns,
-            merge_columns=merge_columns,
             **check_kwargs,
         )
 

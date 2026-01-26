@@ -16,6 +16,7 @@ from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
+from tests.integration_anomaly.test_anomaly_utils import score_3d_with_contributions
 
 
 def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
@@ -49,25 +50,14 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
-    columns = shared_3d_model["columns"]
 
-    # Use factory to create test DataFrame with transaction_id
-    test_df = test_df_factory(
+    # Use helper to score with contributions
+    result_df = score_3d_with_contributions(
         spark,
-        normal_rows=[],
-        anomaly_rows=[(OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95)],
-        columns_schema="amount double, quantity double, discount double",
-    )
-
-    # Use anomaly_scorer with include_contributions
-    result_df = anomaly_scorer(
-        test_df,
-        model_name=model_name,
-        registry_table=registry_table,
-        columns=columns,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
-        include_contributions=True,
-        extract_score=False,
+        test_df_factory,
+        anomaly_scorer,
+        model_name,
+        registry_table,
     )
     row = result_df.collect()[0]
 
@@ -89,7 +79,6 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
-    columns = shared_3d_model["columns"]
 
     # Use factory to create test DataFrame with transaction_id
     test_df = test_df_factory(
@@ -104,7 +93,6 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        columns=columns,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
@@ -126,7 +114,6 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
     # Use shared pre-trained model (no training needed!)
     model_name = shared_4d_model["model_name"]
     registry_table = shared_4d_model["registry_table"]
-    columns = shared_4d_model["columns"]
 
     # Use factory to create test DataFrame with transaction_id
     test_df = test_df_factory(
@@ -141,7 +128,6 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        columns=columns,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
@@ -163,7 +149,6 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     # Use factory to create test DataFrame with transaction_id
     test_df = test_df_factory(
@@ -178,7 +163,6 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        columns=columns,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=False,  # Explicitly False
         extract_score=False,
@@ -193,7 +177,6 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
-    columns = shared_3d_model["columns"]
 
     # Use factory to create test DataFrame with extreme amount value
     test_df = test_df_factory(
@@ -208,7 +191,6 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        columns=columns,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,

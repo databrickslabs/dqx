@@ -532,14 +532,6 @@ bad-functions = ["map", "input"]
 max-args = 11
 max-positional-arguments = 11
 
-# Maximum complexity (McCabe) for function / method body
-# Increased to 12 for check_funcs.py: Pandas UDF factory functions contain nested helper
-# functions (format_shap_contributions, compute_shap_values) that must remain nested for
-# cloudpickle serialization in Spark Connect. Extracting them to module level would cause
-# serialization failures in Databricks Connect worker processes. The nested helpers contribute
-# to parent function complexity (McCabe=11-12) but are required for distributed UDF execution.
-max-complexity = 12
-
 # Maximum number of attributes for a class (see R0902).
 max-attributes = 16
 
@@ -600,8 +592,7 @@ max-module-lines = 10000
 
 [tool.pylint.imports]
 # List of modules that can be imported at any level, not just the top level one.
-# tests.compat must be imported early to apply numba/coverage patches before other imports
-allow-any-import-level = ["tests.compat"]
+# allow-any-import-level = 
 
 # Allow explicit reexports by alias from a package __init__.
 # allow-reexport-from-package =

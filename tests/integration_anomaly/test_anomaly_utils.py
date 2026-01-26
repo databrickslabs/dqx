@@ -8,12 +8,14 @@ from databricks.labs.dqx.anomaly import trainer as anomaly_trainer
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.rule import DQDatasetRule
 
-from tests.integration_anomaly.test_anomaly_constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
+from tests.integration_anomaly.test_anomaly_constants import (
+    DEFAULT_SCORE_THRESHOLD,
+    OUTLIER_AMOUNT,
+    OUTLIER_QUANTITY,
+)
 
 
-def _create_anomaly_apply_fn(
-    model_name: str, registry_table: str, columns: list[str], merge_columns: list[str] | None = None, **check_kwargs
-):
+def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwargs):
     """
     Create apply function from has_no_anomalies check.
 
@@ -23,19 +25,12 @@ def _create_anomaly_apply_fn(
     Args:
         model_name: Name of the trained model
         registry_table: Registry table path
-        columns: Column names to check for anomalies
-        merge_columns: Columns to merge results on (default: ["transaction_id"])
         **check_kwargs: Additional arguments for has_no_anomalies
 
     Returns:
         Apply function from has_no_anomalies check
     """
-    if merge_columns is None:
-        merge_columns = ["transaction_id"]
-
     _, apply_fn = has_no_anomalies(
-        merge_columns=merge_columns,
-        columns=columns,
         model=model_name,
         registry_table=registry_table,
         **check_kwargs,
@@ -225,7 +220,6 @@ def get_percentile_threshold_from_data(
     df: DataFrame,
     model_name: str,
     registry_table: str,
-    columns: list[str],
     percentile: float = 0.95,
 ) -> float:
     """Derive a score threshold from the given data at a target percentile."""
@@ -236,7 +230,6 @@ def get_percentile_threshold_from_data(
         df,
         model_name,
         registry_table,
-        columns=columns,
         score_threshold=1.0,
     )
     threshold = scored.approxQuantile("anomaly_score", [percentile], 0.01)[0]
@@ -246,10 +239,8 @@ def get_percentile_threshold_from_data(
 def create_anomaly_check_rule(
     model_name: str,
     registry_table: str,
-    columns: list[str],
     score_threshold: float = 0.6,
     criticality: str = "error",
-    merge_columns: list[str] | None = None,
     **kwargs: Any,
 ) -> DQDatasetRule:
     """
@@ -260,10 +251,8 @@ def create_anomaly_check_rule(
     Args:
         model_name: Name of the trained model
         registry_table: Full path to registry table
-        columns: List of columns to check
         score_threshold: Anomaly score threshold (default: 0.6)
         criticality: Rule criticality (default: "error")
-        merge_columns: Columns for merging results (optional)
         **kwargs: Additional check_func_kwargs
 
     Returns:
@@ -273,16 +262,9 @@ def create_anomaly_check_rule(
         check = create_anomaly_check_rule(
             model_name="test_model",
             registry_table="main.default.registry",
-            columns=["amount", "quantity"]
         )
     """
-    # If merge_columns not provided, use a default value since has_no_anomalies requires it
-    if merge_columns is None:
-        merge_columns = ["transaction_id"]
-
     check_kwargs = {
-        "merge_columns": merge_columns,
-        "columns": columns,
         "model": model_name,
         "registry_table": registry_table,
         "score_threshold": score_threshold,
@@ -300,7 +282,6 @@ def apply_anomaly_check_direct(
     test_df: Any,
     model_name: str,
     registry_table: str,
-    columns: list[str],
     score_threshold: float = 0.5,
     **kwargs: Any,
 ) -> Any:
@@ -313,7 +294,6 @@ def apply_anomaly_check_direct(
         test_df: Test DataFrame
         model_name: Model name
         registry_table: Registry table path
-        columns: Columns to check (required for this helper)
         score_threshold: Score threshold
         **kwargs: Additional has_no_anomalies kwargs
 
@@ -322,13 +302,10 @@ def apply_anomaly_check_direct(
 
     Example:
         result_df = apply_anomaly_check_direct(
-            test_df, "my_model", "main.default.registry",
-            columns=["amount", "quantity"]
+            test_df, "my_model", "main.default.registry"
         )
     """
     _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=columns,
         model=model_name,
         registry_table=registry_table,
         score_threshold=score_threshold,
@@ -501,9 +478,7 @@ def score_with_anomaly_check(
     df: DataFrame,
     model_name: str,
     registry_table: str,
-    columns: list[str],
     score_threshold: float = 0.5,
-    merge_columns: list[str] | None = None,
 ):
     """
     Helper to score a DataFrame using has_no_anomalies and collect results.
@@ -514,23 +489,19 @@ def score_with_anomaly_check(
         df (DataFrame): DataFrame to score
         model_name (str): Model name
         registry_table (str): Registry table path
-        columns (list[str]): Columns to check
         score_threshold (float): Anomaly score threshold (default: 0.5)
-        merge_columns (list[str] | None): Merge columns (default: ["transaction_id"])
 
     Returns:
         Scored DataFrame with results collected
 
     Example:
         result = score_with_anomaly_check(
-            test_df, "my_model", "main.default.registry", ["amount", "quantity"]
+            test_df, "my_model", "main.default.registry"
         )
     """
     apply_fn = _create_anomaly_apply_fn(
         model_name=model_name,
         registry_table=registry_table,
-        columns=columns,
-        merge_columns=merge_columns,
         score_threshold=score_threshold,
     )
     result_df = apply_fn(df)
@@ -538,13 +509,39 @@ def score_with_anomaly_check(
     return result_df
 
 
+def score_3d_with_contributions(
+    spark: SparkSession,
+    test_df_factory,
+    anomaly_scorer,
+    model_name: str,
+    registry_table: str,
+    normal_rows: list[tuple[float, float, float]] | None = None,
+    anomaly_rows: list[tuple[float, float, float]] | None = None,
+    include_confidence: bool = False,
+):
+    """Score a 3D dataset with contributions enabled (optionally confidence)."""
+    test_df = test_df_factory(
+        spark,
+        normal_rows=normal_rows or [],
+        anomaly_rows=anomaly_rows or [(OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95)],
+        columns_schema="amount double, quantity double, discount double",
+    )
+    return anomaly_scorer(
+        test_df,
+        model_name=model_name,
+        registry_table=registry_table,
+        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        include_contributions=True,
+        include_confidence=include_confidence,
+        extract_score=False,
+    )
+
+
 def create_anomaly_dataset_rule(
     model_name: str,
     registry_table: str,
-    columns: list[str],
     criticality: str = "error",
     score_threshold: float = 0.5,
-    merge_columns: list[str] | None = None,
     **kwargs,
 ):
     """
@@ -555,10 +552,8 @@ def create_anomaly_dataset_rule(
     Args:
         model_name: Model name
         registry_table: Registry table path
-        columns: Columns to check
         criticality: Rule criticality (default: "error")
         score_threshold: Anomaly score threshold (default: 0.5)
-        merge_columns: Merge columns (default: ["transaction_id"])
         **kwargs: Additional has_no_anomalies arguments
 
     Returns:
@@ -566,18 +561,13 @@ def create_anomaly_dataset_rule(
 
     Example:
         rule = create_anomaly_dataset_rule(
-            "my_model", "main.default.registry", ["amount", "quantity"]
+            "my_model", "main.default.registry"
         )
     """
-    if merge_columns is None:
-        merge_columns = ["transaction_id"]
-
     return DQDatasetRule(
         criticality=criticality,
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "merge_columns": merge_columns,
-            "columns": columns,
             "model": model_name,
             "registry_table": registry_table,
             "score_threshold": score_threshold,

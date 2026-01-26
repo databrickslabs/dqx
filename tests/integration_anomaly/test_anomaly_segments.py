@@ -104,9 +104,6 @@ def test_segment_scoring(
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "merge_columns": ["row_id"],
-            "columns": ["amount"],
-            "segment_by": ["region"],
             "model": f"test_score_segments_{suffix}",
             "registry_table": f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
             "score_threshold": DQENGINE_SCORE_THRESHOLD,  # Lowered from 0.7 to account for IsolationForest scoring characteristics
@@ -215,9 +212,6 @@ def test_unknown_segment_handling(
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "merge_columns": ["row_id"],
-            "columns": ["amount"],
-            "segment_by": ["region"],
             "model": f"test_unknown_segments_{suffix}",
             "registry_table": f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
         },

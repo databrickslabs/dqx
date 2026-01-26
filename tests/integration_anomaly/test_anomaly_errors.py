@@ -15,10 +15,10 @@ from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRES
 from tests.integration_anomaly.test_anomaly_utils import train_simple_2d_model
 
 
-def test_column_mismatch_error(
+def test_missing_columns_error(
     ws, spark: SparkSession, make_random, anomaly_engine, test_df_factory, anomaly_registry_prefix
 ):
-    """Test error when scoring columns don't match training columns."""
+    """Test error when input DataFrame is missing model columns."""
     unique_id = make_random(8).lower()
     model_name = f"test_col_mismatch_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
@@ -34,11 +34,9 @@ def test_column_mismatch_error(
         columns_schema="amount double, discount double",
     )
 
-    # Should raise error about column mismatch
-    with pytest.raises(InvalidParameterError, match="Configuration mismatch for model"):
+    # Should raise error about missing model columns in the input DataFrame
+    with pytest.raises(InvalidParameterError, match="missing required columns"):
         _, apply_fn = has_no_anomalies(
-            merge_columns=["transaction_id"],
-            columns=["amount", "discount"],
             model=model_name,
             registry_table=registry_table,
             score_threshold=DEFAULT_SCORE_THRESHOLD,
@@ -77,7 +75,6 @@ def test_column_order_independence(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        columns=["quantity", "amount"],  # Different order from training
         score_threshold=DEFAULT_SCORE_THRESHOLD,
         extract_score=False,
     )
@@ -122,8 +119,6 @@ def test_missing_registry_table_for_scoring_error(
     # Try to score with non-existent registry
     with pytest.raises((InvalidParameterError, Exception)):  # Delta/Spark exception
         _, apply_fn = has_no_anomalies(
-            merge_columns=["transaction_id"],
-            columns=["amount", "quantity"],
             model=model_name,
             registry_table=registry_table,
             score_threshold=DEFAULT_SCORE_THRESHOLD,

@@ -4,9 +4,8 @@ Integration tests for anomaly detection with DQEngine.
 
 from pyspark.sql import SparkSession
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
+from databricks.labs.dqx.rule import DQRowRule
 
 from tests.integration_anomaly.test_anomaly_constants import (
     DQENGINE_SCORE_THRESHOLD,
@@ -21,7 +20,6 @@ def test_apply_checks_by_metadata(ws, spark: SparkSession, shared_2d_model):
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
         [(1, 100.0, 2.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
@@ -33,7 +31,6 @@ def test_apply_checks_by_metadata(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            columns=columns,
             score_threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
@@ -59,7 +56,6 @@ def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     # Test with in-cluster points and clear outliers
     test_df = spark.createDataFrame(
@@ -72,7 +68,6 @@ def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            columns=columns,
             score_threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
@@ -99,7 +94,6 @@ def test_quarantine_dataframe_structure(ws, spark: SparkSession, shared_2d_model
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
         [(1, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],  # Anomalous row
@@ -111,7 +105,6 @@ def test_quarantine_dataframe_structure(ws, spark: SparkSession, shared_2d_model
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            columns=columns,
             score_threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
@@ -139,7 +132,6 @@ def test_multiple_checks_combined(ws, spark: SparkSession, shared_2d_model):
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
         [
@@ -159,16 +151,10 @@ def test_multiple_checks_combined(ws, spark: SparkSession, shared_2d_model):
             column="amount",
         ),
         # Anomaly check
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=0.6,
         ),
     ]
 
@@ -209,7 +195,6 @@ def test_criticality_error(ws, spark: SparkSession, shared_2d_model):
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
         [(1, 100.0, 2.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
@@ -219,16 +204,10 @@ def test_criticality_error(ws, spark: SparkSession, shared_2d_model):
     dq_engine = DQEngine(ws, spark)
 
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=0.6,
         )
     ]
 
@@ -244,7 +223,6 @@ def test_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
         [(1, 100.0, 2.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
@@ -254,16 +232,11 @@ def test_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     dq_engine = DQEngine(ws, spark)
 
     checks = [
-        DQDatasetRule(
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=0.6,
             criticality="warn",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-            },
         )
     ]
 
@@ -283,7 +256,6 @@ def test_get_valid_and_invalid_helpers(ws, spark: SparkSession, shared_2d_model)
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     # Test with in-cluster point (in dense part of range) and far-out anomaly
     test_df = spark.createDataFrame(
@@ -296,7 +268,6 @@ def test_get_valid_and_invalid_helpers(ws, spark: SparkSession, shared_2d_model)
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            columns=columns,
             score_threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
@@ -331,7 +302,6 @@ def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
-    columns = shared_2d_model["columns"]
 
     test_df = spark.createDataFrame(
         [(1, 150.0, 20.0)],  # Normal data
@@ -340,18 +310,12 @@ def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
 
     dq_engine = DQEngine(ws, spark)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-                "include_contributions": False,  # Test without optional fields
-                "include_confidence": False,
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=0.6,
+            include_contributions=False,  # Test without optional fields
+            include_confidence=False,
         )
     ]
 
@@ -414,17 +378,11 @@ def test_info_column_with_contributions(ws, spark: SparkSession, shared_3d_model
 
     dq_engine = DQEngine(ws, spark)
     checks = [
-        DQDatasetRule(
-            criticality="error",
-            check_func=has_no_anomalies,
-            check_func_kwargs={
-                "merge_columns": ["transaction_id"],
-                "columns": columns,
-                "model": model_name,
-                "registry_table": registry_table,
-                "score_threshold": 0.6,
-                "include_contributions": True,  # Request contributions
-            },
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=0.6,
+            include_contributions=True,  # Request contributions
         )
     ]
 

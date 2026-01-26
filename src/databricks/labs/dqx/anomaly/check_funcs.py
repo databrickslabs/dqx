@@ -39,10 +39,10 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering,
     reconstruct_column_infos,
 )
-from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition
-from databricks.labs.dqx.utils import get_column_name_or_alias, missing_required_packages
+from databricks.labs.dqx.utils import missing_required_packages
 
 # Check if SHAP is available (required for feature contributions)
 # sklearn is always available when this module loads (required dependency for anomaly extras)
@@ -54,9 +54,6 @@ logger = logging.getLogger(__name__)
 
 @register_rule("dataset")
 def has_no_anomalies(
-    merge_columns: list[str],
-    columns: list[str | Column] | None = None,
-    segment_by: list[str] | None = None,
     model: str | None = None,
     registry_table: str | None = None,
     score_threshold: float = 0.60,
@@ -68,8 +65,8 @@ def has_no_anomalies(
     """Check that records are not anomalous according to a trained model(s).
 
     Auto-discovery:
-    - columns=None: Inferred from model registry
-    - segment_by=None: Inferred from model registry (checks if model is segmented)
+    - columns: Inferred from model registry
+    - segmentation: Inferred from model registry (checks if model is segmented)
 
     Output columns:
     - _errors or _warnings: Standard DQX result column based on criticality setting
@@ -80,13 +77,15 @@ def has_no_anomalies(
       - _dq_info.anomaly.threshold: Threshold used
       - _dq_info.anomaly.model: Model name
       - _dq_info.anomaly.segment: Segment values (if segmented)
-      - _dq_info.anomaly.contributions: SHAP values (if requested)
-      - _dq_info.anomaly.confidence_std: Ensemble std (if requested)
+    - _dq_info.anomaly.contributions: SHAP values (if requested)
+    - _dq_info.anomaly.confidence_std: Ensemble std (if requested)
+
+    Notes:
+        DQX always scores using the columns the model was trained on.
+        DQX aligns scored rows back to the input using an internal row id and removes it before returning.
+        Segmentation is inferred from the trained model configuration.
 
     Args:
-        merge_columns: Primary key columns (e.g., ["activity_id"]) for joining results.
-        columns: Columns to check for anomalies (auto-inferred if omitted).
-        segment_by: Segment columns (auto-inferred from model if omitted).
         model: Model name (REQUIRED). Provide the base model name returned from train().
         registry_table: Registry table (auto-derived if omitted).
         score_threshold: Anomaly score threshold (default 0.60). Records with score >= threshold
@@ -108,8 +107,7 @@ def has_no_anomalies(
     """
 
     def apply(df: DataFrame) -> DataFrame:
-        if not merge_columns:
-            raise MissingParameterError("merge_columns is not provided.")
+        df_to_score, local_merge_columns, row_id_col = _ensure_merge_columns(df)
 
         driver_only_local = _DRIVER_ONLY["value"]
 
@@ -129,9 +127,8 @@ def has_no_anomalies(
             )
 
         # Auto-discover configuration
-        nonlocal columns, segment_by
         normalized_columns, segment_by, model_name, registry = _discover_model_and_config(
-            df, model, registry_table, columns, segment_by
+            df_to_score, model, registry_table
         )
 
         # Create scoring configuration
@@ -140,7 +137,7 @@ def has_no_anomalies(
             model_name=model_name,
             registry_table=registry,
             score_threshold=score_threshold,
-            merge_columns=merge_columns,
+            merge_columns=local_merge_columns,
             row_filter=row_filter,
             drift_threshold=drift_threshold,
             drift_threshold_value=drift_threshold if drift_threshold is not None else 3.0,
@@ -150,24 +147,32 @@ def has_no_anomalies(
             driver_only=driver_only_local,
         )
 
-        registry_client = AnomalyModelRegistry(df.sparkSession)
+        registry_client = AnomalyModelRegistry(df_to_score.sparkSession)
 
         # Route to segmented or global scoring
         if segment_by:
-            return _score_segmented(df, config, registry_client)
+            result = _score_segmented(df_to_score, config, registry_client)
+            if row_id_col:
+                result = result.drop(row_id_col)
+            return result
 
         # Try global model first
         record = registry_client.get_active_model(registry, model_name)
         if not record:
             # Fallback to segmented scoring
-            result = _try_segmented_scoring_fallback(df, config, registry_client)
-            if result is not None:
-                return result
+            fallback = _try_segmented_scoring_fallback(df_to_score, config, registry_client)
+            if fallback is not None:
+                if row_id_col:
+                    fallback = fallback.drop(row_id_col)
+                return fallback
             raise InvalidParameterError(
                 f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
             )
 
-        return _score_global_model(df, record, config)
+        result = _score_global_model(df_to_score, record, config)
+        if row_id_col:
+            result = result.drop(row_id_col)
+        return result
 
     # Create condition directly from _dq_info.anomaly.is_anomaly (no intermediate column needed)
     message = F.concat_ws(
@@ -196,6 +201,17 @@ class ScoringConfig:
     include_confidence: bool = False
     segment_by: list[str] | None = None
     driver_only: bool = False
+
+
+_INTERNAL_ROW_ID = "_dqx_row_id"
+
+
+def _ensure_merge_columns(df: DataFrame) -> tuple[DataFrame, list[str], str | None]:
+    if _INTERNAL_ROW_ID in df.columns:
+        raise InvalidParameterError(
+            f"Input DataFrame already contains column '{_INTERNAL_ROW_ID}'. " "Rename the column to use anomaly checks."
+        )
+    return df.withColumn(_INTERNAL_ROW_ID, F.monotonically_increasing_id()), [_INTERNAL_ROW_ID], _INTERNAL_ROW_ID
 
 
 def set_driver_only_for_tests(enabled: bool) -> None:
@@ -459,16 +475,16 @@ def _apply_feature_engineering_for_scoring(
 ) -> DataFrame:
     """Apply feature engineering to DataFrame for scoring.
 
-    Note: merge_columns must exist in the DataFrame as they are required for
+    Note: the internal row identifier must exist in the DataFrame as it is required for
     joining results back in row_filter cases.
     """
     # Validate that all merge_columns exist in the DataFrame
     missing_cols = [c for c in merge_columns if c not in df.columns]
     if missing_cols:
         raise InvalidParameterError(
-            f"merge_columns {missing_cols} not found in DataFrame. "
+            f"Internal row identifier {missing_cols} not found in DataFrame. "
             f"Available columns: {df.columns}. "
-            f"merge_columns must reference actual columns (e.g., primary keys or row identifiers)."
+            "Ensure the anomaly check is applied to the same DataFrame instance."
         )
 
     # Deduplicate columns to avoid duplicate column errors
@@ -969,10 +985,8 @@ def _discover_model_and_config(
     df: DataFrame,
     model: str | None,
     registry_table: str | None,
-    columns_param: list[str | Column] | None,
-    segment_by_param: list[str] | None,
 ) -> tuple[list[str], list[str] | None, str, str]:
-    """Auto-discover columns and segment_by from model registry if not provided.
+    """Auto-discover columns and segmentation from the model registry.
 
     Returns:
         Tuple of (columns, segment_by, model_name, registry)
@@ -980,32 +994,22 @@ def _discover_model_and_config(
     registry_client = AnomalyModelRegistry(df.sparkSession)
     registry = registry_table or _derive_registry_table(df.sparkSession)
 
-    columns = columns_param
-    segment_by = segment_by_param
-
-    # Auto-discover from model if needed
-    if columns is None or segment_by is None:
-        if not model:
-            raise InvalidParameterError("Either 'model' or 'columns' must be provided for auto-discovery.")
-
-        model_name_local = ensure_full_model_name(model, registry)
-        record = _get_record_for_discovery(registry_client, registry, model_name_local)
-
-        if columns is None:
-            columns = list(record.training.columns)
-            logger.info(f"Auto-discovered columns from model '{model_name_local}': {columns}")
-        if segment_by is None:
-            segment_by = record.segmentation.segment_by
-            logger.info(f"Auto-discovered segment_by from model '{model_name_local}': {segment_by}")
-
-    # Validate and normalize
-    assert columns is not None, "columns should be set by now"
-    normalized_columns: list[str] = [get_column_name_or_alias(c) for c in columns]
-
     if not model:
         raise InvalidParameterError("model parameter is required. Example: has_no_anomalies(model='my_model', ...)")
 
     model_name = ensure_full_model_name(model, registry)
+    record = _get_record_for_discovery(registry_client, registry, model_name)
+
+    normalized_columns = list(record.training.columns)
+    segment_by = record.segmentation.segment_by
+
+    missing_columns = [col for col in normalized_columns if col not in df.columns]
+    if missing_columns:
+        raise InvalidParameterError(
+            f"Input DataFrame is missing required columns for model '{model_name}': {missing_columns}. "
+            f"Available columns: {df.columns}."
+        )
+
     return normalized_columns, segment_by, model_name, registry
 
 

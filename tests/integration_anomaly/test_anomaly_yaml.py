@@ -24,11 +24,6 @@ def test_yaml_based_checks(ws, spark: SparkSession, shared_2d_model):
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns:
-          - transaction_id
-          columns:
-          - amount
-          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DEFAULT_SCORE_THRESHOLD}
@@ -65,8 +60,6 @@ def test_yaml_based_checks_columns_autodiscovery(ws, spark: SparkSession, shared
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns:
-          - transaction_id
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DEFAULT_SCORE_THRESHOLD}
@@ -109,11 +102,6 @@ def test_yaml_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns:
-          - transaction_id
-          columns:
-          - amount
-          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DQENGINE_SCORE_THRESHOLD}
@@ -171,11 +159,6 @@ def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns:
-          - transaction_id
-          columns:
-          - amount
-          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: 0.9
@@ -212,12 +195,6 @@ def test_yaml_with_contributions(ws, spark: SparkSession, shared_3d_model):
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns:
-          - transaction_id
-          columns:
-          - amount
-          - quantity
-          - discount
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DEFAULT_SCORE_THRESHOLD}
@@ -254,11 +231,6 @@ def test_yaml_with_drift_threshold(ws, spark: SparkSession, shared_2d_model):
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns:
-          - transaction_id
-          columns:
-          - amount
-          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DQENGINE_SCORE_THRESHOLD}
@@ -296,11 +268,6 @@ def test_yaml_criticality_warn(ws, spark: SparkSession, shared_2d_model):
       check:
         function: has_no_anomalies
         arguments:
-          merge_columns:
-          - transaction_id
-          columns:
-          - amount
-          - quantity
           model: {model_name}
           registry_table: {registry_table}
           score_threshold: {DQENGINE_SCORE_THRESHOLD}
@@ -332,8 +299,7 @@ def test_yaml_parsing_validation(ws, spark: SparkSession):
       check:
         function: has_no_anomalies
         arguments:
-          # Missing columns argument
-          model: test_missing_args
+          # Missing model argument
           score_threshold: {DEFAULT_SCORE_THRESHOLD}
     """
 
@@ -348,7 +314,7 @@ def test_yaml_parsing_validation(ws, spark: SparkSession):
 
     dq_engine = DQEngine(ws, spark)
 
-    # Should raise error about missing columns
+    # Should raise error about missing model
     with pytest.raises(Exception):  # May be TypeError or InvalidParameterError
         result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
         result_df.collect()

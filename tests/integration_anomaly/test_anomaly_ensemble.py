@@ -4,12 +4,9 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import AnomalyParams
 
-from tests.integration_anomaly.test_anomaly_constants import (
-    DEFAULT_SCORE_THRESHOLD,
-    OUTLIER_AMOUNT,
-    OUTLIER_QUANTITY,
-)
+from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.test_anomaly_utils import (
+    score_3d_with_contributions,
     train_simple_2d_model,
     train_simple_3d_model,
 )
@@ -76,7 +73,6 @@ def test_ensemble_scoring_with_confidence(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        columns=["amount", "quantity"],
         score_threshold=DEFAULT_SCORE_THRESHOLD,
         include_confidence=True,
         extract_score=False,
@@ -113,24 +109,15 @@ def test_ensemble_with_feature_contributions(
     )
     train_simple_3d_model(spark, anomaly_engine, model_name, registry_table, train_size=30, params=params)
 
-    # Test data - use factory
-    test_df = test_df_factory(
+    # Apply check with confidence and contributions - use helper
+    result_df = score_3d_with_contributions(
         spark,
+        test_df_factory,
+        anomaly_scorer,
+        model_name,
+        registry_table,
         normal_rows=[(100.0, 2.0, 0.1)],
-        anomaly_rows=[(OUTLIER_AMOUNT, OUTLIER_QUANTITY, 0.95)],
-        columns_schema="amount double, quantity double, discount double",
-    )
-
-    # Apply check with confidence and contributions - use anomaly_scorer
-    result_df = anomaly_scorer(
-        test_df,
-        model_name=model_name,
-        registry_table=registry_table,
-        columns=["amount", "quantity", "discount"],
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
-        include_contributions=True,
         include_confidence=True,
-        extract_score=False,
     )
 
     # Check both confidence and contributions exist in _dq_info

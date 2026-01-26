@@ -33,7 +33,6 @@ def test_training_filters_nulls(
 
     anomaly_engine.train(
         df=df,
-        columns=["amount", "quantity"],
         model_name=model_name,
         registry_table=registry_table,
     )
@@ -65,7 +64,6 @@ def test_nulls_are_scored_not_skipped(spark: SparkSession, shared_2d_model, test
         test_df,
         model_name,
         registry_table,
-        columns=["amount", "quantity"],
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
 
@@ -106,8 +104,6 @@ def test_partial_nulls(spark: SparkSession, shared_3d_model, test_df_factory):
 
     # Call apply function directly to get anomaly_score column
     _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=["amount", "quantity", "discount"],
         model=model_name,
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
@@ -142,7 +138,6 @@ def test_all_nulls_row_is_scored(spark: SparkSession, shared_2d_model, test_df_f
         test_df,
         model_name,
         registry_table,
-        columns=["amount", "quantity"],
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     rows = result_df.collect()
@@ -175,7 +170,6 @@ def test_mixed_null_and_anomaly(spark: SparkSession, shared_2d_model, test_df_fa
         test_df,
         model_name,
         registry_table,
-        columns=["amount", "quantity"],
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     rows = result_df.collect()
