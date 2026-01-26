@@ -44,7 +44,7 @@ def get_check_function_definitions(custom_check_functions: dict[str, Callable] |
         list[dict]: A list of dictionaries, each containing the definition of a check function.
     """
     function_docs: list[dict[str, str]] = []
-    for name, func_type in CHECK_FUNC_REGISTRY.items():
+    for name, func_type in list(CHECK_FUNC_REGISTRY.items()):
         func = resolve_check_function(name, custom_check_functions, fail_on_missing=False)
         if func is None:
             logger.warning(f"Check function {name} not found in the registry")
