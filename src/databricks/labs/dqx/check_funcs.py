@@ -13,7 +13,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -1925,12 +1925,14 @@ def is_data_fresh_per_time_window(
 
 
 @register_rule("dataset")
+@register_for_original_columns_preselection()
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
     ref_df_name: str | None = None,
     ref_table: str | None = None,
     columns: list[str | Column] | None = None,
     strict: bool = False,
+    exclude_columns: list[str | Column] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a schema compatibility check condition and closure for dataset-level validation.
@@ -1940,6 +1942,8 @@ def has_valid_schema(
     In strict mode, validates that the schema matches exactly (same columns, same order, same types)
     for the columns specified in columns or for all columns if columns is not specified.
 
+    All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.
+
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
@@ -1948,6 +1952,8 @@ def has_valid_schema(
         strict: Whether to perform strict schema validation (default: False).
             - False: Validates that all expected columns exist with compatible types (allows extra columns)
             - True: Validates exact schema match (same columns, same order, same types)
+        exclude_columns: Optional list of columns in the checked DataFrame schema to
+            ignore for validation.
 
     Returns:
         A tuple of:
@@ -1976,6 +1982,12 @@ def has_valid_schema(
     if columns:
         column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
+    exclude_column_names: list[str] | None = None
+    if exclude_columns:
+        exclude_column_names = [
+            get_column_name_or_alias(col) if not isinstance(col, str) else col for col in exclude_columns
+        ]
+
     expected_schema = _get_schema(expected_schema or types.StructType(), column_names)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -2003,7 +2015,11 @@ def has_valid_schema(
         else:
             _expected_schema = expected_schema
 
-        actual_schema = df.select(*columns).schema if columns else df.schema
+        selected_column_names = column_names if column_names else df.columns
+        if exclude_column_names:
+            ignore_set = set(exclude_column_names)
+            selected_column_names = [col for col in selected_column_names if col not in ignore_set]
+        actual_schema = df.select(*selected_column_names).schema
 
         if strict:
             errors = _get_strict_schema_comparison(actual_schema, _expected_schema)
