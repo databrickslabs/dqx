@@ -41,7 +41,6 @@ def temporal_model(ws, spark, anomaly_registry_prefix):
     return {
         "model_name": model_name,
         "registry_table": registry_table,
-        "columns": ["amount", "temporal_hour", "temporal_day_of_week"],
     }
 
 
@@ -64,8 +63,6 @@ def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
 
     # Score with temporal features
     _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=["amount", "temporal_hour", "temporal_day_of_week"],
         model=model_name,
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
@@ -120,14 +117,6 @@ def test_multiple_temporal_features(spark: SparkSession, make_random, anomaly_en
 
     # Call apply function directly to get _info column
     _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=[
-            "amount",
-            "temporal_hour",
-            "temporal_day_of_week",
-            "temporal_month",
-            "temporal_quarter",
-        ],
         model=model_name,
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
@@ -179,8 +168,6 @@ def test_temporal_pattern_detection(spark: SparkSession, make_random, anomaly_en
 
     # Call apply function directly to get _info column
     _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=["amount", "temporal_hour"],
         model=model_name,
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
@@ -238,8 +225,6 @@ def test_weekend_feature(spark: SparkSession, make_random, anomaly_engine, anoma
 
     # Score (call apply function directly to get _info column)
     _, apply_fn = has_no_anomalies(
-        merge_columns=["transaction_id"],
-        columns=["amount", "temporal_is_weekend"],
         model=model_name,
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,

@@ -335,39 +335,6 @@ def test_registry_table_format():
 
 
 # ============================================================================
-# Merge Columns Validation Tests
-# ============================================================================
-
-
-def test_merge_columns_required():
-    """Test that merge_columns parameter validation."""
-    # Valid merge columns
-    valid_merge = ["id", "timestamp"]
-    assert isinstance(valid_merge, list)
-    assert len(valid_merge) > 0
-
-    # Invalid: empty merge columns
-    empty_merge = []
-    assert len(empty_merge) == 0
-
-    # Invalid: None merge columns
-    none_merge = None
-    assert none_merge is None
-
-
-def test_merge_columns_must_be_list():
-    """Test merge_columns must be a list."""
-    # Valid
-    assert isinstance(["id"], list)
-    assert isinstance(["id", "timestamp"], list)
-
-    # Invalid types
-    assert not isinstance("id", list)
-    assert not isinstance(("id", "timestamp"), list)
-    assert not isinstance({"id"}, list)
-
-
-# ============================================================================
 # Model Name Required Validation
 # ============================================================================
 
@@ -434,7 +401,6 @@ def test_error_message_formats():
     assert model_name in error_msg
     assert registry in error_msg
 
-    # Missing parameter error
-    error_msg = "merge_columns is not provided."
-    assert "merge_columns" in error_msg
-    assert "not provided" in error_msg
+    # Internal row id collision error
+    error_msg = "Input DataFrame already contains column '_dqx_row_id'."
+    assert "_dqx_row_id" in error_msg

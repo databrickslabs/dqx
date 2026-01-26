@@ -5,15 +5,12 @@ import warnings
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
-import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRegistry,
     compute_config_hash,
 )
-from databricks.labs.dqx.errors import InvalidParameterError
 
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.test_anomaly_utils import (
@@ -46,7 +43,7 @@ def test_explicit_model_names(
     )
 
     # Verify model can be loaded with explicit name - use helper
-    result_df = score_with_anomaly_check(df, model_name, registry_table, ["amount", "quantity"])
+    result_df = score_with_anomaly_check(df, model_name, registry_table)
 
     # Verify _dq_info column exists (anomaly_score is now internal, use _dq_info.anomaly.score)
     assert "_dq_info" in result_df.columns
@@ -108,7 +105,6 @@ def test_multiple_models_in_same_registry(
         df1,
         model_name=model_a,
         registry_table=registry_table,
-        columns=["amount", "quantity"],
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     assert "anomaly_score" in result_a.columns
@@ -118,7 +114,6 @@ def test_multiple_models_in_same_registry(
         df2,
         model_name=model_b,
         registry_table=registry_table,
-        columns=["discount", "weight"],
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
     assert "anomaly_score" in result_b.columns
@@ -201,7 +196,7 @@ def test_model_staleness_warning(
     # Score with old model (should issue warning) - use helper
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        _ = score_with_anomaly_check(df, model_name, registry_table, ["amount", "quantity"])
+        _ = score_with_anomaly_check(df, model_name, registry_table)
 
         # Check that staleness warning was issued
         stale_warnings = [warning for warning in w if "days old" in str(warning.message)]
@@ -237,7 +232,6 @@ def test_registry_table_schema(
         "algorithm",
         "mlflow_run_id",
         "status",
-        "columns",
         "hyperparameters",
         "training_rows",
         "training_time",
@@ -281,7 +275,6 @@ def test_registry_stores_metadata(
     assert record["identity"]["algorithm"].startswith("IsolationForest")
     assert record["identity"]["status"] == "active"
     assert record["training"]["training_time"] is not None
-    assert record["training"]["columns"] == ["amount", "quantity", "discount"]
 
     # Verify baseline_stats exists
     assert record["training"]["baseline_stats"] is not None
@@ -411,35 +404,3 @@ def test_config_change_warning(
     config_warnings = [msg for msg in warning_messages if "different configuration" in msg]
     assert len(config_warnings) > 0, f"Expected config warning, got: {warning_messages}"
     assert "will be archived" in config_warnings[0]
-
-
-def test_scoring_validates_config_hash(
-    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
-):
-    """Test that scoring validates config hash and errors on mismatch."""
-    unique_id = make_random(8).lower()
-    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-    model_name = f"test_score_validate_{make_random(4).lower()}"
-
-    # Train with specific columns (2D) - use helper
-    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
-
-    # Try to score with different columns (should error)
-    df_score = spark.createDataFrame(
-        [(100.0 + i * 0.5, 2.0, 0.1) for i in range(10)],
-        "amount double, quantity double, discount double",
-    )
-
-    with pytest.raises(InvalidParameterError) as exc_info:
-        _, apply_fn = has_no_anomalies(
-            merge_columns=["transaction_id"],
-            columns=["amount", "quantity", "discount"],  # Different columns!
-            model=model_name,
-            registry_table=registry_table,
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
-        )
-        result = apply_fn(df_score)
-        result.collect()  # Force evaluation
-
-    assert "Configuration mismatch" in str(exc_info.value)
-    assert "Trained columns" in str(exc_info.value)

@@ -62,9 +62,7 @@ Train a model on recent "good" data, then use it in checks:
 
     checks = [
         has_no_anomalies(
-            merge_columns=["order_id"],
             model=model_name,
-            columns=["amount", "quantity", "discount"],
         )
     ]
 
@@ -94,9 +92,7 @@ Anomaly checks add `_dq_info` with structured metadata. Feature contributions ar
 
 ```python
 has_no_anomalies(
-    merge_columns=["order_id"],
     model=model_name,
-    columns=["amount", "quantity", "discount"],
     include_contributions=False,
 )
 ```

@@ -2742,9 +2742,7 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 
 checks = [
     has_no_anomalies(
-        merge_columns=["order_id"],
         model="orders_monitor",
-        columns=["amount", "quantity", "shipping_cost"],
         score_threshold=0.6,  # higher = more anomalous, default is 0.6 (balanced)
     )
 ]
@@ -2757,9 +2755,7 @@ checks = [
   check:
     function: has_no_anomalies
     arguments:
-      merge_columns: [order_id]
       model: dqx_anomaly_orders
-      columns: [amount, quantity, shipping_cost]
       score_threshold: 0.6  # optional
 ```
 
@@ -2767,13 +2763,9 @@ checks = [
 - 0.3 aggressive (potentially many anomalies), 0.6 balanced (default), 0.7 conservative (fewer anomalies), 0.9 very conservative (extreme anomalies only).
 
 **Parameters**
-- `columns`: Columns to check for anomalies.
 - `registry_table`: Registry table (auto-derived if omitted).
 - `score_threshold`: Anomaly score threshold (default 0.6).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
-- `merge_columns`: Columns for joining scored results back (default: all columns).
-  - **Performance tip**: Provide primary key columns when using `row_filter` for faster joins.
-  - Example: `merge_columns=["order_id"]` instead of joining on all 50 columns.
 - `drift_threshold`: Drift detection threshold (default 3.0, `None` to disable). See the section below for more details.
 - `include_contributions`: Include per-feature contributions in `_dq_info.anomaly.contributions` (default `True`). See the section below for more details.
 - `include_confidence`: Include `anomaly_score_std` for ensembles (default `False`). Useful when using ensemble training.
@@ -2782,8 +2774,10 @@ checks = [
 - For workflow training, `model_name` defaults to `dqx_anomaly_<run_config.name>` when omitted.
 - `registry_table` is auto-derived when omitted.
 - Registry table auto-created if missing.
+- Scoring uses the columns the model was trained on.
 - Rows with nulls in anomaly columns are skipped (not flagged).
 - When `row_filter` is used, all original rows are preserved; non-filtered rows have `null` scores.
+- Row alignment is handled internally; no row-id parameters are required.
 - Fails fast if Spark < 3.4.
 
 ### Advanced Features
@@ -2813,8 +2807,6 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 
 checks = [
     has_no_anomalies(
-        merge_columns=["order_id"],
-        columns=["amount", "quantity", "discount"],
         score_threshold=0.6,
         include_contributions=False,
     )
@@ -2832,8 +2824,6 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 
 checks = [
     has_no_anomalies(
-        merge_columns=["order_id"],
-        columns=["amount", "quantity"],
         drift_threshold=3.0,  # Z-score threshold (default 3.0)
     )
 ]

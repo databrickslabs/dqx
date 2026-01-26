@@ -526,7 +526,6 @@ checks_combined = [
     DQDatasetRule(
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "merge_columns": ["transaction_id"],
             "model": model_name_auto,
             "registry_table": registry_table
             # Default: 2 models for confidence, explains why data is anomalous, threshold 0.60
@@ -826,7 +825,6 @@ checks_manual = [
     DQDatasetRule(
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "merge_columns": ["transaction_id"],
             "model": model_name_manual,
             "score_threshold": 0.5,
             "registry_table": registry_table
@@ -873,7 +871,6 @@ checks_with_contrib = [
     DQDatasetRule(
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "merge_columns": ["transaction_id"],
             "model": model_name_manual,
             "score_threshold": 0.5,
             "include_contributions": True,  # Add this to get explanations!
@@ -1061,7 +1058,6 @@ print(f"   • Production-ready out-of-the-box!")
 # MAGIC
 # MAGIC checks = [
 # MAGIC     has_no_anomalies(
-# MAGIC         merge_columns=["your_id_column"],
 # MAGIC         model="your_model_name"
 # MAGIC     )
 # MAGIC ]
