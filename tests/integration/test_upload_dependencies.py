@@ -115,6 +115,7 @@ def test_workflow_deployment_uploads_dependencies(ws, installation_with_upload_d
         patch.object(wheels, 'upload_wheel_dependencies') as mock_upload_deps,
         patch.object(wheels, 'upload_to_wsfs') as mock_upload_main,
         patch.object(ws.jobs, 'create') as mock_create_job,
+        patch.object(ws.permissions, 'update'),
     ):
         mock_upload_deps.return_value = [
             "/foo/bar/databricks_sdk-0.71.0-py3-none-any.whl",
@@ -191,6 +192,7 @@ def test_dependency_discovery_includes_extras(ws, installation_with_upload_deps)
         patch.object(wheels, 'upload_wheel_dependencies') as mock_upload_deps,
         patch.object(wheels, 'upload_to_wsfs') as mock_upload_main,
         patch.object(ws.jobs, 'create') as mock_create_job,
+        patch.object(ws.permissions, 'update'),
     ):
         mock_upload_deps.return_value = ["/foo/bar/dep.whl"]
         mock_upload_main.return_value = "/foo/bar/dqx.whl"
