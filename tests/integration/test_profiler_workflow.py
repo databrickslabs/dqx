@@ -42,7 +42,7 @@ def test_profiler_workflow_when_timeout(ws, setup_serverless_workflows):
     assert "timed out" in str(failure.value)
 
 
-def test_profiler_workflow(ws, spark, setup_workflows):
+def test_profiler_workflow(ws, spark_keep_alive, setup_workflows):
     installation_ctx, run_config = setup_workflows()
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
@@ -53,7 +53,7 @@ def test_profiler_workflow(ws, spark, setup_workflows):
         product_name=installation_ctx.installation.product(),
     )
 
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
@@ -62,9 +62,9 @@ def test_profiler_workflow(ws, spark, setup_workflows):
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
+def test_profiler_workflow_serverless(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
 
     config = InstallationChecksStorageConfig(
         run_config_name=run_config.name,
@@ -91,7 +91,7 @@ def test_profiler_workflow_serverless(ws, spark, setup_serverless_workflows):
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows_with_custom_folder):
+def test_profiler_workflow_with_custom_install_folder(ws, spark_keep_alive, setup_workflows_with_custom_folder):
     installation_ctx, run_config = setup_workflows_with_custom_folder()
 
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config.name)
@@ -103,7 +103,7 @@ def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows
         install_folder=installation_ctx.installation.install_folder(),
     )
 
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
@@ -112,7 +112,7 @@ def test_profiler_workflow_with_custom_install_folder(ws, spark, setup_workflows
     assert status, f"Profile summary stats file {run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
+def test_profiler_workflow_for_multiple_run_configs(ws, spark_keep_alive, setup_workflows):
     installation_ctx, run_config = setup_workflows()
 
     second_run_config = copy.deepcopy(run_config)
@@ -127,7 +127,7 @@ def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
     # run workflow
     installation_ctx.deployed_workflows.run_workflow("profiler", run_config_name="")
 
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
 
     # assert first run config results
     workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
@@ -154,8 +154,9 @@ def test_profiler_workflow_for_multiple_run_configs(ws, spark, setup_workflows):
     assert status, f"Profile summary stats file {second_run_config.profiler_config.summary_stats_file} does not exist."
 
 
-def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_for_patterns(ws, spark_keep_alive, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -183,8 +184,11 @@ def test_profiler_workflow_for_patterns(ws, spark, setup_workflows, make_table, 
     assert checks, f"Checks for {second_table} were not generated"
 
 
-def test_profiler_workflow_for_patterns_with_exclude_patterns(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_for_patterns_with_exclude_patterns(
+    ws, spark_keep_alive, setup_workflows, make_table, make_random
+):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -214,7 +218,7 @@ def test_profiler_workflow_for_patterns_with_exclude_patterns(ws, spark, setup_w
         engine.load_checks(config=workspace_file_storage_config)
 
 
-def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_for_patterns_exclude_output(ws, spark_keep_alive, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
 
     first_table = run_config.input_config.location
@@ -229,6 +233,7 @@ def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflow
     output_table_suffix = "_output"
     quarantine_table_suffix = "_quarantine"
 
+    spark = spark_keep_alive.spark
     exclude_output_table = _make_second_input_table(
         spark, catalog_name, schema_name, first_table, make_random, output_table_suffix
     )
@@ -268,7 +273,9 @@ def test_profiler_workflow_for_patterns_exclude_output(ws, spark, setup_workflow
         engine.load_checks(config=workspace_file_storage_config)
 
 
-def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_for_patterns_table_checks_storage(
+    ws, spark_keep_alive, setup_workflows, make_table, make_random
+):
     installation_ctx, run_config = setup_workflows()
 
     first_table_full_name = run_config.input_config.location
@@ -280,6 +287,7 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     run_config.checks_location = f"{catalog_name}.{schema_name}.checks"
     installation_ctx.installation.save(config)
 
+    spark = spark_keep_alive.spark
     second_table_full_name = _make_second_input_table(
         spark, catalog_name, schema_name, first_table_full_name, make_random
     )
@@ -308,7 +316,7 @@ def test_profiler_workflow_for_patterns_table_checks_storage(ws, spark, setup_wo
     assert checks, f"Checks for {second_table_full_name} were not generated"
 
 
-def test_profiler_workflow_filter_out_all_data(ws, spark, setup_workflows, make_table, make_random):
+def test_profiler_workflow_filter_out_all_data(ws, spark_keep_alive, setup_workflows, make_table, make_random):
     installation_ctx, run_config = setup_workflows()
 
     config = installation_ctx.config
@@ -325,12 +333,12 @@ def test_profiler_workflow_filter_out_all_data(ws, spark, setup_workflows, make_
     workspace_file_storage_config = WorkspaceFileChecksStorageConfig(
         location=f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}",
     )
-    engine = DQEngine(ws, spark)
+    engine = DQEngine(ws, spark_keep_alive.spark)
     checks = engine.load_checks(config=workspace_file_storage_config)
     assert checks == [], "Checks should be empty when profiling an empty input dataset"
 
 
-def test_profiler_workflow_with_ai_rules_generation(ws, spark, setup_serverless_workflows):
+def test_profiler_workflow_with_ai_rules_generation(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
 
     config = installation_ctx.config
@@ -346,7 +354,7 @@ def test_profiler_workflow_with_ai_rules_generation(ws, spark, setup_serverless_
         product_name=installation_ctx.installation.product(),
     )
 
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
@@ -365,7 +373,7 @@ def test_profiler_workflow_with_ai_rules_generation(ws, spark, setup_serverless_
 
 
 def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secrets(
-    ws, spark, setup_serverless_workflows, make_secret_scope
+    ws, spark_keep_alive, setup_serverless_workflows, make_secret_scope
 ):
     installation_ctx, run_config = setup_serverless_workflows()
 
@@ -391,7 +399,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
         product_name=installation_ctx.installation.product(),
     )
 
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
@@ -409,7 +417,7 @@ def test_profiler_workflow_with_ai_rules_generation_and_model_api_keys_as_secret
     assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
 
 
-def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark, setup_serverless_workflows):
+def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
 
     config = installation_ctx.config
@@ -429,7 +437,7 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark,
         product_name=installation_ctx.installation.product(),
     )
 
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
@@ -447,7 +455,9 @@ def test_profiler_workflow_with_ai_rules_generation_with_custom_funcs(ws, spark,
     assert expected_ai_generated_check == actual_ai_generated_check, "AI generated check not found in the loaded checks"
 
 
-def test_profiler_workflow_with_llm_pk_detection(ws, spark, make_schema, make_table, setup_serverless_workflows):
+def test_profiler_workflow_with_llm_pk_detection(
+    ws, spark_keep_alive, make_schema, make_table, setup_serverless_workflows
+):
     installation_ctx, run_config = setup_serverless_workflows()
 
     schema = make_schema(catalog_name=TEST_CATALOG)
@@ -471,7 +481,7 @@ def test_profiler_workflow_with_llm_pk_detection(ws, spark, make_schema, make_ta
         product_name=installation_ctx.installation.product(),
     )
 
-    dq_engine = DQEngine(ws, spark)
+    dq_engine = DQEngine(ws, spark_keep_alive.spark)
     checks = dq_engine.load_checks(config=config)
     assert checks, "Checks were not loaded correctly"
 
