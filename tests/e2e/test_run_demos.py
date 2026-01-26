@@ -110,7 +110,7 @@ def test_run_dqx_demo_pii_detection(ws, make_notebook, make_job, library_ref):
 
 
 def test_run_dqx_dlt_demo(
-    skip_if_runtime_not_serverless_compatible, ws, make_notebook, make_schema, make_pipeline, make_job, library_ref
+    skip_if_classic_compute, ws, make_notebook, make_schema, make_pipeline, make_job, library_ref
 ):
     """
     Test running the DLT demo notebook in a serverless pipeline.
