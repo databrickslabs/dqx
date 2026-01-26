@@ -199,7 +199,8 @@ class DeployedWorkflows:
         for record in self._fetch_last_run_attempt_logs(workflow, run_id):
             task_logger = logging.getLogger(record.component)
             MaxedStreamHandler.install_handler(task_logger)
-            task_logger.setLevel(logger.getEffectiveLevel())
+            # Always show DEBUG level logs when relaying from files
+            task_logger.setLevel(logging.DEBUG)
             log_level = logging.getLevelName(record.level)
             task_logger.log(log_level, record.message)
         MaxedStreamHandler.uninstall_handlers()

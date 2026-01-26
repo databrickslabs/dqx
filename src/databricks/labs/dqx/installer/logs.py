@@ -132,8 +132,9 @@ class TaskLogger(contextlib.AbstractContextManager):
         self._init_run_readme()
         self._databricks_logger.setLevel(logging.DEBUG)
         self._app_logger.setLevel(logging.DEBUG)
-        console_handler = install_logger(self._log_level)
-        self._databricks_logger.removeHandler(console_handler)
+        # Install console logger for real-time log display at configured level
+        install_logger(self._log_level)
+        # Add file handler for DEBUG level logs
         self._databricks_logger.addHandler(self._file_handler)
         return self
 
