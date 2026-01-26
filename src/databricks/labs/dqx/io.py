@@ -5,6 +5,7 @@ from typing import Any
 from pyspark.sql import SparkSession, DataFrameWriter
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql.streaming import StreamingQuery, DataStreamWriter
+from delta.tables import DeltaTable
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.errors import InvalidConfigError
@@ -101,6 +102,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
             - format: Data format (default: 'delta')
             - options: Additional Spark write options as dict (e.g., "mergeSchema", "overwriteSchema")
             - partition_by: Optional list of columns to partition by
+            - cluster_by: Optional list of columns to cluster by (Delta Liquid Clustering)
             - trigger: (Streaming only) Trigger configuration dict (e.g., "availableNow", "processingTime")
 
     Returns:
@@ -129,6 +131,9 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
     batch_writer = df.write.format(output_config.format).mode(output_config.mode).options(**output_config.options)
     if output_config.partition_by:
         batch_writer = batch_writer.partitionBy(*output_config.partition_by)
+    if output_config.cluster_by:
+        DeltaTable.createIfNotExists().tableName(output_config.location).addColumns(df.schema).clusterBy(*output_config.cluster_by).execute()
+        batch_writer = batch_writer.clusterBy(*output_config.cluster_by)
     _write_batch(batch_writer, output_config)
     return None
 
