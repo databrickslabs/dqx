@@ -137,11 +137,16 @@ class DQEngineCore(DQEngineCoreBase):
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
+        rule_set_fingerprint = generate_rule_set_fingerprint(checks)
         result_df = self._create_results_array(
-            df, error_checks, self._result_column_names[ColumnArguments.ERRORS], ref_dfs
+            df, error_checks, self._result_column_names[ColumnArguments.ERRORS], rule_set_fingerprint, ref_dfs
         )
         result_df = self._create_results_array(
-            result_df, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs
+            result_df,
+            warning_checks,
+            self._result_column_names[ColumnArguments.WARNINGS],
+            rule_set_fingerprint,
+            ref_dfs,
         )
         observed_result = self._observe_metrics(result_df)
 
@@ -362,7 +367,12 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     def _create_results_array(
-        self, df: DataFrame, checks: list[DQRule], dest_col: str, ref_dfs: dict[str, DataFrame] | None = None
+        self,
+        df: DataFrame,
+        checks: list[DQRule],
+        dest_col: str,
+        rule_set_fingerprint: str,
+        ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
@@ -377,6 +387,7 @@ class DQEngineCore(DQEngineCoreBase):
             checks: List of DQRule instances representing the checks to apply.
             dest_col: Name of the output column where the check results map will be stored.
             ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
+            rule_set_fingerprint: Fingerprint of the rule set to exibit in the results.
 
         Returns:
             DataFrame with an added array column (*dest_col*) containing the results of the applied checks.
@@ -385,8 +396,6 @@ class DQEngineCore(DQEngineCoreBase):
             # No checks then just append a null array result
             empty_result = F.lit(None).cast(dq_result_schema).alias(dest_col)
             return df.select("*", empty_result)
-
-        rule_set_fingerprint = generate_rule_set_fingerprint(checks)
 
         check_conditions = []
         current_df = df

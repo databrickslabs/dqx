@@ -2,8 +2,11 @@ import logging
 import os
 from datetime import datetime, timezone
 from io import BytesIO
+import random
+import string
 from typing import Any
 from unittest.mock import patch
+from collections.abc import Generator, Callable
 
 from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame
@@ -11,11 +14,18 @@ import pytest
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
+from databricks.labs.dqx.checks_serializer import (
+    generate_rule_set_fingerprint_from_dict,
+    serialize_checks,
+    deserialize_checks,
+)
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
+from databricks.labs.dqx.rule import DQRule
 from databricks.labs.dqx.schema import dq_result_schema
+from databricks.sdk.service.catalog import SchemaInfo
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 
 from tests.conftest import TEST_CATALOG
@@ -37,6 +47,7 @@ def build_quality_violation(
     name: str,
     message: str,
     columns: list[str] | None,
+    rules: list[dict] | None = None,
     *,
     function: str = "is_not_null_and_not_empty",
 ) -> dict[str, Any]:
@@ -50,6 +61,8 @@ def build_quality_violation(
         "function": function,
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
+        "rule_fingerprint": get_rule_fingerprint_from_checks(rules, name, function),
+        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(rules, name, function),
         "user_metadata": {},
     }
 
@@ -440,3 +453,86 @@ def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, 
 def assert_output_df(spark, expected_output, output_config):
     checked_df = spark.table(output_config.location)
     assert_df_equality(checked_df, expected_output, ignore_nullable=True)
+
+
+@pytest.fixture
+def make_schema_seed(
+    sql_backend,
+    log_workspace_link,
+    watchdog_remove_after,
+) -> Generator[Callable[..., SchemaInfo], None, None]:
+    """
+    Create a schema and return its info. Remove it after the test. Returns instance of `databricks.sdk.service.catalog.SchemaInfo`.
+
+    Keyword Arguments:
+    * `catalog_name` (str): The name of the catalog where the schema will be created. Default is `hive_metastore`.
+    * `name` (str): The name of the schema. Default is a random string.
+    * `location` (str): The path to the location if it should be a managed schema.
+
+    Usage:
+    ```python
+    def test_catalog_fixture(make_catalog, make_schema, make_table):
+        from_catalog = make_catalog()
+        from_schema = make_schema(catalog_name=from_catalog.name)
+        from_table_1 = make_table(catalog_name=from_catalog.name, schema_name=from_schema.name)
+        logger.info(f"Created new schema: {from_table_1}")
+    ```
+    """
+
+    def create(
+        *, catalog_name: str = "hive_metastore", name: str | None = None, location: str | None = None
+    ) -> SchemaInfo:
+        name = name or f"dummy_s{generate_random_name_seed(8,32)}".lower()
+        full_name = f"{catalog_name}.{name}".lower()
+        schema_ddl = f"CREATE SCHEMA {full_name}"
+        if location:
+            schema_ddl = f"{schema_ddl} LOCATION '{location}'"
+        schema_ddl = f"{schema_ddl} WITH DBPROPERTIES (RemoveAfter={watchdog_remove_after})"
+        sql_backend.execute(schema_ddl)
+        schema_info = SchemaInfo(catalog_name=catalog_name, name=name, full_name=full_name, storage_location=location)
+        path = f'explore/data/{schema_info.catalog_name}/{schema_info.name}'
+        log_workspace_link(f'{schema_info.full_name} schema', path)
+        return schema_info
+
+    def remove(schema_info: SchemaInfo):
+        sql_backend.execute(f"DROP SCHEMA IF EXISTS {schema_info.full_name} CASCADE")
+
+    yield from factory("schema", create, remove)
+
+
+def generate_random_name_seed(length: int, seed: int) -> str:
+    random.seed(seed)
+    charset = string.ascii_uppercase + string.ascii_lowercase + string.digits
+    return ''.join(random.choice(charset) for _ in range(length))
+
+
+def generate_rule_and_set_fingerprint_from_rules(rules: list) -> list[dict]:
+    checks_dict = rules
+    if all(isinstance(x, DQRule) for x in rules):
+        checks_dict = serialize_checks(rules)
+    else:
+        # serialize and deserialize to get check name to link it in the result dataframe.
+        checks_rules = deserialize_checks(rules)
+        checks_dict = serialize_checks(checks_rules)
+    rule_fingerprint_checks = generate_rule_set_fingerprint_from_dict(checks_dict)
+    return rule_fingerprint_checks
+
+
+def get_rule_fingerprint_from_checks(checks: list[dict] | None, check_name: str, function: str) -> str | None:
+    rule_dict = {}
+    if checks:
+        for check in checks:
+            if check.get("name") == check_name and check["check"]["function"] == function:
+                rule_dict = check
+        return rule_dict.get("rule_fingerprint", None)
+    return None
+
+
+def get_rule_set_fingerprint_from_checks(checks: list[dict] | None, check_name: str, function: str) -> str | None:
+    rule_dict = {}
+    if checks:
+        for check in checks:
+            if check.get("name") == check_name and check["check"]["function"] == function:
+                rule_dict = check
+        return rule_dict.get("rule_set_fingerprint", None)
+    return None

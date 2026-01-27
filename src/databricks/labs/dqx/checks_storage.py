@@ -136,9 +136,15 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
         rules_df = deserialize_checks_to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
         rule_set_fingerprint = rules_df.select("rule_set_fingerprint").take(1)[0]['rule_set_fingerprint']
-        if self.ws.tables.exists(config.location).table_exists:
+
+        if self.spark.catalog.tableExists(config.location):
             df = self.spark.read.table(config.location)
-            if df.where(f"rule_set_fingerprint = '{rule_set_fingerprint}'").count() > 0:
+            if (
+                df.where(
+                    f"run_config_name = '{config.run_config_name}' AND rule_set_fingerprint = '{rule_set_fingerprint}'"
+                ).count()
+                > 0
+            ):
                 logger.info(
                     f"Checks with rule_set_fingerprint '{rule_set_fingerprint}' already exist in table '{config.location}'. Skipping save."
                 )

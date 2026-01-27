@@ -23,6 +23,11 @@ from databricks.labs.dqx.errors import InvalidCheckError
 
 CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
+    " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>"
+)
+
+EXTENDED_CHECKS_TABLE_SCHEMA = (
+    "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
     " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>,"
     " rule_fingerprint STRING, rule_set_fingerprint STRING,created_at TIMESTAMP"
 )
@@ -65,18 +70,21 @@ def serialize_checks_from_dataframe(
     Returns:
             List of data quality check specifications as a Python dictionary
     """
-    if rule_set_fingerprint is None:
-        # select the most recent rule_set_fingerprint for the run_config_name
-        rule_set_fingerprint = (
-            df.where(f"run_config_name = '{run_config_name}'")
-            .select("rule_set_fingerprint")
-            .orderBy(F.col("created_at").desc())
-            .take(1)[0]["rule_set_fingerprint"]
-        )
 
-    check_rows = df.where(
-        f"run_config_name = '{run_config_name}' AND rule_set_fingerprint = '{rule_set_fingerprint}'"
-    ).collect()
+    df_checks = df.where(f"run_config_name = '{run_config_name}'")
+    if 'rule_set_fingerprint' in df.columns:
+
+        if rule_set_fingerprint is None:
+            # select the most recent rule_set_fingerprint for the run_config_name
+            rule_set_fingerprint = (
+                df.where(f"run_config_name = '{run_config_name}'")
+                .select("rule_set_fingerprint")
+                .orderBy(F.col("created_at").desc())
+                .take(1)[0]["rule_set_fingerprint"]
+            )
+        df_checks = df_checks.where(f"rule_set_fingerprint = '{rule_set_fingerprint}'")
+
+    check_rows = df_checks.collect()
     collect_limit = 500
     if len(check_rows) > collect_limit:
         warnings.warn(
@@ -144,8 +152,7 @@ def deserialize_checks_to_dataframe(
     created_at = datetime.now()
     rule_set_fingerprint = generate_rule_set_fingerprint(dq_rule_checks)
     dq_rule_rows = []
-    print(checks)
-    print(dq_rule_checks)
+
     for dq_rule_check in dq_rule_checks:
         arguments = dq_rule_check.check_func_kwargs
 
@@ -172,12 +179,12 @@ def deserialize_checks_to_dataframe(
             ]
         )
     print(dq_rule_rows)
-    return spark.createDataFrame(dq_rule_rows, CHECKS_TABLE_SCHEMA)
+    return spark.createDataFrame(dq_rule_rows, EXTENDED_CHECKS_TABLE_SCHEMA)
 
 
 def generate_rule_set_fingerprint(checks: list[DQRule]) -> str:
     rule_dicts = [check.rule_fingerprint for check in checks]
-    return str(hash(tuple(sorted(rule_dicts))))
+    return generate_hash(rule_dicts)
 
 
 def generate_hash(input_object: Any) -> str:
