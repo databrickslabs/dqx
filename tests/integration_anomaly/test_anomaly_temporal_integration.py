@@ -10,6 +10,7 @@ from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
 
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
+from tests.integration_anomaly.test_anomaly_utils import qualify_model_name
 
 
 @pytest.fixture
@@ -31,15 +32,16 @@ def temporal_model(ws, spark, anomaly_registry_prefix):
 
     # Train model
     engine = AnomalyEngine(ws, spark)
+    full_model_name = qualify_model_name(model_name, registry_table)
     engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour", "temporal_day_of_week"],
-        model_name=model_name,
+        model_name=full_model_name,
         registry_table=registry_table,
     )
 
     return {
-        "model_name": model_name,
+        "model_name": full_model_name,
         "registry_table": registry_table,
     }
 
@@ -63,7 +65,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
 
     # Score with temporal features
     _, apply_fn = has_no_anomalies(
-        model=model_name,
+        model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
@@ -78,7 +80,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
 def test_multiple_temporal_features(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test training with multiple temporal features."""
     unique_id = make_random(8).lower()
-    model_name = f"test_multi_temporal_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_multi_temporal_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     df = spark.sql("SELECT 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time FROM range(50)")
@@ -104,7 +106,7 @@ def test_multiple_temporal_features(spark: SparkSession, make_random, anomaly_en
             "temporal_month",
             "temporal_quarter",
         ],
-        model_name=model_name,
+        model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
     )
 
@@ -117,7 +119,7 @@ def test_multiple_temporal_features(spark: SparkSession, make_random, anomaly_en
 
     # Call apply function directly to get _info column
     _, apply_fn = has_no_anomalies(
-        model=model_name,
+        model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
@@ -130,7 +132,7 @@ def test_multiple_temporal_features(spark: SparkSession, make_random, anomaly_en
 def test_temporal_pattern_detection(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test that model learns time-based patterns."""
     unique_id = make_random(8).lower()
-    model_name = f"test_temporal_pattern_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_temporal_pattern_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Create data with distinct patterns for different hours
@@ -148,7 +150,7 @@ def test_temporal_pattern_detection(spark: SparkSession, make_random, anomaly_en
     anomaly_engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_hour"],
-        model_name=model_name,
+        model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
     )
 
@@ -168,7 +170,7 @@ def test_temporal_pattern_detection(spark: SparkSession, make_random, anomaly_en
 
     # Call apply function directly to get _info column
     _, apply_fn = has_no_anomalies(
-        model=model_name,
+        model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )
@@ -191,7 +193,7 @@ def test_temporal_pattern_detection(spark: SparkSession, make_random, anomaly_en
 def test_weekend_feature(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test is_weekend temporal feature."""
     unique_id = make_random(8).lower()
-    model_name = f"test_weekend_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_weekend_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on weekday data
@@ -208,7 +210,7 @@ def test_weekend_feature(spark: SparkSession, make_random, anomaly_engine, anoma
     anomaly_engine.train(
         df=df_with_temporal,
         columns=["amount", "temporal_is_weekend"],
-        model_name=model_name,
+        model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
     )
 
@@ -225,7 +227,7 @@ def test_weekend_feature(spark: SparkSession, make_random, anomaly_engine, anoma
 
     # Score (call apply function directly to get _info column)
     _, apply_fn = has_no_anomalies(
-        model=model_name,
+        model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         score_threshold=DEFAULT_SCORE_THRESHOLD,
     )

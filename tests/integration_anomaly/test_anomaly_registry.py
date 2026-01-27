@@ -60,8 +60,8 @@ def test_multiple_models_in_same_registry(
     """Test training multiple models in the same registry table."""
     unique_id = make_random(8).lower()
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-    model_a = f"model_a_{make_random(4).lower()}"
-    model_b = f"model_b_{make_random(4).lower()}"
+    model_a = f"{anomaly_registry_prefix}.model_a_{make_random(4).lower()}"
+    model_b = f"{anomaly_registry_prefix}.model_b_{make_random(4).lower()}"
 
     # Train first model - use helper
     train_simple_2d_model(spark, anomaly_engine, model_a, registry_table)
@@ -95,8 +95,8 @@ def test_multiple_models_in_same_registry(
     model_names = [row["model_name"] for row in registry_df.select("identity.model_name").distinct().collect()]
 
     # Models are stored with full three-level names
-    assert f"{anomaly_registry_prefix}.{model_a}" in model_names
-    assert f"{anomaly_registry_prefix}.{model_b}" in model_names
+    assert model_a in model_names
+    assert model_b in model_names
 
     # Verify correct model is loaded for each check - use anomaly_scorer
 
@@ -125,14 +125,14 @@ def test_active_model_retrieval(
     """Test that get_active_model() returns the most recent model."""
     unique_id = make_random(8).lower()
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-    model_name = f"test_active_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_active_{make_random(4).lower()}"
 
     # Train first version - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Get active model (use full three-level name)
     registry = AnomalyModelRegistry(spark)
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
+    full_model_name = model_name
     model_v1 = registry.get_active_model(registry_table, full_model_name)
 
     assert model_v1 is not None
@@ -170,7 +170,7 @@ def test_model_staleness_warning(
 ):
     """Test that staleness warning is issued when model is >30 days old."""
     unique_id = make_random(8).lower()
-    model_name = f"test_stale_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_stale_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper with standard training data
@@ -185,7 +185,7 @@ def test_model_staleness_warning(
     )
 
     # Mock old training_time in registry (use full three-level name)
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
+    full_model_name = model_name
     old_time = datetime.utcnow() - timedelta(days=35)
     spark.sql(
         f"UPDATE {registry_table} "
@@ -210,7 +210,7 @@ def test_registry_table_schema(
     """Test that registry table has all expected columns."""
     unique_id = make_random(8).lower()
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-    model_name = f"test_schema_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_schema_{make_random(4).lower()}"
 
     # Train model - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
@@ -259,18 +259,17 @@ def test_registry_stores_metadata(
     """Test that registry stores comprehensive metadata."""
     unique_id = make_random(8).lower()
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-    model_name = f"test_metadata_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_metadata_{make_random(4).lower()}"
 
     # Train model - use helper with standard 3D training data
     train_simple_3d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_3d_training_data())
 
     # Query registry (use full three-level name)
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
-    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
 
     # Verify key metadata is present
-    assert record["identity"]["model_name"] == full_model_name
+    assert record["identity"]["model_name"] == model_name
     assert record["identity"]["model_uri"] is not None
     assert record["identity"]["algorithm"].startswith("IsolationForest")
     assert record["identity"]["status"] == "active"
@@ -280,13 +279,11 @@ def test_registry_stores_metadata(
     assert record["training"]["baseline_stats"] is not None
     assert len(record["training"]["baseline_stats"]) == 3  # Three columns
 
-    # Verify feature_importance exists
-    assert record["features"]["feature_importance"] is not None
-    assert len(record["features"]["feature_importance"]) == 3  # Three features
+    # Verify feature_importance is not populated (global importance removed)
+    assert record["features"]["feature_importance"] is None
 
     # Verify metrics exist
     assert record["training"]["metrics"] is not None
-    assert "recommended_threshold" in record["training"]["metrics"]
 
 
 def test_nonexistent_registry_returns_none(spark: SparkSession, anomaly_registry_prefix):
@@ -355,14 +352,14 @@ def test_config_hash_stored_during_training(
     """Test that config_hash is stored in registry during training."""
     unique_id = make_random(8).lower()
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-    model_name = f"test_config_hash_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_config_hash_{make_random(4).lower()}"
     columns = ["amount", "quantity"]
 
     # Train model - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
 
     # Verify config_hash is stored
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
+    full_model_name = model_name
     record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
 
     assert record is not None
@@ -379,7 +376,7 @@ def test_config_change_warning(
     """Test that warning is issued when retraining with different config."""
     unique_id = make_random(8).lower()
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
-    model_name = f"test_config_warn_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_config_warn_{make_random(4).lower()}"
 
     # Train with initial columns (2D) - use helper
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)

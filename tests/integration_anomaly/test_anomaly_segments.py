@@ -39,16 +39,19 @@ def test_explicit_segment_training(
     df.write.saveAsTable(table_name)
 
     # Train with explicit segments
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_segments_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
     anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount", "discount"],
         segment_by=["region"],
-        model_name=f"test_segments_{suffix}",
-        registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Verify segmented models were created
-    registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
+    registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 3  # One per segment
 
@@ -82,12 +85,15 @@ def test_segment_scoring(
     table_name = f"{TEST_CATALOG}.{schema.name}.segment_score_test_{suffix}"
     df.write.saveAsTable(table_name)
 
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_score_segments_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
     anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount"],
         segment_by=["region"],
-        model_name=f"test_score_segments_{suffix}",
-        registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Score with anomalous data (use same case as training data for segment matching)
@@ -104,8 +110,8 @@ def test_segment_scoring(
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "model": f"test_score_segments_{suffix}",
-            "registry_table": f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+            "model": model_name,
+            "registry_table": registry_table,
             "score_threshold": DQENGINE_SCORE_THRESHOLD,  # Lowered from 0.7 to account for IsolationForest scoring characteristics
         },
     )
@@ -153,18 +159,21 @@ def test_multi_column_segments(
     df.write.saveAsTable(table_name)
 
     # Train with multiple segment columns
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_multi_segments_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
     train_model_with_params(
-        spark=spark,
+        anomaly_engine=anomaly_engine,
         df=spark.table(table_name),
-        model_name=f"test_multi_segments_{suffix}",
-        registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        model_name=model_name,
+        registry_table=registry_table,
         columns=["amount"],
         segment_by=["region", "product_type"],
         params=AnomalyParams(sample_fraction=1.0),
     )
 
     # Verify 4 segment models created (2 regions × 2 products)
-    registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
+    registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 4
 
@@ -192,12 +201,15 @@ def test_unknown_segment_handling(
     table_name = f"{TEST_CATALOG}.{schema.name}.unknown_segment_test_{suffix}"
     df.write.saveAsTable(table_name)
 
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_unknown_segments_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
     anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount"],
         segment_by=["region"],
-        model_name=f"test_unknown_segments_{suffix}",
-        registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        model_name=model_name,
+        registry_table=registry_table,
     )
 
     # Score with unknown region "APAC"
@@ -212,8 +224,8 @@ def test_unknown_segment_handling(
         criticality="error",
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "model": f"test_unknown_segments_{suffix}",
-            "registry_table": f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+            "model": model_name,
+            "registry_table": registry_table,
         },
     )
 

@@ -19,32 +19,6 @@ from tests.integration_anomaly.test_anomaly_constants import (
 from tests.integration_anomaly.test_anomaly_utils import score_3d_with_contributions
 
 
-def test_feature_importance_stored(spark: SparkSession, shared_2d_model):
-    """Test that feature_importance is stored in registry."""
-    # Use shared pre-trained model (no training needed!)
-    model_name = shared_2d_model["model_name"]
-    registry_table = shared_2d_model["registry_table"]
-
-    # Query registry for feature_importance
-    # Model name is already in full catalog.schema.model format from the fixture
-    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
-    assert record is not None, f"Model {model_name} not found in registry"
-
-    # Verify feature_importance exists and is non-empty
-    assert record["features"]["feature_importance"] is not None
-    assert len(record["features"]["feature_importance"]) > 0
-
-    # Verify all columns are represented
-    feature_importance = record["features"]["feature_importance"]
-    assert "amount" in feature_importance
-    assert "quantity" in feature_importance
-
-    # Verify importance values are numeric
-    for _col, importance in feature_importance.items():
-        assert isinstance(importance, (int, float))
-        assert importance >= 0
-
-
 def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):
     """Test that anomaly_contributions column is added when requested."""
     # Use shared pre-trained model (no training needed!)

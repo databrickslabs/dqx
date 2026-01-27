@@ -425,7 +425,7 @@ print(f"✅ Registry ready for new models")
 print("🎯 Training anomaly detection model...")
 print("   DQX will automatically discover patterns in your data\n")
 
-model_name_auto = "sales_auto"
+model_name_auto = f"{catalog_name}.{schema_name}.sales_auto"
 model_uri_auto = anomaly_engine.train(
     df=spark.table(table_name),
     model_name=model_name_auto,
@@ -774,7 +774,7 @@ print("   Review these to calibrate your threshold for your use case")
 # Train with manual column selection
 print("🎯 Training model with manual column selection...\n")
 
-model_name_manual = "sales_manual"
+model_name_manual = f"{catalog_name}.{schema_name}.sales_manual"
 model_uri_manual = anomaly_engine.train(
     df=spark.table(table_name),
     columns=["amount", "quantity"],  # Explicitly specify numeric columns only
@@ -1053,12 +1053,14 @@ print(f"   • Production-ready out-of-the-box!")
 # MAGIC # Replace with your table
 # MAGIC model = anomaly_engine.train(
 # MAGIC     df=spark.table("your_catalog.your_schema.your_table"),
-# MAGIC     model_name="your_model_name"
+# MAGIC     model_name="your_catalog.your_schema.your_model_name",
+# MAGIC     registry_table="your_catalog.your_schema.dqx_anomaly_models",
 # MAGIC )
 # MAGIC
 # MAGIC checks = [
 # MAGIC     has_no_anomalies(
-# MAGIC         model="your_model_name"
+# MAGIC         model="your_catalog.your_schema.your_model_name",
+# MAGIC         registry_table="your_catalog.your_schema.dqx_anomaly_models",
 # MAGIC     )
 # MAGIC ]
 # MAGIC df_scored = dq_engine.apply_checks(your_df, checks)

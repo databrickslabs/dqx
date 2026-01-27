@@ -22,7 +22,7 @@ def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    model_name = f"test_basic_{make_random(4).lower()}"
+    model_name = f"{catalog_name}.{schema.name}.test_basic_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
     # Use standard 2D training data for consistent results
@@ -81,7 +81,7 @@ def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_ran
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    model_name = f"test_scores_{make_random(4).lower()}"
+    model_name = f"{catalog_name}.{schema.name}.test_scores_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
     # Use standard 2D training data - use helper
@@ -130,7 +130,7 @@ def test_auto_derivation_of_names(ws, spark: SparkSession, make_random, make_sch
     )
 
     # Train with explicit names to avoid schema conflicts
-    model_name = f"test_auto_model_{make_random(4).lower()}"
+    model_name = f"{catalog_name}.{schema.name}.test_auto_model_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
     model_uri = anomaly_engine.train(
@@ -174,7 +174,7 @@ def test_threshold_flagging(ws, spark: SparkSession, make_schema, make_random, a
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    model_name = f"test_threshold_{make_random(4).lower()}"
+    model_name = f"{catalog_name}.{schema.name}.test_threshold_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
     # Use standard 2D training data - use helper
@@ -232,7 +232,7 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    model_name = f"test_auto_{make_random(4).lower()}"
+    model_name = f"{catalog_name}.{schema.name}.test_auto_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
     # Drop table if exists
@@ -277,7 +277,7 @@ def test_multiple_columns(ws, spark: SparkSession, make_schema, make_random, ano
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
-    model_name = f"test_multi_{make_random(4).lower()}"
+    model_name = f"{catalog_name}.{schema.name}.test_multi_{make_random(4).lower()}"
     registry_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}_registry"
 
     # Train 4D model - use helper with standard 4D data

@@ -16,15 +16,14 @@ def test_sampling_caps_large_datasets(
     """Test that sampling caps at max_rows for large datasets."""
 
     unique_id = make_random(8).lower()
-    model_name = f"test_sampling_large_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_sampling_large_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train with defaults (should cap at max_rows if needed) - use helper
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=200_000)
 
     # Check registry records training_rows (should be sampled, use full three-level name)
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
-    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
 
     # With default sample_fraction=0.3, we should get ~60K rows
@@ -37,7 +36,7 @@ def test_custom_sampling_parameters(
 ):
     """Test that custom sample_fraction and max_rows are respected."""
     unique_id = make_random(8).lower()
-    model_name = f"test_custom_sampling_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_custom_sampling_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Use custom sampling: 50% sample, max 300 rows
@@ -50,8 +49,7 @@ def test_custom_sampling_parameters(
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
     # Check registry (use full three-level name)
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
-    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
 
     # Should have sampled roughly 50% up to max 300 rows
@@ -64,7 +62,7 @@ def test_sampling_warning_issued(
 ):
     """Test that warning is issued when data is truncated."""
     unique_id = make_random(8).lower()
-    model_name = f"test_sampling_warning_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_sampling_warning_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Use very restrictive sampling
@@ -90,7 +88,7 @@ def test_train_validation_split(
 ):
     """Test that train/validation split works correctly."""
     unique_id = make_random(8).lower()
-    model_name = f"test_train_val_split_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_train_val_split_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Use default train_ratio (0.8)
@@ -104,16 +102,11 @@ def test_train_validation_split(
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=1000, params=params)
 
     # Check that metrics exist (which indicates validation was performed, use full three-level name)
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
-    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
 
     # Verify metrics exist
     assert record["training"]["metrics"] is not None
-    assert "recommended_threshold" in record["training"]["metrics"]
-
-    # Additional validation metrics may exist
-    # (precision, recall, f1_score, etc.)
 
 
 def test_custom_train_ratio(
@@ -121,7 +114,7 @@ def test_custom_train_ratio(
 ):
     """Test that custom train_ratio is respected."""
     unique_id = make_random(8).lower()
-    model_name = f"test_custom_train_ratio_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_custom_train_ratio_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Use 90/10 split
@@ -140,7 +133,7 @@ def test_no_sampling_with_full_fraction(
 ):
     """Test that sample_fraction=1.0 uses all data (up to max_rows)."""
     unique_id = make_random(8).lower()
-    model_name = f"test_no_sampling_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_no_sampling_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     params = AnomalyParams(
@@ -152,8 +145,7 @@ def test_no_sampling_with_full_fraction(
     train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=500, params=params)
 
     # Use full three-level name for query
-    full_model_name = f"{anomaly_registry_prefix}.{model_name}"
-    record = spark.table(registry_table).filter(f"identity.model_name = '{full_model_name}'").first()
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
 
     # Should use most/all of the data
@@ -167,7 +159,7 @@ def test_minimal_data_with_sampling(
 ):
     """Test that small datasets work with sampling."""
     unique_id = make_random(8).lower()
-    model_name = f"test_minimal_data_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_minimal_data_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     params = AnomalyParams(
@@ -199,7 +191,7 @@ def test_performance_with_many_columns(
     )
 
     unique_id = make_random(8).lower()
-    model_name = f"test_many_cols_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_many_cols_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     params = AnomalyParams(
@@ -209,7 +201,7 @@ def test_performance_with_many_columns(
 
     # This should complete without timing out
     model_uri = train_model_with_params(
-        spark=spark,
+        anomaly_engine=anomaly_engine,
         df=df,
         model_name=model_name,
         registry_table=registry_table,

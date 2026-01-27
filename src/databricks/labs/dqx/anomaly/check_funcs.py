@@ -27,11 +27,7 @@ from pyspark.sql.types import (
 )
 import sklearn
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord, compute_config_hash
-from databricks.labs.dqx.anomaly.trainer import (
-    _derive_registry_table,
-    _ensure_mlflow_registry_uri,
-    ensure_full_model_name,
-)
+from databricks.labs.dqx.anomaly.trainer import _ensure_mlflow_registry_uri
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
@@ -54,8 +50,8 @@ logger = logging.getLogger(__name__)
 
 @register_rule("dataset")
 def has_no_anomalies(
-    model: str | None = None,
-    registry_table: str | None = None,
+    model: str,
+    registry_table: str,
     score_threshold: float = 0.60,
     row_filter: str | None = None,
     drift_threshold: float | None = None,
@@ -86,8 +82,10 @@ def has_no_anomalies(
         Segmentation is inferred from the trained model configuration.
 
     Args:
-        model: Model name (REQUIRED). Provide the base model name returned from train().
-        registry_table: Registry table (auto-derived if omitted).
+        model: Model name (REQUIRED). Provide the fully qualified model name
+            in catalog.schema.model format returned from train().
+        registry_table: Registry table (REQUIRED). Provide the fully qualified table
+            name in catalog.schema.table format.
         score_threshold: Anomaly score threshold (default 0.60). Records with score >= threshold
             are flagged as anomalous. Higher threshold = stricter detection (fewer anomalies).
         row_filter: Optional SQL expression to filter rows before scoring.
@@ -105,26 +103,28 @@ def has_no_anomalies(
         >>> df_scored.select("_dq_info.anomaly.score", "_dq_info.anomaly.is_anomaly")
         >>> df_scored.filter(col("_dq_info.anomaly.is_anomaly"))
     """
+    _validate_has_no_anomalies_args(
+        model=model,
+        registry_table=registry_table,
+        score_threshold=score_threshold,
+        row_filter=row_filter,
+        drift_threshold=drift_threshold,
+        include_contributions=include_contributions,
+        include_confidence=include_confidence,
+    )
+    if include_contributions and not SHAP_AVAILABLE:
+        raise ImportError(
+            "Feature contributions require SHAP (not included in base DQX installation).\n\n"
+            "Install DQX anomaly extras:\n"
+            "  %pip install 'databricks-labs-dqx[anomaly]'\n"
+            "  dbutils.library.restartPython()"
+        )
 
     def apply(df: DataFrame) -> DataFrame:
         df_to_score, local_merge_columns, row_id_col = _ensure_merge_columns(df)
 
         driver_only_local = _DRIVER_ONLY["value"]
-
-        # Validate SHAP availability early (before Spark jobs)
-        if include_contributions and not SHAP_AVAILABLE:
-            raise ImportError(
-                "Feature contributions require SHAP library (not included in base DQX installation).\n\n"
-                "To install SHAP:\n"
-                "  Option 1 - Install DQX with anomaly extras (recommended):\n"
-                "    %pip install 'databricks-labs-dqx[anomaly]'\n"
-                "    dbutils.library.restartPython()\n\n"
-                "  Option 2 - Install SHAP separately:\n"
-                "    %pip install 'shap>=0.42.0,<0.46'\n"
-                "    dbutils.library.restartPython()\n\n"
-                "  Option 3 - Use anomaly detection without explanations:\n"
-                "    has_no_anomalies(..., include_contributions=False)"
-            )
+        score_col, score_std_col, contributions_col = _resolve_internal_columns(df_to_score)
 
         # Auto-discover configuration
         normalized_columns, segment_by, model_name, registry = _discover_model_and_config(
@@ -145,6 +145,9 @@ def has_no_anomalies(
             include_confidence=include_confidence,
             segment_by=segment_by,
             driver_only=driver_only_local,
+            score_col=score_col,
+            score_std_col=score_std_col,
+            contributions_col=contributions_col,
         )
 
         registry_client = AnomalyModelRegistry(df_to_score.sparkSession)
@@ -201,6 +204,9 @@ class ScoringConfig:
     include_confidence: bool = False
     segment_by: list[str] | None = None
     driver_only: bool = False
+    score_col: str = "anomaly_score"
+    score_std_col: str = "anomaly_score_std"
+    contributions_col: str = "anomaly_contributions"
 
 
 _INTERNAL_ROW_ID = "_dqx_row_id"
@@ -212,6 +218,22 @@ def _ensure_merge_columns(df: DataFrame) -> tuple[DataFrame, list[str], str | No
             f"Input DataFrame already contains column '{_INTERNAL_ROW_ID}'. " "Rename the column to use anomaly checks."
         )
     return df.withColumn(_INTERNAL_ROW_ID, F.monotonically_increasing_id()), [_INTERNAL_ROW_ID], _INTERNAL_ROW_ID
+
+
+def _resolve_internal_columns(df: DataFrame) -> tuple[str, str, str]:
+    """Resolve internal scoring column names to avoid collisions with user columns."""
+    score_col = "anomaly_score"
+    score_std_col = "anomaly_score_std"
+    contributions_col = "anomaly_contributions"
+
+    if score_col in df.columns:
+        score_col = "_dq_anomaly_score"
+    if score_std_col in df.columns:
+        score_std_col = "_dq_anomaly_score_std"
+    if contributions_col in df.columns:
+        contributions_col = "_dq_anomaly_contributions"
+
+    return score_col, score_std_col, contributions_col
 
 
 def set_driver_only_for_tests(enabled: bool) -> None:
@@ -269,18 +291,19 @@ def _join_filtered_results_back(
     df: DataFrame,
     result: DataFrame,
     merge_columns: list[str],
+    score_col: str,
 ) -> DataFrame:
     """Join scored results back to original DataFrame (for row_filter case)."""
     # Get score columns to join (only anomaly_score and _dq_info now)
-    score_cols_to_join = ["anomaly_score", "_dq_info"]
+    score_cols_to_join = [score_col, "_dq_info"]
 
     # Select only merge columns + score columns
     scored_subset = result.select(*merge_columns, *score_cols_to_join)
 
     # Take distinct rows to avoid duplicates
     agg_exprs = [
-        F.max("anomaly_score").alias("anomaly_score"),
-        F.max_by("_dq_info", "anomaly_score").alias("_dq_info"),
+        F.max(score_col).alias(score_col),
+        F.max_by("_dq_info", score_col).alias("_dq_info"),
     ]
     scored_subset_unique = scored_subset.groupBy(*merge_columns).agg(*agg_exprs)
 
@@ -294,14 +317,19 @@ def _prepare_scoring_dataframe(df: DataFrame, row_filter: str | None) -> DataFra
 
 
 def _create_null_scored_dataframe(
-    df: DataFrame, include_contributions: bool, include_confidence: bool = False
+    df: DataFrame,
+    include_contributions: bool,
+    include_confidence: bool = False,
+    score_col: str = "anomaly_score",
+    score_std_col: str = "anomaly_score_std",
+    contributions_col: str = "anomaly_contributions",
 ) -> DataFrame:
     """Create a DataFrame with null anomaly scores (for empty segments)."""
-    result = df.withColumn("anomaly_score", F.lit(None).cast(DoubleType()))
+    result = df.withColumn(score_col, F.lit(None).cast(DoubleType()))
     if include_confidence:
-        result = result.withColumn("anomaly_score_std", F.lit(None).cast(DoubleType()))
+        result = result.withColumn(score_std_col, F.lit(None).cast(DoubleType()))
     if include_contributions:
-        result = result.withColumn("anomaly_contributions", F.lit(None).cast(MapType(StringType(), DoubleType())))
+        result = result.withColumn(contributions_col, F.lit(None).cast(MapType(StringType(), DoubleType())))
 
     # Add null _dq_info column with proper schema (direct struct, not array)
     null_anomaly_info = F.lit(None).cast(
@@ -319,9 +347,6 @@ def _create_null_scored_dataframe(
         )
     )
 
-    # TODO this logic has to be moved out of the check function
-    # the function should take as argument unique _dq_info
-    # the engine will merge the _dq_info fields
     if "_dq_info" in result.columns:
         # Add or replace the 'anomaly' field in the existing struct
         result = result.withColumn("_dq_info", F.col("_dq_info").withField("anomaly", null_anomaly_info))
@@ -372,6 +397,10 @@ def _score_single_segment(
             model_record=segment_model,  # Pass model record for version validation
         )
     segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
+    segment_scored = segment_scored.withColumnRenamed("anomaly_score", config.score_col)
+    segment_scored = segment_scored.withColumnRenamed("anomaly_score_std", config.score_std_col)
+    if config.include_contributions and "anomaly_contributions" in segment_scored.columns:
+        segment_scored = segment_scored.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
     # Add _info column with segment values
     segment_scored = _add_info_column(
@@ -381,6 +410,9 @@ def _score_single_segment(
         segment_values=segment_model.segmentation.segment_values,
         include_contributions=config.include_contributions,
         include_confidence=config.include_confidence,
+        score_col=config.score_col,
+        score_std_col=config.score_std_col,
+        contributions_col=config.contributions_col,
     )
 
     return segment_scored
@@ -416,11 +448,6 @@ def _score_segmented(
     scored_dfs: list[DataFrame] = []
 
     # Score each segment separately
-    # Note: This loops over segments and filters each time, which means O(n*m) row reads
-    # where n=rows, m=segments. For large datasets with many segments, consider:
-    # 1. User-side caching: df.cache() before calling apply_checks()
-    # 2. Saving scored results to tables (as shown in demos)
-    # 3. Using fewer segments or global models for massive datasets
     for segment_model in all_segments:
         segment_filter = _build_segment_filter(segment_model.segmentation.segment_values)
         if segment_filter is None:
@@ -434,27 +461,34 @@ def _score_segmented(
 
     # Union all scored segments
     if not scored_dfs:
-        result = _create_null_scored_dataframe(df_to_score, config.include_contributions, config.include_confidence)
+        result = _create_null_scored_dataframe(
+            df_to_score,
+            config.include_contributions,
+            config.include_confidence,
+            score_col=config.score_col,
+            score_std_col=config.score_std_col,
+            contributions_col=config.contributions_col,
+        )
     else:
         result = scored_dfs[0]
         for sdf in scored_dfs[1:]:
             result = result.union(sdf)
 
     # Drop internal columns that are now in _dq_info (after union, before join)
-    result = result.drop("anomaly_score_std")  # Always drop (null if not ensemble)
+    result = result.drop(config.score_std_col)  # Always drop (null if not ensemble)
     if config.include_contributions:
-        result = result.drop("anomaly_contributions")  # Drop top-level, use _dq_info instead
+        result = result.drop(config.contributions_col)  # Drop top-level, use _dq_info instead
 
     # Always join back to original DataFrame to include unscored rows
     # (rows with segment combinations not seen during training will have null scores)
     if config.row_filter:
-        result = _join_filtered_results_back(df, result, config.merge_columns)
+        result = _join_filtered_results_back(df, result, config.merge_columns, config.score_col)
     else:
         # Even without row_filter, join back to include all rows (including unscored segments)
-        result = _join_filtered_results_back(df_to_score, result, config.merge_columns)
+        result = _join_filtered_results_back(df_to_score, result, config.merge_columns, config.score_col)
 
     # Drop internal anomaly_score column (use _dq_info.anomaly.score instead)
-    result = result.drop("anomaly_score")
+    result = result.drop(config.score_col)
 
     return result
 
@@ -974,17 +1008,95 @@ def _get_record_for_discovery(
     # Try segmented models
     all_segments = registry_client.get_all_segment_models(registry, model_name_local)
     if all_segments:
-        return all_segments[0]
+        return _select_segment_record(all_segments)
 
     raise InvalidParameterError(
         f"Model '{model_name_local}' not found in '{registry}'. " "Train first using anomaly.train(...)."
     )
 
 
+def _validate_fully_qualified_name(value: str, *, label: str) -> None:
+    """Validate that a name is in catalog.schema.name format."""
+    if value.count(".") != 2:
+        raise InvalidParameterError(f"{label} must be fully qualified as catalog.schema.name, got: {value!r}.")
+
+
+def _validate_has_no_anomalies_args(
+    *,
+    model: str,
+    registry_table: str,
+    score_threshold: float,
+    row_filter: str | None,
+    drift_threshold: float | None,
+    include_contributions: bool,
+    include_confidence: bool,
+) -> None:
+    """Validate has_no_anomalies arguments that do not require Spark."""
+    _validate_required_name(
+        model,
+        label="model",
+        example="has_no_anomalies(model='catalog.schema.my_model', ...)",
+    )
+    _validate_required_name(
+        registry_table,
+        label="registry_table",
+        example="registry_table='catalog.schema.dqx_anomaly_models'",
+    )
+    _validate_fully_qualified_name(model, label="model")
+    _validate_fully_qualified_name(registry_table, label="registry_table")
+    _validate_threshold(score_threshold)
+    _validate_optional_sql_expression(row_filter)
+    _validate_optional_positive_float(drift_threshold, label="drift_threshold")
+    _validate_boolean(include_contributions, label="include_contributions")
+    _validate_boolean(include_confidence, label="include_confidence")
+
+
+def _validate_required_name(value: str, *, label: str, example: str) -> None:
+    if not value:
+        raise InvalidParameterError(f"{label} parameter is required. Example: {example}.")
+
+
+def _validate_threshold(score_threshold: float) -> None:
+    if isinstance(score_threshold, bool) or not isinstance(score_threshold, (int, float)):
+        raise InvalidParameterError("score_threshold must be a float between 0.0 and 1.0.")
+    if not 0.0 <= float(score_threshold) <= 1.0:
+        raise InvalidParameterError("score_threshold must be between 0.0 and 1.0.")
+
+
+def _validate_optional_sql_expression(row_filter: str | None) -> None:
+    if row_filter is not None and not isinstance(row_filter, str):
+        raise InvalidParameterError("row_filter must be a SQL expression string when provided.")
+
+
+def _validate_optional_positive_float(value: float | None, *, label: str) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidParameterError(f"{label} must be a float when provided.")
+    if value <= 0:
+        raise InvalidParameterError(f"{label} must be greater than 0 when provided.")
+
+
+def _validate_boolean(value: bool, *, label: str) -> None:
+    if not isinstance(value, bool):
+        raise InvalidParameterError(f"{label} must be a boolean.")
+
+
+def _select_segment_record(all_segments: list[AnomalyModelRecord]) -> AnomalyModelRecord:
+    """Select a deterministic segment record (latest training_time, tie-breaker by model_name)."""
+    return max(
+        all_segments,
+        key=lambda record: (
+            record.training.training_time or datetime.min,
+            record.identity.model_name,
+        ),
+    )
+
+
 def _discover_model_and_config(
     df: DataFrame,
-    model: str | None,
-    registry_table: str | None,
+    model: str,
+    registry_table: str,
 ) -> tuple[list[str], list[str] | None, str, str]:
     """Auto-discover columns and segmentation from the model registry.
 
@@ -992,12 +1104,16 @@ def _discover_model_and_config(
         Tuple of (columns, segment_by, model_name, registry)
     """
     registry_client = AnomalyModelRegistry(df.sparkSession)
-    registry = registry_table or _derive_registry_table(df.sparkSession)
+    registry = registry_table
 
     if not model:
-        raise InvalidParameterError("model parameter is required. Example: has_no_anomalies(model='my_model', ...)")
+        raise InvalidParameterError(
+            "model parameter is required. Example: has_no_anomalies(model='catalog.schema.my_model', ...)"
+        )
 
-    model_name = ensure_full_model_name(model, registry)
+    _validate_fully_qualified_name(registry, label="registry_table")
+    _validate_fully_qualified_name(model, label="model")
+    model_name = model
     record = _get_record_for_discovery(registry_client, registry, model_name)
 
     normalized_columns = list(record.training.columns)
@@ -1283,7 +1399,7 @@ def _try_segmented_scoring_fallback(
         return None
 
     # Auto-detect segmentation
-    first_segment = all_segments[0]
+    first_segment = _select_segment_record(all_segments)
     assert first_segment.segmentation.segment_by is not None, "Segment model must have segment_by"
     return _score_segmented(df, config, registry_client)
 
@@ -1295,6 +1411,9 @@ def _add_info_column(
     segment_values: dict[str, str] | None = None,
     include_contributions: bool = False,
     include_confidence: bool = False,
+    score_col: str = "anomaly_score",
+    score_std_col: str = "anomaly_score_std",
+    contributions_col: str = "anomaly_contributions",
 ) -> DataFrame:
     """Add _dq_info struct column with anomaly metadata.
 
@@ -1305,6 +1424,9 @@ def _add_info_column(
         segment_values: Segment values if model is segmented (None for global models).
         include_contributions: Whether anomaly_contributions are available.
         include_confidence: Whether anomaly_score_std is available.
+        score_col: Column name for anomaly scores (internal, collision-safe).
+        score_std_col: Column name for ensemble std scores (internal, collision-safe).
+        contributions_col: Column name for SHAP contributions (internal, collision-safe).
 
     Returns:
         DataFrame with _dq_info column added.
@@ -1312,8 +1434,8 @@ def _add_info_column(
     # Build anomaly info struct
     anomaly_info_fields = {
         "check_name": F.lit("has_no_anomalies"),
-        "score": F.col("anomaly_score"),
-        "is_anomaly": F.col("anomaly_score") >= F.lit(score_threshold),
+        "score": F.col(score_col),
+        "is_anomaly": F.col(score_col) >= F.lit(score_threshold),
         "threshold": F.lit(score_threshold),
         "model": F.lit(model_name),
     }
@@ -1327,14 +1449,14 @@ def _add_info_column(
         anomaly_info_fields["segment"] = F.lit(None).cast(MapType(StringType(), StringType()))
 
     # Add contributions (null if not requested or not available)
-    if include_contributions and "anomaly_contributions" in df.columns:
-        anomaly_info_fields["contributions"] = F.col("anomaly_contributions")
+    if include_contributions and contributions_col in df.columns:
+        anomaly_info_fields["contributions"] = F.col(contributions_col)
     else:
         anomaly_info_fields["contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
 
     # Add confidence_std (null if not requested or not available)
-    if include_confidence and "anomaly_score_std" in df.columns:
-        anomaly_info_fields["confidence_std"] = F.col("anomaly_score_std")
+    if include_confidence and score_std_col in df.columns:
+        anomaly_info_fields["confidence_std"] = F.col(score_std_col)
     else:
         anomaly_info_fields["confidence_std"] = F.lit(None).cast(DoubleType())
 
@@ -1344,6 +1466,8 @@ def _add_info_column(
     # Create _dq_info struct with anomaly (direct struct, not array - single result per row)
     info_struct = F.struct(anomaly_info.alias("anomaly"))
 
+    if "_dq_info" in df.columns:
+        return df.withColumn("_dq_info", F.col("_dq_info").withField("anomaly", anomaly_info))
     return df.withColumn("_dq_info", info_struct)
 
 
@@ -1425,6 +1549,11 @@ def _score_global_model(
             ).withColumn("anomaly_score_std", F.lit(0.0))
         )
 
+    scored_df = scored_df.withColumnRenamed("anomaly_score", config.score_col)
+    scored_df = scored_df.withColumnRenamed("anomaly_score_std", config.score_std_col)
+    if config.include_contributions and "anomaly_contributions" in scored_df.columns:
+        scored_df = scored_df.withColumnRenamed("anomaly_contributions", config.contributions_col)
+
     # Add _dq_info column (before dropping internal columns)
     scored_df = _add_info_column(
         scored_df,
@@ -1433,17 +1562,20 @@ def _score_global_model(
         segment_values=None,  # Global model has no segments
         include_contributions=config.include_contributions,
         include_confidence=config.include_confidence,
+        score_col=config.score_col,
+        score_std_col=config.score_std_col,
+        contributions_col=config.contributions_col,
     )
 
     # Post-process: drop internal columns that are now in _dq_info
-    scored_df = scored_df.drop("anomaly_score_std")  # Always drop (null if not ensemble)
+    scored_df = scored_df.drop(config.score_std_col)  # Always drop (null if not ensemble)
     if config.include_contributions:
-        scored_df = scored_df.drop("anomaly_contributions")  # Drop top-level, use _dq_info instead
+        scored_df = scored_df.drop(config.contributions_col)  # Drop top-level, use _dq_info instead
 
     if config.row_filter:
-        scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns)
+        scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns, config.score_col)
 
     # Drop internal anomaly_score column (use _dq_info.anomaly.score instead)
-    scored_df = scored_df.drop("anomaly_score")
+    scored_df = scored_df.drop(config.score_col)
 
     return scored_df

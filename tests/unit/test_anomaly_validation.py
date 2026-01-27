@@ -1,6 +1,9 @@
 """Unit tests for anomaly detection validation logic and error handling."""
 
-from databricks.labs.dqx.anomaly.trainer import ensure_full_model_name
+import pytest
+
+from databricks.labs.dqx.anomaly import trainer
+from databricks.labs.dqx.errors import InvalidParameterError
 
 
 # ============================================================================
@@ -8,31 +11,19 @@ from databricks.labs.dqx.anomaly.trainer import ensure_full_model_name
 # ============================================================================
 
 
-def test_ensure_full_model_name_with_simple_name():
-    """Test ensure_full_model_name with simple model name."""
-    full_name = ensure_full_model_name("my_model", "main.anomaly.registry")
-    assert full_name == "main.anomaly.my_model"
+def test_validate_fully_qualified_name_accepts_valid():
+    """Test fully qualified name validation with valid values."""
+    trainer.validate_fully_qualified_name("catalog.schema.model", label="model_name")
+    trainer.validate_fully_qualified_name("catalog.schema.registry", label="registry_table")
 
 
-def test_ensure_full_model_name_with_already_full_name():
-    """Test ensure_full_model_name with already complete catalog.schema.model."""
-    full_name = ensure_full_model_name("main.anomaly.my_model", "main.anomaly.registry")
-    assert full_name == "main.anomaly.my_model"
+def test_validate_fully_qualified_name_rejects_invalid():
+    """Test fully qualified name validation with invalid values."""
+    with pytest.raises(InvalidParameterError):
+        trainer.validate_fully_qualified_name("model", label="model_name")
 
-
-def test_ensure_full_model_name_different_catalogs():
-    """Test ensure_full_model_name with different catalog and schema combinations."""
-    assert ensure_full_model_name("test_model", "catalog1.schema1.registry") == "catalog1.schema1.test_model"
-    assert ensure_full_model_name("test_model", "catalog2.schema2.registry") == "catalog2.schema2.test_model"
-    assert ensure_full_model_name("test_model", "prod.anomaly.registry") == "prod.anomaly.test_model"
-
-
-def test_ensure_full_model_name_preserves_existing_full_name():
-    """Test that ensure_full_model_name doesn't modify already full names."""
-    # If the model name already has catalog.schema, it should be preserved
-    full_name = ensure_full_model_name("other_catalog.other_schema.my_model", "main.anomaly.registry")
-    # The function should respect the existing full name
-    assert full_name == "other_catalog.other_schema.my_model"
+    with pytest.raises(InvalidParameterError):
+        trainer.validate_fully_qualified_name("schema.model", label="model_name")
 
 
 # ============================================================================

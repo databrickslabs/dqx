@@ -1,8 +1,10 @@
 """Unit tests for anomaly detection utility functions."""
 
+import pytest
 from pyspark.sql import types as T
 
-from databricks.labs.dqx.anomaly.trainer import ensure_full_model_name
+from databricks.labs.dqx.anomaly import trainer
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
@@ -13,58 +15,23 @@ from tests.unit.test_anomaly_test_helpers import STANDARD_REGION_PRODUCT_FEATURE
 
 
 # ============================================================================
-# Model Name Utility Tests
+# Fully Qualified Name Validation Tests
 # ============================================================================
 
 
-def test_ensure_full_model_name_simple_model():
-    """Test model name completion with simple name."""
-    result = ensure_full_model_name("my_model", "catalog.schema.registry")
-    assert result == "catalog.schema.my_model"
+def test_validate_fully_qualified_name_accepts_valid():
+    """Test fully qualified name validation with valid values."""
+    trainer.validate_fully_qualified_name("catalog.schema.model", label="model_name")
+    trainer.validate_fully_qualified_name("catalog.schema.registry", label="registry_table")
 
 
-def test_ensure_full_model_name_two_part_name():
-    """Test model name completion with schema.model format."""
-    result = ensure_full_model_name("schema.my_model", "catalog.schema.registry")
-    # Should prepend catalog
-    assert result.startswith("catalog.")
-    assert "my_model" in result
+def test_validate_fully_qualified_name_rejects_invalid():
+    """Test fully qualified name validation with invalid values."""
+    with pytest.raises(InvalidParameterError):
+        trainer.validate_fully_qualified_name("model", label="model_name")
 
-
-def test_ensure_full_model_name_already_complete():
-    """Test that complete model names are not modified."""
-    complete_name = "catalog.schema.my_model"
-    result = ensure_full_model_name(complete_name, "other_catalog.other_schema.registry")
-    # Should return as-is (already has 2+ dots)
-    assert result == complete_name
-
-
-def test_ensure_full_model_name_different_registries():
-    """Test model name completion with different registry tables."""
-    # Test with main catalog
-    result1 = ensure_full_model_name("model1", "main.anomaly.registry")
-    assert result1 == "main.anomaly.model1"
-
-    # Test with prod catalog
-    result2 = ensure_full_model_name("model2", "prod.ml_models.registry")
-    assert result2 == "prod.ml_models.model2"
-
-    # Test with dev catalog
-    result3 = ensure_full_model_name("model3", "dev.test_schema.registry")
-    assert result3 == "dev.test_schema.model3"
-
-
-def test_ensure_full_model_name_extracts_catalog_schema():
-    """Test that catalog and schema are correctly extracted from registry table."""
-    model_name = "simple_model"
-
-    # 3-part registry table
-    result = ensure_full_model_name(model_name, "cat.sch.registry")
-    assert result.startswith("cat.sch.")
-
-    # Complex names
-    result2 = ensure_full_model_name(model_name, "my_catalog.my_schema.my_registry")
-    assert result2.startswith("my_catalog.my_schema.")
+    with pytest.raises(InvalidParameterError):
+        trainer.validate_fully_qualified_name("schema.model", label="model_name")
 
 
 # ============================================================================
@@ -337,20 +304,3 @@ def test_full_metadata_workflow():
     assert column_infos[1].name == "region"
     assert column_infos[1].category == "categorical"
     assert column_infos[1].cardinality == 3
-
-
-def test_model_name_workflow():
-    """Test model name workflow with various inputs."""
-    registry_table = "main.anomaly.model_registry"
-
-    # Simple name
-    result1 = ensure_full_model_name("fraud_model", registry_table)
-    assert result1 == "main.anomaly.fraud_model"
-
-    # Already full name
-    result2 = ensure_full_model_name("prod.ml.existing_model", registry_table)
-    assert result2 == "prod.ml.existing_model"
-
-    # Verify catalog/schema extraction is consistent
-    assert result1.split(".", maxsplit=1)[0] == "main"
-    assert result1.split(".", maxsplit=2)[1] == "anomaly"
