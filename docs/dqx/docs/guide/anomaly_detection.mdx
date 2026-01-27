@@ -56,13 +56,15 @@ Train a model on recent "good" data, then use it in checks:
 
     model_name = anomaly_engine.train(
         df=spark.table("catalog.schema.orders"),
-        model_name="orders_monitor",
+        model_name="catalog.schema.orders_monitor",
         columns=["amount", "quantity", "discount"],
+        registry_table="catalog.schema.dqx_anomaly_models",
     )
 
     checks = [
         has_no_anomalies(
             model=model_name,
+            registry_table="catalog.schema.dqx_anomaly_models",
         )
     ]
 
@@ -93,6 +95,7 @@ Anomaly checks add `_dq_info` with structured metadata. Feature contributions ar
 ```python
 has_no_anomalies(
     model=model_name,
+    registry_table="catalog.schema.dqx_anomaly_models",
     include_contributions=False,
 )
 ```

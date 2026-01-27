@@ -4,27 +4,13 @@ AnomalyEngine entrypoint for anomaly detection workflows.
 
 from __future__ import annotations
 
-import logging
-
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import AnomalyParams
-from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
-from databricks.labs.dqx.anomaly.trainer import (
-    _apply_expected_anomaly_rate,
-    _perform_auto_discovery,
-    _prepare_training_config,
-    _process_exclude_columns,
-    _train_global,
-    _train_segmented,
-    _validate_columns,
-    _validate_spark_version,
-)
+from databricks.labs.dqx.anomaly.trainer import AnomalyTrainingService
 from databricks.sdk import WorkspaceClient
-
-logger = logging.getLogger(__name__)
 
 
 class AnomalyEngine(DQEngineBase):
@@ -47,12 +33,17 @@ class AnomalyEngine(DQEngineBase):
         anomaly_engine = AnomalyEngine(ws)
 
         # Train a model with auto-discovery
-        model_name = anomaly_engine.train(df, model_name="my_anomaly_model")
+        model_name = anomaly_engine.train(
+            df,
+            model_name="catalog.schema.my_anomaly_model",
+            registry_table="catalog.schema.dqx_anomaly_models",
+        )
 
         # Train with specific configuration
         model_name = anomaly_engine.train(
             df=df,
-            model_name="regional_model",
+            model_name="catalog.schema.regional_model",
+            registry_table="catalog.schema.dqx_anomaly_models",
             columns=["revenue", "transactions"],
             segment_by=["region"]
         )
@@ -71,41 +62,43 @@ class AnomalyEngine(DQEngineBase):
         self,
         df: DataFrame,
         model_name: str,
+        registry_table: str,
         columns: list[str] | None = None,
         segment_by: list[str] | None = None,
-        registry_table: str | None = None,
+        params: AnomalyParams | None = None,
         exclude_columns: list[str] | None = None,
         expected_anomaly_rate: float = 0.02,
         row_id_columns: list[str] | None = None,
     ) -> str:
         """
-        Train anomaly detection model(s) with intelligent auto-discovery.
+            Train anomaly detection model(s) with intelligent auto-discovery.
 
-        Requires Spark >= 3.4 and the 'anomaly' extras installed:
-            pip install 'databricks-labs-dqx[anomaly]'
+            Requires Spark >= 3.4 and the 'anomaly' extras installed:
+                pip install 'databricks-labs-dqx[anomaly]'
 
-        Auto-discovery behavior:
-        - columns=None, segment_by=None: Auto-discovers both (simplest)
-        - columns specified, segment_by=None: Uses columns, no segmentation
-        - columns=None, segment_by specified: Auto-discovers columns, uses segments
+            Auto-discovery behavior:
+            - columns=None, segment_by=None: Auto-discovers both (simplest)
+            - columns specified, segment_by=None: Uses columns, no segmentation
+            - columns=None, segment_by specified: Auto-discovers columns, uses segments
 
         Args:
             df: Input DataFrame containing historical "normal" data.
-            model_name: Model name (REQUIRED). Provide a descriptive name like 'field_force_anomaly'.
-                       Can be simple name ('my_model') or full path ('catalog.schema.my_model').
-                       If simple name provided, catalog.schema will be derived from registry_table.
+            model_name: Model name (REQUIRED). Must be fully qualified as
+                       'catalog.schema.model'.
+            registry_table: Registry table (REQUIRED). Must be fully qualified as
+                            'catalog.schema.table'.
             columns: Columns to use for anomaly detection (auto-discovered if omitted).
             segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
-            registry_table: Optional registry table; auto-derived if not provided.
+            params: Optional anomaly parameters for tuning training behavior.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
             expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.02 = 2%).
-                                  This helps the model calibrate what's "normal" vs "unusual".
-                                  Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
-                                  This sets the model contamination default.
-            row_id_columns: Unique identifier columns (optional). These are preserved for
-                          validation/feature-importance shuffling but are NOT used for training.
+                                   This helps the model calibrate what's "normal" vs "unusual".
+                                   Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
+                                   This sets the model contamination default.
+            row_id_columns: Optional identifier columns preserved for validation/feature-importance shuffling.
+                            Not used for training and likely to be removed once row-level helpers are simplified.
 
         Important Notes:
             - Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.
@@ -119,76 +112,57 @@ class AnomalyEngine(DQEngineBase):
 
         Examples:
             # Auto-discovery with default 2% expected anomaly rate (simplest)
-            anomaly_engine.train(df, model_name="my_model")
+            anomaly_engine.train(
+                df,
+                model_name="catalog.schema.my_model",
+                registry_table="catalog.schema.dqx_anomaly_models",
+            )
 
             # Exclude ID fields (recommended)
-            anomaly_engine.train(df, model_name="my_model", exclude_columns=["user_id", "order_id"])
+            anomaly_engine.train(
+                df,
+                model_name="catalog.schema.my_model",
+                registry_table="catalog.schema.dqx_anomaly_models",
+                exclude_columns=["user_id", "order_id"],
+            )
 
             # Adjust expected anomaly rate for specific use cases
-            anomaly_engine.train(df, model_name="fraud_detector", expected_anomaly_rate=0.01)  # 1% fraud
-            anomaly_engine.train(df, model_name="quality_monitor", expected_anomaly_rate=0.10)  # 10% defects
+            anomaly_engine.train(
+                df,
+                model_name="catalog.schema.fraud_detector",
+                registry_table="catalog.schema.dqx_anomaly_models",
+                expected_anomaly_rate=0.01,  # 1% fraud
+            )
+            anomaly_engine.train(
+                df,
+                model_name="catalog.schema.quality_monitor",
+                registry_table="catalog.schema.dqx_anomaly_models",
+                expected_anomaly_rate=0.10,  # 10% defects
+            )
 
             # Explicit columns
-            anomaly_engine.train(df, model_name="sales_monitor", columns=["revenue", "transactions"])
+            anomaly_engine.train(
+                df,
+                model_name="catalog.schema.sales_monitor",
+                registry_table="catalog.schema.dqx_anomaly_models",
+                columns=["revenue", "transactions"],
+            )
         """
-        _validate_spark_version(self.spark)
-
-        # Track if auto-discovery will be used (for telemetry)
-        auto_discovery_used = columns is None
-
-        # Validate model_name is provided
-        if not model_name:
-            raise InvalidParameterError(
-                "model_name is required. Provide a descriptive name like 'field_force_anomaly' or "
-                "'sales_rep_monitor'. The full catalog.schema.model path will be constructed automatically."
-            )
-
-        # Process exclude_columns
-        df_filtered, _exclude_list = _process_exclude_columns(df, columns, exclude_columns)
-
-        # Auto-discovery
-        columns, segment_by, discovery_warnings = _perform_auto_discovery(df_filtered, columns, segment_by)
-
-        # Show auto-discovery warnings
-        for warning in discovery_warnings:
-            logger.warning(warning)
-
-        # Validate columns
-        if not columns:
-            raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
-
-        params = AnomalyParams()
-        validation_warnings = _validate_columns(df, columns, params)
-
-        # Show validation warnings
-        for warning in validation_warnings:
-            logger.warning(warning)
-
-        # Prepare training configuration
-        derived_model_name, derived_registry_table = _prepare_training_config(
-            model_name, registry_table, self.spark, columns, segment_by
+        training_service = AnomalyTrainingService(self.spark)
+        context = training_service.build_context(
+            df,
+            model_name,
+            registry_table,
+            columns=columns,
+            segment_by=segment_by,
+            params=params,
+            exclude_columns=exclude_columns,
+            expected_anomaly_rate=expected_anomaly_rate,
+            row_id_columns=row_id_columns,
         )
 
-        # Apply expected_anomaly_rate to params if contamination not explicitly set
-        params = _apply_expected_anomaly_rate(params, expected_anomaly_rate)
+        log_telemetry(self.ws, "anomaly_auto_discovery", str(context.auto_discovery_used).lower())
+        log_telemetry(self.ws, "anomaly_segmented", str(context.segment_by is not None).lower())
+        log_telemetry(self.ws, "anomaly_num_features", str(len(context.columns)))
 
-        # Log telemetry details (utilization metrics, no customer data)
-        log_telemetry(self.ws, "anomaly_auto_discovery", str(auto_discovery_used).lower())
-        log_telemetry(self.ws, "anomaly_segmented", str(segment_by is not None).lower())
-        log_telemetry(self.ws, "anomaly_num_features", str(len(columns)))
-
-        # Execute training
-        if segment_by:
-            return _train_segmented(
-                self.spark,
-                df_filtered,
-                columns,
-                segment_by,
-                derived_model_name,
-                derived_registry_table,
-                params,
-                row_id_columns,
-            )
-        return _train_global(
-            self.spark, df_filtered, columns, derived_model_name, derived_registry_table, params, row_id_columns
-        )
+        return training_service.train(context)

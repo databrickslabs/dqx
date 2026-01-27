@@ -12,7 +12,7 @@ from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.errors import InvalidParameterError
 
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
-from tests.integration_anomaly.test_anomaly_utils import train_simple_2d_model
+from tests.integration_anomaly.test_anomaly_utils import qualify_model_name, train_simple_2d_model
 
 
 def test_missing_columns_error(
@@ -20,7 +20,7 @@ def test_missing_columns_error(
 ):
     """Test error when input DataFrame is missing model columns."""
     unique_id = make_random(8).lower()
-    model_name = f"test_col_mismatch_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_col_mismatch_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on [amount, quantity] - use helper
@@ -37,7 +37,7 @@ def test_missing_columns_error(
     # Should raise error about missing model columns in the input DataFrame
     with pytest.raises(InvalidParameterError, match="missing required columns"):
         _, apply_fn = has_no_anomalies(
-            model=model_name,
+            model=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             score_threshold=DEFAULT_SCORE_THRESHOLD,
         )
@@ -56,7 +56,7 @@ def test_column_order_independence(
 ):
     """Test that column order doesn't matter (set comparison)."""
     unique_id = make_random(8).lower()
-    model_name = f"test_col_order_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_col_order_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on [amount, quantity] - use helper
@@ -85,7 +85,7 @@ def test_column_order_independence(
 def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix):
     """Test error when training on empty DataFrame."""
     unique_id = make_random(8).lower()
-    model_name = f"test_empty_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_empty_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     empty_df = spark.createDataFrame([], "amount double, quantity double")
@@ -95,7 +95,7 @@ def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine,
         anomaly_engine.train(
             df=empty_df,
             columns=["amount", "quantity"],
-            model_name=model_name,
+            model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
         )
 
@@ -105,7 +105,7 @@ def test_missing_registry_table_for_scoring_error(
 ):
     """Test error when registry table doesn't exist during scoring."""
     unique_id = make_random(8).lower()
-    model_name = f"test_missing_registry_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_missing_registry_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_nonexistent_registry"
 
     # Use factory to create test DataFrame
@@ -119,7 +119,7 @@ def test_missing_registry_table_for_scoring_error(
     # Try to score with non-existent registry
     with pytest.raises((InvalidParameterError, Exception)):  # Delta/Spark exception
         _, apply_fn = has_no_anomalies(
-            model=model_name,
+            model=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             score_threshold=DEFAULT_SCORE_THRESHOLD,
         )

@@ -43,7 +43,7 @@ class AnomalyProfile:
     unsupported_columns: list[str] | None = None  # NEW: columns that cannot be used
 
 
-def auto_discover(df: DataFrame) -> AnomalyProfile:
+def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
     """
     Auto-discover columns and segments for anomaly detection.
 

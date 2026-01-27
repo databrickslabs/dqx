@@ -153,7 +153,10 @@ class ColumnTypeClassifier:
         string_columns = [col_name for col_name in columns if isinstance(schema[col_name], T.StringType)]
         distinct_counts: dict[str, int] = {}
         if string_columns:
-            distinct_exprs = [F.countDistinct(col_name).alias(f"{col_name}__distinct") for col_name in string_columns]
+            distinct_exprs = [
+                F.approx_count_distinct(col_name, rsd=0.05).alias(f"{col_name}__distinct")
+                for col_name in string_columns
+            ]
             distinct_row = df.agg(*distinct_exprs).first()
             assert distinct_row is not None, "Failed to compute distinct counts"
             distinct_counts = {col_name: distinct_row[f"{col_name}__distinct"] for col_name in string_columns}
@@ -205,9 +208,7 @@ class ColumnTypeClassifier:
         """Classify a single column."""
 
         # Numeric types
-        if isinstance(
-            col_type, (T.ByteType, T.ShortType, T.IntegerType, T.LongType, T.FloatType, T.DoubleType, T.DecimalType)
-        ):
+        if isinstance(col_type, T.NumericType):
             return ColumnTypeInfo(
                 name=col_name, spark_type=col_type, category='numeric', null_count=null_count, encoding_strategy='none'
             )

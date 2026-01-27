@@ -4,7 +4,6 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
-from databricks.labs.dqx.anomaly import trainer as anomaly_trainer
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.rule import DQDatasetRule
 
@@ -13,6 +12,14 @@ from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
+
+
+def qualify_model_name(model_name: str, registry_table: str) -> str:
+    """Return a fully qualified model name using the registry table prefix."""
+    if model_name.count(".") >= 2:
+        return model_name
+    registry_prefix = registry_table.rsplit(".", 1)[0]
+    return f"{registry_prefix}.{model_name}"
 
 
 def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwargs):
@@ -31,7 +38,7 @@ def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwarg
         Apply function from has_no_anomalies check
     """
     _, apply_fn = has_no_anomalies(
-        model=model_name,
+        model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         **check_kwargs,
     )
@@ -39,27 +46,26 @@ def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwarg
 
 
 def train_model_with_params(
-    spark: SparkSession,
+    anomaly_engine: AnomalyEngine,
     df: DataFrame,
     model_name: str,
     registry_table: str,
     columns: list[str],
     params: AnomalyParams,
     segment_by: list[str] | None = None,
-    row_id_columns: list[str] | None = None,
+    expected_anomaly_rate: float = 0.02,
 ) -> str:
     """
     Train a model with internal params (test-only).
     """
-    return anomaly_trainer.train_model_with_params(
-        spark=spark,
+    return anomaly_engine.train(
         df=df,
         columns=columns,
         model_name=model_name,
         registry_table=registry_table,
-        params=params,
         segment_by=segment_by,
-        row_id_columns=row_id_columns,
+        params=params,
+        expected_anomaly_rate=expected_anomaly_rate,
     )
 
 
@@ -265,7 +271,7 @@ def create_anomaly_check_rule(
         )
     """
     check_kwargs = {
-        "model": model_name,
+        "model": qualify_model_name(model_name, registry_table),
         "registry_table": registry_table,
         "score_threshold": score_threshold,
     }
@@ -306,7 +312,7 @@ def apply_anomaly_check_direct(
         )
     """
     _, apply_fn = has_no_anomalies(
-        model=model_name,
+        model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         score_threshold=score_threshold,
         **kwargs,
@@ -348,21 +354,22 @@ def train_simple_2d_model(
         train_data = [(100.0 + i * 0.5, 2.0) for i in range(train_size)]
 
     train_df = spark.createDataFrame(train_data, "amount double, quantity double")
+    full_model_name = qualify_model_name(model_name, registry_table)
 
     if params is None:
         anomaly_engine.train(
             df=train_df,
             columns=["amount", "quantity"],
-            model_name=model_name,
+            model_name=full_model_name,
             registry_table=registry_table,
         )
         return
 
     train_model_with_params(
-        spark=spark,
+        anomaly_engine=anomaly_engine,
         df=train_df,
         columns=["amount", "quantity"],
-        model_name=model_name,
+        model_name=full_model_name,
         registry_table=registry_table,
         params=params,
     )
@@ -398,21 +405,22 @@ def train_simple_3d_model(
         train_data = [(100.0 + i * 0.5, 2.0, 0.1) for i in range(train_size)]
 
     train_df = spark.createDataFrame(train_data, "amount double, quantity double, discount double")
+    full_model_name = qualify_model_name(model_name, registry_table)
 
     if params is None:
         anomaly_engine.train(
             df=train_df,
             columns=["amount", "quantity", "discount"],
-            model_name=model_name,
+            model_name=full_model_name,
             registry_table=registry_table,
         )
         return
 
     train_model_with_params(
-        spark=spark,
+        anomaly_engine=anomaly_engine,
         df=train_df,
         columns=["amount", "quantity", "discount"],
-        model_name=model_name,
+        model_name=full_model_name,
         registry_table=registry_table,
         params=params,
     )
@@ -454,21 +462,22 @@ def train_large_dataset_model(
 
     # Generate large dataset efficiently using spark.range
     train_df = spark.range(num_rows).selectExpr("cast(id as double) as amount", "2.0 as quantity")
+    full_model_name = qualify_model_name(model_name, registry_table)
 
     if params is None:
         anomaly_engine.train(
             df=train_df,
             columns=columns,
-            model_name=model_name,
+            model_name=full_model_name,
             registry_table=registry_table,
         )
         return
 
     train_model_with_params(
-        spark=spark,
+        anomaly_engine=anomaly_engine,
         df=train_df,
         columns=columns,
-        model_name=model_name,
+        model_name=full_model_name,
         registry_table=registry_table,
         params=params,
     )
@@ -568,7 +577,7 @@ def create_anomaly_dataset_rule(
         criticality=criticality,
         check_func=has_no_anomalies,
         check_func_kwargs={
-            "model": model_name,
+            "model": qualify_model_name(model_name, registry_table),
             "registry_table": registry_table,
             "score_threshold": score_threshold,
             **kwargs,

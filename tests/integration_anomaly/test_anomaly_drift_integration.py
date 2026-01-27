@@ -32,7 +32,7 @@ def test_drift_detection_warns_on_distribution_shift(
     """Test that drift warning is issued when data distribution shifts."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
-    model_name = f"test_drift_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_drift_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on distribution centered at 100 - use helper (need >= 1000 rows for drift check)
@@ -82,7 +82,7 @@ def test_no_drift_warning_on_similar_distribution(
     """Test that no drift warning is issued when distributions are similar."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
-    model_name = f"test_no_drift_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_no_drift_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train on distribution - use helper (need >= 1000 rows)
@@ -126,7 +126,7 @@ def test_drift_detection_disabled_when_threshold_none(
     """Test that drift detection is disabled when drift_threshold=None."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
-    model_name = f"test_drift_disabled_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_drift_disabled_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper
@@ -170,7 +170,7 @@ def test_drift_detection_skipped_on_small_batch(
     """Test that drift detection is skipped when batch size < 1000 rows."""
     # Create unique table names for test isolation
     unique_id = make_random(8).lower()
-    model_name = f"test_small_batch_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_small_batch_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model - use helper

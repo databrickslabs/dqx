@@ -2,10 +2,11 @@
 
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.profiler import auto_discover
+from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
 
 from tests.conftest import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import SEGMENT_REGIONS
+from tests.integration_anomaly.test_anomaly_utils import qualify_model_name
 
 
 def test_auto_discover_numeric_columns(spark: SparkSession):
@@ -21,7 +22,7 @@ def test_auto_discover_numeric_columns(spark: SparkSession):
         "row_id int, amount double, discount double, date_col string, user_id string",
     )
 
-    profile = auto_discover(df)
+    profile = auto_discover_columns(df)
 
     # Should select amount and discount (numeric with variance)
     # Should exclude: row_id (pattern match), date_col (not numeric), user_id (pattern match)
@@ -41,7 +42,7 @@ def test_auto_discover_segments(spark: SparkSession):
 
     df = spark.createDataFrame(data, "region string, amount double")
 
-    profile = auto_discover(df)
+    profile = auto_discover_columns(df)
 
     # Should select region as segment (3 distinct values, >1000 rows per segment)
     assert "region" in profile.recommended_segments
@@ -54,7 +55,7 @@ def test_auto_discover_excludes_high_cardinality(spark: SparkSession):
     data = [(f"category_{i}", 100.0 + i) for i in range(100)]
     df = spark.createDataFrame(data, "category string, amount double")
 
-    profile = auto_discover(df)
+    profile = auto_discover_columns(df)
 
     # Should not recommend category for segmentation (high cardinality)
     assert "category" not in profile.recommended_segments
@@ -80,17 +81,18 @@ def test_zero_config_training(spark: SparkSession, make_schema, make_random, ano
     df.write.saveAsTable(table_name)
 
     # Train with zero config (should auto-discover columns and segments)
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
     model_uri = anomaly_engine.train(
         df=spark.table(table_name),
-        model_name=f"test_auto_{suffix}",
-        registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        model_name=qualify_model_name(f"test_auto_{suffix}", registry_table),
+        registry_table=registry_table,
     )
 
     # Verify models were created
     assert model_uri is not None
 
     # Check registry for segment models
-    registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
+    registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
 
     # Should create 2 segment models (US and EU)
@@ -118,15 +120,16 @@ def test_explicit_columns_no_auto_segment(spark: SparkSession, make_schema, make
     df.write.saveAsTable(table_name)
 
     # Train with explicit columns (should NOT auto-segment)
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
     anomaly_engine.train(
         df=spark.table(table_name),
         columns=["amount"],  # Explicit columns provided
-        model_name=f"test_explicit_{suffix}",
-        registry_table=f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}",
+        model_name=qualify_model_name(f"test_explicit_{suffix}", registry_table),
+        registry_table=registry_table,
     )
 
     # Verify only 1 global model created (no segmentation)
-    registry = spark.table(f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}")
+    registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 1
     assert models[0].segmentation.is_global_model is True
@@ -142,7 +145,7 @@ def test_warnings_for_small_segments(spark: SparkSession):
 
     df = spark.createDataFrame(data, "region string, amount double")
 
-    profile = auto_discover(df)
+    profile = auto_discover_columns(df)
 
     # Should still recommend region but warn about small segments
     assert "region" in profile.recommended_segments

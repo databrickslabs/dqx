@@ -89,7 +89,7 @@ def shared_2d_model(ws, spark, make_schema, make_random):
     """Function-scoped 2D anomaly model for testing."""
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
-    model_name = f"test_2d_{suffix}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_2d_{suffix}"
     registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
     columns = ["amount", "quantity"]
 
@@ -112,7 +112,7 @@ def shared_3d_model(ws, spark, make_schema, make_random):
     """Function-scoped 3D anomaly model for testing."""
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
-    model_name = f"test_3d_{suffix}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_3d_{suffix}"
     registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
     columns = ["amount", "quantity", "discount"]
 
@@ -135,7 +135,7 @@ def shared_4d_model(ws, spark, make_schema, make_random):
     """Function-scoped 4D anomaly model for testing."""
     schema = make_schema(catalog_name=TEST_CATALOG)
     suffix = make_random(8).lower()
-    model_name = f"test_4d_{suffix}"
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_4d_{suffix}"
     registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
     columns = ["amount", "quantity", "discount", "weight"]
 
@@ -254,7 +254,7 @@ def quick_model_factory(ws, spark, make_random, make_schema):
             schema = make_schema(catalog_name=catalog).name
 
         unique_id = make_random(8).lower()
-        model_name = f"test_model_{make_random(4).lower()}"
+        model_name = f"{catalog}.{schema}.test_model_{make_random(4).lower()}"
         registry_table = f"{catalog}.{schema}.{unique_id}_registry"
 
         if train_data is None:
@@ -277,7 +277,7 @@ def quick_model_factory(ws, spark, make_random, make_schema):
             )
         else:
             full_model_name = train_model_with_params(
-                spark=session,
+                anomaly_engine=engine,
                 df=train_df,
                 model_name=model_name,
                 registry_table=registry_table,

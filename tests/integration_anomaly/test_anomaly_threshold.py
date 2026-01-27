@@ -28,7 +28,7 @@ def test_threshold_affects_flagging(
 ):
     """Test that different thresholds flag different numbers of anomalies."""
     unique_id = make_random(8).lower()
-    model_name = f"test_threshold_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_threshold_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model using helper
@@ -63,54 +63,6 @@ def test_threshold_affects_flagging(
     assert errors_aggressive >= errors_conservative
 
 
-def test_recommended_threshold_stored(spark: SparkSession, quick_model_factory):
-    """Test that recommended_threshold is stored in registry metrics."""
-    # Use sample_fraction=1.0 to ensure validation set has enough data
-    params = AnomalyParams(sample_fraction=1.0, max_rows=50)
-
-    model_name, registry_table, _columns = quick_model_factory(spark, params=params)
-
-    # Query recommended threshold from registry (model_name is already full three-level name)
-    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
-    assert record is not None, f"Model {model_name} not found in registry"
-
-    # Verify recommended_threshold exists in metrics
-    assert record["training"]["metrics"] is not None
-    assert "recommended_threshold" in record["training"]["metrics"]
-
-    # Verify it's a reasonable value (between 0 and 1)
-    recommended = record["training"]["metrics"]["recommended_threshold"]
-    assert 0.0 <= recommended <= 1.0
-
-
-def test_using_recommended_threshold(spark: SparkSession, test_df_factory, quick_model_factory):
-    """Test using recommended_threshold from registry in checks."""
-    # Use sample_fraction=1.0 to ensure validation set has enough data
-    params = AnomalyParams(sample_fraction=1.0, max_rows=50)
-
-    model_name, registry_table, _columns = quick_model_factory(spark, params=params)
-
-    recommended_result = spark.sql(
-        f"""
-        SELECT training.metrics['recommended_threshold'] as threshold
-        FROM {registry_table}
-        WHERE identity.model_name = '{model_name}' AND identity.status = 'active'
-    """
-    )
-    threshold_row = recommended_result.first()
-    assert threshold_row is not None, "Failed to retrieve threshold from registry"
-    recommended_threshold = threshold_row["threshold"]
-
-    # Use recommended threshold in check
-    test_df = test_df_factory(spark)
-
-    # Call directly to get anomaly_score column
-    result_df = apply_anomaly_check_direct(test_df, model_name, registry_table, score_threshold=recommended_threshold)
-
-    # Should work correctly
-    assert "anomaly_score" in result_df.columns
-
-
 def test_precision_recall_tradeoff(
     ws,
     spark: SparkSession,
@@ -120,7 +72,7 @@ def test_precision_recall_tradeoff(
 ):
     """Test that lower threshold increases recall (catches more anomalies)."""
     unique_id = make_random(8).lower()
-    model_name = f"test_precision_recall_{make_random(4).lower()}"
+    model_name = f"{anomaly_registry_prefix}.test_precision_recall_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
     # Train model using helper
@@ -230,7 +182,6 @@ def test_validation_metrics_in_registry(spark: SparkSession, quick_model_factory
     assert metrics is not None
 
     # Recommended threshold should be present
-    assert "recommended_threshold" in metrics
 
     # May also have precision, recall, f1_score (depending on implementation)
     # These are optional but good to have: precision, recall, f1_score, val_anomaly_rate

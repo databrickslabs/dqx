@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import collections.abc
 from copy import deepcopy
+from dataclasses import dataclass
 import logging
 import os
 from datetime import datetime
@@ -25,7 +26,6 @@ from mlflow.tracking import MlflowClient
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import pandas_udf, col
-from pyspark.sql.window import Window
 from pyspark.sql.types import (
     DoubleType,
     IntegerType,
@@ -49,7 +49,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     SegmentationConfig,
     compute_config_hash,
 )
-from databricks.labs.dqx.anomaly.profiler import auto_discover
+from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeClassifier,
     SparkFeatureMetadata,
@@ -64,21 +64,423 @@ DEFAULT_MAX_ROWS = 1_000_000
 DEFAULT_TRAIN_RATIO = 0.8
 
 
+@dataclass(frozen=True)
+class TrainingResult:
+    model_uri: str
+    run_id: str | None
+    hyperparams: dict[str, Any]
+    validation_metrics: dict[str, float]
+    feature_metadata: SparkFeatureMetadata
+    ensemble_size: int
+    algorithm: str
+
+
+class AnomalyTrainingStrategy:
+    """Training strategy interface for anomaly models."""
+
+    name: str
+
+    def train(
+        self,
+        train_df: DataFrame,
+        val_df: DataFrame,
+        columns: list[str],
+        params: AnomalyParams,
+        model_name: str,
+        *,
+        allow_ensemble: bool,
+    ) -> TrainingResult:
+        raise NotImplementedError
+
+
+class IsolationForestTrainingStrategy(AnomalyTrainingStrategy):
+    """IsolationForest training strategy (default)."""
+
+    name = "isolation_forest"
+
+    def train(
+        self,
+        train_df: DataFrame,
+        val_df: DataFrame,
+        columns: list[str],
+        params: AnomalyParams,
+        model_name: str,
+        *,
+        allow_ensemble: bool,
+    ) -> TrainingResult:
+        ensemble_size = params.ensemble_size if allow_ensemble and params.ensemble_size else 1
+
+        if ensemble_size > 1:
+            model_uris, hyperparams, validation_metrics, feature_metadata = _train_ensemble(
+                train_df, val_df, columns, params, ensemble_size, model_name
+            )
+            model_uri = ",".join(model_uris)
+            run_id = "ensemble"
+        else:
+            model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, columns, params)
+            validation_metrics = _compute_validation_metrics(model, val_df, columns, feature_metadata)
+            model_uri, run_id = _register_single_model_to_mlflow(
+                model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
+            )
+
+        algorithm = f"IsolationForest_Ensemble_{ensemble_size}" if ensemble_size > 1 else "IsolationForest"
+        return TrainingResult(
+            model_uri=model_uri,
+            run_id=run_id,
+            hyperparams=hyperparams,
+            validation_metrics=validation_metrics,
+            feature_metadata=feature_metadata,
+            ensemble_size=ensemble_size,
+            algorithm=algorithm,
+        )
+
+
+@dataclass(frozen=True)
+class AnomalyTrainingContext:
+    spark: SparkSession
+    df: DataFrame
+    df_filtered: DataFrame
+    model_name: str
+    registry_table: str
+    columns: list[str]
+    segment_by: list[str] | None
+    params: AnomalyParams
+    expected_anomaly_rate: float
+    exclude_columns: list[str] | None
+    row_id_columns: list[str] | None
+    auto_discovery_used: bool
+
+
+@dataclass(frozen=True)
+class TrainingArtifacts:
+    model_name: str
+    model_uri: str
+    run_id: str | None
+    ensemble_size: int
+    feature_metadata: SparkFeatureMetadata
+    hyperparams: dict[str, Any]
+    training_rows: int
+    validation_metrics: dict[str, float]
+    baseline_stats: dict[str, dict[str, float]]
+    algorithm: str
+    segment_values: dict[str, Any] | None = None
+
+
+class AnomalyTrainingService:
+    """Service for building training context and orchestrating model training.
+
+    Extension point:
+        If we add new algorithms/models in the future, introduce a TrainingStrategy
+        interface and make this service delegate to it based on params/metadata.
+    """
+
+    def __init__(self, spark: SparkSession, strategy: AnomalyTrainingStrategy | None = None) -> None:
+        self._spark = spark
+        self._strategy = strategy or IsolationForestTrainingStrategy()
+
+    def build_context(
+        self,
+        df: DataFrame,
+        model_name: str,
+        registry_table: str,
+        *,
+        columns: list[str] | None,
+        segment_by: list[str] | None,
+        params: AnomalyParams | None,
+        exclude_columns: list[str] | None,
+        expected_anomaly_rate: float,
+        row_id_columns: list[str] | None,
+    ) -> AnomalyTrainingContext:
+        _validate_spark_version(self._spark)
+
+        if not model_name:
+            raise InvalidParameterError("model_name is required and must be fully qualified as 'catalog.schema.model'.")
+        if not registry_table:
+            raise InvalidParameterError(
+                "registry_table is required and must be fully qualified as 'catalog.schema.table'."
+            )
+
+        df_filtered = _process_exclude_columns(df, columns, exclude_columns)
+        auto_discovery_used = columns is None
+
+        if columns is None:
+            columns, segment_by = _perform_auto_discovery(df_filtered, segment_by)
+
+        if not columns:
+            raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
+
+        params = AnomalyParams() if params is None else params
+        validation_warnings = _validate_columns(df, columns, params)
+        for warning in validation_warnings:
+            logger.warning(warning)
+
+        self._prepare_training_config(
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=columns,
+            segment_by=segment_by,
+        )
+
+        params = _apply_expected_anomaly_rate_if_default_contamination(params, expected_anomaly_rate)
+
+        return AnomalyTrainingContext(
+            spark=self._spark,
+            df=df,
+            df_filtered=df_filtered,
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=columns,
+            segment_by=segment_by,
+            params=params,
+            expected_anomaly_rate=expected_anomaly_rate,
+            exclude_columns=exclude_columns,
+            row_id_columns=row_id_columns,
+            auto_discovery_used=auto_discovery_used,
+        )
+
+    def train(self, context: AnomalyTrainingContext) -> str:
+        if context.segment_by:
+            return self._train_segmented(context)
+        return self._train_global(context)
+
+    def _prepare_training_config(
+        self,
+        *,
+        model_name: str,
+        registry_table: str,
+        columns: list[str],
+        segment_by: list[str] | None,
+    ) -> None:
+        _validate_fully_qualified_name(model_name, label="model_name")
+        _validate_fully_qualified_name(registry_table, label="registry_table")
+
+        if _model_exists_in_uc(model_name):
+            logger.warning(
+                f"Model '{model_name}' already exists. Creating a new version. Previous versions remain available."
+            )
+
+        registry = AnomalyModelRegistry(self._spark)
+        existing = registry.get_active_model(registry_table, model_name)
+
+        if existing:
+            config_changed = (
+                set(columns) != set(existing.training.columns) or segment_by != existing.segmentation.segment_by
+            )
+
+            if config_changed:
+                logger.warning(
+                    f"⚠️  Model '{model_name}' exists with different configuration:\n"
+                    f"   Existing: columns={existing.training.columns}, segment_by={existing.segmentation.segment_by}\n"
+                    f"   New: columns={columns}, segment_by={segment_by}\n"
+                    f"   The old model will be archived. Consider using a different model_name "
+                    f"if this is a different use case."
+                )
+
+    def _train_global(self, context: AnomalyTrainingContext) -> str:
+        sampled_df, _, truncated = _sample_df(
+            context.df_filtered, context.columns, context.params, extra_columns=context.row_id_columns
+        )
+        if not sampled_df.head(1):
+            raise InvalidParameterError(
+                "Sampling produced 0 rows. Provide more data or adjust sampling parameters "
+                "(sample_fraction/max_rows)."
+            )
+
+        train_df, val_df = _train_validation_split(sampled_df, context.params)
+
+        result = self._strategy.train(
+            train_df,
+            val_df,
+            context.columns,
+            context.params,
+            context.model_name,
+            allow_ensemble=True,
+        )
+
+        baseline_stats = _compute_post_training_metadata(train_df, result.feature_metadata)
+
+        if truncated:
+            logger.warning(f"Sampling capped at {context.params.max_rows} rows; model trained on truncated sample.")
+
+        artifacts = TrainingArtifacts(
+            model_name=context.model_name,
+            model_uri=result.model_uri,
+            run_id=result.run_id,
+            ensemble_size=result.ensemble_size,
+            feature_metadata=result.feature_metadata,
+            hyperparams=result.hyperparams,
+            training_rows=train_df.count(),
+            validation_metrics=result.validation_metrics,
+            baseline_stats=baseline_stats,
+            algorithm=result.algorithm,
+        )
+        self._save_training_record(context, artifacts, segment_by=None)
+
+        logger.info(f"   Model trained: {context.model_name}")
+        logger.info(f"   Model URI: {result.model_uri}")
+        logger.info(f"   Registry: {context.registry_table}")
+
+        return context.model_name
+
+    def _train_segmented(self, context: AnomalyTrainingContext) -> str:
+        if context.segment_by is None:
+            raise InvalidParameterError(
+                "segment_by must be provided for segmented training. Provide segment_by or use global training."
+            )
+
+        segments = _get_and_validate_segments(context.df_filtered, context.segment_by)
+
+        model_uris: list[str] = []
+        skipped_segments: list[str] = []
+        failed_segments: list[tuple[str, str]] = []
+
+        for i, segment_vals in enumerate(segments):
+            segment_name = "_".join(f"{k}={v}" for k, v in segment_vals.items())
+            logger.info(f"Training segment {i+1}/{len(segments)}: {segment_name}")
+
+            try:
+                model_uri = self._train_one_segment_with_validation(context, segment_vals)
+
+                if model_uri is not None:
+                    model_uris.append(model_uri)
+                else:
+                    skipped_segments.append(segment_name)
+
+            except Exception as exc:
+                error_msg = f"Segment {segment_name} training failed: {type(exc).__name__}: {exc}"
+                logger.warning(error_msg)
+                failed_segments.append((segment_name, str(exc)))
+
+        _report_training_summary(
+            model_uris,
+            skipped_segments,
+            failed_segments,
+            len(segments),
+            context.model_name,
+            context.registry_table,
+            context.params,
+        )
+
+        return context.model_name
+
+    def _train_one_segment_with_validation(
+        self, context: AnomalyTrainingContext, segment_vals: dict[str, Any]
+    ) -> str | None:
+        segment_name = "_".join(f"{k}={v}" for k, v in segment_vals.items())
+
+        segment_df = context.df_filtered
+        for col_name, val in segment_vals.items():
+            segment_df = segment_df.filter(F.col(col_name) == val)
+
+        segment_size = segment_df.count()
+        if segment_size < 1000:
+            logger.warning(f"Segment {segment_name} has only {segment_size} rows, model may be unreliable.")
+
+        segment_model_name = f"{context.model_name}__seg_{segment_name}"
+
+        return self._train_single_segment(context, segment_df, segment_vals, segment_model_name)
+
+    def _train_single_segment(
+        self,
+        context: AnomalyTrainingContext,
+        segment_df: DataFrame,
+        segment_values: dict[str, Any],
+        model_name: str,
+    ) -> str | None:
+        sampled_df, sampled_count, _ = _sample_df(
+            segment_df, context.columns, context.params, extra_columns=context.row_id_columns
+        )
+        if sampled_count == 0:
+            logger.info(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
+            return None
+
+        train_df, val_df = _train_validation_split(sampled_df, context.params)
+
+        result = self._strategy.train(
+            train_df,
+            val_df,
+            context.columns,
+            context.params,
+            model_name,
+            allow_ensemble=False,
+        )
+
+        baseline_stats = _compute_post_training_metadata(train_df, result.feature_metadata)
+
+        artifacts = TrainingArtifacts(
+            model_name=model_name,
+            model_uri=result.model_uri,
+            run_id=result.run_id,
+            ensemble_size=result.ensemble_size,
+            feature_metadata=result.feature_metadata,
+            hyperparams=result.hyperparams,
+            training_rows=train_df.count(),
+            validation_metrics=result.validation_metrics,
+            baseline_stats=baseline_stats,
+            algorithm=result.algorithm,
+            segment_values=segment_values,
+        )
+        self._save_training_record(context, artifacts, segment_by=context.segment_by)
+
+        return result.model_uri
+
+    def _save_training_record(
+        self,
+        context: AnomalyTrainingContext,
+        artifacts: TrainingArtifacts,
+        *,
+        segment_by: list[str] | None,
+    ) -> None:
+        record = AnomalyModelRecord(
+            identity=ModelIdentity(
+                model_name=artifacts.model_name,
+                model_uri=artifacts.model_uri,
+                algorithm=artifacts.algorithm,
+                mlflow_run_id=artifacts.run_id or "unknown",
+                status="active",
+            ),
+            training=TrainingMetadata(
+                columns=context.columns,
+                hyperparameters=_stringify_dict(artifacts.hyperparams),
+                training_rows=artifacts.training_rows,
+                training_time=datetime.utcnow(),
+                metrics=artifacts.validation_metrics,
+                baseline_stats=artifacts.baseline_stats,
+            ),
+            features=FeatureEngineering(
+                mode="spark",
+                column_types=None,
+                feature_metadata=artifacts.feature_metadata.to_json(),
+                feature_importance=None,
+                temporal_config=None,
+            ),
+            segmentation=SegmentationConfig(
+                segment_by=segment_by,
+                segment_values=_stringify_dict(artifacts.segment_values) if artifacts.segment_values else None,
+                is_global_model=segment_by is None,
+                sklearn_version=sklearn.__version__,
+                config_hash=compute_config_hash(context.columns, segment_by),
+            ),
+        )
+        registry = AnomalyModelRegistry(context.spark)
+        registry.save_model(record, context.registry_table)
+
+
 def _process_exclude_columns(
     df: DataFrame,
     columns: list[str] | None,
     exclude_columns: list[str] | None,
-) -> tuple[DataFrame, list[str]]:
+) -> DataFrame:
     """
     Process exclude_columns parameter and return filtered DataFrame.
 
     Returns:
-        Tuple of (filtered_df, exclude_columns_list)
+        Filtered DataFrame
     """
     exclude_list = exclude_columns or []
 
     if not exclude_list:
-        return df, []
+        return df
 
     # Validate that exclude_columns exist in DataFrame
     df_columns = set(df.columns)
@@ -99,31 +501,24 @@ def _process_exclude_columns(
         remaining_columns = [col for col in df.columns if col not in exclude_list]
         df_filtered = df.select(*remaining_columns)
         logger.info(f"Excluding {len(exclude_list)} columns from auto-discovery: {exclude_list}")
-        return df_filtered, exclude_list
+        return df_filtered
 
     # No need to filter if columns explicitly provided
-    return df, exclude_list
+    return df
 
 
 def _perform_auto_discovery(
     df_filtered: DataFrame,
-    columns: list[str] | None,
     segment_by: list[str] | None,
-) -> tuple[list[str] | None, list[str] | None, list[str]]:
+) -> tuple[list[str], list[str] | None]:
     """
     Perform auto-discovery of columns and segments.
 
     Returns:
-        Tuple of (columns, segment_by, warnings)
+        Tuple of (columns, segment_by)
     """
-    discover_warnings: list[str] = []
-
-    if columns is not None:
-        # No auto-discovery needed
-        return columns, segment_by, discover_warnings
-
     # Auto-discover columns
-    profile = auto_discover(df_filtered)
+    profile = auto_discover_columns(df_filtered)
     discovered_columns = profile.recommended_columns
     discovered_segments = segment_by
 
@@ -139,10 +534,15 @@ def _perform_auto_discovery(
             f"({profile.segment_count} total segments)"
         )
 
-    return discovered_columns, discovered_segments, profile.warnings
+    for warning in profile.warnings:
+        logger.warning(warning)
+
+    return discovered_columns, discovered_segments
 
 
-def _apply_expected_anomaly_rate(params: AnomalyParams | None, expected_anomaly_rate: float) -> AnomalyParams:
+def _apply_expected_anomaly_rate_if_default_contamination(
+    params: AnomalyParams | None, expected_anomaly_rate: float
+) -> AnomalyParams:
     """
     Apply expected_anomaly_rate to params if contamination is not explicitly set.
 
@@ -174,87 +574,15 @@ def _apply_expected_anomaly_rate(params: AnomalyParams | None, expected_anomaly_
     return params
 
 
-def _prepare_training_config(
-    model_name: str,
-    registry_table: str | None,
-    spark: SparkSession,
-    columns: list[str],
-    segment_by: list[str] | None,
-) -> tuple[str, str]:
-    """
-    Derive registry table and full model name, check if model exists and warn about config changes.
-
-    Returns:
-        Tuple of (derived_model_name, derived_registry_table)
-    """
-    derived_registry_table = registry_table or _derive_registry_table(spark)
-
-    # Ensure model_name has full three-level catalog.schema.model format
-    derived_model_name = ensure_full_model_name(model_name, derived_registry_table)
-
-    # Check if model already exists in Unity Catalog and warn
-    if _model_exists_in_uc(derived_model_name):
-        logger.warning(
-            f"Model '{derived_model_name}' already exists. Creating a new version. "
-            f"Previous versions remain available."
-        )
-
-    # Check for configuration changes in existing models
-    registry = AnomalyModelRegistry(spark)
-    existing = registry.get_active_model(derived_registry_table, derived_model_name)
-
-    if existing:
-        config_changed = (
-            set(columns) != set(existing.training.columns) or segment_by != existing.segmentation.segment_by
-        )
-
-        if config_changed:
-            logger.warning(
-                f"⚠️  Model '{derived_model_name}' exists with different configuration:\n"
-                f"   Existing: columns={existing.training.columns}, segment_by={existing.segmentation.segment_by}\n"
-                f"   New: columns={columns}, segment_by={segment_by}\n"
-                f"   The old model will be archived. Consider using a different model_name "
-                f"if this is a different use case."
-            )
-
-    return derived_model_name, derived_registry_table
+def _validate_fully_qualified_name(value: str, *, label: str) -> None:
+    """Validate that a name is in catalog.schema.name format."""
+    if value.count(".") != 2:
+        raise InvalidParameterError(f"{label} must be fully qualified as catalog.schema.name, got: {value!r}.")
 
 
-def train_model_with_params(
-    spark: SparkSession,
-    df: DataFrame,
-    columns: list[str],
-    model_name: str,
-    registry_table: str,
-    params: AnomalyParams,
-    segment_by: list[str] | None = None,
-    row_id_columns: list[str] | None = None,
-    expected_anomaly_rate: float = 0.02,
-) -> str:
-    """
-    Train a model with explicit params (internal/test helper).
-    """
-    _validate_spark_version(spark)
-    _validate_columns(df, columns, params)
-
-    derived_model_name, derived_registry_table = _prepare_training_config(
-        model_name, registry_table, spark, columns, segment_by
-    )
-    params = _apply_expected_anomaly_rate(params, expected_anomaly_rate)
-
-    if segment_by:
-        return _train_segmented(
-            spark,
-            df,
-            columns,
-            segment_by,
-            derived_model_name,
-            derived_registry_table,
-            params,
-            row_id_columns,
-        )
-
-    return _train_global(spark, df, columns, derived_model_name, derived_registry_table, params, row_id_columns)
+def validate_fully_qualified_name(value: str, *, label: str) -> None:
+    """Public validator for fully qualified names."""
+    _validate_fully_qualified_name(value, label=label)
 
 
 def _register_single_model_to_mlflow(
@@ -312,27 +640,19 @@ def _register_single_model_to_mlflow(
 
 def _compute_post_training_metadata(
     train_df: DataFrame,
-    val_df: DataFrame,
-    columns: list[str],
     feature_metadata: Any,
-    model: Any,
-    row_id_columns: list[str] | None,
-) -> tuple[dict[str, dict[str, float]], dict[str, float]]:
+) -> dict[str, dict[str, float]]:
     """
-    Compute baseline statistics and feature importance after training.
+    Compute baseline statistics after training.
 
     Extracted helper to reduce local variables in training functions.
 
     Args:
         train_df: Training DataFrame with original columns
-        val_df: Validation DataFrame
-        columns: Original column names
         feature_metadata: Feature engineering metadata from training
-        model: Trained model for feature importance computation
-        row_id_columns: Optional stable row identifier columns (used for permutation importance only)
 
     Returns:
-        Tuple of (baseline_stats, feature_importance)
+        Baseline statistics dictionary
     """
     # Apply feature engineering to compute baseline stats on the same features the model was trained on
     column_infos_for_stats = reconstruct_column_infos(feature_metadata)
@@ -347,175 +667,7 @@ def _compute_post_training_metadata(
     # Compute baseline statistics for drift detection on engineered features
     baseline_stats = _compute_baseline_statistics(engineered_train_df, feature_metadata.engineered_feature_names)
 
-    # Compute feature importance for explainability
-    feature_importance = _compute_feature_importance(model, val_df, columns, feature_metadata, row_id_columns)
-
-    return baseline_stats, feature_importance
-
-
-def _train_global_model(
-    train_df: DataFrame,
-    val_df: DataFrame,
-    columns: list[str],
-    params: AnomalyParams,
-    model_name: str,
-) -> tuple[str, str, dict[str, Any], dict[str, float], Any, Any, int]:
-    """Train a global model and return training artifacts."""
-    ensemble_size = params.ensemble_size if params and params.ensemble_size else 1
-
-    if ensemble_size > 1:
-        model_uris, hyperparams, validation_metrics, feature_metadata = _train_ensemble(
-            train_df, val_df, columns, params, ensemble_size, model_name
-        )
-        model_uri = ",".join(model_uris)
-        run_id = "ensemble"
-        model_for_importance = mlflow.sklearn.load_model(model_uris[0])
-    else:
-        model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, columns, params)
-        contamination = params.algorithm_config.contamination if params and params.algorithm_config else 0.1
-        validation_metrics = _compute_validation_metrics(model, val_df, columns, contamination, feature_metadata)
-        model_uri, run_id = _register_single_model_to_mlflow(
-            model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
-        )
-        model_for_importance = model
-
-    return (
-        model_uri,
-        run_id,
-        hyperparams,
-        validation_metrics,
-        feature_metadata,
-        model_for_importance,
-        ensemble_size,
-    )
-
-
-def _train_global(
-    spark: SparkSession,
-    df: DataFrame,
-    columns: list[str],
-    model_name: str,
-    registry_table: str,
-    params: AnomalyParams | None,
-    row_id_columns: list[str] | None,
-) -> str:
-    """Train a single global model (no segmentation)."""
-    params = params or AnomalyParams()
-
-    sampled_df, _, truncated = _sample_df(df, columns, params, extra_columns=row_id_columns)
-    if not sampled_df.head(1):
-        raise InvalidParameterError("Sampling produced 0 rows; provide more data or adjust params.")
-
-    train_df, val_df = _train_validation_split(sampled_df, params)
-
-    (
-        model_uri,
-        run_id,
-        hyperparams,
-        validation_metrics,
-        feature_metadata,
-        model_for_importance,
-        ensemble_size,
-    ) = _train_global_model(train_df, val_df, columns, params, model_name)
-
-    # Compute baseline stats and feature importance
-    baseline_stats, feature_importance = _compute_post_training_metadata(
-        train_df, val_df, columns, feature_metadata, model_for_importance, row_id_columns
-    )
-
-    if truncated:
-        logger.warning(f"Sampling capped at {params.max_rows} rows; model trained on truncated sample.")
-
-    registry = AnomalyModelRegistry(spark)
-
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name=model_name,
-            model_uri=model_uri,
-            algorithm=f"IsolationForest_Ensemble_{ensemble_size}" if ensemble_size > 1 else "IsolationForest",
-            mlflow_run_id=run_id or "unknown",
-            status="active",
-        ),
-        training=TrainingMetadata(
-            columns=columns,
-            hyperparameters=_stringify_dict(hyperparams),
-            training_rows=train_df.count(),
-            training_time=datetime.utcnow(),
-            metrics=validation_metrics,
-            baseline_stats=baseline_stats,
-        ),
-        features=FeatureEngineering(
-            mode="spark",
-            column_types=None,
-            feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
-            feature_importance=feature_importance,
-            temporal_config=None,
-        ),
-        segmentation=SegmentationConfig(
-            segment_by=None,
-            segment_values=None,
-            is_global_model=True,
-            sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
-            config_hash=compute_config_hash(columns, None),  # Compute config hash for collision detection
-        ),
-    )
-    registry.save_model(record, registry_table)
-
-    logger.info(f"   Model trained: {model_name}")
-    logger.info(f"   Model URI: {model_uri}")
-    logger.info(f"   Registry: {registry_table}")
-
-    return model_name
-
-
-def _train_one_segment_with_validation(
-    spark: SparkSession,
-    df: DataFrame,
-    columns: list[str],
-    segment_vals: dict[str, Any],
-    segment_by: list[str],
-    base_model_name: str,
-    registry_table: str,
-    params: AnomalyParams,
-    row_id_columns: list[str] | None,
-) -> tuple[str | None, bool]:
-    """
-    Train a single segment with validation.
-
-    Returns:
-        (model_uri, skipped) where:
-        - model_uri: URI if successful, None if failed or skipped
-        - skipped: True if skipped due to insufficient data, False otherwise
-    """
-    segment_name = "_".join(f"{k}={v}" for k, v in segment_vals.items())
-
-    # Filter to this segment
-    segment_df = df
-    for col_name, val in segment_vals.items():
-        segment_df = segment_df.filter(F.col(col_name) == val)
-
-    # Validate segment size
-    segment_size = segment_df.count()
-    if segment_size < 1000:
-        logger.warning(f"Segment {segment_name} has only {segment_size} rows, model may be unreliable.")
-
-    # Derive segment-specific model name
-    segment_model_name = f"{base_model_name}__seg_{segment_name}"
-
-    # Train model for this segment
-    model_uri = _train_single_segment(
-        spark,
-        segment_df,
-        columns,
-        segment_model_name,
-        segment_vals,
-        segment_by,
-        registry_table,
-        params,
-        row_id_columns,
-    )
-
-    return model_uri, model_uri is None
+    return baseline_stats
 
 
 def _get_and_validate_segments(
@@ -587,7 +739,7 @@ def _report_training_summary(
     # Validate that at least one segment was successfully trained
     if not model_uris:
         raise InvalidParameterError(
-            f"All {total_segments} segments failed ({len(skipped_segments)} insufficient data, "
+            f"All {total_segments} segments failed ({len(skipped_segments)} skipped, "
             f"{len(failed_segments)} errors). Cannot train any models. "
             f"Consider increasing sample_fraction (current: {params.sample_fraction}) or checking segment definitions."
         )
@@ -596,142 +748,6 @@ def _report_training_summary(
     trained_count = len(model_uris)
     logger.info(f"   Trained {trained_count}/{total_segments} segment models for: {base_model_name}")
     logger.info(f"   Registry: {registry_table}")
-
-
-def _train_segmented(
-    spark: SparkSession,
-    df: DataFrame,
-    columns: list[str],
-    segment_by: list[str],
-    base_model_name: str,
-    registry_table: str,
-    params: AnomalyParams | None,
-    row_id_columns: list[str] | None,
-) -> str:
-    """Train separate models for each segment."""
-    params = params or AnomalyParams()
-
-    # Get and validate segments
-    segments = _get_and_validate_segments(df, segment_by)
-
-    model_uris = []
-    skipped_segments = []
-    failed_segments = []
-
-    # Train each segment
-    for i, segment_vals in enumerate(segments):
-        segment_name = "_".join(f"{k}={v}" for k, v in segment_vals.items())
-        logger.info(f"Training segment {i+1}/{len(segments)}: {segment_name}")
-
-        try:
-            model_uri, was_skipped = _train_one_segment_with_validation(
-                spark,
-                df,
-                columns,
-                segment_vals,
-                segment_by,
-                base_model_name,
-                registry_table,
-                params,
-                row_id_columns,
-            )
-
-            if model_uri is not None:
-                model_uris.append(model_uri)
-            elif was_skipped:
-                skipped_segments.append(segment_name)
-
-        except Exception as e:
-            # Log error and continue with next segment
-            error_msg = f"Segment {segment_name} training failed: {type(e).__name__}: {e}"
-            logger.warning(error_msg)
-            failed_segments.append((segment_name, str(e)))
-
-    # Report summary and validate success
-    _report_training_summary(
-        model_uris, skipped_segments, failed_segments, len(segments), base_model_name, registry_table, params
-    )
-
-    return base_model_name
-
-
-def _train_single_segment(
-    spark: SparkSession,
-    df: DataFrame,
-    columns: list[str],
-    model_name: str,
-    segment_values: dict[str, Any],
-    segment_by: list[str],
-    registry_table: str,
-    params: AnomalyParams,
-    row_id_columns: list[str] | None,
-) -> str | None:
-    """
-    Train a model for a single segment.
-
-    Returns:
-        Model URI on success, None if segment has insufficient data after sampling.
-    """
-
-    sampled_df, sampled_count, _ = _sample_df(df, columns, params, extra_columns=row_id_columns)
-    if sampled_count == 0:
-        logger.info(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
-        return None
-
-    train_df, val_df = _train_validation_split(sampled_df, params)
-
-    # Train single model (no ensemble for segments to reduce complexity)
-    model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, columns, params)
-
-    contamination = params.algorithm_config.contamination if params and params.algorithm_config else 0.1
-    validation_metrics = _compute_validation_metrics(model, val_df, columns, contamination, feature_metadata)
-
-    # Register model to Unity Catalog
-    model_uri, run_id = _register_single_model_to_mlflow(
-        model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
-    )
-
-    # Compute baseline stats and feature importance
-    baseline_stats, feature_importance = _compute_post_training_metadata(
-        train_df, val_df, columns, feature_metadata, model, row_id_columns
-    )
-
-    registry = AnomalyModelRegistry(spark)
-
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name=model_name,
-            model_uri=model_uri,
-            algorithm="IsolationForest",
-            mlflow_run_id=run_id,
-            status="active",
-        ),
-        training=TrainingMetadata(
-            columns=columns,
-            hyperparameters=_stringify_dict(hyperparams),
-            training_rows=train_df.count(),
-            training_time=datetime.utcnow(),
-            metrics=validation_metrics,
-            baseline_stats=baseline_stats,
-        ),
-        features=FeatureEngineering(
-            mode="spark",
-            column_types=None,
-            feature_metadata=feature_metadata.to_json(),  # Save feature engineering metadata
-            feature_importance=feature_importance,
-            temporal_config=None,
-        ),
-        segmentation=SegmentationConfig(
-            segment_by=segment_by,
-            segment_values=_stringify_dict(segment_values),
-            is_global_model=False,
-            sklearn_version=sklearn.__version__,  # Capture sklearn version for compatibility checking
-            config_hash=compute_config_hash(columns, segment_by),  # Compute config hash for collision detection
-        ),
-    )
-    registry.save_model(record, registry_table)
-
-    return model_uri
 
 
 def _validate_spark_version(spark: SparkSession) -> None:
@@ -767,71 +783,6 @@ def _validate_columns(
     return warnings_list
 
 
-def _derive_registry_table(spark: SparkSession) -> str:
-    """Derive registry table name from current catalog and schema.
-
-    Args:
-        spark: SparkSession
-
-    Returns:
-        Registry table name in format: catalog.schema.dqx_anomaly_models
-
-    Raises:
-        InvalidParameterError: If current catalog/schema cannot be determined
-    """
-    try:
-        catalog_row = spark.sql("SELECT current_catalog()").first()
-        schema_row = spark.sql("SELECT current_schema()").first()
-        assert catalog_row is not None and schema_row is not None
-        current_catalog = catalog_row[0]
-        current_schema = schema_row[0]
-        return f"{current_catalog}.{current_schema}.dqx_anomaly_models"
-    except Exception as exc:
-        raise InvalidParameterError(
-            "Cannot infer registry table name. No current catalog/schema set. "
-            "Provide registry_table explicitly (e.g., 'catalog.schema.dqx_anomaly_models')."
-        ) from exc
-
-
-def ensure_full_model_name(model_name: str, registry_table: str) -> str:
-    """
-    Ensure model name has the full three-level catalog.schema.model format required by Unity Catalog.
-    Uses catalog and schema from registry_table.
-
-    This is a public utility function that validates and normalizes model names for Unity Catalog.
-
-    If model_name already has three levels (two dots), returns it as-is.
-    Otherwise, prepends catalog and/or schema from registry_table.
-
-    Args:
-        model_name: Model name (may be partial or full)
-        registry_table: Full registry table name (catalog.schema.table)
-
-    Returns:
-        Full model name with catalog.schema.model format
-
-    Raises:
-        InvalidParameterError: If registry_table format is invalid
-    """
-    if model_name.count('.') >= 2:
-        # Already has catalog.schema.model format
-        return model_name
-
-    # Extract catalog.schema from registry_table
-    parts = registry_table.split(".")
-    if len(parts) >= 2:
-        catalog, schema = parts[0], parts[1]
-    else:
-        raise InvalidParameterError(f"registry_table must have at least catalog.schema format, got: {registry_table}")
-
-    if model_name.count('.') == 1:
-        # Has schema.model, add catalog
-        return f"{catalog}.{model_name}"
-
-    # No dots, add catalog.schema.model
-    return f"{catalog}.{schema}.{model_name}"
-
-
 def _model_exists_in_uc(model_name: str) -> bool:
     """
     Check if a model exists in Unity Catalog using MLflow API.
@@ -858,9 +809,6 @@ def _sample_df(
 ) -> tuple[DataFrame, int, bool]:
     fraction = params.sample_fraction if params.sample_fraction is not None else DEFAULT_SAMPLE_FRACTION
     selected_cols = list(dict.fromkeys([*columns, *(extra_columns or [])]))
-    missing_cols = [col for col in selected_cols if col not in df.columns]
-    if missing_cols:
-        raise InvalidParameterError(f"Columns not found in DataFrame: {missing_cols}")
     sampled = df.select(*selected_cols).sample(withReplacement=False, fraction=fraction, seed=42)
     if params.max_rows:
         sampled = sampled.limit(params.max_rows)
@@ -881,9 +829,8 @@ def _fit_isolation_forest(
     """
     Train IsolationForest model with distributed feature engineering and driver-based training.
 
-    Architecture: Feature engineering runs distributed on Spark for scalability, then model trains
-    on driver with collected data. This hybrid approach maximizes performance while maintaining
-    Spark Connect compatibility (no custom Python classes serialized across cluster).
+    Architecture: Feature engineering runs on Spark, then the model trains on the driver.
+    This hybrid approach maximizes performance while remaining Spark Connect compatible.
 
     Returns:
         - pipeline: sklearn Pipeline (RobustScaler + IsolationForest) - only standard components
@@ -902,9 +849,7 @@ def _fit_isolation_forest(
     feature_df = train_df.select(*feature_columns)
     column_infos, _ = classifier.analyze_columns(feature_df, feature_columns)
 
-    # Feature engineering transforms all column types to numeric features in Spark (distributed).
-    # Datetime → cyclical features (hour_sin/cos, dow_sin/cos, etc.), categorical → one-hot/frequency,
-    # numeric → pass-through. Original datetime/categorical columns are dropped after transformation.
+    # Feature engineering transforms all column types to numeric features in Spark.
     engineered_df, feature_metadata = apply_feature_engineering(
         feature_df,
         column_infos,
@@ -1023,65 +968,11 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
     return result
 
 
-def _compute_threshold_metrics(
-    labeled_df: DataFrame, test_thresholds: list[float]
-) -> tuple[dict[str, float], float, float]:
-    """
-    Compute precision/recall/F1 for multiple thresholds and find the best threshold.
-
-    Returns:
-        Tuple of (threshold_metrics_dict, best_f1, best_threshold)
-    """
-    threshold_metrics: dict[str, float] = {}
-    best_f1 = 0.0
-    best_threshold = 0.5
-
-    agg_exprs = []
-    for threshold in test_thresholds:
-        key = int(threshold * 100)
-        score_ge = F.col("score") >= F.lit(threshold)
-        score_lt = F.col("score") < F.lit(threshold)
-
-        agg_exprs.extend(
-            [
-                F.sum(F.when(score_ge & (F.col("true_label") == 1), 1).otherwise(0)).alias(f"tp_{key}"),
-                F.sum(F.when(score_ge & (F.col("true_label") == 0), 1).otherwise(0)).alias(f"fp_{key}"),
-                F.sum(F.when(score_lt & (F.col("true_label") == 1), 1).otherwise(0)).alias(f"fn_{key}"),
-            ]
-        )
-
-    stats_row = labeled_df.agg(*agg_exprs).first()
-    assert stats_row is not None, "Failed to compute threshold metrics"
-
-    for threshold in test_thresholds:
-        key = int(threshold * 100)
-        true_positives = stats_row[f"tp_{key}"] or 0
-        false_positives = stats_row[f"fp_{key}"] or 0
-        false_negatives = stats_row[f"fn_{key}"] or 0
-
-        precision = (
-            true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0.0
-        )
-        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0.0
-        f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
-
-        threshold_metrics[f"threshold_{key}_precision"] = precision
-        threshold_metrics[f"threshold_{key}_recall"] = recall
-        threshold_metrics[f"threshold_{key}_f1"] = f1_score
-
-        if f1_score > best_f1:
-            best_f1 = f1_score
-            best_threshold = threshold
-
-    return threshold_metrics, best_f1, best_threshold
-
-
 def _compute_validation_metrics(
-    model: Any, val_df: DataFrame, feature_cols: list[str], contamination: float, feature_metadata: Any
+    model: Any, val_df: DataFrame, feature_cols: list[str], feature_metadata: Any
 ) -> dict[str, float]:
     """
-    Compute comprehensive validation metrics including precision, recall, F1,
-    threshold recommendations, and distribution statistics.
+    Compute validation metrics and distribution statistics.
 
     Uses distributed scoring via pandas UDF.
     """
@@ -1102,19 +993,6 @@ def _compute_validation_metrics(
     # Quantiles for distribution
     quantiles = scores_df.approxQuantile("score", [0.1, 0.25, 0.5, 0.75, 0.9], 0.01)
 
-    # Ground truth labels: top contamination% are anomalies
-    threshold_for_labels = scores_df.approxQuantile("score", [1 - contamination], 0.01)[0]
-    labeled_df = scores_df.withColumn(
-        "true_label", F.when(F.col("score") >= F.lit(threshold_for_labels), 1).otherwise(0)
-    )
-
-    # Compute precision/recall/F1 for multiple thresholds
-    test_thresholds = [0.3, 0.5, 0.7, 0.9]
-    threshold_metrics, best_f1, best_threshold = _compute_threshold_metrics(labeled_df, test_thresholds)
-
-    # Estimated contamination (percentage of scores above best threshold)
-    estimated_contamination = labeled_df.filter(F.col("score") >= F.lit(best_threshold)).count() / val_count
-
     assert stats is not None, "Failed to compute validation statistics"
     metrics = {
         "validation_rows": val_count,
@@ -1126,13 +1004,7 @@ def _compute_validation_metrics(
         "score_p50": quantiles[2],
         "score_p75": quantiles[3],
         "score_p90": quantiles[4],
-        "recommended_threshold": best_threshold,
-        "recommended_threshold_f1": best_f1,
-        "estimated_contamination": estimated_contamination,
     }
-
-    # Add threshold-specific metrics
-    metrics.update(threshold_metrics)
 
     # Filter out None values (MLflow doesn't accept them)
     metrics = {k: v for k, v in metrics.items() if v is not None}
@@ -1191,86 +1063,6 @@ def _compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dic
         }
 
     return baseline_stats
-
-
-def _compute_feature_importance(
-    model: Any,
-    val_df: DataFrame,
-    columns: list[str],
-    feature_metadata: Any,
-    row_id_columns: list[str] | None,
-) -> dict[str, float]:
-    """
-    Compute global feature importance using permutation importance.
-    Measures how much each feature contributes to anomaly detection.
-
-    Uses distributed scoring via pandas UDF for efficient computation across cluster.
-    """
-    if val_df.count() == 0:
-        return {}
-
-    # Baseline scores (distributed scoring)
-    baseline_scored = _score_with_model(model, val_df, columns, feature_metadata)
-    baseline_row = baseline_scored.select(F.mean("anomaly_score")).first()
-    assert baseline_row is not None, "Failed to compute baseline score"
-    baseline_avg_score = baseline_row[0]
-
-    importance = {}
-    missing_row_id_cols = []
-    if row_id_columns:
-        missing_row_id_cols = [c for c in row_id_columns if c not in val_df.columns]
-        if missing_row_id_cols:
-            raise InvalidParameterError(f"row_id_columns not found in validation DataFrame: {missing_row_id_cols}")
-
-    # Permutation importance: shuffle each column and measure impact (distributed on Spark)
-    for idx, column_name in enumerate(columns):
-        seed = 42 + idx
-        shuffled_df = _shuffle_column(val_df, column_name, row_id_columns, seed)
-
-        # Compute scores with shuffled column (distributed scoring)
-        shuffled_scored = _score_with_model(model, shuffled_df, columns, feature_metadata)
-        shuffled_row = shuffled_scored.select(F.mean("anomaly_score")).first()
-        assert shuffled_row is not None, f"Failed to compute shuffled score for {column_name}"
-        shuffled_avg_score = shuffled_row[0]
-
-        # Importance = increase in average score when feature is random
-        importance[column_name] = abs(shuffled_avg_score - baseline_avg_score)
-
-    # Normalize to sum to 1.0
-    total = sum(importance.values())
-    if total > 0:
-        importance = {k: v / total for k, v in importance.items()}
-
-    return importance
-
-
-def _shuffle_column(
-    df: DataFrame,
-    column_name: str,
-    row_id_columns: list[str] | None,
-    seed: int,
-) -> DataFrame:
-    """Shuffle a single column using stable row indexing and random ordering."""
-    partition_window = Window.partitionBy(F.lit(1))
-    if row_id_columns:
-        stable_window = partition_window.orderBy(*[F.col(c) for c in row_id_columns])
-    else:
-        stable_window = partition_window.orderBy(F.monotonically_increasing_id())
-    shuffle_window = partition_window.orderBy(F.rand(seed))
-
-    base_indexed = df.withColumn("_row_idx", F.row_number().over(stable_window))
-    shuffled_values = (
-        df.select(F.col(column_name))
-        .withColumn("_row_idx", F.row_number().over(shuffle_window))
-        .select("_row_idx", F.col(column_name).alias(f"{column_name}__shuf"))
-    )
-
-    return (
-        base_indexed.join(shuffled_values, on="_row_idx", how="inner")
-        .drop("_row_idx")
-        .drop(column_name)
-        .withColumnRenamed(f"{column_name}__shuf", column_name)
-    )
 
 
 def _ensure_mlflow_registry_uri() -> None:
@@ -1412,8 +1204,7 @@ def _train_ensemble(
             first_feature_metadata = feature_metadata
 
         # Compute metrics (distributed scoring on Spark)
-        contamination = modified_params.algorithm_config.contamination
-        metrics = _compute_validation_metrics(model, val_df, columns, contamination, feature_metadata)
+        metrics = _compute_validation_metrics(model, val_df, columns, feature_metadata)
         all_metrics.append(metrics)
 
         # Register to MLflow
