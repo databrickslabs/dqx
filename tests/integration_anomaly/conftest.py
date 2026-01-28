@@ -9,7 +9,6 @@ import pytest
 
 from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
-
 from tests.conftest import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_AMOUNT,
@@ -68,8 +67,6 @@ def configure_mlflow_tracking():
     except Exception as e:
         logger.error(f"Failed to configure MLflow: {e}")
         raise
-
-    yield
 
 
 @pytest.fixture

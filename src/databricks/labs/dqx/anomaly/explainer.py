@@ -8,17 +8,17 @@ contribute most to anomaly scores for individual records.
 import logging
 from typing import Any
 
-from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
-from pyspark.sql.types import MapType, StringType, DoubleType, StructType, StructField
+from pyspark.sql import DataFrame
 from pyspark.sql.functions import pandas_udf
+from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 
 logger = logging.getLogger(__name__)
 
 # Optional dependencies for anomaly detection explainability
 try:
-    import pandas as pd
     import numpy as np
+    import pandas as pd
 except ImportError:
     pd = None  # type: ignore
     np = None  # type: ignore
@@ -154,8 +154,8 @@ def compute_feature_contributions(
         Returns:
             DataFrame with anomaly_contributions column
         """
-        import pandas as pd
         import mlflow.sklearn as mlflow_sklearn
+        import pandas as pd
 
         # Load model once per executor
         model_local = mlflow_sklearn.load_model(model_uri)

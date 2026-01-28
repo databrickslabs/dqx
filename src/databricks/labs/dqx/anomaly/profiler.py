@@ -10,20 +10,21 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
+from pyspark.sql import DataFrame
 from pyspark.sql.types import (
-    IntegerType,
-    LongType,
-    FloatType,
-    DoubleType,
-    DecimalType,
-    StringType,
     BooleanType,
     DateType,
-    TimestampType,
+    DecimalType,
+    DoubleType,
+    FloatType,
+    IntegerType,
+    LongType,
+    StringType,
     TimestampNTZType,
+    TimestampType,
 )
+
 from databricks.labs.dqx.profiling_utils import compute_null_and_distinct_counts
 
 logger = logging.getLogger(__name__)

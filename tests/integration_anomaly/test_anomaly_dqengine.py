@@ -3,10 +3,10 @@ Integration tests for anomaly detection with DQEngine.
 """
 
 from pyspark.sql import SparkSession
+
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
-
 from tests.integration_anomaly.test_anomaly_constants import (
     DQENGINE_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,

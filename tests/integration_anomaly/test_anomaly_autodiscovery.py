@@ -3,7 +3,6 @@
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
-
 from tests.conftest import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import SEGMENT_REGIONS
 from tests.integration_anomaly.test_anomaly_utils import qualify_model_name

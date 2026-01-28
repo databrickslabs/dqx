@@ -5,14 +5,13 @@ model training, and Delta table access. Pure parameter validation errors
 are covered by unit tests (tests/unit/test_anomaly_validation.py).
 """
 
+import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidParameterError
-
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.test_anomaly_utils import (
     create_anomaly_dataset_rule,

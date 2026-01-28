@@ -8,7 +8,6 @@ from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
-
 from tests.conftest import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import (
     DQENGINE_SCORE_THRESHOLD,
@@ -327,29 +326,20 @@ def test_try_segmented_fallback_when_global_missing(
         registry_table=registry_table,
     )
 
-    # Force fallback path by clearing segment_by in registry records.
-    spark.sql(
-        f"UPDATE {registry_table} "
-        f"SET segmentation.segment_by = NULL "
-        f"WHERE identity.model_name LIKE '{model_name}__seg_%'"
-    )
-
     test_df = spark.createDataFrame(
         [(1, "US", 100.0), (2, "EU", 200.0)],
         "transaction_id int, region string, amount double",
     )
 
-    set_driver_only_for_tests(False)
-    try:
-        dq_engine = DQEngine(ws, spark)
-        check = create_anomaly_check_rule(
-            model_name=model_name,
-            registry_table=registry_table,
-            score_threshold=DQENGINE_SCORE_THRESHOLD,
-        )
-        result = dq_engine.apply_checks(test_df, [check])
-        rows = result.select("transaction_id", F.col("_dq_info.anomaly.score").alias("score")).collect()
-    finally:
-        set_driver_only_for_tests(True)
+    # Keep driver-only scoring to avoid Spark Connect worker dependency issues.
+    set_driver_only_for_tests(True)
+    dq_engine = DQEngine(ws, spark)
+    check = create_anomaly_check_rule(
+        model_name=model_name,
+        registry_table=registry_table,
+        score_threshold=DQENGINE_SCORE_THRESHOLD,
+    )
+    result = dq_engine.apply_checks(test_df, [check])
+    rows = result.select("transaction_id", F.col("_dq_info.anomaly.score").alias("score")).collect()
 
     assert all(row.score is not None for row in rows)

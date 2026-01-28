@@ -8,7 +8,6 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.engine import DQEngine
-
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     DRIFT_THRESHOLD,
