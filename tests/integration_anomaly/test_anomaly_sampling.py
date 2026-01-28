@@ -72,10 +72,8 @@ def test_exclude_columns_precedence(
     model_name = f"{anomaly_registry_prefix}.test_exclude_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
-    df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, 110.0, 3.0), (3, 120.0, 4.0)],
-        "user_id int, amount double, quantity double",
-    )
+    rows = [(i, 100.0 + i, 2.0 + i * 0.1) for i in range(1, 51)]
+    df = spark.createDataFrame(rows, "user_id int, amount double, quantity double")
 
     anomaly_engine.train(
         df=df,
@@ -83,6 +81,7 @@ def test_exclude_columns_precedence(
         registry_table=registry_table,
         columns=["amount", "quantity", "user_id"],
         exclude_columns=["user_id"],
+        params=AnomalyParams(sample_fraction=1.0, max_rows=1000),
     )
 
     record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
