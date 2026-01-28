@@ -5,7 +5,6 @@ from typing import Any
 from pyspark.sql import SparkSession, DataFrameWriter
 from pyspark.sql.dataframe import DataFrame
 from pyspark.sql.streaming import StreamingQuery, DataStreamWriter
-from delta.tables import DeltaTable
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.errors import InvalidConfigError
@@ -113,6 +112,8 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
             table namespace or a storage path starting with /, s3:/, abfss:/, or gs:/)
     """
     if df.isStreaming:
+        if output_config.cluster_by:
+            logger.warning("Ignoring cluster_by for streaming writes; Delta Liquid Clustering is batch-only.")
         stream_writer = (
             df.writeStream.format(output_config.format).outputMode(output_config.mode).options(**output_config.options)
         )
@@ -132,7 +133,6 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
     if output_config.partition_by:
         batch_writer = batch_writer.partitionBy(*output_config.partition_by)
     if output_config.cluster_by:
-        DeltaTable.createIfNotExists().tableName(output_config.location).addColumns(df.schema).clusterBy(*output_config.cluster_by).execute()
         batch_writer = batch_writer.clusterBy(*output_config.cluster_by)
     _write_batch(batch_writer, output_config)
     return None
