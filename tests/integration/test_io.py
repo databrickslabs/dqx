@@ -1,3 +1,4 @@
+import logging
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
@@ -258,6 +259,39 @@ def test_save_streaming_dataframe_in_table_with_partition_by(spark, make_schema,
 
     table_detail = spark.sql(f"DESCRIBE DETAIL {result_table_name}").collect()[0]
     assert table_detail["partitionColumns"] == ["a"]
+
+
+def test_save_streaming_dataframe_in_table_with_cluster_by(spark, make_schema, make_random, make_volume, caplog):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    random_name = make_random(10).lower()
+    result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+    options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
+    trigger = {"availableNow": True}
+    output_config = OutputConfig(location=result_table_name, options=options, trigger=trigger, cluster_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
+    input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+    streaming_input_df = spark.readStream.table(table_name)
+
+    # NOTE: Streaming writes with `cluster_by` will generate warnings via logger; Using caplog in this test to check
+    # the generated logs and ensure the appropriate warnings are written
+    with caplog.at_level(logging.WARNING):
+        save_dataframe_as_table(
+            streaming_input_df,
+            output_config,
+        ).awaitTermination()
+
+    result_df = spark.table(result_table_name)
+    assert_df_equality(input_df, result_df)
+    assert any(
+        r.levelno == logging.WARNING
+        and "Ignoring cluster_by for streaming writes; Delta Liquid Clustering is batch-only." in r.message
+        for r in caplog.records
+    )
 
 
 def test_save_batch_dataframe_to_path(spark, make_schema, make_volume, make_random):

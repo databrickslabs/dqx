@@ -73,8 +73,8 @@ The 'Supports local execution' in the above table indicates which methods can be
 `RunConfig` support the following parameters:
 * `name`: The name of the run config.
 * `input_config` (`InputConfig`): Configuration of the input data.
-* `output_config` (`OutputConfig`): Configuration of the output data (supports `partition_by` or `cluster_by`, only one applies;).
-* `quarantine_config` (`OutputConfig`): Configuration of the quarantine data (if provided, data will be split; supports `partition_by` or `cluster_by`, only one applies;).
+* `output_config` (`OutputConfig`): Configuration of the output data.
+* `quarantine_config` (`OutputConfig`): Configuration of the quarantine data (if provided, data will be split).
 * `checks_location`: Location of the checks.
 * `reference_tables` (`dict[str, InputConfig]`): Dictionary of reference DataFrames stored in tables/views to use in the checks.
 * `custom_check_functions` (`dict[str, str]`): Mapping of fully qualified custom check function name to the module location, such as:
@@ -97,8 +97,8 @@ The 'Supports local execution' in the above table indicates which methods can be
 * `mode`: The write mode for the output data (`overwrite` or `append`, default is `append`).
 * `options`: Additional options for writing the output data, such as schema merge settings or checkpoint locations for streaming.
 * `trigger`: Optional trigger settings for streaming output, such as `trigger={"availableNow": True}` or `trigger={"processingTime": "10 seconds"}`.
-* `partition_by`: Optional list of columns to partition the output data; (only one of `partition_by` or `cluster_by` applies).
-* `cluster_by`: Optional list of columns for clustering the Liquid Clustered tables; (only one of `cluster_by` or `partition_by` applies).
+* `partition_by`: Optional list of columns to partition the output data; (only one of `partition_by` or `cluster_by` can be specified).
+* `cluster_by`: Optional list of columns for clustering the Liquid Clustered tables; (only one of `cluster_by` or `partition_by` can be specified).
 
 Supported storage backend configurations (implementations of `BaseChecksStorageConfig`) for `load_checks` and `save_checks` methods:
 * `FileChecksStorageConfig` can be used to save or load checks from a local filesystem, or workspace file if invoked from Databricks notebook or job, with fields:
