@@ -1,4 +1,3 @@
-import importlib
 import textwrap
 
 import pytest
@@ -105,27 +104,20 @@ def test_resolve_custom_check_functions_from_path_with_dependency(tmp_path):
     assert func() == "dependency ok"
 
 
-def test_optional_module_import_failure(monkeypatch):
-    """Test that optional check modules can fail without breaking core resolution."""
-    optional_modules = (
-        "databricks.labs.dqx.anomaly.check_funcs",
-        "databricks.labs.dqx.pii.pii_detection_funcs",
-    )
-    original_import_module = importlib.import_module
+def test_optional_module_import_failure():
+    """Test that optional check modules can be unavailable without breaking core resolution."""
+    resolver = dqx.checks_resolver
+    optional_modules = getattr(resolver, "_OPTIONAL_CHECK_MODULES")
+    original_cache = dict(getattr(resolver, "_optional_modules_cache"))
 
-    def _patched_import(name, *args, **kwargs):
-        if name in optional_modules:
-            raise ImportError("Simulated optional module failure")
-        return original_import_module(name, *args, **kwargs)
-
-    monkeypatch.setattr(importlib, "import_module", _patched_import)
-    importlib.reload(dqx.checks_resolver)
     try:
-        func = dqx.checks_resolver.resolve_check_function("is_not_null")
+        for module_path in optional_modules:
+            getattr(resolver, "_optional_modules_cache")[module_path] = None
+
+        func = resolver.resolve_check_function("is_not_null")
         assert func is not None
 
-        func = dqx.checks_resolver.resolve_check_function("some_missing_func", fail_on_missing=False)
+        func = resolver.resolve_check_function("some_missing_func", fail_on_missing=False)
         assert func is None
     finally:
-        monkeypatch.undo()
-        importlib.reload(dqx.checks_resolver)
+        setattr(resolver, "_optional_modules_cache", original_cache)

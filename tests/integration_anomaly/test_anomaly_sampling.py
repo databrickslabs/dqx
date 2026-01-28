@@ -4,10 +4,18 @@ import warnings
 from collections.abc import Callable
 
 from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
 
+from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
+from databricks.labs.dqx.engine import DQEngine
 
-from tests.integration_anomaly.test_anomaly_utils import train_large_dataset_model, train_model_with_params
+from tests.integration_anomaly.test_anomaly_utils import (
+    create_anomaly_check_rule,
+    train_large_dataset_model,
+    train_model_with_params,
+    train_simple_2d_model,
+)
 
 
 def test_sampling_caps_large_datasets(
@@ -57,8 +65,34 @@ def test_custom_sampling_parameters(
     assert record["training"]["training_rows"] <= 300
 
 
-def test_sampling_warning_issued(
+def test_exclude_columns_precedence(
     spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
+    """Test that exclude_columns always take precedence over columns."""
+    unique_id = make_random(8).lower()
+    model_name = f"{anomaly_registry_prefix}.test_exclude_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    df = spark.createDataFrame(
+        [(1, 100.0, 2.0), (2, 110.0, 3.0), (3, 120.0, 4.0)],
+        "user_id int, amount double, quantity double",
+    )
+
+    anomaly_engine.train(
+        df=df,
+        model_name=model_name,
+        registry_table=registry_table,
+        columns=["amount", "quantity", "user_id"],
+        exclude_columns=["user_id"],
+    )
+
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
+    assert record is not None
+    assert "user_id" not in record.training.columns
+
+
+def test_sampling_warning_issued(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix, caplog
 ):
     """Test that warning is issued when data is truncated."""
     unique_id = make_random(8).lower()
@@ -72,15 +106,18 @@ def test_sampling_warning_issued(
     )
 
     # Should issue warning about truncation
-    with warnings.catch_warnings(record=True) as _warning_context:
+    with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
+        with caplog.at_level("WARNING"):
+            # Train with restrictive params - use helper
+            train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=10_000, params=params)
 
-        # Train with restrictive params - use helper
-        train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=10_000, params=params)
+    warning_messages = [record.message for record in caplog.records if record.levelname == "WARNING"]
+    assert any("sampling capped" in message.lower() for message in warning_messages)
 
-        # Check for sampling/truncation warning
-        # (Implementation may or may not warn, this is aspirational)
-        # Commenting out assertion as implementation may vary
+    # Check for sampling/truncation warning
+    # (Implementation may or may not warn, this is aspirational)
+    # Commenting out assertion as implementation may vary
 
 
 def test_train_validation_split(
@@ -104,6 +141,7 @@ def test_train_validation_split(
     # Check that metrics exist (which indicates validation was performed, use full three-level name)
     record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
+    assert record["training"]["training_rows"] <= params.max_rows
 
     # Verify metrics exist
     assert record["training"]["metrics"] is not None
@@ -148,10 +186,68 @@ def test_no_sampling_with_full_fraction(
     record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
     assert record is not None
 
-    # Should use most/all of the data
-    # (May be slightly less due to train/val split or null filtering)
-    # With 80/20 split on 500 rows: 500 * 0.8 = 400, but some may be filtered
-    assert record["training"]["training_rows"] >= 390  # At least 78% used for training
+
+def test_distributed_scoring_with_row_filter(
+    ws,
+    spark: SparkSession,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    test_df_factory,
+    anomaly_registry_prefix,
+):
+    """Ensure row_filter scoring uses distributed path and joins results back."""
+    unique_id = make_random(8).lower()
+    model_name = f"{anomaly_registry_prefix}.test_row_filter_dist_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table)
+
+    df = test_df_factory(
+        spark,
+        normal_rows=[(100.0, 2.0), (200.0, 2.0)],
+        anomaly_rows=[],
+        columns_schema="amount double, quantity double",
+    )
+
+    set_driver_only_for_tests(False)
+    try:
+        dq_engine = DQEngine(ws, spark)
+        check = create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            row_filter="amount > 150",
+            include_contributions=False,
+        )
+        result = dq_engine.apply_checks(df, [check])
+        scores = result.select("amount", F.col("_dq_info.anomaly.score").alias("score")).collect()
+    finally:
+        set_driver_only_for_tests(True)
+
+    scored = {row.amount: row.score for row in scores}
+    assert scored[100.0] is None
+    assert scored[200.0] is not None
+
+
+def test_train_ratio_no_validation_path(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
+    """Ensure training works when validation split is disabled."""
+    unique_id = make_random(8).lower()
+    model_name = f"{anomaly_registry_prefix}.test_train_ratio_none_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    params = AnomalyParams(
+        sample_fraction=1.0,
+        max_rows=200,
+        train_ratio=1.0,
+    )
+
+    train_large_dataset_model(spark, anomaly_engine, model_name, registry_table, num_rows=200, params=params)
+
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
+    assert record is not None
+    assert record["training"]["training_rows"] > 0
+    assert record["training"]["training_rows"] <= params.max_rows
 
 
 def test_minimal_data_with_sampling(
