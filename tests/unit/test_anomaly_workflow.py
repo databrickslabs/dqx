@@ -1,19 +1,20 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from databricks.labs.dqx.anomaly import anomaly_workflow
 from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig
+from databricks.labs.dqx.errors import InvalidConfigError
 
 
-def test_anomaly_workflow_default_model_name(monkeypatch):
-    captured = {}
-
+def test_anomaly_workflow_requires_model_name(monkeypatch):
     class FakeEngine:
         def __init__(self, _ws, _spark):
             pass
 
-        def train(self, **kwargs):
-            captured.update(kwargs)
+        def train(self, **_kwargs):
+            return None
 
     monkeypatch.setattr(anomaly_workflow, "ANOMALY_ENABLED", True)
     monkeypatch.setattr(anomaly_workflow, "AnomalyEngine", FakeEngine)
@@ -27,6 +28,5 @@ def test_anomaly_workflow_default_model_name(monkeypatch):
     ctx = SimpleNamespace(run_config=run_config, spark=Mock(), workspace_client=Mock())
 
     workflow = anomaly_workflow.AnomalyTrainerWorkflow()
-    workflow.train_model(ctx)
-
-    assert captured["model_name"] == "dqx_anomaly_orders_daily"
+    with pytest.raises(InvalidConfigError, match="model_name is required"):
+        workflow.train_model(ctx)
