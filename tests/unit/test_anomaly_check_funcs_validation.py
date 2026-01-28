@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
@@ -75,8 +77,8 @@ def test_has_no_anomalies_requires_fully_qualified_model():
         )
 
 
-def test_has_no_anomalies_rejects_internal_row_id(spark):
-    df = spark.createDataFrame([(1, 2.0, 3)], "id int, value double, _dqx_row_id int")
+def test_has_no_anomalies_rejects_internal_row_id():
+    df = SimpleNamespace(columns=["id", "value", "_dqx_row_id"])
     _, apply_fn = has_no_anomalies(
         model="catalog.schema.model",
         registry_table="catalog.schema.table",
