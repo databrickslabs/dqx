@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 
-
 from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.schema import dq_result_schema
 

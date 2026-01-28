@@ -7,7 +7,6 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
-
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -162,7 +161,7 @@ def test_threshold_consistency(spark, test_df_factory, quick_model_factory):
     scores2 = [row["anomaly_score"] for row in result2.orderBy("transaction_id").collect()]
 
     # Scores should be identical (deterministic)
-    for score1, score2 in zip(scores1, scores2):
+    for score1, score2 in zip(scores1, scores2, strict=False):
         if score1 is not None and score2 is not None:
             assert abs(score1 - score2) < 0.001  # Allow small floating point error
 

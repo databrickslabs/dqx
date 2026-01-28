@@ -9,8 +9,8 @@ Usage in conftest.py:
     import tests.compat  # noqa: F401  # Apply compatibility patches
 """
 
-from typing import Any
 from collections.abc import Callable
+from typing import Any
 
 # Optional import - coverage is only present when running with coverage
 try:

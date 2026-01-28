@@ -9,10 +9,10 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+import pyspark.sql.functions as F
+from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.window import Window
-from pyspark.errors import AnalysisException
-import pyspark.sql.functions as F
 
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.io import save_dataframe_as_table

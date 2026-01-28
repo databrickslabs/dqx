@@ -4,7 +4,6 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
-
 from tests.conftest import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_utils import (
     create_anomaly_check_rule,

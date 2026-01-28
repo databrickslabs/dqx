@@ -5,8 +5,8 @@ import warnings
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
-from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
+from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
@@ -17,7 +17,6 @@ from databricks.labs.dqx.anomaly.model_registry import (
     TrainingMetadata,
     compute_config_hash,
 )
-
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.test_anomaly_utils import (
     get_standard_2d_training_data,

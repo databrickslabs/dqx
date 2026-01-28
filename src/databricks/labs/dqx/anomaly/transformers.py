@@ -16,7 +16,7 @@ from typing import Any
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from pyspark.sql.functions import col, when, lit, coalesce, hour, dayofweek, month, sin, cos, pi, count, to_timestamp
+from pyspark.sql.functions import coalesce, col, cos, count, dayofweek, hour, lit, month, pi, sin, to_timestamp, when
 from pyspark.sql.types import DoubleType, TimestampType
 
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -263,9 +263,7 @@ class ColumnTypeClassifier:
         null_indicators = 0
 
         for info in column_infos:
-            if info.category == 'numeric':
-                total += 1
-            elif info.category == 'boolean':
+            if info.category in {"numeric", "boolean"}:
                 total += 1
             elif info.category == 'datetime':
                 total += 5  # hour_sin, hour_cos, dow_sin, dow_cos, is_weekend

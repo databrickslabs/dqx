@@ -6,7 +6,6 @@ from pyspark.sql import DataFrame, SparkSession
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.rule import DQDatasetRule
-
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,

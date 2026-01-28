@@ -7,8 +7,8 @@ to detect significant changes that may indicate model staleness.
 
 from dataclasses import dataclass
 
-from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
+from pyspark.sql import DataFrame
 
 # Minimum sample size for reliable drift detection
 # Small batches have high variance and lead to false positives
@@ -209,7 +209,9 @@ def compute_ks_statistic(df: DataFrame, col: str, baseline_stats: dict[str, floa
     baseline_quantiles = [baseline_stats["p25"], baseline_stats["p50"], baseline_stats["p75"]]
 
     # Compute max absolute difference (simplified KS statistic)
-    differences = [abs(current - baseline) for current, baseline in zip(current_quantiles, baseline_quantiles)]
+    differences = [
+        abs(current - baseline) for current, baseline in zip(current_quantiles, baseline_quantiles, strict=False)
+    ]
 
     # Normalize by baseline range to get a 0-1 score
     baseline_range = baseline_stats["max"] - baseline_stats["min"]

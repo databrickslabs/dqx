@@ -13,14 +13,15 @@ import numpy as np
 import pytest
 from pyspark.sql import SparkSession
 from sklearn.ensemble import IsolationForest
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
+from databricks.labs.dqx.anomaly import explainer as explainer_mod
+from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.anomaly.explainer import (
     add_top_contributors_to_message,
     create_optimal_tree_explainer,
 )
-from databricks.labs.dqx.anomaly import explainer as explainer_mod
-from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
-
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -214,6 +215,22 @@ def test_add_top_contributors_message(spark: SparkSession):
     assert rows[0.2] == ""
 
 
+def test_add_top_contributors_handles_null_map(spark: SparkSession):
+    """Null or empty contributions should yield empty contributor message."""
+    df = spark.createDataFrame(
+        [
+            (0.9, None),
+            (0.9, {}),
+        ],
+        "anomaly_score double, anomaly_contributions map<string,double>",
+    )
+
+    result = add_top_contributors_to_message(df, threshold=0.6, top_n=2)
+    rows = [row["_top_contributors"] for row in result.collect()]
+
+    assert rows == ["", ""]
+
+
 def test_create_optimal_tree_explainer():
     """TreeExplainer is created when SHAP is available, otherwise ImportError."""
     if explainer_mod.shap is None:
@@ -270,3 +287,23 @@ def test_compute_contributions_helper():
 
     assert len(contributions) == 2
     assert set(contributions[0].keys()) == {"amount", "quantity"}
+
+
+def test_compute_contributions_pipeline_and_nan():
+    """Pipeline models and NaN rows are handled correctly."""
+    if explainer_mod.shap is None or explainer_mod.np is None or explainer_mod.pd is None:
+        pytest.skip("Explainability dependencies not available")
+
+    pipeline = Pipeline(
+        [
+            ("scaler", StandardScaler()),
+            ("model", IsolationForest(random_state=42)),
+        ]
+    )
+    pipeline.fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
+
+    feature_matrix = np.array([[np.nan, 0.1], [2.0, 2.1]])
+    contributions = explainer_mod.compute_contributions_for_matrix(pipeline, feature_matrix, ["amount", "quantity"])
+
+    assert contributions[0] == {"amount": None, "quantity": None}
+    assert set(contributions[1].keys()) == {"amount", "quantity"}

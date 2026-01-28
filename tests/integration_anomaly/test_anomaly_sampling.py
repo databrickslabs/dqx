@@ -3,13 +3,12 @@
 import warnings
 from collections.abc import Callable
 
-from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
+from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
-
 from tests.integration_anomaly.test_anomaly_utils import (
     create_anomaly_check_rule,
     train_large_dataset_model,

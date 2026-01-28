@@ -10,41 +10,39 @@ Note: All imports are at module-level since DQX is installed as a wheel on all c
 """
 
 import collections.abc
-from copy import deepcopy
-from dataclasses import dataclass
 import logging
 import os
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
 import cloudpickle
 import mlflow
+import pandas as pd
+import pyspark.sql.functions as F
+import sklearn
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
-import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
-from pyspark.sql.functions import pandas_udf, col
+from pyspark.sql.functions import col, pandas_udf
 from pyspark.sql.types import (
     DoubleType,
     IntegerType,
-    StructType,
     StructField,
+    StructType,
 )
-import pyspark.sql.functions as F
-import sklearn
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import RobustScaler
 
-from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
-from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     AnomalyModelRegistry,
-    ModelIdentity,
-    TrainingMetadata,
     FeatureEngineering,
+    ModelIdentity,
     SegmentationConfig,
+    TrainingMetadata,
     compute_config_hash,
 )
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
@@ -54,6 +52,8 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering,
     reconstruct_column_infos,
 )
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from databricks.labs.dqx.errors import InvalidParameterError
 
 logger = logging.getLogger(__name__)
 
@@ -929,8 +929,8 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
         is NOT installed as a wheel on all cluster nodes.
         """
         import cloudpickle
-        import pandas as pd
         import numpy as np
+        import pandas as pd
 
         # Deserialize model (only standard sklearn components)
         model_local = cloudpickle.loads(model_bytes)
