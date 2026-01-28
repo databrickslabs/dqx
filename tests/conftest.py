@@ -14,18 +14,17 @@ from typing import Any
 import tests.compat  # noqa: F401
 
 import pytest
+from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.labs.pytester.fixtures.baseline import factory
-
+from databricks.labs.dqx.__about__ import __version__
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
 from databricks.sdk.retries import retried
 from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
 from databricks.sdk.service.workspace import ImportFormat
-from pyspark.sql.types import IntegerType, StringType, StructField, StructType
-from databricks.labs.dqx.__about__ import __version__
 
 # Anomaly detection imports - required for anomaly tests
 # Imported after patches are applied to ensure compatibility
