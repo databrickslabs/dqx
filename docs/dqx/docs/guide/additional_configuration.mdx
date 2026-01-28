@@ -85,8 +85,14 @@ override the values set in the engine.
 
 ## Customizing result columns
 
-By default, DQX appends `_error` and `_warning` result columns to the output DataFrame or Table to flag quality issues.
+By default, DQX appends `_errors`, `_warnings`, and `_dq_info` result columns to the output DataFrame or Table to flag quality issues.
 You can customize the names of these result columns by specifying extra parameters when creating the engine.
+
+| Default Column | Purpose | Customization Key |
+|----------------|---------|-------------------|
+| `_errors` | Array of critical quality check failures | `errors` |
+| `_warnings` | Array of warning-level quality check issues | `warnings` |
+| `_dq_info` | Structured metadata from produced by certain dataset-level checks (e.g., anomaly detection) | `info` |
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -95,7 +101,11 @@ You can customize the names of these result columns by specifying extra paramete
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.config import ExtraParams
 
-    custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
+    custom_column_names = {
+        "errors": "dq_errors",
+        "warnings": "dq_warnings",
+        "info": "dq_info"  # used for some checks, e.g. anomaly detection
+    }
 
     # use ExtraParams to configure one or more optional parameters
     extra_parameters = ExtraParams(result_column_names=custom_column_names)
@@ -111,6 +121,13 @@ You can customize the names of these result columns by specifying extra paramete
         result_column_names:
             errors: dq_errors
             warnings: dq_warnings
+            info: dq_info
     ```
   </TabItem>
 </Tabs>
+
+<Admonition type="info" title="Info column usage">
+The `_dq_info` column contains structured metadata and is created when applying certain checks, such as `has_no_anomalies`.
+For anomaly detection checks, it includes details like anomaly scores, thresholds, and feature contributions.
+See [Anomaly Detection](/docs/guide/anomaly_detection) for details.
+</Admonition>

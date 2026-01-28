@@ -1,7 +1,6 @@
 import logging
 import json
 import warnings
-from typing import Any
 from collections.abc import Callable
 from pathlib import Path
 
@@ -19,24 +18,12 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.utils import safe_json_load
 from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.checks_formats import FILE_SERIALIZERS, FILE_DESERIALIZERS
 
 CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
     " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>"
 )
-
-FILE_SERIALIZERS: dict[str, Callable[[list[dict[Any, Any]]], str]] = {
-    ".json": json.dumps,
-    ".yml": yaml.safe_dump,
-    ".yaml": yaml.safe_dump,
-}
-
-
-FILE_DESERIALIZERS: dict[str, Callable] = {
-    ".json": json.load,
-    ".yaml": yaml.safe_load,
-    ".yml": yaml.safe_load,
-}
 
 logger = logging.getLogger(__name__)
 

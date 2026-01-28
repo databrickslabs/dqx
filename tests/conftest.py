@@ -1,32 +1,41 @@
+import logging
 import os
+import re
+from collections.abc import Callable, Generator
+from dataclasses import dataclass, replace
 from datetime import timedelta
+from functools import cached_property
 from io import BytesIO
 from typing import Any
-import re
-import logging
-from collections.abc import Callable, Generator
-from dataclasses import replace, dataclass
-from functools import cached_property
+
+# Apply numba/coverage patches before any other imports that might trigger numba
+# This must be imported early (before third-party imports) to patch coverage types
+# See pyproject.toml per-file-ignores for pylint exceptions
+import tests.compat  # noqa: F401
 
 import pytest
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
-from databricks.sdk.retries import retried
+from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
+from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.__about__ import __version__
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
+from databricks.sdk.retries import retried
+from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
+from databricks.sdk.service.workspace import ImportFormat
+
+# Anomaly detection imports - required for anomaly tests
+# Imported after patches are applied to ensure compatibility
+from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
+from databricks.labs.dqx.installer.install import InstallationService, WorkspaceInstaller
 from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
-from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
-from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +51,12 @@ def debug_env_name():
 @pytest.fixture
 def product_info():
     return "dqx", __version__
+
+
+@pytest.fixture
+def anomaly_engine(ws, spark):
+    """Provide an AnomalyEngine instance for tests."""
+    return AnomalyEngine(ws, spark)
 
 
 @pytest.fixture
@@ -98,7 +113,7 @@ def skip_if_runtime_not_geo_compatible(ws, debug_env):
     if not match:
         raise ValueError(f"Invalid runtime version format: {runtime_version}")
 
-    major, minor = [int(x) for x in match.groups()]
+    major, minor = (int(x) for x in match.groups())
     valid = major > 17 or (major == 17 and minor >= 1)
 
     if not valid:
@@ -534,7 +549,7 @@ def make_invalid_local_check_file_as_json(checks_json_invalid_content, make_rand
 @pytest.fixture
 def make_check_file_as_yaml(ws, make_directory, checks_yaml_content):
     def create(**kwargs):
-        if "install_dir" in kwargs and kwargs["install_dir"]:
+        if kwargs.get("install_dir"):
             workspace_file_path = kwargs["install_dir"] + "/checks.yml"
         else:
             folder = make_directory()
@@ -793,7 +808,7 @@ def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]])
     assert len(result) == len(expected), f"Expected {len(expected)} checks, got {len(result)}"
     sorted_result = sorted(result, key=_sort_key)
     sorted_expected = sorted(expected, key=_sort_key)
-    for res, exp in zip(sorted_result, sorted_expected):
+    for res, exp in zip(sorted_result, sorted_expected, strict=False):
         for key in exp:
             assert res.get(key) == exp[key], f"Mismatch for key '{key}': {res.get(key)} != {exp[key]}"
 

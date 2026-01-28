@@ -15,8 +15,8 @@ from databricks.labs.dqx.utils import (
     is_simple_column_expression,
     normalize_bound_args,
     safe_strip_file_from_path,
-    missing_required_packages,
 )
+from databricks.labs.dqx.package_utils import missing_required_packages
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
 

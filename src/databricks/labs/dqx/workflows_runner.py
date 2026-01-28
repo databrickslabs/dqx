@@ -8,6 +8,7 @@ from databricks.sdk.config import with_user_agent_extra
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.anomaly.anomaly_workflow import AnomalyTrainerWorkflow
 from databricks.labs.dqx.profiler.profiler_workflow import ProfilerWorkflow
 from databricks.labs.dqx.quality_checker.quality_checker_workflow import DataQualityWorkflow
 from databricks.labs.dqx.quality_checker.e2e_workflow import EndToEndWorkflow
@@ -52,7 +53,11 @@ class WorkflowsRunner:
             spark_conf=config.e2e_spark_conf,
             override_clusters=config.e2e_override_clusters,
         )
-        return cls([profiler, quality_checker, e2e])
+        anomaly_trainer = AnomalyTrainerWorkflow(
+            spark_conf=config.quality_checker_spark_conf,
+            override_clusters=config.quality_checker_override_clusters,
+        )
+        return cls([profiler, quality_checker, e2e, anomaly_trainer])
 
     def tasks(self) -> list[Task]:
         """Return all tasks."""

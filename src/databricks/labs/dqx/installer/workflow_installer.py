@@ -43,6 +43,7 @@ from databricks.sdk.retries import retried
 from databricks.sdk.service import compute, jobs
 from databricks.sdk.service.jobs import Run
 from databricks.sdk.service.workspace import ObjectType
+from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
 
 import databricks
 from databricks.labs.dqx.config import WorkspaceConfig
@@ -385,7 +386,7 @@ class WorkflowDeployment(InstallationMixin):
             remote_wheels_with_extras = remote_wheels
             if use_serverless:
                 # installing extras from a file is only possible with serverless
-                remote_wheels_with_extras = [f"{wheel}[llm,pii]" for wheel in remote_wheels]
+                remote_wheels_with_extras = [f"{wheel}[llm,pii,anomaly]" for wheel in remote_wheels]
             settings = self._job_settings(task.workflow, remote_wheels_with_extras, use_serverless, task.spark_conf)
             if task.override_clusters:
                 settings = self._apply_cluster_overrides(
@@ -475,8 +476,25 @@ class WorkflowDeployment(InstallationMixin):
         logger.info(f"Creating new job configuration for step={step_name}")
         new_job = self._ws.jobs.create(**settings)
         assert new_job.job_id is not None
-        self._install_state.jobs[step_name] = str(new_job.job_id)
+
+        job_id_str = str(new_job.job_id)
+        self._install_state.jobs[step_name] = job_id_str
+        self._update_job_permissions(job_id_str)
         return None
+
+    def _update_job_permissions(self, job_id: str):
+        if self._is_testing():
+            # ensure test jobs are viewable by all users in test env to facilitate debugging
+            self._ws.permissions.update(
+                request_object_type="jobs",
+                request_object_id=job_id,
+                access_control_list=[
+                    AccessControlRequest(
+                        group_name="users",  # all account users
+                        permission_level=PermissionLevel.CAN_VIEW,
+                    )
+                ],
+            )
 
     @staticmethod
     def _library_dep_order(library: str):

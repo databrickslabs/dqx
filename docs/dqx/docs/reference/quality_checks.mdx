@@ -2693,6 +2693,154 @@ Using non-curated aggregate functions is supported with the following limitation
 - Some aggregate functions are only available in newer versions of the Databricks Runtime. If a function is unavailable in your environment, DQX will raise an error indicating the minimum required runtime version. Use the latest Databricks Runtime version for best compatibility.
 </Admonition>
 
+## Anomaly Detection
+
+Detects unusual rows by learning what "normal" looks like across multiple columns, then flags rows that deviate. Train on recent "good" data so the check learns typical ranges and combinations (e.g., amount and quantity together), not just single-column thresholds.
+
+**Current algorithm**: IsolationForest (scikit-learn with Spark scoring, requires Spark >= 3.4). Future releases may add additional algorithms behind the same interface.
+
+For a conceptual overview (including how this complements Databricks data quality monitoring), see [Anomaly Detection](/docs/guide/anomaly_detection).
+
+### Model training
+
+Train a model before scoring so the check can learn typical ranges and combinations.
+
+**Python**
+```python
+from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.sdk import WorkspaceClient
+
+anomaly_engine = AnomalyEngine(WorkspaceClient())
+
+model_name = anomaly_engine.train(
+    df=spark.table("catalog.schema.orders"),
+    model_name="catalog.schema.orders_monitor",
+    columns=["amount", "quantity", "shipping_cost"],
+    registry_table="catalog.schema.dqx_anomaly_models",
+)
+```
+
+**Guidance: exclude identifier columns**
+Avoid ID‑like columns (order IDs, user IDs). They are often unique and can dominate the model, reducing anomaly quality.
+If you must keep IDs in the dataset, use `exclude_columns` or pass a curated `columns` list of behavioral fields.
+
+**Workflow (configuration file)**
+```yaml
+run_configs:
+  - name: orders
+    input_config:
+      location: catalog.schema.orders
+    anomaly_config:
+      columns: [amount, quantity, shipping_cost]
+      # model_name: catalog.schema.orders_monitor
+      # registry_table: catalog.schema.dqx_anomaly_models
+```
+
+### Define checks
+
+Use the model name returned by training.
+
+**Python**
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        model="catalog.schema.orders_monitor",
+        registry_table="catalog.schema.dqx_anomaly_models",
+        score_threshold=0.6,  # higher = more anomalous, default is 0.6 (balanced)
+    )
+]
+```
+
+**Define anomaly check declaratively in YAML**
+```yaml
+# checks.yml
+- criticality: warn
+  check:
+    function: has_no_anomalies
+    arguments:
+      model: catalog.schema.dqx_anomaly_orders
+      registry_table: catalog.schema.dqx_anomaly_models
+      score_threshold: 0.6  # optional
+```
+
+**Score thresholds**
+- 0.3 aggressive (potentially many anomalies), 0.6 balanced (default), 0.7 conservative (fewer anomalies), 0.9 very conservative (extreme anomalies only).
+
+**Parameters**
+- `registry_table`: Registry table (required, fully qualified `catalog.schema.table`).
+- `score_threshold`: Anomaly score threshold (default 0.6).
+- `row_filter`: Optional SQL expression to filter rows before scoring.
+- `drift_threshold`: Drift detection threshold (default 3.0, `None` to disable). See the section below for more details.
+- `include_contributions`: Include per-feature contributions in `_dq_info.anomaly.contributions` (default `True`). See the section below for more details.
+- `include_confidence`: Include `anomaly_score_std` for ensembles (default `False`). Useful when using ensemble training.
+
+**Notes**
+- For workflow training, `model_name` is required and should be fully qualified.
+- Scoring uses the columns the model was trained on.
+- Rows with nulls in anomaly columns are skipped (not flagged).
+- When `row_filter` is used, all original rows are preserved; non-filtered rows have `null` scores.
+- Row alignment is handled internally; no row-id parameters are required.
+- Fails fast if Spark < 3.4.
+
+### Advanced Features
+
+**Model Performance Metrics**
+
+After training, the model registry stores comprehensive validation metrics:
+- Distribution statistics (mean, std, skewness, percentiles)
+
+Query the registry table to view metrics:
+```sql
+SELECT model_name, metrics, training_time
+FROM catalog.schema.dqx_anomaly_models
+WHERE status = 'active'
+ORDER BY training_time DESC
+```
+
+**Feature Contributions (Explainability)**
+
+Contributions are enabled by default. For performance reasons, you may want to disable them:
+
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        model="catalog.schema.orders_monitor",
+        registry_table="catalog.schema.dqx_anomaly_models",
+        score_threshold=0.6,
+        include_contributions=False,
+    )
+]
+```
+
+When contributions are enabled (default), the `_dq_info` column includes `contributions` showing per-feature contribution percentages.
+
+**Drift Detection**
+
+Automatically detects when current data distribution differs significantly from training data:
+
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        model="catalog.schema.orders_monitor",
+        registry_table="catalog.schema.dqx_anomaly_models",
+        drift_threshold=3.0,  # Z-score threshold (default 3.0)
+    )
+]
+```
+
+The default `3.0` corresponds to a roughly 3-sigma deviation from training statistics (about 99.7% of values fall within ±3σ under a normal assumption), which is a common starting point to avoid noisy drift alerts.
+
+When drift detected, issues warning with:
+- Specific columns experiencing drift
+- Drift score magnitude
+- Explicit retrain command
+
 ## Creating Custom Row-level Checks
 
 ### Using SQL Expressions
