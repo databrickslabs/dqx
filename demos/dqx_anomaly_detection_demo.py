@@ -425,7 +425,7 @@ print(f"✅ Registry ready for new models")
 print("🎯 Training anomaly detection model...")
 print("   DQX will automatically discover patterns in your data\n")
 
-model_name_auto = f"{catalog_name}.{schema_name}.sales_auto"
+model_name_auto = f"{catalog}.{schema_name}.sales_auto"
 model_uri_auto = anomaly_engine.train(
     df=spark.table(table_name),
     model_name=model_name_auto,
@@ -774,7 +774,7 @@ print("   Review these to calibrate your threshold for your use case")
 # Train with manual column selection
 print("🎯 Training model with manual column selection...\n")
 
-model_name_manual = f"{catalog_name}.{schema_name}.sales_manual"
+model_name_manual = f"{catalog}.{schema_name}.sales_manual"
 model_uri_manual = anomaly_engine.train(
     df=spark.table(table_name),
     columns=["amount", "quantity"],  # Explicitly specify numeric columns only
@@ -970,8 +970,9 @@ else:
 # MAGIC - How to route anomalies to a quarantine table for investigation
 # MAGIC - Best practices for production data quality pipelines
 # MAGIC
-# MAGIC **Workflow tip**: If you train via YAML workflow and omit `model_name`, it defaults to
-# MAGIC `dqx_anomaly_<run_config.name>` (e.g., `dqx_anomaly_orders`).
+# MAGIC **Workflow tip**: Provide fully qualified names for both `model_name` and `registry_table`
+# MAGIC (e.g., `catalog.schema.model_name`, `catalog.schema.registry_table`). DQX will not
+# MAGIC auto-derive these in workflows.
 # MAGIC
 
 # COMMAND ----------

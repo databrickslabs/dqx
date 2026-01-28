@@ -5,8 +5,6 @@ Enables detection of anomalies that depend on time-of-day, day-of-week,
 or seasonal patterns.
 """
 
-from __future__ import annotations
-
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F
 

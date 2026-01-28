@@ -38,7 +38,7 @@ from databricks.labs.dqx.anomaly.transformers import (
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition
-from databricks.labs.dqx.utils import missing_required_packages
+from databricks.labs.dqx.package_utils import missing_required_packages
 
 # Check if SHAP is available (required for feature contributions)
 # sklearn is always available when this module loads (required dependency for anomaly extras)
@@ -46,6 +46,56 @@ SHAP_AVAILABLE = not missing_required_packages(["shap"])
 _DRIVER_ONLY = {"value": False}
 
 logger = logging.getLogger(__name__)
+
+
+class AnomalyScoringStrategy:
+    """Scoring strategy interface for anomaly models."""
+
+    def supports(self, algorithm: str) -> bool:
+        raise NotImplementedError
+
+    def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: "ScoringConfig") -> DataFrame:
+        raise NotImplementedError
+
+    def score_segmented(
+        self,
+        df: DataFrame,
+        config: "ScoringConfig",
+        registry_client: AnomalyModelRegistry,
+        all_segments: list[AnomalyModelRecord],
+    ) -> DataFrame:
+        raise NotImplementedError
+
+
+class IsolationForestScoringStrategy(AnomalyScoringStrategy):
+    """IsolationForest scoring strategy (default)."""
+
+    def supports(self, algorithm: str) -> bool:
+        return algorithm.startswith("IsolationForest")
+
+    def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: "ScoringConfig") -> DataFrame:
+        return _score_global_model(df, record, config)
+
+    def score_segmented(
+        self,
+        df: DataFrame,
+        config: "ScoringConfig",
+        registry_client: AnomalyModelRegistry,
+        all_segments: list[AnomalyModelRecord],
+    ) -> DataFrame:
+        return _score_segmented(df, config, registry_client, all_segments=all_segments)
+
+
+_SCORING_STRATEGIES: list[AnomalyScoringStrategy] = [IsolationForestScoringStrategy()]
+
+
+def _resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:
+    for strategy in _SCORING_STRATEGIES:
+        if strategy.supports(algorithm):
+            return strategy
+    raise InvalidParameterError(
+        f"Unsupported model algorithm '{algorithm}'. Add a scoring strategy for this algorithm."
+    )
 
 
 @register_rule("dataset")
@@ -154,7 +204,9 @@ def has_no_anomalies(
 
         # Route to segmented or global scoring
         if segment_by:
-            result = _score_segmented(df_to_score, config, registry_client)
+            all_segments = _load_segment_models(registry_client, config)
+            strategy = _resolve_scoring_strategy(all_segments[0].identity.algorithm)
+            result = strategy.score_segmented(df_to_score, config, registry_client, all_segments)
             if row_id_col:
                 result = result.drop(row_id_col)
             return result
@@ -172,7 +224,8 @@ def has_no_anomalies(
                 f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
             )
 
-        result = _score_global_model(df_to_score, record, config)
+        strategy = _resolve_scoring_strategy(record.identity.algorithm)
+        result = strategy.score_global(df_to_score, record, config)
         if row_id_col:
             result = result.drop(row_id_col)
         return result
@@ -264,9 +317,14 @@ def _check_segment_drift(
 ) -> None:
     """Check and warn about data drift in a segment."""
     if drift_threshold is not None and segment_model.training.baseline_stats:
-        drift_result = compute_drift_score(
-            segment_df.select(columns),
+        drift_df, drift_columns = _prepare_drift_df(
+            segment_df,
             columns,
+            segment_model,
+        )
+        drift_result = compute_drift_score(
+            drift_df,
+            drift_columns,
             segment_model.training.baseline_stats,
             drift_threshold_value,
         )
@@ -422,6 +480,7 @@ def _score_segmented(
     df: DataFrame,
     config: ScoringConfig,
     registry_client: AnomalyModelRegistry,
+    all_segments: list[AnomalyModelRecord] | None = None,
 ) -> DataFrame:
     """Score DataFrame using segment-specific models.
 
@@ -429,12 +488,17 @@ def _score_segmented(
         df: Input DataFrame to score.
         config: Scoring configuration with all parameters.
         registry_client: Registry client for loading model metadata.
+        all_segments: Optional preloaded segment records.
 
     Returns:
         Scored DataFrame with anomaly scores and _info column.
     """
     # Get all segment models
-    all_segments = registry_client.get_all_segment_models(config.registry_table, config.model_name)
+    all_segments = (
+        all_segments
+        if all_segments is not None
+        else registry_client.get_all_segment_models(config.registry_table, config.model_name)
+    )
 
     if not all_segments:
         raise InvalidParameterError(
@@ -1015,6 +1079,19 @@ def _get_record_for_discovery(
     )
 
 
+def _load_segment_models(
+    registry_client: AnomalyModelRegistry,
+    config: "ScoringConfig",
+) -> list[AnomalyModelRecord]:
+    all_segments = registry_client.get_all_segment_models(config.registry_table, config.model_name)
+    if not all_segments:
+        raise InvalidParameterError(
+            f"No segment models found for base model '{config.model_name}'. "
+            "Train segmented models first using anomaly.train(...)."
+        )
+    return all_segments
+
+
 def _validate_fully_qualified_name(value: str, *, label: str) -> None:
     """Validate that a name is in catalog.schema.name format."""
     if value.count(".") != 2:
@@ -1201,9 +1278,10 @@ def _check_and_warn_drift(
 ) -> None:
     """Check for data drift and issue warning if detected."""
     if drift_threshold is not None and record.training.baseline_stats:
+        drift_df, drift_columns = _prepare_drift_df(df, columns, record)
         drift_result = compute_drift_score(
-            df.select(columns),
-            columns,
+            drift_df,
+            drift_columns,
             record.training.baseline_stats,
             drift_threshold_value,
         )
@@ -1220,6 +1298,27 @@ def _check_and_warn_drift(
                 UserWarning,
                 stacklevel=3,
             )
+
+
+def _prepare_drift_df(
+    df: DataFrame,
+    columns: list[str],
+    record: "AnomalyModelRecord",
+) -> tuple[DataFrame, list[str]]:
+    """Prepare drift DataFrame and columns aligned to training baseline stats."""
+    feature_metadata_json = record.features.feature_metadata
+    if not feature_metadata_json:
+        return df.select(*columns), columns
+
+    column_infos, feature_metadata = _prepare_feature_metadata(feature_metadata_json)
+    engineered_df = _apply_feature_engineering_for_scoring(
+        df,
+        columns,
+        merge_columns=[],
+        column_infos=column_infos,
+        feature_metadata=feature_metadata,
+    )
+    return engineered_df, feature_metadata.engineered_feature_names
 
 
 def _serialize_ensemble_models(
@@ -1401,7 +1500,8 @@ def _try_segmented_scoring_fallback(
     # Auto-detect segmentation
     first_segment = _select_segment_record(all_segments)
     assert first_segment.segmentation.segment_by is not None, "Segment model must have segment_by"
-    return _score_segmented(df, config, registry_client)
+    strategy = _resolve_scoring_strategy(first_segment.identity.algorithm)
+    return strategy.score_segmented(df, config, registry_client, all_segments)
 
 
 def _add_info_column(

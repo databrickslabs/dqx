@@ -6,8 +6,6 @@ All transformations are applied in Spark (distributed) for scalability and
 Spark Connect compatibility (no custom Python class serialization).
 """
 
-from __future__ import annotations
-
 import json
 import re
 import sys
@@ -147,7 +145,8 @@ class ColumnTypeClassifier:
 
         null_exprs = [F.count(F.when(F.col(col_name).isNull(), 1)).alias(f"{col_name}__nulls") for col_name in columns]
         nulls_row = df.agg(*null_exprs).first()
-        assert nulls_row is not None, "Failed to compute null counts"
+        if nulls_row is None:
+            raise InvalidParameterError("Failed to compute null counts.")
         null_counts = {col_name: nulls_row[f"{col_name}__nulls"] for col_name in columns}
 
         string_columns = [col_name for col_name in columns if isinstance(schema[col_name], T.StringType)]
@@ -158,7 +157,8 @@ class ColumnTypeClassifier:
                 for col_name in string_columns
             ]
             distinct_row = df.agg(*distinct_exprs).first()
-            assert distinct_row is not None, "Failed to compute distinct counts"
+            if distinct_row is None:
+                raise InvalidParameterError("Failed to compute distinct counts.")
             distinct_counts = {col_name: distinct_row[f"{col_name}__distinct"] for col_name in string_columns}
 
         for col_name in columns:

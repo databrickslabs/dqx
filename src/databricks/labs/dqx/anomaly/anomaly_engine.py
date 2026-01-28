@@ -1,8 +1,6 @@
 """
-AnomalyEngine entrypoint for anomaly detection workflows.
+AnomalyEngine entrypoint for anomaly detection.
 """
-
-from __future__ import annotations
 
 from pyspark.sql import DataFrame, SparkSession
 
@@ -68,7 +66,6 @@ class AnomalyEngine(DQEngineBase):
         params: AnomalyParams | None = None,
         exclude_columns: list[str] | None = None,
         expected_anomaly_rate: float = 0.02,
-        row_id_columns: list[str] | None = None,
     ) -> str:
         """
             Train anomaly detection model(s) with intelligent auto-discovery.
@@ -91,15 +88,13 @@ class AnomalyEngine(DQEngineBase):
             segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
             params: Optional anomaly parameters for tuning training behavior.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).
+                            Exclusions always take precedence over `columns` if both are provided.
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
             expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.02 = 2%).
                                    This helps the model calibrate what's "normal" vs "unusual".
                                    Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
                                    This sets the model contamination default.
-            row_id_columns: Optional identifier columns preserved for validation/feature-importance shuffling.
-                            Not used for training and likely to be removed once row-level helpers are simplified.
-
         Important Notes:
             - Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.
             - Choose behavioral columns, not identifiers. Good: amount, quantity. Bad: user_id.
@@ -158,7 +153,6 @@ class AnomalyEngine(DQEngineBase):
             params=params,
             exclude_columns=exclude_columns,
             expected_anomaly_rate=expected_anomaly_rate,
-            row_id_columns=row_id_columns,
         )
 
         log_telemetry(self.ws, "anomaly_auto_discovery", str(context.auto_discovery_used).lower())

@@ -5,8 +5,6 @@ Analyzes DataFrames to recommend columns and segments suitable for
 anomaly detection using on-the-fly heuristics.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from dataclasses import dataclass
@@ -26,6 +24,7 @@ from pyspark.sql.types import (
     TimestampType,
     TimestampNTZType,
 )
+from databricks.labs.dqx.profiling_utils import compute_null_and_distinct_counts
 
 logger = logging.getLogger(__name__)
 
@@ -432,14 +431,14 @@ def _auto_discover_heuristic(
     total_count = df.count()
     column_names = [f.name for f in df.schema.fields]
 
-    null_exprs = [F.count(F.when(F.col(col_name).isNull(), 1)).alias(f"{col_name}__nulls") for col_name in column_names]
     distinct_columns = [f.name for f in df.schema.fields if isinstance(f.dataType, (StringType, IntegerType))]
-    distinct_exprs = [F.countDistinct(col_name).alias(f"{col_name}__distinct") for col_name in distinct_columns]
-
-    stats_row = df.agg(*null_exprs, *distinct_exprs).first()
-    assert stats_row is not None, "Failed to compute column statistics"
-    null_counts = {col_name: stats_row[f"{col_name}__nulls"] for col_name in column_names}
-    distinct_counts = {col_name: stats_row[f"{col_name}__distinct"] for col_name in distinct_columns}
+    null_counts, distinct_counts = compute_null_and_distinct_counts(
+        df,
+        column_names,
+        distinct_columns,
+        approx=True,
+        rsd=0.05,
+    )
 
     for field in df.schema.fields:
         col_name = field.name
