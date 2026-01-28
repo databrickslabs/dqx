@@ -13,7 +13,7 @@ from databricks.labs.dqx.errors import DQXError
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.io import read_input_data
-from databricks.labs.dqx.llm.table_manager import TableManager
+from databricks.labs.dqx.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
 

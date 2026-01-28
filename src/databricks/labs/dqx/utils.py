@@ -18,7 +18,7 @@ import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.llm.table_manager import SparkTableDataProvider
+from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
