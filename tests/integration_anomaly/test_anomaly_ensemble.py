@@ -2,11 +2,14 @@
 
 from pyspark.sql import SparkSession
 
+from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
+from databricks.labs.dqx.engine import DQEngine
 
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.test_anomaly_utils import (
     score_3d_with_contributions,
+    create_anomaly_check_rule,
     train_simple_2d_model,
     train_simple_3d_model,
 )
@@ -84,6 +87,40 @@ def test_ensemble_scoring_with_confidence(
     # Check that scores vary (std > 0 for some rows)
     std_values = [r["_dq_info"]["anomaly"]["confidence_std"] for r in result_df.collect()]
     assert any(std is not None and std > 0 for std in std_values)
+
+
+def test_ensemble_scoring_distributed_path(
+    ws,
+    spark: SparkSession,
+    make_random,
+    anomaly_engine,
+    anomaly_registry_prefix,
+):
+    """Exercise distributed ensemble scoring path (driver_only disabled)."""
+    unique_id = make_random(8).lower()
+    model_name = f"{anomaly_registry_prefix}.test_ensemble_distributed_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    params = AnomalyParams(sample_fraction=1.0, max_rows=50, ensemble_size=2)
+    train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_size=50, params=params)
+
+    df = spark.createDataFrame([(1, 100.0, 2.0)], "transaction_id int, amount double, quantity double")
+
+    set_driver_only_for_tests(False)
+    try:
+        dq_engine = DQEngine(ws, spark)
+        check = create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            include_confidence=True,
+            include_contributions=False,
+        )
+
+        result = dq_engine.apply_checks(df, [check])
+        row = result.collect()[0]
+        assert row["_dq_info"]["anomaly"]["confidence_std"] is not None
+    finally:
+        set_driver_only_for_tests(True)
 
 
 def test_ensemble_with_feature_contributions(

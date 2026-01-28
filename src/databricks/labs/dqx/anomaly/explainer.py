@@ -60,6 +60,54 @@ def create_optimal_tree_explainer(tree_model: Any) -> Any:
     return shap.TreeExplainer(tree_model)
 
 
+def compute_contributions_for_matrix(
+    model_local: Any, feature_matrix: "np.ndarray", columns: list[str]
+) -> list[dict[str, float | None]]:
+    """Compute normalized SHAP contributions for a feature matrix."""
+    if pd is None or np is None or shap is None or Pipeline is None:
+        raise ImportError("Explainability dependencies are not available.")
+
+    # If model is a Pipeline (due to feature scaling), extract components
+    # SHAP's TreeExplainer only supports tree models, not pipelines
+    if isinstance(model_local, Pipeline):
+        scaler = model_local.named_steps["scaler"]
+        tree_model = model_local.named_steps["model"]
+        needs_scaling = True
+    else:
+        scaler = None
+        tree_model = model_local
+        needs_scaling = False
+
+    explainer = shap.TreeExplainer(tree_model)
+
+    # Scale the data if the model uses a scaler
+    if needs_scaling:
+        feature_matrix = scaler.transform(feature_matrix)
+
+    # Handle NaN values (SHAP can't process them)
+    has_nan = pd.isna(feature_matrix).any(axis=1)
+
+    contributions_list: list[dict[str, float | None]] = []
+    for i in range(len(feature_matrix)):
+        if has_nan[i]:
+            contributions_list.append({col: None for col in columns})
+            continue
+
+        shap_values = explainer.shap_values(feature_matrix[i : i + 1])[0]
+        abs_shap = np.abs(shap_values)
+        total = abs_shap.sum()
+
+        if total > 0:
+            normalized = abs_shap / total
+            contributions: dict[str, float | None] = {col: float(normalized[j]) for j, col in enumerate(columns)}
+        else:
+            contributions = {col: 1.0 / len(columns) for col in columns}
+
+        contributions_list.append(contributions)
+
+    return contributions_list
+
+
 def compute_feature_contributions(
     model_uri: str,
     df: DataFrame,
@@ -107,71 +155,14 @@ def compute_feature_contributions(
             DataFrame with anomaly_contributions column
         """
         import pandas as pd
-        import numpy as np
         import mlflow.sklearn as mlflow_sklearn
-        from sklearn.pipeline import Pipeline
-        import shap
 
         # Load model once per executor
         model_local = mlflow_sklearn.load_model(model_uri)
 
-        # If model is a Pipeline (due to feature scaling), extract components
-        # SHAP's TreeExplainer only supports tree models, not pipelines
-        if isinstance(model_local, Pipeline):
-            # Extract the scaler and the actual tree model
-            scaler = model_local.named_steps['scaler']
-            tree_model = model_local.named_steps['model']
-            needs_scaling = True
-        else:
-            scaler = None
-            tree_model = model_local
-            needs_scaling = False
-
-        # Create TreeExplainer for SHAP value computation
-        explainer = shap.TreeExplainer(tree_model)
-
         # feature_struct is already a DataFrame with struct fields as columns
         feature_matrix = feature_struct.values
-
-        # Scale the data if the model uses a scaler
-        # SHAP values are computed in the scaled space to match how the model was trained
-        if needs_scaling:
-            feature_matrix = scaler.transform(feature_matrix)
-
-        # Handle NaN values (SHAP can't process them)
-        has_nan = pd.isna(feature_matrix).any(axis=1)
-
-        # Initialize output - list can contain dicts with float or None values
-        contributions_list: list[dict[str, float | None]] = []
-
-        for i in range(len(feature_matrix)):
-            if has_nan[i]:
-                # Null contributions for rows with NaN
-                contributions_list.append({col: None for col in columns})
-            else:
-                # Compute SHAP values for this row
-                shap_values = explainer.shap_values(feature_matrix[i : i + 1])[0]
-
-                # Convert to absolute contributions normalized to sum to 1.0
-                abs_shap = np.abs(shap_values)
-                total = abs_shap.sum()
-
-                if total > 0:
-                    normalized = abs_shap / total
-                    contributions: dict[str, float | None] = {
-                        col: float(normalized[j]) for j, col in enumerate(columns)
-                    }
-                else:
-                    # EDGE CASE: All SHAP values are 0 or extremely small
-                    # This can happen when:
-                    # 1. Data point is perfectly normal (all features at expected values)
-                    # 2. Numerical precision limits (SHAP values < 1e-15)
-                    # 3. Single constant feature
-                    # Fallback: Assign equal contributions to avoid division by zero
-                    # Note: This is rare and may indicate the instance has very low anomaly score
-                    contributions = {col: 1.0 / len(columns) for col in columns}
-
-                contributions_list.append(contributions)
+        contributions_list = compute_contributions_for_matrix(model_local, feature_matrix, columns)
 
         # Return as a DataFrame so the StructType schema is satisfied
         return pd.DataFrame({"anomaly_contributions": contributions_list})

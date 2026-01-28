@@ -9,7 +9,17 @@ OPTIMIZATION: These tests use session-scoped shared fixtures (shared_2d_model, s
 shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min to ~10 min (83% savings).
 """
 
+import numpy as np
+import pytest
 from pyspark.sql import SparkSession
+from sklearn.ensemble import IsolationForest
+
+from databricks.labs.dqx.anomaly.explainer import (
+    add_top_contributors_to_message,
+    create_optimal_tree_explainer,
+)
+from databricks.labs.dqx.anomaly import explainer as explainer_mod
+from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
@@ -184,3 +194,79 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
     # Since amount is the most anomalous feature
     assert top_feature in {"amount", "discount", "quantity"}
     assert valid_contribs[top_feature] > 0.2  # Should have significant contribution
+
+
+def test_add_top_contributors_message(spark: SparkSession):
+    """Top contributors are added only for rows above threshold."""
+    df = spark.createDataFrame(
+        [
+            (0.7, {"amount": 0.8, "quantity": 0.2}),
+            (0.2, {"amount": 0.9, "quantity": 0.1}),
+        ],
+        "anomaly_score double, anomaly_contributions map<string,double>",
+    )
+
+    result = add_top_contributors_to_message(df, threshold=0.6, top_n=2)
+    rows = {row.anomaly_score: row["_top_contributors"] for row in result.collect()}
+
+    assert "amount" in rows[0.7]
+    assert "quantity" in rows[0.7]
+    assert rows[0.2] == ""
+
+
+def test_create_optimal_tree_explainer():
+    """TreeExplainer is created when SHAP is available, otherwise ImportError."""
+    if explainer_mod.shap is None:
+        with pytest.raises(ImportError):
+            create_optimal_tree_explainer(object())
+        return
+
+    model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
+    explainer = create_optimal_tree_explainer(model)
+    assert explainer is not None
+
+
+def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, test_df_factory, anomaly_scorer):
+    """Compute SHAP contributions in driver-only mode (Spark Connect safe)."""
+    if explainer_mod.shap is None:
+        pytest.skip("Explainability dependencies not available")
+
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+
+    test_df = test_df_factory(
+        spark,
+        normal_rows=[(100.0, 2.0)],
+        anomaly_rows=[],
+        columns_schema="amount double, quantity double",
+    )
+
+    set_driver_only_for_tests(True)
+    try:
+        result_df = anomaly_scorer(
+            test_df,
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            include_contributions=True,
+            extract_score=False,
+        )
+        row = result_df.collect()[0]
+        contribs = row["_dq_info"]["anomaly"]["contributions"]
+        assert contribs is not None
+        assert "amount" in contribs and "quantity" in contribs
+    finally:
+        set_driver_only_for_tests(False)
+
+
+def test_compute_contributions_helper():
+    """Compute contributions directly for a small matrix."""
+    if explainer_mod.shap is None or explainer_mod.np is None or explainer_mod.pd is None:
+        pytest.skip("Explainability dependencies not available")
+
+    model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
+    feature_matrix = np.array([[0.0, 0.1], [2.0, 2.1]])
+    contributions = explainer_mod.compute_contributions_for_matrix(model, feature_matrix, ["amount", "quantity"])
+
+    assert len(contributions) == 2
+    assert set(contributions[0].keys()) == {"amount", "quantity"}

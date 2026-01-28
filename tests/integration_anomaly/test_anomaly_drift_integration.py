@@ -204,6 +204,58 @@ def test_drift_detection_skipped_on_small_batch(
         assert len(drift_warnings) == 0
 
 
+def test_segment_drift_warns_per_segment(
+    ws,
+    spark: SparkSession,
+    make_random: Callable[[int], str],
+    anomaly_engine,
+    anomaly_registry_prefix,
+):
+    """Segmented scoring should emit drift warnings when each segment shifts."""
+    unique_id = make_random(8).lower()
+    model_name = f"{anomaly_registry_prefix}.test_segment_drift_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    train_rows = []
+    for region, base in (("US", 100.0), ("EU", 200.0)):
+        for i in range(1200):
+            train_rows.append((region, base + i * 0.1, 5.0))
+
+    train_df = spark.createDataFrame(train_rows, "region string, amount double, quantity double")
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        segment_by=["region"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    drift_rows = []
+    for region, base in (("US", 2000.0), ("EU", 3000.0)):
+        for i in range(1200):
+            drift_rows.append((region, base + i * 0.1, 5.0))
+
+    test_df = spark.createDataFrame(drift_rows, "region string, amount double, quantity double")
+    dq_engine = DQEngine(ws, spark)
+    checks = [
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=["amount", "quantity"],
+            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            drift_threshold=DRIFT_THRESHOLD,
+        )
+    ]
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        dq_engine.apply_checks(test_df, checks).collect()
+
+        drift_warnings = [warning for warning in w if "data drift detected" in str(warning.message).lower()]
+        assert drift_warnings
+        assert any("segment" in str(warning.message).lower() for warning in drift_warnings)
+
+
 # ============================================================================
 # Direct Drift Detector Module Tests
 # ============================================================================

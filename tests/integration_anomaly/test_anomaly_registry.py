@@ -6,9 +6,15 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
 
 from databricks.labs.dqx.anomaly.model_registry import (
+    AnomalyModelRecord,
     AnomalyModelRegistry,
+    FeatureEngineering,
+    ModelIdentity,
+    SegmentationConfig,
+    TrainingMetadata,
     compute_config_hash,
 )
 
@@ -401,3 +407,107 @@ def test_config_change_warning(
     config_warnings = [msg for msg in warning_messages if "different configuration" in msg]
     assert len(config_warnings) > 0, f"Expected config warning, got: {warning_messages}"
     assert "will be archived" in config_warnings[0]
+
+
+def test_registry_active_model_and_archiving(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix
+):
+    """Test registry archiving behavior when saving multiple versions."""
+    unique_id = make_random(8).lower()
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+    model_name = f"{anomaly_registry_prefix}.test_archive_{make_random(4).lower()}"
+
+    registry = AnomalyModelRegistry(spark)
+    now = datetime.utcnow()
+
+    record_v1 = AnomalyModelRecord(
+        identity=ModelIdentity(
+            model_name=model_name,
+            model_uri="models:/dummy_model/1",
+            algorithm="isolation_forest",
+            mlflow_run_id="run_v1",
+        ),
+        training=TrainingMetadata(
+            columns=["amount", "quantity"],
+            hyperparameters={"n_estimators": "100"},
+            training_rows=100,
+            training_time=now,
+            metrics={"precision": 0.9},
+            baseline_stats={"amount": {"mean": 1.0, "std": 0.1}},
+        ),
+        features=FeatureEngineering(mode="spark"),
+        segmentation=SegmentationConfig(is_global_model=True, config_hash="hash_v1"),
+    )
+
+    record_v2 = AnomalyModelRecord(
+        identity=ModelIdentity(
+            model_name=model_name,
+            model_uri="models:/dummy_model/2",
+            algorithm="isolation_forest",
+            mlflow_run_id="run_v2",
+        ),
+        training=TrainingMetadata(
+            columns=["amount", "quantity"],
+            hyperparameters={"n_estimators": "150"},
+            training_rows=150,
+            training_time=now + timedelta(seconds=5),
+            metrics={"precision": 0.95},
+        ),
+        features=FeatureEngineering(mode="spark"),
+        segmentation=SegmentationConfig(is_global_model=True, config_hash="hash_v2"),
+    )
+
+    registry.save_model(record_v1, registry_table)
+    registry.save_model(record_v2, registry_table)
+
+    active = registry.get_active_model(registry_table, model_name)
+    assert active is not None
+    assert active.identity.model_uri == "models:/dummy_model/2"
+
+    archived_count = (
+        spark.table(registry_table)
+        .filter((F.col("identity.model_name") == model_name) & (F.col("identity.status") == "archived"))
+        .count()
+    )
+    assert archived_count == 1
+
+
+def test_registry_segment_lookup(spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix):
+    """Test segment model lookup and listing."""
+    unique_id = make_random(8).lower()
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    registry = AnomalyModelRegistry(spark)
+    base_name = f"{anomaly_registry_prefix}.seg_model_{make_random(4).lower()}"
+    segment_name = f"{base_name}__seg_region=US"
+
+    record = AnomalyModelRecord(
+        identity=ModelIdentity(
+            model_name=segment_name,
+            model_uri="models:/seg_model/1",
+            algorithm="isolation_forest",
+            mlflow_run_id="run_seg",
+        ),
+        training=TrainingMetadata(
+            columns=["amount"],
+            hyperparameters={},
+            training_rows=50,
+            training_time=datetime.utcnow(),
+        ),
+        features=FeatureEngineering(mode="spark"),
+        segmentation=SegmentationConfig(
+            segment_by=["region"],
+            segment_values={"region": "US"},
+            is_global_model=False,
+            config_hash="hash_seg",
+        ),
+    )
+
+    registry.save_model(record, registry_table)
+
+    fetched = registry.get_segment_model(registry_table, base_name, {"region": "US"})
+    assert fetched is not None
+    assert fetched.identity.model_name == segment_name
+
+    all_segments = registry.get_all_segment_models(registry_table, base_name)
+    assert len(all_segments) == 1

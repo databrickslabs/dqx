@@ -4,6 +4,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
@@ -13,7 +14,7 @@ from tests.integration_anomaly.test_anomaly_constants import (
     DQENGINE_SCORE_THRESHOLD,
     SEGMENT_REGIONS,
 )
-from tests.integration_anomaly.test_anomaly_utils import train_model_with_params
+from tests.integration_anomaly.test_anomaly_utils import create_anomaly_check_rule, train_model_with_params
 
 
 def test_explicit_segment_training(
@@ -236,3 +237,119 @@ def test_unknown_segment_handling(
     result_with_score = result.select("*", F.col("_dq_info.anomaly.score").alias("anomaly_score"))
     apac_row = [row for row in result_with_score.collect() if row.region == "APAC"][0]
     assert apac_row.anomaly_score is None
+
+
+def test_all_unknown_segments_yield_null_scores(
+    ws,
+    spark: SparkSession,
+    make_schema,
+    make_random,
+    anomaly_engine,
+):
+    """All rows should have null scores if none match trained segments."""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    train_data = []
+    for region in ("US", "EU"):
+        for i in range(200):
+            base = 100 if region == "US" else 200
+            train_data.append((region, base + i * 0.5))
+
+    df = spark.createDataFrame(train_data, "region string, amount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.unknown_only_test_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_unknown_only_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
+    anomaly_engine.train(
+        df=spark.table(table_name),
+        columns=["amount"],
+        segment_by=["region"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    test_data = [
+        (1, "APAC", 300.0),
+        (2, "LATAM", 400.0),
+    ]
+    test_df = spark.createDataFrame(test_data, "row_id int, region string, amount double")
+
+    dq_engine = DQEngine(ws, spark)
+    check = DQDatasetRule(
+        criticality="error",
+        check_func=has_no_anomalies,
+        check_func_kwargs={
+            "model": model_name,
+            "registry_table": registry_table,
+            "include_contributions": True,
+            "include_confidence": True,
+        },
+    )
+
+    result = dq_engine.apply_checks(test_df, [check])
+    result_with_score = result.select("*", F.col("_dq_info.anomaly.score").alias("anomaly_score"))
+    rows = result_with_score.collect()
+    assert all(row.anomaly_score is None for row in rows)
+
+
+def test_try_segmented_fallback_when_global_missing(
+    spark: SparkSession,
+    make_schema,
+    make_random,
+    anomaly_engine,
+    ws,
+):
+    """Fallback should score using segmented models when global record is missing."""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    data = []
+    for region in ("US", "EU"):
+        base = 100 if region == "US" else 200
+        for i in range(200):
+            data.append((region, base + i * 0.5))
+
+    df = spark.createDataFrame(data, "region string, amount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.fallback_test_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_fallback_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
+    anomaly_engine.train(
+        df=spark.table(table_name),
+        columns=["amount"],
+        segment_by=["region"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    # Force fallback path by clearing segment_by in registry records.
+    spark.sql(
+        f"UPDATE {registry_table} "
+        f"SET segmentation.segment_by = NULL "
+        f"WHERE identity.model_name LIKE '{model_name}__seg_%'"
+    )
+
+    test_df = spark.createDataFrame(
+        [(1, "US", 100.0), (2, "EU", 200.0)],
+        "transaction_id int, region string, amount double",
+    )
+
+    set_driver_only_for_tests(False)
+    try:
+        dq_engine = DQEngine(ws, spark)
+        check = create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            score_threshold=DQENGINE_SCORE_THRESHOLD,
+        )
+        result = dq_engine.apply_checks(test_df, [check])
+        rows = result.select("transaction_id", F.col("_dq_info.anomaly.score").alias("score")).collect()
+    finally:
+        set_driver_only_for_tests(True)
+
+    assert all(row.score is not None for row in rows)
