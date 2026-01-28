@@ -5,8 +5,6 @@ Compares current data distribution against baseline statistics
 to detect significant changes that may indicate model staleness.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from pyspark.sql import DataFrame

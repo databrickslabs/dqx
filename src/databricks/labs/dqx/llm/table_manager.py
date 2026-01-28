@@ -1,10 +1,77 @@
 import logging
 from abc import ABC, abstractmethod
-from typing import Protocol
+from typing import Any, Protocol
 from pandas import DataFrame  # type: ignore
 from pyspark.sql import SparkSession
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_fk_source_columns(fk_def: str) -> list[str]:
+    """Extract source columns from FK definition."""
+    if 'FOREIGN KEY' not in fk_def or '(' not in fk_def:
+        return []
+
+    cols_start = fk_def.index('(', fk_def.index('FOREIGN KEY')) + 1
+    cols_end = fk_def.index(')', cols_start)
+    return [col.strip() for col in fk_def[cols_start:cols_end].split(',')]
+
+
+def _parse_fk_referenced_table_and_columns(fk_def: str) -> tuple[str | None, list[str]]:
+    """Extract referenced table and columns from FK definition."""
+    if 'REFERENCES' not in fk_def:
+        return None, []
+
+    ref_part = fk_def.split('REFERENCES')[1].strip()
+    if '(' not in ref_part:
+        return ref_part.strip(), []
+
+    ref_table = ref_part[: ref_part.index('(')].strip()
+    ref_cols_start = ref_part.index('(') + 1
+    ref_cols_end = ref_part.index(')', ref_cols_start)
+    ref_cols = [col.strip() for col in ref_part[ref_cols_start:ref_cols_end].split(',')]
+
+    return ref_table, ref_cols
+
+
+def _parse_foreign_key_definition(value: str) -> dict[str, Any] | None:
+    """
+    Parse a foreign key definition string into structured components.
+
+    Expected format: "FOREIGN KEY (col1, col2) REFERENCES ref_table(ref_col1, ref_col2)"
+    """
+    fk_def = str(value).upper()
+
+    source_cols = _parse_fk_source_columns(fk_def)
+    ref_table, ref_cols = _parse_fk_referenced_table_and_columns(fk_def)
+
+    if source_cols and ref_table:
+        return {
+            "columns": source_cols,
+            "referenced_table": ref_table,
+            "referenced_columns": ref_cols,
+        }
+
+    return None
+
+
+def _extract_foreign_keys_from_properties(fk_rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Extract foreign key constraints from table property rows."""
+    foreign_keys: dict[str, dict[str, Any]] = {}
+
+    for row in fk_rows:
+        key = row.get("key")
+        value = row.get("value")
+
+        if not (key and 'foreign' in str(key).lower() and value):
+            continue
+
+        fk_name = str(key).rsplit('.', maxsplit=1)[-1]
+        fk_metadata = _parse_foreign_key_definition(value)
+        if fk_metadata:
+            foreign_keys[fk_name] = fk_metadata
+
+    return foreign_keys
 
 
 class TableDataProvider(Protocol):
@@ -43,6 +110,17 @@ class TableDataProvider(Protocol):
 
         Returns:
             DataFrame with columns: key, value containing table properties.
+        """
+
+    def get_table_foreign_keys(self, table: str) -> dict[str, dict[str, Any]]:
+        """
+        Retrieve foreign key constraints from table properties.
+
+        Args:
+            table: Fully qualified table name.
+
+        Returns:
+            Dictionary mapping foreign key names to their metadata.
         """
 
     def get_column_statistics(self, table: str) -> DataFrame:
@@ -156,6 +234,24 @@ class SparkTableDataProvider:
         stats_query = f"SHOW TBLPROPERTIES {table}"
         stats_result = self.spark.sql(stats_query)
         return stats_result.toPandas()
+
+    def get_table_foreign_keys(self, table: str) -> dict[str, dict[str, Any]]:
+        """
+        Retrieve foreign key constraints from table properties.
+
+        Args:
+            table: Fully qualified table name.
+
+        Returns:
+            Dictionary mapping foreign key names to their metadata.
+        """
+        try:
+            props_df = self.get_table_properties(table)
+            rows = props_df.to_dict("records") if hasattr(props_df, "to_dict") else []
+        except (ValueError, RuntimeError, KeyError, TypeError):
+            return {}
+
+        return _extract_foreign_keys_from_properties(rows)
 
     def get_column_statistics(self, table: str) -> DataFrame:
         """

@@ -2720,6 +2720,10 @@ model_name = anomaly_engine.train(
 )
 ```
 
+**Guidance: exclude identifier columns**
+Avoid ID‑like columns (order IDs, user IDs). They are often unique and can dominate the model, reducing anomaly quality.
+If you must keep IDs in the dataset, use `exclude_columns` or pass a curated `columns` list of behavioral fields.
+
 **Workflow (configuration file)**
 ```yaml
 run_configs:
@@ -2830,7 +2834,7 @@ checks = [
 ]
 ```
 
-The default `3.0` corresponds to a roughly 3-sigma deviation from training statistics.
+The default `3.0` corresponds to a roughly 3-sigma deviation from training statistics (about 99.7% of values fall within ±3σ under a normal assumption), which is a common starting point to avoid noisy drift alerts.
 
 When drift detected, issues warning with:
 - Specific columns experiencing drift

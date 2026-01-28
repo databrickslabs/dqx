@@ -3,7 +3,6 @@ import json
 import datetime
 import logging
 import re
-from importlib.util import find_spec
 from typing import Any
 from fnmatch import fnmatch
 
@@ -19,6 +18,7 @@ import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.llm.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
@@ -451,31 +451,32 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     return F.lower(col_expr)
 
 
-def missing_required_packages(packages: list[str]) -> bool:
-    """
-    Checks if any of the required packages are missing.
-
-    Args:
-        packages: A list of package names to check.
-
-    Returns:
-        True if any package is missing, False otherwise.
-    """
-    return not all(find_spec(spec) for spec in packages)
-
-
 def _query_table_properties(table: str, spark: Any) -> list[Any]:
-    """Query Unity Catalog table properties."""
-    pk_query = f"SHOW TBLPROPERTIES {table}"
-    pk_result = spark.sql(pk_query)
-    return pk_result.collect()
+    """Query Unity Catalog table properties using the shared table data provider."""
+    provider = SparkTableDataProvider(spark)
+    properties_df = provider.get_table_properties(table)
+    if hasattr(properties_df, "to_dict"):
+        return properties_df.to_dict("records")
+    if hasattr(properties_df, "collect"):
+        return properties_df.collect()
+    return list(properties_df)
+
+
+def _get_property_kv(row: Any) -> tuple[Any, Any]:
+    """Return (key, value) from a table properties row."""
+    if hasattr(row, "key") or hasattr(row, "value"):
+        return getattr(row, "key", None), getattr(row, "value", None)
+    if isinstance(row, dict):
+        return row.get("key"), row.get("value")
+    if hasattr(row, "get"):
+        return row.get("key"), row.get("value")
+    return None, None
 
 
 def _extract_primary_key_from_properties(pk_rows: list[Any]) -> set[str]:
     """Extract primary key columns from table property rows."""
     for row in pk_rows:
-        key = getattr(row, 'key', None)
-        value = getattr(row, 'value', None)
+        key, value = _get_property_kv(row)
 
         if key and 'primary' in str(key).lower() and value:
             # Primary key value is typically a comma-separated list of columns
@@ -515,86 +516,6 @@ def get_table_primary_keys(table: str, spark: Any) -> set[str]:
         return set()
 
 
-def _parse_fk_source_columns(fk_def: str) -> list[str]:
-    """Extract source columns from FK definition."""
-    if 'FOREIGN KEY' not in fk_def or '(' not in fk_def:
-        return []
-
-    cols_start = fk_def.index('(', fk_def.index('FOREIGN KEY')) + 1
-    cols_end = fk_def.index(')', cols_start)
-    return [col.strip() for col in fk_def[cols_start:cols_end].split(',')]
-
-
-def _parse_fk_referenced_table_and_columns(fk_def: str) -> tuple[str | None, list[str]]:
-    """Extract referenced table and columns from FK definition."""
-    if 'REFERENCES' not in fk_def:
-        return None, []
-
-    ref_part = fk_def.split('REFERENCES')[1].strip()
-    if '(' not in ref_part:
-        return ref_part.strip(), []
-
-    ref_table = ref_part[: ref_part.index('(')].strip()
-    ref_cols_start = ref_part.index('(') + 1
-    ref_cols_end = ref_part.index(')', ref_cols_start)
-    ref_cols = [col.strip() for col in ref_part[ref_cols_start:ref_cols_end].split(',')]
-
-    return ref_table, ref_cols
-
-
-def _parse_foreign_key_definition(value: str) -> dict[str, Any] | None:
-    """
-    Parse a foreign key definition string into structured components.
-
-    Expected format: "FOREIGN KEY (col1, col2) REFERENCES ref_table(ref_col1, ref_col2)"
-
-    Returns:
-        Dict with 'columns', 'referenced_table', 'referenced_columns' or None if invalid
-    """
-    fk_def = str(value).upper()
-
-    source_cols = _parse_fk_source_columns(fk_def)
-    ref_table, ref_cols = _parse_fk_referenced_table_and_columns(fk_def)
-
-    if source_cols and ref_table:
-        return {
-            "columns": source_cols,
-            "referenced_table": ref_table,
-            "referenced_columns": ref_cols,
-        }
-
-    return None
-
-
-def _extract_foreign_keys_from_properties(fk_rows: list[Any]) -> dict[str, dict[str, Any]]:
-    """Extract foreign key constraints from table property rows."""
-    foreign_keys = {}
-
-    # Look for foreign key constraints in table properties
-    # Unity Catalog stores FKs with keys like "delta.constraints.fk_name"
-    for row in fk_rows:
-        key = getattr(row, 'key', None)
-        value = getattr(row, 'value', None)
-
-        if not (key and 'foreign' in str(key).lower() and value):
-            continue
-
-        # Extract foreign key name from property key
-        # Format: "delta.constraints.fk_customer" -> "fk_customer"
-        fk_name = str(key).rsplit('.', maxsplit=1)[-1]
-
-        # Parse foreign key definition
-        try:
-            fk_metadata = _parse_foreign_key_definition(value)
-            if fk_metadata:
-                foreign_keys[fk_name] = fk_metadata
-        except Exception:
-            # Skip malformed foreign key definitions
-            continue
-
-    return foreign_keys
-
-
 def get_table_foreign_keys(table: str, spark: Any) -> dict[str, dict[str, Any]]:
     """
     Retrieve foreign key constraints from Unity Catalog table metadata.
@@ -617,8 +538,8 @@ def get_table_foreign_keys(table: str, spark: Any) -> dict[str, dict[str, Any]]:
         # Returns dict with FK name as key, containing columns, referenced_table, referenced_columns
     """
     try:
-        fk_rows = _query_table_properties(table, spark)
-        return _extract_foreign_keys_from_properties(fk_rows)
+        provider = SparkTableDataProvider(spark)
+        return provider.get_table_foreign_keys(table)
     except Exception:
         # Silently handle errors (table not found, permissions, etc.)
         return {}

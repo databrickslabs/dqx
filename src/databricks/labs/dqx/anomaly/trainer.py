@@ -9,8 +9,6 @@ Architecture:
 Note: All imports are at module-level since DQX is installed as a wheel on all cluster nodes.
 """
 
-from __future__ import annotations
-
 import collections.abc
 from copy import deepcopy
 from dataclasses import dataclass
@@ -147,7 +145,6 @@ class AnomalyTrainingContext:
     params: AnomalyParams
     expected_anomaly_rate: float
     exclude_columns: list[str] | None
-    row_id_columns: list[str] | None
     auto_discovery_used: bool
 
 
@@ -189,7 +186,6 @@ class AnomalyTrainingService:
         params: AnomalyParams | None,
         exclude_columns: list[str] | None,
         expected_anomaly_rate: float,
-        row_id_columns: list[str] | None,
     ) -> AnomalyTrainingContext:
         _validate_spark_version(self._spark)
 
@@ -199,6 +195,10 @@ class AnomalyTrainingService:
             raise InvalidParameterError(
                 "registry_table is required and must be fully qualified as 'catalog.schema.table'."
             )
+
+        exclude_list = exclude_columns or []
+        if columns is not None and exclude_list:
+            columns = [col for col in columns if col not in exclude_list]
 
         df_filtered = _process_exclude_columns(df, columns, exclude_columns)
         auto_discovery_used = columns is None
@@ -234,7 +234,6 @@ class AnomalyTrainingService:
             params=params,
             expected_anomaly_rate=expected_anomaly_rate,
             exclude_columns=exclude_columns,
-            row_id_columns=row_id_columns,
             auto_discovery_used=auto_discovery_used,
         )
 
@@ -277,9 +276,7 @@ class AnomalyTrainingService:
                 )
 
     def _train_global(self, context: AnomalyTrainingContext) -> str:
-        sampled_df, _, truncated = _sample_df(
-            context.df_filtered, context.columns, context.params, extra_columns=context.row_id_columns
-        )
+        sampled_df, _, truncated = _sample_df(context.df_filtered, context.columns, context.params)
         if not sampled_df.head(1):
             raise InvalidParameterError(
                 "Sampling produced 0 rows. Provide more data or adjust sampling parameters "
@@ -387,9 +384,7 @@ class AnomalyTrainingService:
         segment_values: dict[str, Any],
         model_name: str,
     ) -> str | None:
-        sampled_df, sampled_count, _ = _sample_df(
-            segment_df, context.columns, context.params, extra_columns=context.row_id_columns
-        )
+        sampled_df, sampled_count, _ = _sample_df(segment_df, context.columns, context.params)
         if sampled_count == 0:
             logger.info(f"Segment {segment_values} has 0 rows after sampling. Skipping model training.")
             return None
@@ -487,14 +482,6 @@ def _process_exclude_columns(
     invalid_excludes = [col for col in exclude_list if col not in df_columns]
     if invalid_excludes:
         raise InvalidParameterError(f"exclude_columns contains columns not in DataFrame: {invalid_excludes}")
-
-    # If columns are explicitly provided, validate they don't overlap
-    if columns is not None:
-        overlap = set(columns) & set(exclude_list)
-        if overlap:
-            raise InvalidParameterError(
-                f"columns and exclude_columns overlap: {overlap}. Remove overlapping columns from either list."
-            )
 
     # Filter DataFrame for auto-discovery (exclude unwanted columns)
     if columns is None:
@@ -804,12 +791,12 @@ def _model_exists_in_uc(model_name: str) -> bool:
         return False
 
 
-def _sample_df(
-    df: DataFrame, columns: list[str], params: AnomalyParams, extra_columns: list[str] | None = None
-) -> tuple[DataFrame, int, bool]:
+def _sample_df(df: DataFrame, columns: list[str], params: AnomalyParams) -> tuple[DataFrame, int, bool]:
     fraction = params.sample_fraction if params.sample_fraction is not None else DEFAULT_SAMPLE_FRACTION
-    selected_cols = list(dict.fromkeys([*columns, *(extra_columns or [])]))
-    sampled = df.select(*selected_cols).sample(withReplacement=False, fraction=fraction, seed=42)
+    missing_cols = [col for col in columns if col not in df.columns]
+    if missing_cols:
+        raise InvalidParameterError(f"Columns not found in DataFrame: {missing_cols}")
+    sampled = df.select(*columns).sample(withReplacement=False, fraction=fraction, seed=42)
     if params.max_rows:
         sampled = sampled.limit(params.max_rows)
     count = sampled.count()

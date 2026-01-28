@@ -5,8 +5,6 @@ Provides TreeSHAP-based feature contribution analysis to understand which column
 contribute most to anomaly scores for individual records.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 

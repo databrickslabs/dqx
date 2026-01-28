@@ -44,6 +44,12 @@ pip install 'databricks-labs-dqx[anomaly]'
 
 Train a model on recent "good" data, then use it in checks:
 
+<Admonition type="tip" title="Exclude identifier columns">
+Avoid ID‑like columns (e.g., `order_id`, `user_id`) in anomaly training. IDs often look unique and can drown out real
+patterns, which makes the model less useful. If you need to keep them in your table, use `exclude_columns` or provide
+an explicit `columns` list of behavioral fields (amounts, counts, rates, timestamps).
+</Admonition>
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
