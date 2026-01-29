@@ -4,6 +4,9 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.manager import DQRuleManager
+from databricks.labs.dqx.rule import ColumnArguments
+from databricks.labs.dqx.schema import dq_result_schema
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_utils import (
     create_anomaly_check_rule,
@@ -62,6 +65,69 @@ def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random
     ]
 
     result_df = dq_engine.apply_checks(test_df, checks)
+    engine_core = dq_engine._engine
+    current_df = test_df
+    check_conditions = []
+    for check in checks:
+        normalized_check = engine_core._preselect_original_columns(test_df, check)
+        manager = DQRuleManager(
+            check=normalized_check,
+            df=current_df,
+            spark=spark,
+            run_id=engine_core.run_id,
+            engine_user_metadata=engine_core.engine_user_metadata,
+            run_time_overwrite=engine_core.run_time_overwrite,
+            ref_dfs=None,
+        )
+        result = manager.process()
+        check_conditions.append(result.condition)
+        current_df = result.check_df
+
+    combined_result_array = F.array_compact(F.array(*check_conditions))
+    errors_col = F.when(F.size(combined_result_array) > 0, combined_result_array).otherwise(
+        F.lit(None).cast(dq_result_schema)
+    )
+    warnings_col = F.lit(None).cast(dq_result_schema)
+    expected_df = current_df.withColumn(
+        engine_core.result_column_names[ColumnArguments.ERRORS], errors_col
+    ).withColumn(engine_core.result_column_names[ColumnArguments.WARNINGS], warnings_col)
+
+    info_col_name = engine_core.result_column_names[ColumnArguments.INFO]
+    if "_dq_info" in expected_df.columns and info_col_name != "_dq_info":
+        expected_df = expected_df.withColumnRenamed("_dq_info", info_col_name)
+
+    expected_df = expected_df.select(*result_df.columns)
+
+    assert result_df.schema == expected_df.schema
+
+    def _strip_nondeterministic(value):
+        if isinstance(value, dict):
+            cleaned = {}
+            for key, val in value.items():
+                if key in {"run_time", "run_id"}:
+                    continue
+                cleaned[key] = _strip_nondeterministic(val)
+            return cleaned
+        if isinstance(value, list):
+            return [_strip_nondeterministic(v) for v in value]
+        return value
+
+    def _normalize_value(value):
+        if isinstance(value, dict):
+            return tuple((k, _normalize_value(v)) for k, v in sorted(value.items()))
+        if isinstance(value, list):
+            return tuple(_normalize_value(v) for v in value)
+        return value
+
+    def _normalize_row(row):
+        cleaned = _strip_nondeterministic(row.asDict(recursive=True))
+        return _normalize_value(cleaned)
+
+    result_rows = [_normalize_row(row) for row in result_df.collect()]
+    expected_rows = [_normalize_row(row) for row in expected_df.collect()]
+
+    assert sorted(result_rows) == sorted(expected_rows)
+
     rows = result_df.select("_errors", F.col("_dq_info.anomaly.score").alias("score")).collect()
     flagged = 0
     for row in rows:
