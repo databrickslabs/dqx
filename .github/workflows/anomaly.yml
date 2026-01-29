@@ -102,10 +102,6 @@ jobs:
         run: |
           hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
 
-      - name: Merge coverage reports and convert them to XML
-        run: |
-          hatch run combine_coverage
-
       # Recursively search the entire workspace directory for all coverage reports.
       # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
@@ -194,9 +190,6 @@ jobs:
         run: |
           hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
 
-      - name: Merge coverage reports and convert them to XML
-        run: |
-          hatch run combine_coverage
 
       # collects all coverage reports
       - name: Publish test coverage

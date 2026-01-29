@@ -15,7 +15,7 @@ def build_segment_filter(segment_values: dict[str, str] | None) -> Column | None
         None if segment_values is None or empty
 
     Example:
-        >>> build_segment_filter({"region": "US", "product": "A"})
+        >>> build_segment_filter(dict(region="US", product="A"))
         Column<'((region = US) AND (product = A))'>
         >>> build_segment_filter(None)
         None

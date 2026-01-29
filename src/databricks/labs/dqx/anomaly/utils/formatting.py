@@ -13,7 +13,7 @@ def format_contributions_map(contributions_map: dict[str, float | None] | None, 
         Empty string if contributions_map is None or empty
 
     Example:
-        >>> format_contributions_map({"amount": 0.85, "quantity": 0.10}, 2)
+        >>> format_contributions_map(dict(amount=0.85, quantity=0.10), 2)
         'amount (85%), quantity (10%)'
     """
     if not contributions_map:
