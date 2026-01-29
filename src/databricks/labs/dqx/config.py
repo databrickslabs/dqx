@@ -44,12 +44,16 @@ class OutputConfig:
     mode: str = "append"
     options: dict[str, str] = field(default_factory=dict)
     trigger: dict[str, str | bool] = field(default_factory=dict)
+    partition_by: list[str] = field(default_factory=list)
+    cluster_by: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         """
         Normalize trigger configuration by converting string boolean representations to actual booleans.
         This is required due to the limitation of the config deserializer.
         """
+        if self.partition_by and self.cluster_by:
+            raise InvalidParameterError("Only one of partition_by or cluster_by is allowed")
         # Convert string representations of booleans to actual booleans
         for key, value in list(self.trigger.items()):
             if isinstance(value, str):
