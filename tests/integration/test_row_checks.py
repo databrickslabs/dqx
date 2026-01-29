@@ -35,6 +35,9 @@ from databricks.labs.dqx.check_funcs import (
     is_valid_ipv6_address,
     is_ipv6_address_in_cidr,
     is_data_fresh,
+    is_null,
+    is_empty,
+    is_null_or_empty,
 )
 from databricks.labs.dqx.pii import pii_detection_funcs
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -153,6 +156,139 @@ def test_col_is_not_null(spark):
             [None, None, None, None],
             [None, "Column 'b' value is null", None, "Column 'try_element_at(d, 1)' value is null"],
             [None, None, "Column 'UnresolvedExtractValue(c, val)' value is null", None],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_null(spark):
+    input_schema = "a: string, b: int, c: map<string, string>, d: array<string>"
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, {"val": "a"}, ["a", "b"]],
+            ["", None, {"val": ""}, [None, "a"]],
+            [" ", 3, {"val": None}, ["", "a"]],
+        ],
+        input_schema,
+    )
+
+    actual = test_df.select(
+        is_null("a"),
+        is_null("b"),
+        is_null(F.col("c").getItem("val")),
+        is_null(F.try_element_at("d", F.lit(1))),
+    )
+
+    checked_schema = (
+        "a_is_not_null: string, "
+        + "b_is_not_null: string, "
+        + "unresolvedextractvalue_c_val_is_not_null: string, "
+        + "try_element_at_d_1_is_not_null: string"
+    )
+    expected = spark.createDataFrame(
+        [
+            [
+                "Column 'a' value is not null",
+                "Column 'b' value is not null",
+                "Column 'UnresolvedExtractValue(c, val)' value is not null",
+                "Column 'try_element_at(d, 1)' value is not null",
+            ],
+            ["Column 'a' value is not null", None, "Column 'UnresolvedExtractValue(c, val)' value is not null", None],
+            [
+                "Column 'a' value is not null",
+                "Column 'b' value is not null",
+                None,
+                "Column 'try_element_at(d, 1)' value is not null",
+            ],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_empty(spark):
+    input_schema = "a: string, b: int, c: map<string, string>, d: array<string>"
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, {"val": "a"}, ["a", "b"]],
+            ["", None, {"val": ""}, [None, "a"]],
+            [" ", 3, {"val": None}, ["", "a"]],
+        ],
+        input_schema,
+    )
+
+    actual = test_df.select(
+        is_empty("a"),
+        is_empty("b"),
+        is_empty(F.col("c").getItem("val")),
+        is_empty(F.try_element_at("d", F.lit(1))),
+    )
+
+    checked_schema = (
+        "a_is_not_empty: string, "
+        + "b_is_not_empty: string, "
+        + "unresolvedextractvalue_c_val_is_not_empty: string, "
+        + "try_element_at_d_1_is_not_empty: string"
+    )
+    expected = spark.createDataFrame(
+        [
+            [
+                "Column 'a' value is not empty",
+                "Column 'b' value is not empty",
+                "Column 'UnresolvedExtractValue(c, val)' value is not empty",
+                "Column 'try_element_at(d, 1)' value is not empty",
+            ],
+            [None, None, None, None],
+            [
+                "Column 'a' value is not empty",
+                "Column 'b' value is not empty",
+                None,
+                "Column 'try_element_at(d, 1)' value is not empty",
+            ],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_null_or_empty(spark):
+    input_schema = "a: string, b: int, c: map<string, string>, d: array<string>"
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, {"val": "a"}, ["a", "b"]],
+            ["", None, {"val": ""}, [None, "a"]],
+            [" ", 3, {"val": None}, ["", "a"]],
+        ],
+        input_schema,
+    )
+
+    actual = test_df.select(
+        is_null_or_empty("a"),
+        is_null_or_empty("b", True),
+        is_null_or_empty(F.col("c").getItem("val")),
+        is_null_or_empty(F.try_element_at("d", F.lit(1))),
+    )
+
+    checked_schema = (
+        "a_is_not_null_and_not_empty: string, "
+        + "b_is_not_null_and_not_empty: string, "
+        + "unresolvedextractvalue_c_val_is_not_null_and_not_empty: string, "
+        + "try_element_at_d_1_is_not_null_and_not_empty: string"
+    )
+    expected = spark.createDataFrame(
+        [
+            [
+                "Column 'a' value is not null and not empty",
+                "Column 'b' value is not null and not empty",
+                "Column 'UnresolvedExtractValue(c, val)' value is not null and not empty",
+                "Column 'try_element_at(d, 1)' value is not null and not empty",
+            ],
+            [None, None, None, None],
+            [None, "Column 'b' value is not null and not empty", None, None],
         ],
         checked_schema,
     )

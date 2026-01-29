@@ -165,6 +165,59 @@ def is_not_null(column: str | Column) -> Column:
 
 
 @register_rule("row")
+def is_null(column: str | Column) -> Column:
+    """Checks whether the values in the input column are null.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    return make_condition(
+        col_expr.isNotNull(), f"Column '{col_expr_str}' value is not null", f"{col_str_norm}_is_not_null"
+    )
+
+
+@register_rule("row")
+def is_empty(column: str | Column) -> Column:
+    """Checks whether the values in the input column are empty (but may be null).
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    condition = col_expr.cast("string") != F.lit("")
+    return make_condition(condition, f"Column '{col_expr_str}' value is not empty", f"{col_str_norm}_is_not_empty")
+
+
+@register_rule("row")
+def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+    """Checks whether the values in the input column are null or empty.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        trim_strings: boolean flag to trim spaces from strings
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if trim_strings:
+        col_expr = F.trim(col_expr).alias(col_str_norm)
+    condition = col_expr.isNotNull() & (col_expr.cast("string").isNotNull() & (col_expr.cast("string") != F.lit("")))
+    return make_condition(
+        condition,
+        f"Column '{col_expr_str}' value is not null and not empty",
+        f"{col_str_norm}_is_not_null_and_not_empty",
+    )
+
+
+@register_rule("row")
 def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
     Can optionally perform a case-insensitive comparison.
