@@ -11,6 +11,7 @@ Note: All imports are at module-level since DQX is installed as a wheel on all c
 
 import collections.abc
 import logging
+from abc import ABC, abstractmethod
 import os
 from copy import deepcopy
 from dataclasses import dataclass
@@ -73,11 +74,12 @@ class TrainingResult:
     algorithm: str
 
 
-class AnomalyTrainingStrategy:
+class AnomalyTrainingStrategy(ABC):
     """Training strategy interface for anomaly models."""
 
     name: str
 
+    @abstractmethod
     def train(
         self,
         train_df: DataFrame,
@@ -88,7 +90,7 @@ class AnomalyTrainingStrategy:
         *,
         allow_ensemble: bool,
     ) -> TrainingResult:
-        raise NotImplementedError
+        pass
 
 
 class IsolationForestTrainingStrategy(AnomalyTrainingStrategy):

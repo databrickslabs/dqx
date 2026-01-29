@@ -5,6 +5,7 @@ Check functions for anomaly detection.
 import logging
 import sys
 import warnings
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -54,15 +55,18 @@ _DRIVER_ONLY = {"value": False}
 logger = logging.getLogger(__name__)
 
 
-class AnomalyScoringStrategy:
+class AnomalyScoringStrategy(ABC):
     """Scoring strategy interface for anomaly models."""
 
+    @abstractmethod
     def supports(self, algorithm: str) -> bool:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: "ScoringConfig") -> DataFrame:
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def score_segmented(
         self,
         df: DataFrame,
@@ -70,7 +74,7 @@ class AnomalyScoringStrategy:
         registry_client: AnomalyModelRegistry,
         all_segments: list[AnomalyModelRecord],
     ) -> DataFrame:
-        raise NotImplementedError
+        pass
 
 
 class IsolationForestScoringStrategy(AnomalyScoringStrategy):
