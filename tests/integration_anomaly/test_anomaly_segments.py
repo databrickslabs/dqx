@@ -147,11 +147,12 @@ def test_multi_column_segments(
     suffix = make_random(8).lower()
 
     # Generate data with region + product_type
+    # Use 1500 rows per segment to ensure reliable probabilistic sampling
     data = []
     for region in ("US", "EU"):
         for product in ("A", "B"):
             base = 100 + (50 if region == "EU" else 0) + (25 if product == "B" else 0)
-            for i in range(150):
+            for i in range(1500):
                 data.append((region, product, base + i * 0.5))
 
     df = spark.createDataFrame(data, "region string, product_type string, amount double")
@@ -172,7 +173,8 @@ def test_multi_column_segments(
         params=AnomalyParams(sample_fraction=1.0),
     )
 
-    # Verify 4 segment models created (2 regions × 2 products)
+    # Verify segment models created (2 regions × 2 products = 4 segments).
+    # With sufficient data per segment, all segments should train successfully.
     registry = spark.table(registry_table)
     models = registry.filter("identity.status = 'active'").collect()
     assert len(models) == 4
