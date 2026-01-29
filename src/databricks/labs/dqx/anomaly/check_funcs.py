@@ -23,7 +23,6 @@ from pyspark.sql.types import (
     StructField,
     MapType,
     StringType,
-    BooleanType,
 )
 import sklearn
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord, compute_config_hash
@@ -34,6 +33,13 @@ from databricks.labs.dqx.anomaly.transformers import (
     SparkFeatureMetadata,
     apply_feature_engineering,
     reconstruct_column_infos,
+)
+from databricks.labs.dqx.anomaly.utils import (
+    build_segment_filter,
+    create_null_scored_dataframe,
+    add_info_column,
+    create_udf_schema,
+    validate_sklearn_compatibility,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
@@ -294,20 +300,6 @@ def set_driver_only_for_tests(enabled: bool) -> None:
     _DRIVER_ONLY["value"] = enabled
 
 
-def _build_segment_filter(segment_values: dict[str, str] | None) -> Column | None:
-    """Build Spark filter expression for a segment's values."""
-    if not segment_values:
-        return None
-
-    filter_exprs = [F.col(key) == F.lit(value) for key, value in segment_values.items()]
-
-    segment_filter = filter_exprs[0]
-    for expr in filter_exprs[1:]:
-        segment_filter = segment_filter & expr
-
-    return segment_filter
-
-
 def _check_segment_drift(
     segment_df: DataFrame,
     columns: list[str],
@@ -374,47 +366,6 @@ def _prepare_scoring_dataframe(df: DataFrame, row_filter: str | None) -> DataFra
     return df.filter(F.expr(row_filter)) if row_filter else df
 
 
-def _create_null_scored_dataframe(
-    df: DataFrame,
-    include_contributions: bool,
-    include_confidence: bool = False,
-    score_col: str = "anomaly_score",
-    score_std_col: str = "anomaly_score_std",
-    contributions_col: str = "anomaly_contributions",
-) -> DataFrame:
-    """Create a DataFrame with null anomaly scores (for empty segments)."""
-    result = df.withColumn(score_col, F.lit(None).cast(DoubleType()))
-    if include_confidence:
-        result = result.withColumn(score_std_col, F.lit(None).cast(DoubleType()))
-    if include_contributions:
-        result = result.withColumn(contributions_col, F.lit(None).cast(MapType(StringType(), DoubleType())))
-
-    # Add null _dq_info column with proper schema (direct struct, not array)
-    null_anomaly_info = F.lit(None).cast(
-        StructType(
-            [
-                StructField("check_name", StringType(), True),
-                StructField("score", DoubleType(), True),
-                StructField("is_anomaly", BooleanType(), True),
-                StructField("threshold", DoubleType(), True),
-                StructField("model", StringType(), True),
-                StructField("segment", MapType(StringType(), StringType()), True),
-                StructField("contributions", MapType(StringType(), DoubleType()), True),
-                StructField("confidence_std", DoubleType(), True),
-            ]
-        )
-    )
-
-    if "_dq_info" in result.columns:
-        # Add or replace the 'anomaly' field in the existing struct
-        result = result.withColumn("_dq_info", F.col("_dq_info").withField("anomaly", null_anomaly_info))
-    else:
-        # Create a new struct with only the 'anomaly' field
-        result = result.withColumn("_dq_info", F.struct(null_anomaly_info.alias("anomaly")))
-
-    return result
-
-
 def _score_single_segment(
     segment_df: DataFrame,
     segment_model: AnomalyModelRecord,
@@ -461,7 +412,7 @@ def _score_single_segment(
         segment_scored = segment_scored.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
     # Add _info column with segment values
-    segment_scored = _add_info_column(
+    segment_scored = add_info_column(
         segment_scored,
         config.model_name,
         config.score_threshold,
@@ -513,7 +464,7 @@ def _score_segmented(
 
     # Score each segment separately
     for segment_model in all_segments:
-        segment_filter = _build_segment_filter(segment_model.segmentation.segment_values)
+        segment_filter = build_segment_filter(segment_model.segmentation.segment_values)
         if segment_filter is None:
             continue
 
@@ -525,7 +476,7 @@ def _score_segmented(
 
     # Union all scored segments
     if not scored_dfs:
-        result = _create_null_scored_dataframe(
+        result = create_null_scored_dataframe(
             df_to_score,
             config.include_contributions,
             config.include_confidence,
@@ -598,78 +549,6 @@ def _apply_feature_engineering_for_scoring(
     )
 
     return engineered_df
-
-
-def _create_udf_schema(include_contributions: bool) -> StructType:
-    """Create schema for scoring UDF output.
-
-    The anomaly_score is used internally for populating _dq_info.anomaly.score.
-    Users should check _dq_info.anomaly.is_anomaly for anomaly status.
-    """
-    schema_fields = [
-        StructField("anomaly_score", DoubleType(), True),
-    ]
-    if include_contributions:
-        schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
-    return StructType(schema_fields)
-
-
-def _parse_version_tuple(version_str: str) -> tuple[int, int]:
-    """Parse version string into (major, minor) tuple."""
-    parts = version_str.split(".")
-    major = int(parts[0])
-    minor = int(parts[1]) if len(parts) > 1 else 0
-    return major, minor
-
-
-def _validate_sklearn_compatibility(model_record: AnomalyModelRecord) -> None:
-    """Validate sklearn version compatibility between training and inference.
-
-    Args:
-        model_record: Model record containing sklearn_version from training
-
-    Raises:
-        Warning if minor version mismatch detected (e.g., 1.2.x vs 1.3.x)
-    """
-    if not model_record.segmentation.sklearn_version:
-        # Old models without version tracking - can't validate
-        return
-
-    trained_version = model_record.segmentation.sklearn_version
-    current_version = sklearn.__version__
-
-    if trained_version == current_version:
-        return  # Perfect match
-
-    # Parse versions
-    try:
-        trained_major, trained_minor = _parse_version_tuple(trained_version)
-        current_major, current_minor = _parse_version_tuple(current_version)
-
-        # Check for version mismatches
-        if trained_major != current_major or trained_minor != current_minor:
-            warnings.warn(
-                f"\nSKLEARN VERSION MISMATCH DETECTED\n"
-                f"Model Information:\n"
-                f"  - Model: {model_record.identity.model_name}\n"
-                f"  - Trained with: sklearn {trained_version}\n"
-                f"  - Current environment: sklearn {current_version}\n"
-                f"\n"
-                f"Minor version changes (e.g., 1.2 -> 1.3) can cause pickle incompatibility errors.\n"
-                f"\n"
-                f"RECOMMENDED ACTION:\n"
-                f"Retrain the model with your current sklearn version:\n"
-                f"  anomaly_engine.train(\n"
-                f"      df=df_train,\n"
-                f"      model_name=\"{model_record.identity.model_name}\",\n"
-                f"      columns={model_record.training.columns}\n"
-                f"  )\n",
-                UserWarning,
-                stacklevel=3,
-            )
-    except (ValueError, IndexError):
-        # Couldn't parse version - skip validation
-        pass
 
 
 def _load_sklearn_model_with_error_handling(model_uri: str, model_record: AnomalyModelRecord) -> Any:
@@ -749,7 +628,7 @@ def _load_and_validate_model(
     Returns:
         Loaded sklearn model
     """
-    _validate_sklearn_compatibility(model_record)
+    validate_sklearn_compatibility(model_record)
     return _load_sklearn_model_with_error_handling(model_uri, model_record)
 
 
@@ -857,7 +736,7 @@ def _score_with_sklearn_model(
     model_bytes = cloudpickle.dumps(sklearn_model)
 
     # Create UDF schema and scoring UDF
-    schema = _create_udf_schema(include_contributions)
+    schema = create_udf_schema(include_contributions)
     if include_contributions:
         predict_with_shap_udf = _create_scoring_udf_with_contributions(model_bytes, engineered_feature_cols, schema)
     else:
@@ -1504,73 +1383,6 @@ def _try_segmented_scoring_fallback(
     return strategy.score_segmented(df, config, registry_client, all_segments)
 
 
-def _add_info_column(
-    df: DataFrame,
-    model_name: str,
-    score_threshold: float,
-    segment_values: dict[str, str] | None = None,
-    include_contributions: bool = False,
-    include_confidence: bool = False,
-    score_col: str = "anomaly_score",
-    score_std_col: str = "anomaly_score_std",
-    contributions_col: str = "anomaly_contributions",
-) -> DataFrame:
-    """Add _dq_info struct column with anomaly metadata.
-
-    Args:
-        df: Scored DataFrame with anomaly_score, prediction, etc.
-        model_name: Name of the model used for scoring.
-        score_threshold: Threshold used for anomaly detection.
-        segment_values: Segment values if model is segmented (None for global models).
-        include_contributions: Whether anomaly_contributions are available.
-        include_confidence: Whether anomaly_score_std is available.
-        score_col: Column name for anomaly scores (internal, collision-safe).
-        score_std_col: Column name for ensemble std scores (internal, collision-safe).
-        contributions_col: Column name for SHAP contributions (internal, collision-safe).
-
-    Returns:
-        DataFrame with _dq_info column added.
-    """
-    # Build anomaly info struct
-    anomaly_info_fields = {
-        "check_name": F.lit("has_no_anomalies"),
-        "score": F.col(score_col),
-        "is_anomaly": F.col(score_col) >= F.lit(score_threshold),
-        "threshold": F.lit(score_threshold),
-        "model": F.lit(model_name),
-    }
-
-    # Add segment as map (null for global models)
-    if segment_values:
-        anomaly_info_fields["segment"] = F.create_map(
-            *[F.lit(item) for pair in segment_values.items() for item in pair]
-        )
-    else:
-        anomaly_info_fields["segment"] = F.lit(None).cast(MapType(StringType(), StringType()))
-
-    # Add contributions (null if not requested or not available)
-    if include_contributions and contributions_col in df.columns:
-        anomaly_info_fields["contributions"] = F.col(contributions_col)
-    else:
-        anomaly_info_fields["contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
-
-    # Add confidence_std (null if not requested or not available)
-    if include_confidence and score_std_col in df.columns:
-        anomaly_info_fields["confidence_std"] = F.col(score_std_col)
-    else:
-        anomaly_info_fields["confidence_std"] = F.lit(None).cast(DoubleType())
-
-    # Create anomaly info struct and wrap in array
-    anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()])
-
-    # Create _dq_info struct with anomaly (direct struct, not array - single result per row)
-    info_struct = F.struct(anomaly_info.alias("anomaly"))
-
-    if "_dq_info" in df.columns:
-        return df.withColumn("_dq_info", F.col("_dq_info").withField("anomaly", anomaly_info))
-    return df.withColumn("_dq_info", info_struct)
-
-
 def _score_global_model(
     df: DataFrame,
     record: AnomalyModelRecord,
@@ -1655,7 +1467,7 @@ def _score_global_model(
         scored_df = scored_df.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
     # Add _dq_info column (before dropping internal columns)
-    scored_df = _add_info_column(
+    scored_df = add_info_column(
         scored_df,
         config.model_name,
         config.score_threshold,

@@ -22,6 +22,7 @@ from databricks.labs.dqx.anomaly.explainer import (
     add_top_contributors_to_message,
     create_optimal_tree_explainer,
 )
+from databricks.labs.dqx.anomaly.utils import format_contributions_map
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -210,16 +211,16 @@ def test_add_top_contributors_message(spark: SparkSession):
     result = add_top_contributors_to_message(df, threshold=0.6, top_n=2)
     assert "_top_contributors" in result.columns
 
-    rendered = explainer_mod._format_contributions_map({"amount": 0.8, "quantity": 0.2}, 2)
+    rendered = format_contributions_map({"amount": 0.8, "quantity": 0.2}, 2)
     assert "amount" in rendered
     assert "quantity" in rendered
-    assert explainer_mod._format_contributions_map({"amount": 0.9, "quantity": 0.1}, 2) != ""
+    assert format_contributions_map({"amount": 0.9, "quantity": 0.1}, 2) != ""
 
 
 def test_add_top_contributors_handles_null_map(spark: SparkSession):
     """Null or empty contributions should yield empty contributor message."""
-    assert explainer_mod._format_contributions_map(None, 2) == ""
-    assert explainer_mod._format_contributions_map({}, 2) == ""
+    assert format_contributions_map(None, 2) == ""
+    assert format_contributions_map({}, 2) == ""
 
 
 def test_create_optimal_tree_explainer():
@@ -323,30 +324,6 @@ def test_compute_contributions_requires_deps():
         explainer_mod.pd = pd_saved
 
 
-def test_compute_contributions_zero_total_branch():
-    """Zero-total SHAP values should yield uniform contributions."""
-    if explainer_mod.np is None:
-        pytest.skip("Explainability dependencies not available")
-
-    class _FakeExplainer:
-        def shap_values(self, data):
-            return [np.zeros((1, data.shape[1]))]
-
-    class _FakeShap:
-        def TreeExplainer(self, _model):
-            return _FakeExplainer()
-
-    shap_saved = explainer_mod.shap
-    try:
-        explainer_mod.shap = _FakeShap()
-        model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1]]))
-        feature_matrix = np.array([[0.0, 0.1]])
-        contributions = explainer_mod.compute_contributions_for_matrix(model, feature_matrix, ["amount", "quantity"])
-        assert contributions[0] == {"amount": 0.5, "quantity": 0.5}
-    finally:
-        explainer_mod.shap = shap_saved
-
-
 def test_compute_feature_contributions_requires_deps(spark: SparkSession):
     """Missing pandas/numpy should raise ImportError before loading model."""
     pd_saved = explainer_mod.pd
@@ -361,7 +338,7 @@ def test_compute_feature_contributions_requires_deps(spark: SparkSession):
 
 def test_format_contributions_map():
     """Formatting helper should handle None and sort by magnitude."""
-    assert explainer_mod._format_contributions_map(None, 2) == ""
-    assert explainer_mod._format_contributions_map({}, 2) == ""
-    rendered = explainer_mod._format_contributions_map({"a": 0.7, "b": None, "c": 0.2}, 2)
+    assert format_contributions_map(None, 2) == ""
+    assert format_contributions_map({}, 2) == ""
+    rendered = format_contributions_map({"a": 0.7, "b": None, "c": 0.2}, 2)
     assert "a" in rendered

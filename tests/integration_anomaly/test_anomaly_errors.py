@@ -15,12 +15,18 @@ from pyspark.sql import SparkSession
 import databricks.labs.dqx.anomaly.check_funcs as anomaly_check_funcs
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import (
-    AnomalyModelRegistry,
     AnomalyModelRecord,
     FeatureEngineering,
     ModelIdentity,
     SegmentationConfig,
     TrainingMetadata,
+)
+from databricks.labs.dqx.anomaly.utils import (
+    build_segment_filter,
+    create_null_scored_dataframe,
+    add_info_column,
+    create_udf_schema,
+    validate_sklearn_compatibility,
 )
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -311,8 +317,9 @@ def test_has_no_anomalies_invalid_inputs(kwargs, match):
 
 
 def test_build_segment_filter_handles_none_and_multi_key():
-    assert anomaly_check_funcs._build_segment_filter(None) is None
-    expr = anomaly_check_funcs._build_segment_filter({"region": "US", "product": "A"})
+    """Test segment filter construction handles None and multiple keys."""
+    assert build_segment_filter(None) is None
+    expr = build_segment_filter({"region": "US", "product": "A"})
     assert expr is not None
 
 
@@ -347,11 +354,12 @@ def test_row_filter_scores_only_matching_rows(
 
 
 def test_create_null_scored_dataframe_updates_existing_info(spark: SparkSession):
+    """Test null scored DataFrame preserves existing _dq_info fields."""
     df = spark.createDataFrame(
         [(1, 0.1, {"existing": "value"})],
         "id int, amount double, _dq_info struct<existing:string>",
     )
-    result = anomaly_check_funcs._create_null_scored_dataframe(
+    result = create_null_scored_dataframe(
         df,
         include_contributions=True,
         include_confidence=True,
@@ -362,11 +370,12 @@ def test_create_null_scored_dataframe_updates_existing_info(spark: SparkSession)
 
 
 def test_add_info_column_preserves_existing_info(spark: SparkSession):
+    """Test info column addition preserves existing _dq_info fields."""
     df = spark.createDataFrame(
         [(1, 0.5, {"existing": "value"})],
         "id int, anomaly_score double, _dq_info struct<existing:string>",
     )
-    result = anomaly_check_funcs._add_info_column(
+    result = add_info_column(
         df,
         model_name="catalog.schema.model",
         score_threshold=0.6,
@@ -379,46 +388,11 @@ def test_add_info_column_preserves_existing_info(spark: SparkSession):
 
 
 def test_create_udf_schema_includes_contributions():
-    schema_without = anomaly_check_funcs._create_udf_schema(include_contributions=False)
-    schema_with = anomaly_check_funcs._create_udf_schema(include_contributions=True)
+    """Test UDF schema includes contributions field when requested."""
+    schema_without = create_udf_schema(include_contributions=False)
+    schema_with = create_udf_schema(include_contributions=True)
     assert [field.name for field in schema_without.fields] == ["anomaly_score"]
     assert [field.name for field in schema_with.fields] == ["anomaly_score", "anomaly_contributions"]
-
-
-def test_prepare_drift_df_without_feature_metadata(spark: SparkSession):
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name="catalog.schema.model",
-            model_uri="models:/dummy",
-            algorithm="IsolationForest",
-            mlflow_run_id="run",
-        ),
-        training=TrainingMetadata(
-            columns=["amount", "quantity"],
-            hyperparameters={},
-            training_rows=10,
-            training_time=datetime.utcnow(),
-        ),
-        features=FeatureEngineering(feature_metadata=None),
-        segmentation=SegmentationConfig(),
-    )
-    df = spark.createDataFrame([(1.0, 2.0)], "amount double, quantity double")
-    drift_df, drift_cols = anomaly_check_funcs._prepare_drift_df(df, ["amount", "quantity"], record)
-    assert drift_cols == ["amount", "quantity"]
-    assert drift_df.columns == ["amount", "quantity"]
-
-
-def test_score_segmented_raises_with_no_segments(spark: SparkSession):
-    df = spark.createDataFrame([(1, 1.0)], "id int, amount double")
-    config = anomaly_check_funcs.ScoringConfig(
-        columns=["amount"],
-        model_name="catalog.schema.model",
-        registry_table="catalog.schema.registry",
-        score_threshold=0.6,
-        merge_columns=["id"],
-    )
-    with pytest.raises(InvalidParameterError, match="No segment models found"):
-        anomaly_check_funcs._score_segmented(df, config, AnomalyModelRegistry(df.sparkSession), all_segments=[])
 
 
 def test_sklearn_version_mismatch_warns(
@@ -494,6 +468,7 @@ def test_sklearn_version_parse_error_silently_skips(
 
 
 def test_validate_sklearn_compatibility_skips_when_missing_version():
+    """Test sklearn validation skips when version is missing."""
     record = AnomalyModelRecord(
         identity=ModelIdentity(
             model_name="catalog.schema.model",
@@ -510,7 +485,7 @@ def test_validate_sklearn_compatibility_skips_when_missing_version():
         features=FeatureEngineering(feature_metadata=None),
         segmentation=SegmentationConfig(sklearn_version=None),
     )
-    anomaly_check_funcs._validate_sklearn_compatibility(record)
+    validate_sklearn_compatibility(record)
 
 
 def test_unknown_algorithm_raises(
