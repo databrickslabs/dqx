@@ -10,7 +10,7 @@ from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
 
 logger = logging.getLogger(__name__)

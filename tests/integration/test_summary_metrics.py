@@ -13,7 +13,7 @@ from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_
 from databricks.labs.dqx.rule import ColumnArguments
 from tests.integration.conftest import EXTRA_PARAMS
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 # Test constants
 TEST_SCHEMA = StructType(

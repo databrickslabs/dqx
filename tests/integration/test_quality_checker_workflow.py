@@ -21,7 +21,7 @@ from tests.integration.conftest import (
     setup_custom_check_func,
 )
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_quality_checker_workflow(ws, spark_keep_alive, setup_workflows, expected_quality_checking_output):

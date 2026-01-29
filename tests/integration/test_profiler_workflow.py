@@ -11,7 +11,7 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration.conftest import setup_custom_check_func
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_profiler_workflow_when_missing_input_location_in_config(ws, setup_serverless_workflows):

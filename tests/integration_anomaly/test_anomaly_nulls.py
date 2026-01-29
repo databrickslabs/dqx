@@ -63,7 +63,7 @@ def test_nulls_are_scored_not_skipped(spark: SparkSession, shared_2d_model, test
         test_df,
         model_name,
         registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
 
     # NOTE: Null handling follows ML best practices:
@@ -105,7 +105,7 @@ def test_partial_nulls(spark: SparkSession, shared_3d_model, test_df_factory):
     _, apply_fn = has_no_anomalies(
         model=model_name,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df)
     rows = result_df.select("transaction_id", F.col("_dq_info.anomaly.score").alias("anomaly_score")).collect()
@@ -137,7 +137,7 @@ def test_all_nulls_row_is_scored(spark: SparkSession, shared_2d_model, test_df_f
         test_df,
         model_name,
         registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
     rows = result_df.collect()
 
@@ -169,7 +169,7 @@ def test_mixed_null_and_anomaly(spark: SparkSession, shared_2d_model, test_df_fa
         test_df,
         model_name,
         registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
     rows = result_df.collect()
 

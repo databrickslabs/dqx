@@ -108,7 +108,7 @@ def _resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:
 def has_no_anomalies(
     model: str,
     registry_table: str,
-    score_threshold: float = 0.60,
+    threshold: float = 0.60,
     row_filter: str | None = None,
     drift_threshold: float | None = None,
     include_contributions: bool = True,
@@ -142,7 +142,7 @@ def has_no_anomalies(
             in catalog.schema.model format returned from train().
         registry_table: Registry table (REQUIRED). Provide the fully qualified table
             name in catalog.schema.table format.
-        score_threshold: Anomaly score threshold (default 0.60). Records with score >= threshold
+        threshold: Anomaly score threshold (default 0.60). Records with score >= threshold
             are flagged as anomalous. Higher threshold = stricter detection (fewer anomalies).
         row_filter: Optional SQL expression to filter rows before scoring.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
@@ -162,7 +162,7 @@ def has_no_anomalies(
     _validate_has_no_anomalies_args(
         model=model,
         registry_table=registry_table,
-        score_threshold=score_threshold,
+        threshold=threshold,
         row_filter=row_filter,
         drift_threshold=drift_threshold,
         include_contributions=include_contributions,
@@ -192,7 +192,7 @@ def has_no_anomalies(
             columns=normalized_columns,
             model_name=model_name,
             registry_table=registry,
-            score_threshold=score_threshold,
+            threshold=threshold,
             merge_columns=local_merge_columns,
             row_filter=row_filter,
             drift_threshold=drift_threshold,
@@ -241,7 +241,7 @@ def has_no_anomalies(
         "",
         F.lit("Anomaly score "),
         F.round(F.col("_dq_info").anomaly.score, 3).cast("string"),
-        F.lit(f" exceeded threshold {score_threshold}"),
+        F.lit(f" exceeded threshold {threshold}"),
     )
     condition_expr = F.col("_dq_info").anomaly.is_anomaly
     return make_condition(condition_expr, message, "has_anomalies"), apply
@@ -254,7 +254,7 @@ class ScoringConfig:
     columns: list[str]
     model_name: str
     registry_table: str
-    score_threshold: float
+    threshold: float
     merge_columns: list[str]
     row_filter: str | None = None
     drift_threshold: float | None = None
@@ -415,7 +415,7 @@ def _score_single_segment(
     segment_scored = add_info_column(
         segment_scored,
         config.model_name,
-        config.score_threshold,
+        config.threshold,
         segment_values=segment_model.segmentation.segment_values,
         include_contributions=config.include_contributions,
         include_confidence=config.include_confidence,
@@ -981,7 +981,7 @@ def _validate_has_no_anomalies_args(
     *,
     model: str,
     registry_table: str,
-    score_threshold: float,
+    threshold: float,
     row_filter: str | None,
     drift_threshold: float | None,
     include_contributions: bool,
@@ -1000,7 +1000,7 @@ def _validate_has_no_anomalies_args(
     )
     _validate_fully_qualified_name(model, label="model")
     _validate_fully_qualified_name(registry_table, label="registry_table")
-    _validate_threshold(score_threshold)
+    _validate_threshold(threshold)
     _validate_optional_sql_expression(row_filter)
     _validate_optional_positive_float(drift_threshold, label="drift_threshold")
     _validate_boolean(include_contributions, label="include_contributions")
@@ -1012,11 +1012,11 @@ def _validate_required_name(value: str, *, label: str, example: str) -> None:
         raise InvalidParameterError(f"{label} parameter is required. Example: {example}.")
 
 
-def _validate_threshold(score_threshold: float) -> None:
-    if isinstance(score_threshold, bool) or not isinstance(score_threshold, (int, float)):
-        raise InvalidParameterError("score_threshold must be a float between 0.0 and 1.0.")
-    if not 0.0 <= float(score_threshold) <= 1.0:
-        raise InvalidParameterError("score_threshold must be between 0.0 and 1.0.")
+def _validate_threshold(threshold: float) -> None:
+    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
+        raise InvalidParameterError("threshold must be a float between 0.0 and 1.0.")
+    if not 0.0 <= float(threshold) <= 1.0:
+        raise InvalidParameterError("threshold must be between 0.0 and 1.0.")
 
 
 def _validate_optional_sql_expression(row_filter: str | None) -> None:
@@ -1470,7 +1470,7 @@ def _score_global_model(
     scored_df = add_info_column(
         scored_df,
         config.model_name,
-        config.score_threshold,
+        config.threshold,
         segment_values=None,  # Global model has no segments
         include_contributions=config.include_contributions,
         include_confidence=config.include_confidence,

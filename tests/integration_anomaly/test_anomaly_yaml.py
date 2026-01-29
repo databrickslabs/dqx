@@ -26,7 +26,7 @@ def test_yaml_based_checks(ws, spark: SparkSession, shared_2d_model):
         arguments:
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: {DEFAULT_SCORE_THRESHOLD}
+          threshold: {DEFAULT_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)
@@ -62,7 +62,7 @@ def test_yaml_based_checks_columns_autodiscovery(ws, spark: SparkSession, shared
         arguments:
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: {DEFAULT_SCORE_THRESHOLD}
+          threshold: {DEFAULT_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)
@@ -104,7 +104,7 @@ def test_yaml_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
         arguments:
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: {DQENGINE_SCORE_THRESHOLD}
+          threshold: {DQENGINE_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)
@@ -148,7 +148,7 @@ def test_yaml_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
 
 
 def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
-    """Test YAML configuration with custom score_threshold."""
+    """Test YAML configuration with custom threshold."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
@@ -161,7 +161,7 @@ def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
         arguments:
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: 0.9
+          threshold: 0.9
     """
 
     checks = yaml.safe_load(checks_yaml)
@@ -197,7 +197,7 @@ def test_yaml_with_contributions(ws, spark: SparkSession, shared_3d_model):
         arguments:
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: {DEFAULT_SCORE_THRESHOLD}
+          threshold: {DEFAULT_SCORE_THRESHOLD}
           include_contributions: true
     """
 
@@ -233,7 +233,7 @@ def test_yaml_with_drift_threshold(ws, spark: SparkSession, shared_2d_model):
         arguments:
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: {DQENGINE_SCORE_THRESHOLD}
+          threshold: {DQENGINE_SCORE_THRESHOLD}
           drift_threshold: 3.0
     """
 
@@ -270,7 +270,7 @@ def test_yaml_criticality_warn(ws, spark: SparkSession, shared_2d_model):
         arguments:
           model: {model_name}
           registry_table: {registry_table}
-          score_threshold: {DQENGINE_SCORE_THRESHOLD}
+          threshold: {DQENGINE_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)
@@ -300,7 +300,7 @@ def test_yaml_parsing_validation(ws, spark: SparkSession):
         function: has_no_anomalies
         arguments:
           # Missing model argument
-          score_threshold: {DEFAULT_SCORE_THRESHOLD}
+          threshold: {DEFAULT_SCORE_THRESHOLD}
     """
 
     checks = yaml.safe_load(checks_yaml)

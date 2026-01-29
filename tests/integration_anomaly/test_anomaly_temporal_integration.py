@@ -66,7 +66,7 @@ def test_temporal_features_end_to_end(spark: SparkSession, temporal_model):
     _, apply_fn = has_no_anomalies(
         model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df_with_temporal)
 
@@ -120,7 +120,7 @@ def test_multiple_temporal_features(spark: SparkSession, make_random, anomaly_en
     _, apply_fn = has_no_anomalies(
         model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df_with_temporal)
     assert "_dq_info" in result_df.columns
@@ -171,7 +171,7 @@ def test_temporal_pattern_detection(spark: SparkSession, make_random, anomaly_en
     _, apply_fn = has_no_anomalies(
         model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
 
     # Score both
@@ -228,7 +228,7 @@ def test_weekend_feature(spark: SparkSession, make_random, anomaly_engine, anoma
     _, apply_fn = has_no_anomalies(
         model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df_with_temporal)
     assert "_dq_info" in result_df.columns

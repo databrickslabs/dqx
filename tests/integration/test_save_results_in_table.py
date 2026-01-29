@@ -6,7 +6,7 @@ from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_save_results_in_table(ws, spark, make_schema, make_random):

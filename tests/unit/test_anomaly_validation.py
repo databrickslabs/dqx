@@ -248,7 +248,7 @@ def test_max_input_columns_validation():
 # ============================================================================
 
 
-def test_score_threshold_bounds():
+def test_threshold_bounds():
     """Test anomaly score threshold validation (0-1 range)."""
     # Valid thresholds
     valid_thresholds = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0]

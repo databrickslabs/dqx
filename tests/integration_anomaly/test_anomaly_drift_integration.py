@@ -49,7 +49,7 @@ def test_drift_detection_warns_on_distribution_shift(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
             drift_threshold=DRIFT_THRESHOLD,
         )
     ]
@@ -99,7 +99,7 @@ def test_no_drift_warning_on_similar_distribution(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
             drift_threshold=DRIFT_THRESHOLD,
         )
     ]
@@ -143,7 +143,7 @@ def test_drift_detection_disabled_when_threshold_none(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
             drift_threshold=None,  # Disable drift detection
         )
     ]
@@ -187,7 +187,7 @@ def test_drift_detection_skipped_on_small_batch(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
             drift_threshold=DRIFT_THRESHOLD,  # Drift detection enabled, but batch too small
         )
     ]
@@ -241,7 +241,7 @@ def test_segment_drift_warns_per_segment(
             model_name=model_name,
             registry_table=registry_table,
             columns=["amount", "quantity"],
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
             drift_threshold=DRIFT_THRESHOLD,
         )
     ]

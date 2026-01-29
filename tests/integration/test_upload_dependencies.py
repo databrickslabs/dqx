@@ -14,7 +14,7 @@ from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment, DeployedWorkflows
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.sdk.service.jobs import RunResultState
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 logger = logging.getLogger(__name__)
 

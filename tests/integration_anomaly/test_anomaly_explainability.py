@@ -79,7 +79,7 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
     )
@@ -114,7 +114,7 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
     )
@@ -149,7 +149,7 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=False,  # Explicitly False
         extract_score=False,
     )
@@ -177,7 +177,7 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
         include_contributions=True,
         extract_score=False,
     )
@@ -256,7 +256,7 @@ def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, t
             test_df,
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
             include_contributions=True,
             extract_score=False,
         )

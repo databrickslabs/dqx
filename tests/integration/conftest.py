@@ -17,7 +17,7 @@ from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 from databricks.sdk.service.workspace import ImportFormat
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import (
     EXTRA_PARAMS,
     REPORTING_COLUMNS,

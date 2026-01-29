@@ -74,7 +74,7 @@ def test_ensemble_scoring_with_confidence(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
         include_confidence=True,
         extract_score=False,
     )

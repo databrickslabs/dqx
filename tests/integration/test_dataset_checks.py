@@ -25,7 +25,7 @@ from databricks.labs.dqx.check_funcs import (
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 SCHEMA = "a: string, b: int"

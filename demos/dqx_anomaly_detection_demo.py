@@ -826,7 +826,7 @@ checks_manual = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "model": model_name_manual,
-            "score_threshold": 0.5,
+            "threshold": 0.5,
             "registry_table": registry_table
         }
     )
@@ -872,7 +872,7 @@ checks_with_contrib = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "model": model_name_manual,
-            "score_threshold": 0.5,
+            "threshold": 0.5,
             "include_contributions": True,  # Add this to get explanations!
             "registry_table": registry_table
         }

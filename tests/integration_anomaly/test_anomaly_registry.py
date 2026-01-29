@@ -110,7 +110,7 @@ def test_multiple_models_in_same_registry(
         df1,
         model_name=model_a,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
     assert "anomaly_score" in result_a.columns
 
@@ -119,7 +119,7 @@ def test_multiple_models_in_same_registry(
         df2,
         model_name=model_b,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
     )
     assert "anomaly_score" in result_b.columns
 

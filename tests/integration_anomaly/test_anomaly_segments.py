@@ -8,7 +8,7 @@ from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import (
     DQENGINE_SCORE_THRESHOLD,
     SEGMENT_REGIONS,
@@ -112,7 +112,7 @@ def test_segment_scoring(
         check_func_kwargs={
             "model": model_name,
             "registry_table": registry_table,
-            "score_threshold": DQENGINE_SCORE_THRESHOLD,  # Lowered from 0.7 to account for IsolationForest scoring characteristics
+            "threshold": DQENGINE_SCORE_THRESHOLD,  # Lowered from 0.7 to account for IsolationForest scoring characteristics
         },
     )
 
@@ -339,7 +339,7 @@ def test_try_segmented_fallback_when_global_missing(
     check = create_anomaly_check_rule(
         model_name=model_name,
         registry_table=registry_table,
-        score_threshold=DQENGINE_SCORE_THRESHOLD,
+        threshold=DQENGINE_SCORE_THRESHOLD,
     )
     result = dq_engine.apply_checks(test_df, [check])
     rows = result.select("transaction_id", F.col("_dq_info.anomaly.score").alias("score")).collect()

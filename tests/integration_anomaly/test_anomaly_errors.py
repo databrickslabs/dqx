@@ -62,7 +62,7 @@ def test_missing_columns_error(
         _, apply_fn = has_no_anomalies(
             model=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
         )
         result_df = apply_fn(test_df)
         result_df.collect()
@@ -98,7 +98,7 @@ def test_column_order_independence(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
         extract_score=False,
     )
     result_df.collect()
@@ -179,7 +179,7 @@ def test_missing_registry_table_for_scoring_error(
         _, apply_fn = has_no_anomalies(
             model=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
         )
         result_df = apply_fn(df)
         result_df.collect()
@@ -224,7 +224,7 @@ def test_model_not_found_error(
         _, apply_fn = has_no_anomalies(
             model=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
-            score_threshold=DEFAULT_SCORE_THRESHOLD,
+            threshold=DEFAULT_SCORE_THRESHOLD,
         )
         result_df = apply_fn(df)
         result_df.collect()
@@ -298,8 +298,8 @@ def test_has_no_anomalies_requires_shap_when_enabled():
 @pytest.mark.parametrize(
     "kwargs, match",
     [
-        ({"score_threshold": "0.5"}, "score_threshold must be a float"),  # type: ignore[arg-type]
-        ({"score_threshold": 1.5}, "score_threshold must be between"),
+        ({"threshold": "0.5"}, "threshold must be a float"),  # type: ignore[arg-type]
+        ({"threshold": 1.5}, "threshold must be between"),
         ({"row_filter": 123}, "row_filter must be a SQL expression"),  # type: ignore[arg-type]
         ({"drift_threshold": "bad"}, "drift_threshold must be a float"),  # type: ignore[arg-type]
         ({"drift_threshold": -1.0}, "drift_threshold must be greater than 0"),
@@ -342,7 +342,7 @@ def test_row_filter_scores_only_matching_rows(
     _, apply_fn = has_no_anomalies(
         model=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
-        score_threshold=DEFAULT_SCORE_THRESHOLD,
+        threshold=DEFAULT_SCORE_THRESHOLD,
         row_filter="amount > 150",
         include_contributions=False,
     )
@@ -378,7 +378,7 @@ def test_add_info_column_preserves_existing_info(spark: SparkSession):
     result = add_info_column(
         df,
         model_name="catalog.schema.model",
-        score_threshold=0.6,
+        threshold=0.6,
         include_contributions=False,
         include_confidence=False,
     )

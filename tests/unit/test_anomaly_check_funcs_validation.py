@@ -11,7 +11,7 @@ def test_has_no_anomalies_rejects_threshold_type():
         has_no_anomalies(
             model="catalog.schema.model",
             registry_table="catalog.schema.table",
-            score_threshold="0.5",  # type: ignore[arg-type]
+            threshold="0.5",  # type: ignore[arg-type]
         )
 
 
@@ -20,7 +20,7 @@ def test_has_no_anomalies_rejects_threshold_range():
         has_no_anomalies(
             model="catalog.schema.model",
             registry_table="catalog.schema.table",
-            score_threshold=1.5,
+            threshold=1.5,
         )
 
 

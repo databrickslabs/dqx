@@ -9,7 +9,7 @@ import pytest
 
 from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,

@@ -31,7 +31,7 @@ def test_apply_checks_by_metadata(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=DQENGINE_SCORE_THRESHOLD,
+            threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
 
@@ -68,7 +68,7 @@ def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=DQENGINE_SCORE_THRESHOLD,
+            threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
 
@@ -105,7 +105,7 @@ def test_quarantine_dataframe_structure(ws, spark: SparkSession, shared_2d_model
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=DQENGINE_SCORE_THRESHOLD,
+            threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
 
@@ -154,7 +154,7 @@ def test_multiple_checks_combined(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=0.6,
+            threshold=0.6,
         ),
     ]
 
@@ -207,7 +207,7 @@ def test_criticality_error(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=0.6,
+            threshold=0.6,
         )
     ]
 
@@ -235,7 +235,7 @@ def test_criticality_warn(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=0.6,
+            threshold=0.6,
             criticality="warn",
         )
     ]
@@ -268,7 +268,7 @@ def test_get_valid_and_invalid_helpers(ws, spark: SparkSession, shared_2d_model)
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=DQENGINE_SCORE_THRESHOLD,
+            threshold=DQENGINE_SCORE_THRESHOLD,
         )
     ]
 
@@ -313,7 +313,7 @@ def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=0.6,
+            threshold=0.6,
             include_contributions=False,  # Test without optional fields
             include_confidence=False,
         )
@@ -381,7 +381,7 @@ def test_info_column_with_contributions(ws, spark: SparkSession, shared_3d_model
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=0.6,
+            threshold=0.6,
             include_contributions=True,  # Request contributions
         )
     ]

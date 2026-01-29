@@ -2748,7 +2748,7 @@ checks = [
     has_no_anomalies(
         model="catalog.schema.orders_monitor",
         registry_table="catalog.schema.dqx_anomaly_models",
-        score_threshold=0.6,  # higher = more anomalous, default is 0.6 (balanced)
+        threshold=0.6,  # higher = more anomalous, default is 0.6 (balanced)
     )
 ]
 ```
@@ -2762,7 +2762,7 @@ checks = [
     arguments:
       model: catalog.schema.dqx_anomaly_orders
       registry_table: catalog.schema.dqx_anomaly_models
-      score_threshold: 0.6  # optional
+      threshold: 0.6  # optional
 ```
 
 **Score thresholds**
@@ -2770,7 +2770,7 @@ checks = [
 
 **Parameters**
 - `registry_table`: Registry table (required, fully qualified `catalog.schema.table`).
-- `score_threshold`: Anomaly score threshold (default 0.6).
+- `threshold`: Anomaly score threshold (default 0.6).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
 - `drift_threshold`: Drift detection threshold (default 3.0, `None` to disable). See the section below for more details.
 - `include_contributions`: Include per-feature contributions in `_dq_info.anomaly.contributions` (default `True`). See the section below for more details.
@@ -2810,7 +2810,7 @@ checks = [
     has_no_anomalies(
         model="catalog.schema.orders_monitor",
         registry_table="catalog.schema.dqx_anomaly_models",
-        score_threshold=0.6,
+        threshold=0.6,
         include_contributions=False,
     )
 ]

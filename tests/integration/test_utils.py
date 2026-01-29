@@ -3,7 +3,7 @@ import pytest
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.utils import list_tables
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_list_tables(spark, ws, make_schema, make_random):

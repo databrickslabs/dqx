@@ -6,7 +6,7 @@ import pytest
 from databricks.labs.dqx.anomaly.anomaly_workflow import AnomalyTrainerWorkflow
 from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig
 from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_utils import get_standard_2d_training_data
 
 

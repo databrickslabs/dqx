@@ -25,7 +25,7 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID, build_quality_violation
 
 

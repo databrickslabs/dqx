@@ -4,7 +4,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_utils import (
     create_anomaly_check_rule,
     get_percentile_threshold_from_data,
@@ -57,7 +57,7 @@ def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=threshold,
+            threshold=threshold,
         )
     ]
 
@@ -101,7 +101,7 @@ def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_ran
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=threshold,
+            threshold=threshold,
         )
     ]
 
@@ -155,7 +155,7 @@ def test_auto_derivation_of_names(ws, spark: SparkSession, make_random, make_sch
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=threshold,
+            threshold=threshold,
         )
     ]
 
@@ -169,7 +169,7 @@ def test_auto_derivation_of_names(ws, spark: SparkSession, make_random, make_sch
 
 
 def test_threshold_flagging(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):
-    """Test that anomalous rows are flagged based on score_threshold."""
+    """Test that anomalous rows are flagged based on threshold."""
     # Create unique schema and table names for test isolation
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -205,7 +205,7 @@ def test_threshold_flagging(ws, spark: SparkSession, make_schema, make_random, a
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=threshold,
+            threshold=threshold,
         )
     ]
 
@@ -306,7 +306,7 @@ def test_multiple_columns(ws, spark: SparkSession, make_schema, make_random, ano
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            score_threshold=threshold,
+            threshold=threshold,
         )
     ]
 

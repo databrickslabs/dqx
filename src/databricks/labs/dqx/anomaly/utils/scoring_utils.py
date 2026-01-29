@@ -68,7 +68,7 @@ def create_null_scored_dataframe(
 def add_info_column(
     df: DataFrame,
     model_name: str,
-    score_threshold: float,
+    threshold: float,
     segment_values: dict[str, str] | None = None,
     include_contributions: bool = False,
     include_confidence: bool = False,
@@ -81,7 +81,7 @@ def add_info_column(
     Args:
         df: Scored DataFrame with anomaly_score, prediction, etc.
         model_name: Name of the model used for scoring.
-        score_threshold: Threshold used for anomaly detection.
+        threshold: Threshold used for anomaly detection.
         segment_values: Segment values if model is segmented (None for global models).
         include_contributions: Whether anomaly_contributions are available.
         include_confidence: Whether anomaly_score_std is available.
@@ -96,8 +96,8 @@ def add_info_column(
     anomaly_info_fields = {
         "check_name": F.lit("has_no_anomalies"),
         "score": F.col(score_col),
-        "is_anomaly": F.col(score_col) >= F.lit(score_threshold),
-        "threshold": F.lit(score_threshold),
+        "is_anomaly": F.col(score_col) >= F.lit(threshold),
+        "threshold": F.lit(threshold),
         "model": F.lit(model_name),
     }
 
