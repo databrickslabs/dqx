@@ -33,3 +33,4 @@ submit a support ticket relating to any issues arising from the use of this proj
 Any issues discovered through the use of this project should be filed as GitHub 
 [Issues on this repository](https://github.com/databrickslabs/dqx/issues). 
 They will be reviewed as time permits, but no formal SLAs for support exist.
+
