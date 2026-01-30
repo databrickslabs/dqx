@@ -22,8 +22,12 @@ Install JavaScript/TypeScript dependencies:
 uv run bun install
 ```
 
-Create a build:
+Install Python dependencies and sync the virtual environment:
+```bash
+uv sync
+```
 
+Create a build:
 ```bash
 uv run apx build
 ```

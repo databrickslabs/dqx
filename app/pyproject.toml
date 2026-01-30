@@ -5,12 +5,12 @@ description = "App for Data Quality eXtended (DQX), a Python library for data qu
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi>=0.119.0",
-    "pydantic-settings>=2.11.0",
-    "uvicorn>=0.37.0",
+    "fastapi~=0.119",
+    "pydantic-settings~=2.11",
+    "uvicorn~=0.37",
     "databricks-labs-dqx",
-    "databricks-sdk>=0.71.0",
-    "databricks-connect>=16.1.7",
+    "databricks-sdk~=0.73",
+    "databricks-connect~=15.4",
 ]
 
 [dependency-groups]
