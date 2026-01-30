@@ -54,7 +54,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useState, useEffect, Suspense } from "react";
@@ -1005,15 +1005,15 @@ function FormEditor({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="lakebase_user">User</Label>
+              <Label htmlFor="lakebase_client_id">Client ID</Label>
               <Input
-                id="lakebase_user"
-                value={formData.lakebase_user || ""}
+                id="lakebase_client_id"
+                value={formData.lakebase_client_id || ""}
                 onChange={(e) =>
-                  updateFormData({ lakebase_user: e.target.value })
+                  updateFormData({ lakebase_client_id: e.target.value })
                 }
                 disabled={isLocked}
-                placeholder="Optional Lakebase user"
+                placeholder="Optional Lakebase Client ID"
               />
             </div>
             <div className="grid gap-2">
