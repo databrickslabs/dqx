@@ -15,7 +15,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "apx>=0.1.28",
+    "apx>=0.2.1",
     "ruff>=0.14.7",
 ]
 
@@ -28,7 +28,7 @@ metadata-path = "src/databricks_labs_dqx_app/_metadata.py"
 
 [tool.uv.sources]
 databricks-labs-dqx = { path = "../", editable = true }
-apx = { git = "https://github.com/databricks-solutions/apx.git", tag = "v0.1.28" }
+apx = { git = "https://github.com/databricks-solutions/apx.git" }
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]

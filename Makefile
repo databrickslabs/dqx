@@ -1,7 +1,7 @@
 all: clean dev lint fmt test integration perf coverage e2e
 
 clean: docs-clean
-	rm -fr .venv app/.venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml
+	rm -fr .venv app/.venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml .app-installed
 	rm -fr **/*.pyc
 
 .venv/bin/python:
@@ -13,10 +13,15 @@ clean: docs-clean
 dev: .venv/bin/python
 	@hatch run which python
 
-lint:
+# Ensure app package is installed (required for linting app tests)
+.app-installed: .venv/bin/python
+	hatch run pip install -e app
+	@touch .app-installed
+
+lint: .app-installed
 	hatch run verify
 
-fmt:
+fmt: .app-installed
 	hatch run fmt
 	hatch run update_github_urls
 
