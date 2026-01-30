@@ -318,7 +318,6 @@ load-plugins = [
     "pylint.extensions.redefined_variable_type",
     "pylint.extensions.set_membership",
     "pylint.extensions.typing",
-    "pylint_per_file_ignores",
 ]
 
 # Pickle collected data for later comparisons.
@@ -852,7 +851,7 @@ redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", 
 
 [tool.pylint-per-file-ignores]
 # Disable pylint-pytest fixture collection errors for integration tests that use external fixtures
-"tests/integration/test_app_backend.py" = "F6401"
+"tests/integration/test_app_backend.py" = "cannot-enumerate-pytest-fixtures"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
