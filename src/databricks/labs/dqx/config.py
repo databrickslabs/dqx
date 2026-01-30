@@ -1,6 +1,6 @@
 import abc
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
-from dataclasses import dataclass, field, asdict
 
 from databricks.labs.dqx.checks_formats import FILE_SERIALIZERS
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -83,7 +83,7 @@ class ProfilerConfig:
 class IsolationForestConfig:
     """Algorithm parameters for Spark ML IsolationForest."""
 
-    contamination: float = 0.1
+    contamination: float | None = None
     num_trees: int = 200
     max_depth: int | None = None
     subsampling_rate: float | None = None

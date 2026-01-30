@@ -11,8 +11,8 @@ Note: All imports are at module-level since DQX is installed as a wheel on all c
 
 import collections.abc
 import logging
-from abc import ABC, abstractmethod
 import os
+from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
@@ -229,7 +229,7 @@ class AnomalyTrainingService:
             segment_by=segment_by,
         )
 
-        params = _apply_expected_anomaly_rate_if_default_contamination(params, expected_anomaly_rate)
+        params = apply_expected_anomaly_rate_if_default_contamination(params, expected_anomaly_rate)
 
         return AnomalyTrainingContext(
             spark=self._spark,
@@ -538,7 +538,7 @@ def _perform_auto_discovery(
     return discovered_columns, discovered_segments
 
 
-def _apply_expected_anomaly_rate_if_default_contamination(
+def apply_expected_anomaly_rate_if_default_contamination(
     params: AnomalyParams | None, expected_anomaly_rate: float
 ) -> AnomalyParams:
     """
@@ -558,9 +558,9 @@ def _apply_expected_anomaly_rate_if_default_contamination(
     # Deep copy to avoid mutating caller's params
     params = deepcopy(params)
 
-    # Only apply expected_anomaly_rate if contamination is still at default (0.1)
+    # Only apply expected_anomaly_rate if contamination is unset
     # This allows explicit contamination settings to take precedence
-    if params.algorithm_config.contamination == 0.1:  # sklearn default
+    if params.algorithm_config.contamination is None:
         params.algorithm_config.contamination = expected_anomaly_rate
         logger.info(f"Using expected_anomaly_rate={expected_anomaly_rate:.2%} for model training")
     else:
@@ -1067,7 +1067,7 @@ def _compute_score_quantiles(
     scores_df = scored.select(F.col("anomaly_score").alias("score"))
     quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, 0.01)
 
-    return dict(zip(SCORE_QUANTILE_KEYS, quantiles))
+    return dict(zip(SCORE_QUANTILE_KEYS, quantiles, strict=False))
 
 
 def _compute_score_quantiles_ensemble(
@@ -1081,7 +1081,7 @@ def _compute_score_quantiles_ensemble(
     scores_df = scored.select(F.col("anomaly_score").alias("score"))
     quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, 0.01)
 
-    return dict(zip(SCORE_QUANTILE_KEYS, quantiles))
+    return dict(zip(SCORE_QUANTILE_KEYS, quantiles, strict=False))
 
 
 def _compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict[str, dict[str, float]]:

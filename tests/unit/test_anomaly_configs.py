@@ -3,10 +3,9 @@
 from databricks.labs.dqx.config import (
     AnomalyConfig,
     AnomalyParams,
-    IsolationForestConfig,
     FeatureEngineeringConfig,
+    IsolationForestConfig,
 )
-
 
 # ============================================================================
 # IsolationForestConfig Tests
@@ -16,7 +15,7 @@ from databricks.labs.dqx.config import (
 def test_isolation_forest_config_defaults():
     """Test IsolationForestConfig with default values."""
     cfg = IsolationForestConfig()
-    assert cfg.contamination == 0.1
+    assert cfg.contamination is None
     assert cfg.num_trees == 200
     assert cfg.random_seed == 42
 

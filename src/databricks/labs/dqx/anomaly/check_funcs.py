@@ -15,20 +15,21 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
-from pyspark.sql import Column, DataFrame
-from pyspark.sql.functions import pandas_udf, col
 import pyspark.sql.functions as F
+import sklearn
+from pyspark.sql import Column, DataFrame
+from pyspark.sql.functions import col, pandas_udf
 from pyspark.sql.types import (
     DoubleType,
-    StructType,
-    StructField,
     MapType,
     StringType,
+    StructField,
+    StructType,
 )
-import sklearn
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry, AnomalyModelRecord, compute_config_hash
-from databricks.labs.dqx.anomaly.trainer import _ensure_mlflow_registry_uri
+
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry, compute_config_hash
+from databricks.labs.dqx.anomaly.trainer import _ensure_mlflow_registry_uri
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
@@ -36,17 +37,17 @@ from databricks.labs.dqx.anomaly.transformers import (
     reconstruct_column_infos,
 )
 from databricks.labs.dqx.anomaly.utils import (
+    add_info_column,
+    add_severity_percentile_column,
     build_segment_filter,
     create_null_scored_dataframe,
-    add_severity_percentile_column,
-    add_info_column,
     create_udf_schema,
     validate_sklearn_compatibility,
 )
-from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.package_utils import missing_required_packages
+from databricks.labs.dqx.rule import register_rule
 
 # Check if SHAP is available (required for feature contributions)
 # sklearn is always available when this module loads (required dependency for anomaly extras)
@@ -139,8 +140,6 @@ def has_no_anomalies(
     - segmentation: Inferred from model registry (checks if model is segmented)
 
     Output columns:
-    - _errors or _warnings: Standard DQX result column based on criticality setting
-      (customizable via ExtraParams.result_column_names)
     - _dq_info: Structured anomaly metadata
       - _dq_info.anomaly.score: Raw anomaly score (model-relative)
       - _dq_info.anomaly.severity_percentile: Severity percentile (0–100)
@@ -835,8 +834,8 @@ def _compute_shap_values(
     allow_missing: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute SHAP values for a model and feature matrix."""
-    import pandas as pd
     import numpy as np
+    import pandas as pd
 
     try:
         import shap
@@ -1117,7 +1116,6 @@ def _discover_model_and_config(
     Returns:
         Tuple of (columns, segment_by, model_name, registry)
     """
-    registry_client = AnomalyModelRegistry(df.sparkSession)
     registry = registry_table
 
     if not model:
@@ -1128,6 +1126,8 @@ def _discover_model_and_config(
     _validate_fully_qualified_name(registry, label="registry_table")
     _validate_fully_qualified_name(model, label="model")
     model_name = model
+
+    registry_client = AnomalyModelRegistry(df.sparkSession)
     record = _get_record_for_discovery(registry_client, registry, model_name)
 
     normalized_columns = list(record.training.columns)
@@ -1306,8 +1306,8 @@ def _create_ensemble_scoring_udf(
     def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
         """Score with all ensemble models in single pass (Spark Connect compatible)."""
         import cloudpickle
-        import pandas as pd
         import numpy as np
+        import pandas as pd
 
         # Deserialize all models and prepare input
         models = [cloudpickle.loads(mb) for mb in models_bytes]
@@ -1335,8 +1335,8 @@ def _create_ensemble_scoring_udf_with_contributions(
     def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
         """Score with all ensemble models in single pass (Spark Connect compatible)."""
         import cloudpickle
-        import pandas as pd
         import numpy as np
+        import pandas as pd
 
         # Deserialize all models and prepare input
         models = [cloudpickle.loads(mb) for mb in models_bytes]

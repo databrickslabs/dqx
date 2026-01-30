@@ -31,6 +31,12 @@ logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture
+def anomaly_engine(ws, spark):
+    """Provide an AnomalyEngine instance for anomaly integration tests."""
+    return AnomalyEngine(ws, spark)
+
+
 @pytest.fixture(autouse=True)
 def enable_driver_only_scoring_for_anomaly_tests():
     """Enable driver-only scoring for all anomaly tests to avoid cluster library requirements."""

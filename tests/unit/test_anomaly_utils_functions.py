@@ -4,15 +4,14 @@ import pytest
 from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly import trainer
-from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
     reconstruct_column_infos,
 )
-
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+from databricks.labs.dqx.errors import InvalidParameterError
 from tests.unit.test_anomaly_test_helpers import STANDARD_REGION_PRODUCT_FEATURES
-
 
 # ============================================================================
 # Fully Qualified Name Validation Tests
@@ -32,6 +31,26 @@ def test_validate_fully_qualified_name_rejects_invalid():
 
     with pytest.raises(InvalidParameterError):
         trainer.validate_fully_qualified_name("schema.model", label="model_name")
+
+
+def test_expected_anomaly_rate_applies_when_contamination_unset():
+    """expected_anomaly_rate should set contamination when unset (None)."""
+    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=None))
+    updated = trainer.apply_expected_anomaly_rate_if_default_contamination(params, 0.02)
+
+    assert updated.algorithm_config.contamination == 0.02
+    # Ensure caller params were not mutated
+    assert params.algorithm_config.contamination is None
+
+
+def test_expected_anomaly_rate_does_not_override_explicit_contamination():
+    """expected_anomaly_rate should not override explicit contamination."""
+    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.15))
+    updated = trainer.apply_expected_anomaly_rate_if_default_contamination(params, 0.02)
+
+    assert updated.algorithm_config.contamination == 0.15
+    # Ensure caller params were not mutated
+    assert params.algorithm_config.contamination == 0.15
 
 
 # ============================================================================

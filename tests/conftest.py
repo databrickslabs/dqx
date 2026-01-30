@@ -20,15 +20,6 @@ from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.__about__ import __version__
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
-from databricks.sdk.retries import retried
-from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
-from databricks.sdk.service.workspace import ImportFormat
-
-# Anomaly detection imports - required for anomaly tests
-# Imported after patches are applied to ensure compatibility
-from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.installer.install import InstallationService, WorkspaceInstaller
@@ -36,6 +27,11 @@ from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
+from databricks.sdk.retries import retried
+from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
+from databricks.sdk.service.workspace import ImportFormat
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +44,6 @@ def debug_env_name():
 @pytest.fixture
 def product_info():
     return "dqx", __version__
-
-
-@pytest.fixture
-def anomaly_engine(ws, spark):
-    """Provide an AnomalyEngine instance for tests."""
-    return AnomalyEngine(ws, spark)
 
 
 @pytest.fixture

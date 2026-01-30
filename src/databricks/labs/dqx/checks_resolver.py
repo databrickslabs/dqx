@@ -8,9 +8,8 @@ from contextlib import contextmanager
 from types import ModuleType
 
 from databricks.labs.dqx import check_funcs
-from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
-
 from databricks.labs.dqx.errors import InvalidCheckError
+from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,7 @@ _optional_modules_cache: dict[str, ModuleType | None] = {}
 
 
 def _load_optional_check_module(module_path: str) -> ModuleType | None:
-    cached = _optional_modules_cache.get(module_path, None)
+    cached = _optional_modules_cache.get(module_path)
     if cached is not None or module_path in _optional_modules_cache:
         return cached
     try:

@@ -4,10 +4,10 @@ AnomalyEngine entrypoint for anomaly detection.
 
 from pyspark.sql import DataFrame, SparkSession
 
+from databricks.labs.dqx.anomaly.trainer import AnomalyTrainingService
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import AnomalyParams
-from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry
-from databricks.labs.dqx.anomaly.trainer import AnomalyTrainingService
+from databricks.labs.dqx.telemetry import log_telemetry, telemetry_logger
 from databricks.sdk import WorkspaceClient
 
 
@@ -155,7 +155,7 @@ class AnomalyEngine(DQEngineBase):
             expected_anomaly_rate=expected_anomaly_rate,
         )
 
-        log_telemetry(self.ws, "anomaly_auto_discovery", str(context.auto_discovery_used).lower())
+        log_telemetry(self.ws, "anomaly_auto_discovery", str(columns is None).lower())
         log_telemetry(self.ws, "anomaly_segmented", str(context.segment_by is not None).lower())
         log_telemetry(self.ws, "anomaly_num_features", str(len(context.columns)))
 
