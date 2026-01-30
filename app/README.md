@@ -72,3 +72,18 @@ Deploy to Databricks:
 ```bash
 databricks bundle deploy -p <your-profile>
 ```
+
+## Common Issues
+
+### uv hangs
+
+If any of the uv commands hang, try to run to diagnose:
+```bash
+# sync package in verbose mode
+uv sync -v
+```
+
+A typical resolution is to remove the lock file
+```bash
+rm -rf .venv/.lock
+```

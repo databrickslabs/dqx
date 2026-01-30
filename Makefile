@@ -1,13 +1,14 @@
 all: clean dev lint fmt test integration perf coverage e2e
 
 clean: docs-clean
-	rm -fr .venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml
+	rm -fr .venv app/.venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml
 	rm -fr **/*.pyc
 
 .venv/bin/python:
 	pip install hatch
 	hatch env create
 	hatch run pip install ".[llm,pii,datacontract]"
+	hatch run pip install -e app
 
 dev: .venv/bin/python
 	@hatch run which python
