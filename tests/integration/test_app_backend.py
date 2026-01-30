@@ -1,10 +1,11 @@
 """Integration tests for the DQX App backend."""
 
 import pytest
-from databricks.sdk.errors import ResourceDoesNotExist
 
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.settings import SettingsManager
+
+from databricks.sdk.errors import ResourceDoesNotExist
 
 
 @pytest.fixture
