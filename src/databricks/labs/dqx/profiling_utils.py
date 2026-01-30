@@ -37,3 +37,17 @@ def compute_null_and_distinct_counts(
     distinct_counts = {col_name: stats_row[f"{col_name}__distinct"] for col_name in distinct_columns}
 
     return null_counts, distinct_counts
+
+
+def compute_exact_distinct_counts(
+    df: DataFrame,
+    columns: collections.abc.Iterable[str],
+) -> dict[str, int]:
+    """Compute exact distinct counts for provided columns."""
+    columns = list(columns)
+    if not columns:
+        return {}
+    distinct_exprs = [F.countDistinct(col_name).alias(col_name) for col_name in columns]
+    stats_row = df.agg(*distinct_exprs).first()
+    assert stats_row is not None, "Failed to compute distinct counts"
+    return {col_name: stats_row[col_name] for col_name in columns}

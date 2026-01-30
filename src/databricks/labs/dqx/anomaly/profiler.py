@@ -25,7 +25,7 @@ from pyspark.sql.types import (
     TimestampType,
 )
 
-from databricks.labs.dqx.profiling_utils import compute_null_and_distinct_counts
+from databricks.labs.dqx.profiling_utils import compute_exact_distinct_counts, compute_null_and_distinct_counts
 
 logger = logging.getLogger(__name__)
 
@@ -432,7 +432,8 @@ def _auto_discover_heuristic(
     total_count = df.count()
     column_names = [f.name for f in df.schema.fields]
 
-    distinct_columns = [f.name for f in df.schema.fields if isinstance(f.dataType, (StringType, IntegerType))]
+    categorical_fields = [f for f in df.schema.fields if isinstance(f.dataType, (StringType, IntegerType))]
+    distinct_columns = [f.name for f in categorical_fields]
     null_counts, distinct_counts = compute_null_and_distinct_counts(
         df,
         column_names,
@@ -440,6 +441,8 @@ def _auto_discover_heuristic(
         approx=True,
         rsd=0.05,
     )
+    if distinct_columns:
+        distinct_counts.update(compute_exact_distinct_counts(df, distinct_columns))
 
     for field in df.schema.fields:
         col_name = field.name

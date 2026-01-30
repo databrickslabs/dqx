@@ -4,14 +4,14 @@
 # MAGIC
 # MAGIC ## Learn Anomaly Detection in 15 Minutes
 # MAGIC
-# MAGIC This beginner-friendly demo shows you how to:
-# MAGIC - Understand what anomaly detection is and why it matters
-# MAGIC - Detect unusual patterns in your data with zero configuration
-# MAGIC - Tune detection sensitivity to your needs
-# MAGIC - Understand why specific records are flagged
-# MAGIC - Integrate anomaly detection into production workflows
+# MAGIC **Quickstart (5–10 minutes):**
+# MAGIC - Train an anomaly model on sample data using DQX - Anomaly Detection Engine
+# MAGIC - Score records and see flagged anomalies
+# MAGIC - View severity percentiles and top contributors
 # MAGIC
 # MAGIC **Dataset**: Simple sales transactions (universally relatable, no domain expertise required)
+# MAGIC
+# MAGIC **Optional deep dive**: Conceptual background and Unity Catalog comparison are provided later.
 # MAGIC
 # MAGIC
 
@@ -20,108 +20,13 @@
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 0: What is Anomaly Detection in Data Quality?
+# MAGIC ## What is Anomaly Detection?
 # MAGIC
-# MAGIC Before we dive into the code, let's understand what anomaly detection is and why it's valuable.
+# MAGIC - Rule checks catch *known* issues (nulls, ranges, formats).
+# MAGIC - Anomaly detection finds *unknown* patterns across multiple columns.
+# MAGIC - Use both together for better coverage.
 # MAGIC
-# MAGIC ### The Data Quality Challenge: Known vs Unknown Issues
-# MAGIC
-# MAGIC #### 🎯 Known Unknowns (Traditional Data Quality)
-# MAGIC
-# MAGIC These are issues **you can anticipate** and write rules for:
-# MAGIC
-# MAGIC | Issue Type | Example | DQX Rule |
-# MAGIC |------------|---------|----------|
-# MAGIC | Null values | `amount` is NULL | `is_not_null(column="amount")` |
-# MAGIC | Out of range | Price is negative | `is_in_range(column="price", min=0)` |
-# MAGIC | Invalid format | Email without @ symbol | Regex validation |
-# MAGIC
-# MAGIC **Works great when you know what to look for!**
-# MAGIC
-# MAGIC #### 🔍 Unknown Unknowns (Anomaly Detection)
-# MAGIC
-# MAGIC These are issues **you DON'T know to look for**:
-# MAGIC
-# MAGIC - Unusual **patterns** across multiple columns
-# MAGIC - Outlier **combinations** that are individually valid
-# MAGIC - Subtle **data corruption** that passes all rules
-# MAGIC
-# MAGIC **Problem**: You can't write rules for things you haven't thought of!
-# MAGIC
-# MAGIC **Solution**: ML-based anomaly detection learns "normal" patterns from your data and flags deviations.
-# MAGIC
-# MAGIC ### Concrete Example
-# MAGIC
-# MAGIC ```
-# MAGIC Known Unknown:  "Amount must be positive"
-# MAGIC                 → is_in_range(min=0)
-# MAGIC                 ✅ Catches: amount = -50
-# MAGIC
-# MAGIC Unknown Unknown: "Transaction for $47,283 at 3am on Sunday for 2 items"
-# MAGIC                  → Anomaly detection
-# MAGIC                  ✅ Catches: All fields valid individually, but pattern is unusual
-# MAGIC ```
-# MAGIC
-# MAGIC ### Why Anomaly Detection Matters
-# MAGIC
-# MAGIC - ✅ **Catches issues before they become problems** - Early warning system
-# MAGIC - ✅ **No need to anticipate every failure mode** - Adapts to your data
-# MAGIC - ✅ **Learns patterns automatically** - No manual rule writing
-# MAGIC - ✅ **Complements rule-based checks** - Use both together for comprehensive quality
-# MAGIC
-# MAGIC ### Unity Catalog Integration
-# MAGIC
-# MAGIC #### Built-in Quality Monitoring (Unity Catalog)
-# MAGIC
-# MAGIC Unity Catalog includes **table-level** anomaly detection by analyzing table metadata and state:
-# MAGIC - Monitors table freshness by analyzing the history of table commits.
-# MAGIC - Monitors table completeness by tracking historical row counts and alerts if the current row count falls outside the predicted range.
-# MAGIC - Focuses on row count and commit timing metrics, but not table content (data).
-# MAGIC - Great for monitoring table health for completeness and freshness.
-# MAGIC
-# MAGIC More [here](https://docs.databricks.com/aws/en/data-quality-monitoring/).
-# MAGIC
-# MAGIC #### When to Use DQX Anomaly Detection
-# MAGIC
-# MAGIC DQX provides **row-level** anomaly detection by analyzing the actual data content:
-# MAGIC - **Detects unusual patterns in individual records/transactions** by analyzing the data content across the dataset.
-# MAGIC - **Provides row-level anomaly reporting** with a detailed log identifying the specific records or transactions flagged as anomalous.
-# MAGIC - **Multi-column pattern** detection (e.g., price + quantity + time)
-# MAGIC - **Custom models per segment** (e.g., different regions, categories)
-# MAGIC - **Feature contributions** to understand WHY records are anomalous
-# MAGIC - **Integrated** and executable with other DQX quality rules types
-# MAGIC
-# MAGIC #### Complementary Approach
-# MAGIC
-# MAGIC ```
-# MAGIC ┌─────────────────────────────────────────────────────────┐
-# MAGIC │  Rule-Based Checks (Known Unknowns)                     │
-# MAGIC │  • is_not_null, is_in_range, regex validation           │
-# MAGIC │  • Schema validation, referential integrity             │
-# MAGIC └─────────────────────────────────────────────────────────┘
-# MAGIC                            +
-# MAGIC ┌─────────────────────────────────────────────────────────┐
-# MAGIC │  ML Anomaly Detection (Unknown Unknowns)                │
-# MAGIC │  • Pattern detection, outlier identification            │
-# MAGIC │  • Multi-column relationship validation                 │
-# MAGIC │  DQX: Row-level anomaly detection                       │
-# MAGIC └─────────────────────────────────────────────────────────┘
-# MAGIC                            +
-# MAGIC ┌───────────────────────────────────────────────────────────────┐
-# MAGIC │  Unity Catalog Monitoring (Table Health)                      │
-# MAGIC │  • Metadata and table state tracking (e.g. commits, row count)│
-# MAGIC │  Table freshness and completeness for Unity Catalog tables    │
-# MAGIC └───────────────────────────────────────────────────────────────┘
-# MAGIC ```
-# MAGIC
-# MAGIC ### Key Takeaways
-# MAGIC
-# MAGIC - 💡 **Anomaly detection finds issues in the data you didn't know to look for**
-# MAGIC - 💡 **Complements (doesn't replace) rule-based checks - use both!**
-# MAGIC - 💡 **Unity Catalog monitors table freshness and completeness of tables, DQX monitors data inside the tables**
-# MAGIC - 💡 **Together, they provide comprehensive quality coverage**
-# MAGIC
-# MAGIC Let's see how easy it is to add DQX anomaly detection to your pipeline! 🚀
+# MAGIC **If you want the deep dive**, see the Appendix at the end of this notebook or DQX Docs[https://databrickslabs.github.io/dqx/docs/guide/].
 # MAGIC
 
 # COMMAND ----------
@@ -130,6 +35,8 @@
 # MAGIC ---
 # MAGIC
 # MAGIC ## Prerequisites: Install DQX with Anomaly Support
+# MAGIC
+# MAGIC (If you're already running DQX in Databricks, you can skip this install cell.)
 # MAGIC
 # MAGIC Before running this demo, install DQX with anomaly detection extras:
 # MAGIC
@@ -148,6 +55,7 @@
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Prerequisites: Install DQX with Anomaly Support
 
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
 
@@ -159,6 +67,7 @@ else:
 %restart_python
 
 # COMMAND ----------
+# DBTITLE 1,Prerequisites: Install DQX with Anomaly Support
 
 default_catalog = "main"
 default_schema = "default"
@@ -173,10 +82,11 @@ dbutils.widgets.text("demo_schema", default_schema, "Schema Name")
 # MAGIC %md
 # MAGIC ## Section 1: Setup & Data Generation
 # MAGIC
-# MAGIC First, let's set up our environment and create simple sales transaction data.
+# MAGIC We’ll create historical data, train a model, then score a new batch with injected anomalies.
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Setup & Data Generation
 
 # Imports
 import pyspark.sql.functions as F
@@ -205,29 +115,14 @@ print("✅ Setup complete!")
 
 
 # COMMAND ----------
+# DBTITLE 1,Setup & Data Generation
 
-# Generate simple sales transaction data
-def generate_sales_data(
-    num_rows:int=1000,
-    anomaly_rate:float=0.02,
-    dq_null_amount_rate:float=0.01,
-    dq_null_quantity_rate:float=0.005,
-    dq_negative_amount_rate:float=0.005,
+# Generate historical (training) data
+def generate_historical_sales_data(
+    num_rows: int = 1000,
 ):
     """
-    Generate sales transaction data with injected anomalies.
-    
-    Normal patterns:
-    - Amount: $10-500 per transaction
-    - Quantity: 1-10 items
-    - Business hours: 9am-6pm weekdays
-    - Regional consistency
-    
-    Anomalies (2% - matches default expected_anomaly_rate):
-    - Pricing errors (VERY extreme: 40-50x or 1/40 of normal amounts)
-    - Quantity spikes (bulk orders 100-150 items = 20-30x normal)
-    - Timing anomalies (off-hours + 5-8x amount + 25-40 quantity)
-    - Multi-factor (6-10x amount + 35-60 quantity + always off-hours)
+    Generate historical sales data (no synthetic anomalies).
     """
     data = []
     categories = ["Electronics", "Clothing", "Food", "Books", "Home"]
@@ -258,68 +153,12 @@ def generate_sales_data(
         if date.weekday() >= 5:  # Saturday=5, Sunday=6
             date = date - timedelta(days=date.weekday() - 4)  # Move to Friday
         
-        # Inject a few simple DQ issues (nulls/negatives) for rule-based checks
-        dq_issue_roll = random.random()
-        dq_issue_type = None
-        if dq_issue_roll < dq_null_amount_rate:
-            dq_issue_type = "null_amount"
-        elif dq_issue_roll < dq_null_amount_rate + dq_null_quantity_rate:
-            dq_issue_type = "null_quantity"
-        elif dq_issue_roll < dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate:
-            dq_issue_type = "negative_amount"
-
-        if dq_issue_type == "null_amount":
-            amount = None
-            quantity = max(1, int(np.random.normal(pattern["quantity"], 1)))
-        elif dq_issue_type == "null_quantity":
-            amount = round(pattern["base_amount"] * random.uniform(0.85, 1.15), 2)
-            quantity = None
-        elif dq_issue_type == "negative_amount":
-            amount = -abs(round(pattern["base_amount"] * random.uniform(0.5, 1.5), 2))
-            quantity = max(1, int(np.random.normal(pattern["quantity"], 1)))
-
-        # Inject anomalies (unusual patterns not caught by simple rules)
-        elif random.random() < anomaly_rate:
-            # Bias towards more extreme anomaly types for better detection
-            anomaly_type = random.choices(
-                ["pricing", "quantity", "timing", "multi_factor"],
-                weights=[2, 2, 1, 3]  # Favor pricing, quantity, and multi-factor
-            )[0]
-            
-            if anomaly_type == "pricing":
-                # Pricing error: VERY extreme amounts (40-50x or 1/40 of normal)
-                multiplier = random.choice([random.uniform(40, 50), 1.0 / random.uniform(35, 45)])
-                amount = round(pattern["base_amount"] * multiplier, 2)
-                quantity = int(np.random.normal(pattern["quantity"], 0.3))  # Near-normal quantity
-            
-            elif anomaly_type == "quantity":
-                # Bulk order spike (100-150 items = 20-30x normal) 
-                amount = round(pattern["base_amount"] * random.uniform(0.95, 1.05), 2)  # Normal amount
-                quantity = random.randint(100, 150)
-            
-            elif anomaly_type == "timing":
-                # Off-hours transaction WITH very unusual amount (multi-factor)
-                amount = round(pattern["base_amount"] * random.uniform(5.0, 8.0), 2)  # 5-8x normal
-                quantity = random.randint(25, 40)  # 5-8x normal
-                date = date.replace(hour=random.choice([2, 3, 4, 22, 23]))  # Late night/early morning
-                # Or make it weekend
-                if random.random() > 0.5:
-                    date = date + timedelta(days=(5 - date.weekday()))  # Move to Saturday
-            
-            else:  # multi-factor: EXTREME multi-dimensional anomaly
-                # Extreme regional mismatch + very unusual quantity + off-hours
-                other_region = random.choice([r for r in regions if r != region])
-                amount = round(region_patterns[other_region]["base_amount"] * random.uniform(6.0, 10.0), 2)
-                quantity = random.randint(35, 60)  # 7-12x normal
-                date = date.replace(hour=random.choice([2, 3, 4, 22, 23]))  # Always off-hours
-        
-        else:
-            # Normal transaction (tighter variance for more consistent patterns)
-            amount = round(pattern["base_amount"] * random.uniform(0.85, 1.15), 2)
-            quantity = max(1, int(np.random.normal(pattern["quantity"], 1)))
+        # Normal transaction (tighter variance for more consistent patterns)
+        amount = round(pattern["base_amount"] * random.uniform(0.85, 1.15), 2)
+        quantity = max(1, int(np.random.normal(pattern["quantity"], 1)))
         
         # Ensure valid ranges (skip for injected nulls/negatives)
-        if amount is not None and dq_issue_type != "negative_amount":
+        if amount is not None:
             amount = max(10, min(10000, amount))
         if quantity is not None:
             quantity = max(1, min(150, quantity))  # Allow bulk orders up to 150
@@ -328,21 +167,10 @@ def generate_sales_data(
     
     return data
 
-# Generate data
-print("🔄 Generating sales transaction data...\n")
-anomaly_rate = 0.02
-dq_null_amount_rate = 0.01
-dq_null_quantity_rate = 0.005
-dq_negative_amount_rate = 0.005
-dq_issue_rate = dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate
-
-sales_data = generate_sales_data(
-    num_rows=1000,
-    anomaly_rate=anomaly_rate,
-    dq_null_amount_rate=dq_null_amount_rate,
-    dq_null_quantity_rate=dq_null_quantity_rate,
-    dq_negative_amount_rate=dq_negative_amount_rate,
-)
+# Generate historical data
+print("🔄 Generating historical (training) data...\n")
+train_rows = 5000
+historical_data = generate_historical_sales_data(num_rows=train_rows)
 
 schema = StructType([
     StructField("transaction_id", StringType(), False),
@@ -353,24 +181,17 @@ schema = StructType([
     StructField("region", StringType(), False),
 ])
 
-df_sales = spark.createDataFrame(sales_data, schema)
+df_train = spark.createDataFrame(historical_data, schema)
 
 print("📊 Sample of sales transactions:")
-display(df_sales.orderBy("date"))
+display(df_train.orderBy("date"))
 
-total_rows = df_sales.count()
-print(f"\n✅ Generated {total_rows} sales transactions")
-print(f"   Expected anomalies: ~{int(total_rows * anomaly_rate)} ({anomaly_rate*100:.0f}%)")
-print(f"   Expected rule-based issues: ~{int(total_rows * dq_issue_rate)} ({dq_issue_rate*100:.1f}%)")
-print(f"\n💡 Data includes:")
-print(f"   • Normal patterns: Business hours, typical amounts (170-230), reasonable quantities (4-6)")
-print(f"   • Injected anomalies: unusual multi-column patterns (e.g., timing + amount + quantity)")
-print(f"   • Injected DQ issues: a few nulls and negative amounts (caught by rules)")
-print(f"\n🎯 Anomaly detection will identify patterns that deviate significantly from normal behavior")
-print(f"\n📌 Note: 2% anomaly rate matches the model's default 'expected_anomaly_rate' parameter")
+total_train = df_train.count()
+print(f"\n✅ Generated {total_train} historical transactions (for training)")
 
 
 # COMMAND ----------
+# DBTITLE 1,Setup & Data Generation
 
 # Get catalog and schema from widgets
 catalog = dbutils.widgets.get("demo_catalog")
@@ -380,13 +201,14 @@ print(f"📂 Using catalog: {catalog}")
 print(f"📂 Using schema: {schema_name}\n")
 
 # Save data to table
-table_name = f"{catalog}.{schema_name}.sales_transactions"
-df_sales.write.mode("overwrite").saveAsTable(table_name)
+train_table = f"{catalog}.{schema_name}.sales_transactions_train"
+df_train.write.mode("overwrite").saveAsTable(train_table)
 
-print(f"✅ Data saved to: {table_name}")
+print(f"✅ Training data saved to: {train_table}")
 
 
 # COMMAND ----------
+# DBTITLE 1,Setup & Data Generation
 
 # Set up registry table for tracking trained models
 registry_table = f"{catalog}.{schema_name}.anomaly_model_registry_101"
@@ -402,24 +224,15 @@ print(f"✅ Registry ready for new models")
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 2: Combined Quality Checks: Rule-Based + ML Anomaly Detection
+# MAGIC ## Section 2: Train the Anomaly Model
 # MAGIC
-# MAGIC Let's build a comprehensive quality pipeline that combines:
-# MAGIC 1. **Rule-based checks** (known unknowns): nulls, ranges, formats
-# MAGIC 2. **ML anomaly detection** (unknown unknowns): unusual patterns
-# MAGIC
-# MAGIC With **ZERO configuration**, the system will:
-# MAGIC - Automatically select relevant columns for anomaly detection
-# MAGIC - Auto-detect if segmentation is needed (e.g., separate models per region)
-# MAGIC - Train ensemble models (2 models by default for robustness)
-# MAGIC - Score all transactions with both rule-based AND anomaly checks
-# MAGIC - Provide feature contributions to explain WHY records are flagged as anomalous
-# MAGIC
-# MAGIC **You provide**: Just the data and rules of your choice 
-# MAGIC **DQX provides**: Everything else, optimized for performance!
+# MAGIC We’ll run:
+# MAGIC - Simple rule checks (nulls, ranges)
+# MAGIC - Anomaly detection for unusual multi‑column patterns
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Train the Anomaly Model
 
 # Train anomaly detection model with zero configuration
 print("🎯 Training anomaly detection model...")
@@ -427,7 +240,7 @@ print("   DQX will automatically discover patterns in your data\n")
 
 model_name_auto = f"{catalog}.{schema_name}.sales_auto"
 model_uri_auto = anomaly_engine.train(
-    df=spark.table(table_name),
+    df=spark.table(train_table),
     model_name=model_name_auto,
     registry_table=registry_table
 )
@@ -453,68 +266,142 @@ display(
     .orderBy("identity.model_name")
 )
 
-print("\n💡 Understanding the Results:")
-print("   • DQX automatically found patterns in your data")
-print("   • If 'segment_by' has values, DQX created separate models for different groups")
-print("   • Each row is a trained model ready to score new data")
+print("\n💡 DQX auto-discovered patterns and registered a model you can score immediately.")
 
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 💡 Viewing Models in Databricks UI
+# MAGIC ### Optional: View Models in the UI
 # MAGIC
-# MAGIC Your trained models are automatically registered in **Unity Catalog Model Registry**. Here's how to view them:
-# MAGIC
-# MAGIC **Option 1: Catalog Explorer**
-# MAGIC 1. Click **Catalog** in the left sidebar
-# MAGIC 2. Navigate to your catalog → schema
-# MAGIC 3. Look for models named `sales_auto` (or `sales_auto_ensemble_0`, `sales_auto_ensemble_1` for ensemble models)
-# MAGIC 4. Click on a model to see:
-# MAGIC    - Model versions
-# MAGIC    - MLflow run details (parameters, metrics)
-# MAGIC    - Model lineage and schema
-# MAGIC
-# MAGIC **Option 2: MLflow Experiments**
-# MAGIC 1. Click **Experiments** in the left sidebar
-# MAGIC 2. Find your notebook's experiment (automatically created per notebook)
-# MAGIC 3. View all training runs with:
-# MAGIC    - Hyperparameters (contamination, num_trees, etc.)
-# MAGIC    - Validation metrics (precision, recall, F1)
-# MAGIC    - Model artifacts and signatures
-# MAGIC
-# MAGIC **What DQX Logs Automatically:**
-# MAGIC - ✅ **Parameters**: contamination, num_trees, subsampling_rate, random_seed
-# MAGIC - ✅ **Metrics**: precision, recall, F1 score, validation accuracy
-# MAGIC - ✅ **Model Signature**: Input/output schemas for Unity Catalog
-# MAGIC - ✅ **Model Artifacts**: Serialized sklearn model + feature metadata
-# MAGIC
-# MAGIC **Model URI Format:**
-# MAGIC ```
-# MAGIC models:/<catalog>.<schema>.<model_name>/<version>
-# MAGIC ```
-# MAGIC Example: `models:/main.dqx_demo.sales_auto/1`
+# MAGIC Your models are registered in Unity Catalog / MLflow.
+# MAGIC If you want to inspect them, open **Catalog Explorer** or **Experiments**.
 # MAGIC
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Applying Quality Checks
+# MAGIC ### Section 3: Generate a New Batch (with Injected Anomalies)
 # MAGIC
-# MAGIC Now that we have our anomaly detection model trained, let's apply it alongside traditional rule-based checks to score all transactions.
-# MAGIC The anomalies will be reported in the _warn and _error columns similar to other DQX checks.
-# MAGIC In addition, _dq_info column will contain:
-# MAGIC - **severity_percentile (0–100)**: how severe this record is relative to training data
-# MAGIC - **score**: raw model score (diagnostic only; not comparable across datasets)
-# MAGIC - **contributions**: feature-level explanations for why it was flagged
-# MAGIC For analysis purposes, severity and raw score are present for all records, not just anomalies.
-# MAGIC This allows you to tune the threshold with an intuitive, percentile-based knob.
+# MAGIC We score with rule checks + anomaly detection.
+# MAGIC `_dq_info.anomaly` includes:
+# MAGIC - `severity_percentile` (0–100): percentile of anomaly severity
+# MAGIC - `score`: raw model score (diagnostic only)
+# MAGIC - `contributions`: feature-level explanations
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Generate a New Batch (with Injected Anomalies)
 
-# Apply quality checks: combine rule-based + ML anomaly detection
-print("🔍 Applying quality checks to all transactions...\n")
+def inject_anomalies_and_dq_issues(
+    base_rows: list[tuple],
+    anomaly_rate: float = 0.02,
+    dq_null_amount_rate: float = 0.01,
+    dq_null_quantity_rate: float = 0.005,
+    dq_negative_amount_rate: float = 0.005,
+):
+    """
+    Take clean (normal) rows and inject anomalies + simple DQ issues.
+    """
+    rows = []
+    for idx, row in enumerate(base_rows):
+        transaction_id, date, amount, quantity, category, region = row
+        transaction_id = f"NEW{idx:06d}"
+        is_synthetic_anomaly = False
+
+        dq_roll = random.random()
+        if dq_roll < dq_null_amount_rate:
+            amount = None
+        elif dq_roll < dq_null_amount_rate + dq_null_quantity_rate:
+            quantity = None
+        elif dq_roll < dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate:
+            amount = -abs(amount)
+        elif random.random() < anomaly_rate:
+            is_synthetic_anomaly = True
+            anomaly_type = random.choices(
+                ["extreme_scale", "mismatch_pair", "timing_spike"],
+                weights=[3, 3, 2],
+            )[0]
+
+            if anomaly_type == "extreme_scale":
+                amount = round(amount * random.uniform(15, 25), 2)
+                quantity = int(quantity * random.uniform(15, 25))
+            elif anomaly_type == "mismatch_pair":
+                # Large amount with tiny quantity (or vice versa)
+                if random.random() < 0.5:
+                    amount = round(amount * random.uniform(12, 20), 2)
+                    quantity = max(1, int(quantity * random.uniform(0.05, 0.2)))
+                else:
+                    amount = round(amount * random.uniform(0.05, 0.2), 2)
+                    quantity = int(quantity * random.uniform(12, 20))
+            else:
+                # Off-hours + large spike
+                amount = round(amount * random.uniform(10, 18), 2)
+                quantity = int(quantity * random.uniform(10, 18))
+                date = date.replace(hour=random.choice([2, 3, 4, 22, 23]))
+
+        if amount is not None:
+            amount = max(10, min(10000, amount))
+        if quantity is not None:
+            quantity = max(1, min(150, quantity))
+
+        rows.append((transaction_id, date, amount, quantity, category, region, is_synthetic_anomaly))
+    return rows
+
+print("🔄 Generating new batch data with injected anomalies...\n")
+
+new_rows = 1000
+anomaly_rate = 0.02
+dq_null_amount_rate = 0.01
+dq_null_quantity_rate = 0.005
+dq_negative_amount_rate = 0.005
+dq_issue_rate = dq_null_amount_rate + dq_null_quantity_rate + dq_negative_amount_rate
+
+new_batch_base = generate_historical_sales_data(num_rows=new_rows)
+new_batch = inject_anomalies_and_dq_issues(
+    base_rows=new_batch_base,
+    anomaly_rate=anomaly_rate,
+    dq_null_amount_rate=dq_null_amount_rate,
+    dq_null_quantity_rate=dq_null_quantity_rate,
+    dq_negative_amount_rate=dq_negative_amount_rate,
+)
+
+new_schema = StructType([
+    StructField("transaction_id", StringType(), False),
+    StructField("date", TimestampType(), False),
+    StructField("amount", DoubleType(), True),
+    StructField("quantity", IntegerType(), True),
+    StructField("category", StringType(), False),
+    StructField("region", StringType(), False),
+    StructField("is_synthetic_anomaly", BooleanType(), False),
+])
+
+df_new = spark.createDataFrame(new_batch, new_schema)
+
+print("📊 Sample of NEW batch:")
+display(df_new.orderBy("date"))
+
+total_new = df_new.count()
+print(f"\n✅ Generated {total_new} NEW transactions")
+print(f"   Injected anomalies: ~{int(total_new * anomaly_rate)} ({anomaly_rate*100:.0f}%)")
+print(f"   Injected rule issues: ~{int(total_new * dq_issue_rate)} ({dq_issue_rate*100:.1f}%)")
+
+new_table = f"{catalog}.{schema_name}.sales_transactions_new"
+df_new.write.mode("overwrite").saveAsTable(new_table)
+print(f"✅ New batch saved to: {new_table}")
+
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Section 4: Score the New Batch (Default Settings)
+# MAGIC
+# MAGIC Now apply anomaly detection + rule checks to the **new batch**.
+
+# COMMAND ----------
+# DBTITLE 1,Score the New Batch (Default Settings)
+
+print("🔍 Applying quality checks to NEW batch...\n")
 
 # Define all quality checks
 checks_combined = [
@@ -531,48 +418,39 @@ checks_combined = [
         check_func_kwargs={
             "model": model_name_auto,
             "registry_table": registry_table
-            # Default: 2 models for confidence, explains why data is anomalous, demo threshold 98 (percentile)
         }
     )
 ]
 
-df_scored = dq_engine.apply_checks(df_sales, checks_combined)
+df_valid, df_anomalies = dq_engine.apply_checks_and_split(df_new, checks_combined)
+df_scored = df_valid.unionByName(df_anomalies, allowMissingColumns=True)
 
 display(df_scored)
 
-print("\n💡 What Just Happened:")
-print("   • Rule-based checks caught known issues (nulls, out-of-range values)")
-print("   • Anomaly detection found unusual patterns you didn't explicitly define")
-print("   • The 'why_anomalous' column explains what made each record unusual")
-print("   • Severity percentile shows how unusual a record is within this dataset")
-print("   • Demo threshold of 98 (percentile) balances finding issues vs false alarms")
+print("\n💡 Summary:")
+print("   • We trained on historical data and scored a new batch.")
+print("   • Default threshold 95 flags the top 5% most unusual records.")
+print("   • Threshold is a percentile cutoff — tune it based on your data and alert tolerance.")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 3: Understanding Your Results
+# MAGIC ## Section 5: Review Results
 # MAGIC
-# MAGIC Let's explore the anomalies we found and learn how to interpret anomaly severity.
-# MAGIC
-# MAGIC **What you'll learn:**
-# MAGIC - How severity percentiles work (0–100 scale)
-# MAGIC - What makes a record "high severity" vs "normal"
-# MAGIC - Why certain records were flagged as unusual
-# MAGIC
-# MAGIC **Important**: Raw anomaly scores are NOT probabilities or confidence levels!
-# MAGIC We normalize them into **severity percentiles** so the threshold is intuitive and consistent.
+# MAGIC You’ll see flagged anomalies, severity percentiles, and top contributors.
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Review Results
 
-df_anomalies = dq_engine.get_invalid(df_scored)
+df_anomalies = df_anomalies.filter(F.col("_dq_info.anomaly.is_anomaly") == True)
 score_col = F.col("_dq_info.anomaly.score")
 severity_col = F.col("_dq_info.anomaly.severity_percentile")
 percentile_band = (
-    F.when(severity_col >= 99, F.lit("p99+ (top 1%)"))
-    .when(severity_col >= 95, F.lit("p95-99 (top 5%)"))
+    F.when(severity_col >= 98, F.lit("p98+ (top 2%)"))
+    .when(severity_col >= 95, F.lit("p95-98 (top 5%)"))
     .when(severity_col >= 90, F.lit("p90-95 (top 10%)"))
     .otherwise(F.lit("<p90 (bottom 90%)"))
 )
@@ -581,12 +459,22 @@ anomalies_count = df_anomalies.count()
 
 print(f"✅ Quality checks complete!")
 print(f"\n📊 Results:")
-print(f"   Total transactions: {total_rows}")
-print(f"   Anomalies found: {anomalies_count} ({(anomalies_count / total_rows) * 100:.1f}%)")
+print(f"   Total new transactions: {total_new}")
+print(f"   Anomalies found: {anomalies_count} ({(anomalies_count / total_new) * 100:.1f}%)")
 print("ℹ️  Each record receives a severity percentile.")
 print("   The percentile threshold decides whether a record is flagged as anomalous.")
 print("   Even records that are not flagged still get severity for analysis.")
 print("   Higher percentile = more severe relative to training data.")
+
+# Sanity check: did we catch the injected anomalies?
+synthetic_total = df_scored.filter(F.col("is_synthetic_anomaly") == True).count()
+synthetic_caught = df_scored.filter(
+    (F.col("is_synthetic_anomaly") == True) & (F.col("_dq_info.anomaly.is_anomaly") == True)
+).count()
+if synthetic_total > 0:
+    recall = synthetic_caught / synthetic_total * 100
+    print(f"\n✅ Synthetic anomalies injected: {synthetic_total}")
+    print(f"   Synthetic anomalies caught: {synthetic_caught} ({recall:.1f}% recall)")
 print(f"\n🔝 Top 10 anomalies:\n")
 
 display(df_anomalies.orderBy(severity_col.desc()).select(
@@ -601,71 +489,30 @@ print("   Use the existing 'why_anomalous' display column above (from _dq_info.a
 
 # COMMAND ----------
 
-# Analyze severity distribution
-print("📊 Severity Percentile Distribution:\n")
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## Section 6: Threshold Tradeoffs (Optional)
+# MAGIC
+# MAGIC This section is optional. Skip if you only want the quickstart.
 
-severity_stats = df_scored.select(severity_col.alias("severity_percentile")).describe()
-display(severity_stats)
+# COMMAND ----------
+# DBTITLE 1,Threshold Tradeoffs (Optional)
 
-# Show severity ranges (aligned with 98 threshold)
-print("📈 Severity Range Breakdown (percentiles):\n")
-
-severity_ranges = df_scored.select(
-    F.count(F.when(severity_col < 90, 1)).alias("normal_0_90"),
-    F.count(F.when((severity_col >= 90) & (severity_col < 98), 1)).alias("borderline_90_98"),
-    F.count(F.when((severity_col >= 98) & (severity_col < 99), 1)).alias("flagged_98_99"),
-    F.count(F.when(severity_col >= 99, 1)).alias("highly_anomalous_99_100"),
-).first()
-
-total = total_scored
-print(f"Likely Normal (0-<90):        {severity_ranges['normal_0_90']:4d} ({severity_ranges['normal_0_90']/total*100:5.1f}%) ← Not flagged")
-print(f"Near Threshold (90-<98):      {severity_ranges['borderline_90_98']:4d} ({severity_ranges['borderline_90_98']/total*100:5.1f}%) ← Not flagged")
-print(f"Flagged (98-<99):             {severity_ranges['flagged_98_99']:4d} ({severity_ranges['flagged_98_99']/total*100:5.1f}%) ← ANOMALIES (flagged)")
-print(f"Highly Anomalous (99-100):    {severity_ranges['highly_anomalous_99_100']:4d} ({severity_ranges['highly_anomalous_99_100']/total*100:5.1f}%) ← ANOMALIES (extreme)")
-
-print("\n📊 Percentile-Based Breakdown (easy to interpret):\n")
-print(f"\nℹ️ Percentiles compare records within this dataset.")
-print("   Percentile bands are for interpretation only; the threshold is the actual rule.")
-
-print(f"\n💡 What Do These Scores Mean?")
-print(f"   • Severity is based on percentile rank within the training distribution")
-print(f"   • Low severity (0-<90): Typical patterns (NOT flagged)")
-print(f"   • Near-threshold (90-<98): Close to threshold (NOT flagged)")
-print(f"   • High severity (≥98): Unusual patterns (FLAGGED as anomalies)")
-print(f"   • This is NOT a probability - it is a relative unusualness percentile")
-print(f"   • The threshold (98) is tuned empirically, not a statistical significance level")
+print("📌 Summary:")
+print("   • Default threshold = 95 (top 5%).")
+print("   • Raise it to reduce alerts; lower it to catch more.")
+print("   • The right setting depends on your data distribution and risk tolerance.")
 
 
 # COMMAND ----------
+# DBTITLE 1,Threshold Tradeoffs (Optional)
 
-# Compare normal vs anomalous transactions (using 98 threshold)
-print("🔍 Normal vs Anomalous Transaction Comparison:\n")
-
-normal_stats = df_scored.filter(severity_col < 98).agg(
-    F.avg("amount").alias("avg_amount"),
-    F.avg("quantity").alias("avg_quantity"),
-    F.count("*").alias("count")
-).first()
-
-anomaly_stats = df_scored.filter(severity_col >= 98).agg(
-    F.avg("amount").alias("avg_amount"),
-    F.avg("quantity").alias("avg_quantity"),
-    F.count("*").alias("count")
-).first()
-
-print("Normal Transactions (severity < 98):")
-print(f"   Count: {normal_stats['count']} ({normal_stats['count']/total_scored*100:.1f}%)")
-print(f"   Avg Amount: ${normal_stats['avg_amount']:.2f}")
-print(f"   Avg Quantity: {normal_stats['avg_quantity']:.1f}")
-
-print("\nFlagged Anomalies (severity ≥ 98):")
-print(f"   Count: {anomaly_stats['count']} ({anomaly_stats['count']/total_scored*100:.1f}%)")
-print(f"   Avg Amount: ${anomaly_stats['avg_amount']:.2f}")
-print(f"   Avg Quantity: {anomaly_stats['avg_quantity']:.1f}")
-
-print("\n💡 Expected Results:")
-print("   • Normal transactions should be ~95% of data with typical amounts/quantities")
-print("   • Anomalies should be ~5% with extreme or unusual patterns")
+# (Optional) Quick normal vs anomaly sanity check
+print("🔍 Sanity check (severity < 95 vs ≥ 95):\n")
+normal_count = df_scored.filter(severity_col < 95).count()
+anomaly_count = df_scored.filter(severity_col >= 95).count()
+print(f"   Normal: {normal_count} ({normal_count/total_scored*100:.1f}%)")
+print(f"   Anomaly: {anomaly_count} ({anomaly_count/total_scored*100:.1f}%)")
 
 
 # COMMAND ----------
@@ -673,76 +520,53 @@ print("   • Anomalies should be ~5% with extreme or unusual patterns")
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 4: Tuning the Threshold
+# MAGIC ### Tuning the Threshold
 # MAGIC
-# MAGIC The threshold controls which records get flagged as anomalies. It's like setting a "sensitivity dial":
+# MAGIC Threshold is a percentile cutoff:
+# MAGIC - Lower (e.g., 90) = more alerts
+# MAGIC - Higher (e.g., 98) = fewer alerts
 # MAGIC
-# MAGIC - **Lower threshold** (e.g., 90-95): More sensitive, flags more records as unusual
-# MAGIC - **Higher threshold** (e.g., 98-99): Less sensitive, flags only very unusual records
-# MAGIC
-# MAGIC **The demo uses 98** to keep alert volume low. The product default is **95**.
-# MAGIC - Finding real issues (recall)
-# MAGIC - Avoiding false alarms (precision)
-# MAGIC
-# MAGIC **Remember**: This is NOT a statistical confidence level! It's a cutoff on the **severity percentile** that determines what's unusual enough to investigate.
-# MAGIC
-# MAGIC **Important**: We already computed scores for every record. You can change the threshold and re-filter the
-# MAGIC results without re-running the anomaly check.
-# MAGIC
-# MAGIC Let's see how changing the threshold affects results!
+# MAGIC We already scored all records, so you can change thresholds without re‑scoring.
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Tuning the Threshold
 
 # Try different thresholds
 print("🎚️  Testing Different Thresholds:\n")
 print("Threshold | Anomalies | % of Data | Interpretation")
 print("-" * 70)
 
-thresholds = [95, 98, 99]
+thresholds = [90, 95, 98]
 total_count = total_scored
 
 for threshold in thresholds:
     anomaly_count = df_scored.filter(severity_col >= threshold).count()
     percentage = (anomaly_count / total_count) * 100
-    
-    if threshold <= 80:
+
+    if threshold < 95:
         interpretation = "Sensitive (more alerts)"
-    elif threshold <= 90:
-        interpretation = "Balanced (recommended)"
+    elif threshold == 95:
+        interpretation = "Balanced (default)"
     else:
         interpretation = "Strict (fewer alerts)"
-    
+
     print(f"   {threshold:>3d}   |   {anomaly_count:4d}    |  {percentage:5.1f}%  | {interpretation}")
 
-print("\n💡 How to Choose Your Threshold:")
-print("   • Start with default 95 (balanced for most use cases)")
-print("   • Too many alerts to investigate? → Increase to 99")
-print("   • Missing real issues? → Decrease to 95 or 90")
-print("   • The 'right' threshold depends on:")
-print("     - Your investigation capacity (how many alerts can you handle?)")
-print("     - Your risk tolerance (cost of missing an issue vs false alarm)")
+print("\n💡 Start at 95, then explore thresholds on your data to balance noise vs. missed anomalies.")
 
 
 # COMMAND ----------
+# DBTITLE 1,Tuning the Threshold
 
-# Let's look at borderline cases
-print("🔍 Examining Borderline Cases (severity 95-<98):\n")
-
-borderline = df_scored.filter(
-    (severity_col >= 95) &
-    (severity_col < 98)
-).orderBy(severity_col.desc())
-
-print(f"Found {borderline.count()} borderline transactions:\n")
+# Borderline slice (optional)
+borderline = df_scored.filter((severity_col >= 90) & (severity_col < 95)).orderBy(severity_col.desc())
+print(f"\nBorderline (90-<95) examples: {borderline.count()}")
 display(borderline.select(
-    "transaction_id", "amount", "quantity", "category", "region",
+    "transaction_id", "amount", "quantity",
     F.round(severity_col, 1).alias("severity_percentile"),
-    F.round(score_col, 3).alias("score")
-).limit(10))
-
-print("\n💡 These are on the edge - slight threshold changes will include/exclude them")
-print("   Review these to calibrate your threshold for your use case")
+    F.round(score_col, 3).alias("score"),
+).limit(5))
 
 
 # COMMAND ----------
@@ -750,23 +574,20 @@ print("   Review these to calibrate your threshold for your use case")
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 5: Manual Column Selection (Optional - Advanced)
+# MAGIC ## Section 7: Manual Column Selection (Optional)
 # MAGIC
-# MAGIC **Note**: This section shows optional advanced features. Feel free to skip to Section 7 for production patterns!
-# MAGIC
-# MAGIC Auto-discovery is great for exploration, but for production you might want explicit control over which features the model uses.
-# MAGIC
-# MAGIC Let's train a model with **manually selected columns**.
+# MAGIC Skip this if you only want the quickstart.
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Manual Column Selection (Optional)
 
 # Train with manual column selection
 print("🎯 Training model with manual column selection...\n")
 
 model_name_manual = f"{catalog}.{schema_name}.sales_manual"
 model_uri_manual = anomaly_engine.train(
-    df=spark.table(table_name),
+    df=spark.table(train_table),
     columns=["amount", "quantity"],  # Explicitly specify numeric columns only
     model_name=model_name_manual,
     registry_table=registry_table
@@ -774,8 +595,7 @@ model_uri_manual = anomaly_engine.train(
 
 print(f"✅ Manual model trained!")
 print(f"   Model URI: {model_uri_manual}")
-print(f"\n💡 Note: Manual column selection works best with numeric columns")
-print(f"   Datetime/categorical columns are auto-engineered when using auto-discovery")
+print(f"\n💡 Manual selection is useful in production when you want strict feature control.")
 
 # Compare auto vs manual in the registry
 print(f"\n📊 Auto vs Manual Comparison:")
@@ -797,16 +617,11 @@ display(
     .orderBy("identity.model_name", "training.training_time")
 )
 
-print(f"\n💡 Key Differences:")
-print(f"   • Auto model: Discovered columns automatically + may have segmentation")
-print(f"   • Manual model: You explicitly chose 2 columns (amount, quantity)")
-print(f"\n💡 When to use each approach:")
-print(f"   • Auto-discovery: Exploration, quick start, don't know what matters")
-print(f"   • Manual selection: Production, control features, domain knowledge")
-print(f"   • Both are valid! Start with auto, refine with manual")
+print(f"\n💡 Auto vs manual: auto = fast exploration, manual = tight control.")
 
 
 # COMMAND ----------
+# DBTITLE 1,Manual Column Selection (Optional)
 
 # Score with manual model
 print("🔍 Scoring with manual model...\n")
@@ -816,13 +631,13 @@ checks_manual = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "model": model_name_manual,
-            "threshold": 98.0,
+            "threshold": 95.0,
             "registry_table": registry_table
         }
     )
 ]
 
-df_valid, df_anomalies_manual = dq_engine.apply_checks_and_split(df_sales, checks_manual)
+df_valid, df_anomalies_manual = dq_engine.apply_checks_and_split(df_new, checks_manual)
 
 print(f"⚠️  Manual model found {df_anomalies_manual.count()} anomalies")
 print(f"   (Auto model found {df_anomalies.count()} anomalies)")
@@ -835,8 +650,7 @@ display(df_anomalies_manual.orderBy(F.col("_dq_info.anomaly.severity_percentile"
     F.round("_dq_info.anomaly.score", 3).alias("score")
 ).limit(5))
 
-print("\n💡 Results may differ slightly because we're using different features")
-print("   This is normal and expected!")
+print("\n💡 Different features → different anomalies. That’s expected.")
 
 
 # COMMAND ----------
@@ -844,16 +658,31 @@ print("   This is normal and expected!")
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 6: Deep Dive - Feature Contributions (Optional - Advanced)
+# MAGIC ## Section 8: Feature Contributions (Optional)
 # MAGIC
-# MAGIC **Note**: This section shows detailed analysis of contributions. Skip to Section 7 for production patterns!
+# MAGIC Contributions are already shown in Section 5. This section is a deeper look.
 # MAGIC
-# MAGIC **Reminder**: Contributions are now enabled by default (you already saw them in Section 2), but this section shows how to analyze them in depth.
+# MAGIC ### Advanced Options (Reference)
 # MAGIC
-# MAGIC Finding anomalies is great, but **understanding WHY** they're anomalous is crucial for investigation. Feature contributions show which columns drove each anomaly score.
+# MAGIC **Scoring options (`has_no_anomalies`):**
+# MAGIC - `threshold` (float, 0–100): percentile cutoff (default 95)
+# MAGIC - `include_contributions` (bool): feature contributions in `_dq_info.anomaly`
+# MAGIC - `include_confidence` (bool): confidence estimate (std dev across ensemble)
+# MAGIC - `drift_threshold` (float): drift detection sensitivity
+# MAGIC - `row_filter` (str): SQL filter applied before scoring
+# MAGIC
+# MAGIC **Training options (`AnomalyEngine.train` / `AnomalyParams`):**
+# MAGIC - `columns` (list[str]): explicit feature list (disables auto‑discovery)
+# MAGIC - `segment_by` (list[str]): explicit segmentation columns
+# MAGIC - `sample_fraction`, `max_rows`: training sample controls
+# MAGIC - `ensemble_size`: number of models in the ensemble
+# MAGIC - `expected_anomaly_rate`: expected anomaly rate for calibration
+# MAGIC
+# MAGIC These are optional — the demo uses defaults for simplicity.
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Advanced Options (Reference)
 
 # Score with feature contributions
 print("🔍 Scoring with feature contributions (explainability)...\n")
@@ -863,14 +692,14 @@ checks_with_contrib = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "model": model_name_manual,
-            "threshold": 98.0,
-            "include_contributions": True,  # Add this to get explanations!
+            "threshold": 95.0,
+            "include_contributions": True,  # On by default; explicit here for clarity.
             "registry_table": registry_table
         }
     )
 ]
 
-df_with_contrib = dq_engine.apply_checks(df_sales, checks_with_contrib)
+df_with_contrib = dq_engine.apply_checks(df_new, checks_with_contrib)
 
 print("✅ Scored with feature contributions!")
 print("\n🎯 Top Anomalies with Explanations:\n")
@@ -890,21 +719,12 @@ display(anomalies_explained.select(
     F.col("_dq_info.anomaly.contributions").alias("contributions")
 ))
 
-print("\n💡 How to Read Contributions:")
-print("   • Contributions show which features made this transaction unusual")
-print("   • Higher contribution = that feature is more responsible for the anomaly")
-print("   • Use this to triage and investigate efficiently!")
-print("\n   Example: If 'amount' has high contribution → pricing issue")
-print("            If 'quantity' has high contribution → bulk order anomaly")
-print("            If 'date' has high contribution → timing anomaly")
-print("\n💡 About Category Contributions:")
-print("   • You'll see contributions from ALL category features (one-hot encoded)")
-print("   • Non-matching categories (e.g., 'category_Electronics' when item is Clothing)")
-print("     show small contributions representing the feature's ABSENCE")
-print("   • Focus on features with >5% contribution for investigation")
+print("\n💡 Contributions show which features most influenced the anomaly.")
+print("   Focus on features with the highest % contribution.")
 
 
 # COMMAND ----------
+# DBTITLE 1,Advanced Options (Reference)
 
 # Show one detailed example
 print("🔎 Detailed Example - Top Anomaly:\n")
@@ -936,7 +756,7 @@ if contributions:
     # Sort by contribution value
     sorted_contrib = sorted(contributions.items(), key=lambda x: abs(x[1]), reverse=True)
     for feature, value in sorted_contrib[:3]:  # Top 3
-        print(f"   {feature}: {abs(value)*100:.1f}% contribution")
+        print(f"   {feature}: {abs(value):.1f}% contribution")
     
     print(f"\n🎯 Investigation Tip:")
     top_feature = sorted_contrib[0][0]
@@ -955,14 +775,9 @@ else:
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## Section 7: Using in Production
+# MAGIC ## Section 9: Using in Production (Optional)
 # MAGIC
-# MAGIC Ready to use anomaly detection in real pipelines? This section shows you how.
-# MAGIC
-# MAGIC **What you'll learn:**
-# MAGIC - How to automatically separate good data from bad data
-# MAGIC - How to route anomalies to a quarantine table for investigation
-# MAGIC - Best practices for production data quality pipelines
+# MAGIC This section shows a simple production‑style pattern (clean + quarantine tables).
 # MAGIC
 # MAGIC **Workflow tip**: Provide fully qualified names for both `model_name` and `registry_table`
 # MAGIC (e.g., `catalog.schema.model_name`, `catalog.schema.registry_table`). DQX will not
@@ -970,6 +785,7 @@ else:
 # MAGIC
 
 # COMMAND ----------
+# DBTITLE 1,Using in Production (Optional)
 
 # Automatically separate clean data from anomalies
 print("📦 Separating clean data from anomalies...\n")
@@ -980,7 +796,7 @@ quarantine_table = f"{catalog}.{schema_name}.sales_anomalies_quarantine"
 
 dq_engine.apply_checks_and_save_in_table(
     checks=checks_combined,
-    input_config=InputConfig(location=table_name),
+    input_config=InputConfig(location=new_table),
     output_config=OutputConfig(location=clean_table, mode="overwrite"),
     quarantine_config=OutputConfig(location=quarantine_table, mode="overwrite"),
 )
@@ -991,12 +807,11 @@ bad_df = spark.table(quarantine_table)
 print(f"✅ Automatically saved clean and quarantined data using apply_checks_and_save_in_table():")
 print(f"   Clean records: {good_df.count()}")
 print(f"   Quarantined: {bad_df.count()}")
-print(f"\n💡 Benefits of apply_checks_and_save_in_table():")
+print(f"\n💡 Benefits:")
 print(f"   • Automatically routes failed checks to quarantine")
-print(f"   • Handles both anomalies AND rule violations")
-print(f"   • No manual filtering needed - just specify the checks!")
+print(f"   • Handles anomalies + rule violations in one pass")
 print(f"\nTables created:")
-print(f"   Input: {table_name}")
+print(f"   Input: {new_table}")
 print(f"   Clean: {clean_table}")
 print(f"   Quarantine: {quarantine_table}")
 print(f"\n📋 Access quarantined records (includes DQX _errors/_warnings metadata):")
@@ -1004,26 +819,12 @@ print(f"   spark.table('{quarantine_table}')")
 
 
 # COMMAND ----------
+# DBTITLE 1,Using in Production (Optional)
 
 # Pattern 2: Use in downstream pipelines
-print("🔄 Pattern 2: Integrate with Downstream Pipelines\n")
-
-# Use the clean data (good_df) for downstream processing
-print("💡 Best Practices:")
-print("   ✅ Use good_df for downstream analytics, ML training, reporting")
-print("   ✅ Route bad_df to investigation/remediation workflows")
-print("   ✅ Monitor quarantine table for trends and retraining signals")
-print("   ✅ Combine rule-based + anomaly checks (shown in Section 2)")
-print(f"\n📊 Production Flow:")
-print(f"   1. Apply checks (Section 2) → rule-based + anomaly detection")
-print(f"   2. Split data (this section) → good vs bad records")
-print(f"   3. Process good_df → downstream systems")
-print(f"   4. Investigate bad_df → manual review or auto-remediation")
-print(f"\n✨ With new defaults, you get:")
-print(f"   • Ensemble models (confidence scores)")
-print(f"   • Feature contributions (explainability)")
-print(f"   • Optimized performance (10-15x faster than baseline)")
-print(f"   • Production-ready out-of-the-box!")
+print("🔄 Downstream usage:")
+print("   • Use clean data for analytics/ML")
+print("   • Investigate quarantined records")
 
 
 # COMMAND ----------
@@ -1033,17 +834,12 @@ print(f"   • Production-ready out-of-the-box!")
 # MAGIC
 # MAGIC ## Summary & Next Steps
 # MAGIC
-# MAGIC ### 💡 Key Takeaways
+# MAGIC **Key takeaways:**
+# MAGIC - Use anomaly detection + rules together.
+# MAGIC - Start with threshold 95, tune as needed.
+# MAGIC - Use contributions to triage anomalies faster.
 # MAGIC
-# MAGIC - **Start simple**: Use auto-discovery first, then refine with manual selection
-# MAGIC - **Threshold matters**: Adjust based on your tolerance for false positives
-# MAGIC - **Contributions are crucial**: Use them to triage and investigate efficiently
-# MAGIC - **Complement, don't replace**: Use both rule-based checks and anomaly detection
-# MAGIC - **Unity Catalog + DQX**: Together they provide comprehensive data quality coverage
-# MAGIC
-# MAGIC ### 🚀 Next Steps
-# MAGIC
-# MAGIC #### 1. Apply to Your Data
+# MAGIC **Apply to your data:**
 # MAGIC ```python
 # MAGIC # Replace with your table
 # MAGIC model = anomaly_engine.train(
@@ -1061,21 +857,33 @@ print(f"   • Production-ready out-of-the-box!")
 # MAGIC df_scored = dq_engine.apply_checks(your_df, checks)
 # MAGIC ```
 # MAGIC
-# MAGIC #### 2. Explore Advanced Features
-# MAGIC - **Segmented models**: Train separate models per region, category, etc.
-# MAGIC - **Drift detection**: Monitor when models become stale
-# MAGIC - **Ensemble models**: Get confidence intervals on scores
-# MAGIC - See the pharma and investment banking demos for examples!
+# MAGIC **Optional next steps:**
+# MAGIC - Add segmentation, drift detection, and scheduled scoring.
+# MAGIC - Automate retraining and alerting.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
 # MAGIC
-# MAGIC #### 3. Set Up Production Workflows
-# MAGIC - Automate model training (weekly/monthly)
-# MAGIC - Schedule scoring (hourly/daily)
-# MAGIC - Build investigation workflow around quarantine table
-# MAGIC - Integrate with alerting (Slack, PagerDuty, etc.)
+# MAGIC ## Appendix (Optional): Concepts & Unity Catalog Comparison
 # MAGIC
-# MAGIC #### 4. Monitor & Iterate
-# MAGIC - Review flagged anomalies regularly
-# MAGIC - Adjust thresholds based on false positive rate
+# MAGIC **Known vs Unknown Issues**
+# MAGIC - **Known unknowns**: rule‑based checks (nulls, ranges, formats).
+# MAGIC - **Unknown unknowns**: multi‑column or subtle patterns you didn’t anticipate.
+# MAGIC
+# MAGIC **Why anomaly detection**
+# MAGIC - Learns “normal” from data
+# MAGIC - Flags deviations without manual rules
+# MAGIC - Complements rule checks rather than replacing them
+# MAGIC
+# MAGIC **Unity Catalog Monitoring vs DQX Anomaly**
+# MAGIC - **Unity Catalog**: table‑level signals (row counts, freshness, commit patterns).
+# MAGIC - **DQX Anomaly**: row‑level patterns (per‑record anomalies with explanations).
+# MAGIC
+# MAGIC **Where to learn more**
+# MAGIC - Unity Catalog monitoring: https://docs.databricks.com/aws/en/data-quality-monitoring/
+# MAGIC - DQX anomaly docs: see `docs/dqx/docs/guide/anomaly_detection.mdx`
 # MAGIC - Retrain models as patterns change
 # MAGIC - Combine with Unity Catalog's table-level monitoring
 # MAGIC
