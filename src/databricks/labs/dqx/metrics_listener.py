@@ -65,11 +65,16 @@ class StreamingMetricsListener(listener.StreamingQueryListener):
         if not observed_metrics:
             return
 
+        run_time_overwrite = (
+            self.metrics_observation.run_time_overwrite
+            if self.metrics_observation.run_time_overwrite is not None
+            else datetime.fromisoformat(event.progress.timestamp)
+        )
         metrics_observation = DQMetricsObservation(
             run_id=self.metrics_observation.run_id,
             run_name=self.metrics_observation.run_name,
             observed_metrics=observed_metrics.asDict(),
-            run_time_overwrite=datetime.fromisoformat(event.progress.timestamp),  # time the micro-batch is processed
+            run_time_overwrite=run_time_overwrite,
             error_column_name=self.metrics_observation.error_column_name,
             warning_column_name=self.metrics_observation.warning_column_name,
             input_location=self.metrics_observation.input_location,
