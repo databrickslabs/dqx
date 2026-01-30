@@ -300,6 +300,7 @@ limit-inference-results = 100
 load-plugins = [
     "databricks.labs.pylint.all",
     "pylint_pytest",
+    "pylint_per_file_ignores",
     "pylint.extensions.bad_builtin",
     "pylint.extensions.broad_try_clause",
     "pylint.extensions.check_elif",
@@ -848,6 +849,10 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
+
+[tool.pylint-per-file-ignores]
+# Disable pylint-pytest fixture collection errors for integration tests that use external fixtures
+"tests/integration/test_app_backend.py" = "F6401"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
