@@ -38,6 +38,7 @@ from databricks.labs.dqx.anomaly.transformers import (
 from databricks.labs.dqx.anomaly.utils import (
     build_segment_filter,
     create_null_scored_dataframe,
+    add_severity_percentile_column,
     add_info_column,
     create_udf_schema,
     validate_sklearn_compatibility,
@@ -51,6 +52,19 @@ from databricks.labs.dqx.package_utils import missing_required_packages
 # sklearn is always available when this module loads (required dependency for anomaly extras)
 SHAP_AVAILABLE = not missing_required_packages(["shap"])
 _DRIVER_ONLY = {"value": False}
+SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
+    (0.0, "p00"),
+    (1.0, "p01"),
+    (5.0, "p05"),
+    (10.0, "p10"),
+    (25.0, "p25"),
+    (50.0, "p50"),
+    (75.0, "p75"),
+    (90.0, "p90"),
+    (95.0, "p95"),
+    (99.0, "p99"),
+    (100.0, "p100"),
+]
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +126,7 @@ def _resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:
 def has_no_anomalies(
     model: str,
     registry_table: str,
-    threshold: float = 0.60,
+    threshold: float = 95.0,
     row_filter: str | None = None,
     drift_threshold: float | None = None,
     include_contributions: bool = True,
@@ -128,12 +142,13 @@ def has_no_anomalies(
     - _errors or _warnings: Standard DQX result column based on criticality setting
       (customizable via ExtraParams.result_column_names)
     - _dq_info: Structured anomaly metadata
-      - _dq_info.anomaly.score: Anomaly score (0-1)
+      - _dq_info.anomaly.score: Raw anomaly score (model-relative)
+      - _dq_info.anomaly.severity_percentile: Severity percentile (0–100)
       - _dq_info.anomaly.is_anomaly: Boolean flag
-      - _dq_info.anomaly.threshold: Threshold used
+      - _dq_info.anomaly.threshold: Severity percentile threshold used (0–100)
       - _dq_info.anomaly.model: Model name
       - _dq_info.anomaly.segment: Segment values (if segmented)
-    - _dq_info.anomaly.contributions: SHAP values (if requested)
+      - _dq_info.anomaly.contributions: SHAP contributions as percentages (0–100)
     - _dq_info.anomaly.confidence_std: Ensemble std (if requested)
 
     Notes:
@@ -146,8 +161,9 @@ def has_no_anomalies(
             in catalog.schema.model format returned from train().
         registry_table: Registry table (REQUIRED). Provide the fully qualified table
             name in catalog.schema.table format.
-        threshold: Anomaly score threshold (default 0.60). Records with score >= threshold
-            are flagged as anomalous. Higher threshold = stricter detection (fewer anomalies).
+        threshold: Severity percentile threshold (0–100, default 95).
+            Records with severity_percentile >= threshold are flagged as anomalous.
+            Higher threshold = stricter detection (fewer anomalies).
         row_filter: Optional SQL expression to filter rows before scoring.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
         include_contributions: Include SHAP feature contributions for explainability (default True).
@@ -184,7 +200,7 @@ def has_no_anomalies(
         df_to_score, local_merge_columns, row_id_col = _ensure_merge_columns(df)
 
         driver_only_local = _DRIVER_ONLY["value"]
-        score_col, score_std_col, contributions_col = _resolve_internal_columns(df_to_score)
+        score_col, score_std_col, contributions_col, severity_col = _resolve_internal_columns(df_to_score)
 
         # Auto-discover configuration
         normalized_columns, segment_by, model_name, registry = _discover_model_and_config(
@@ -208,6 +224,7 @@ def has_no_anomalies(
             score_col=score_col,
             score_std_col=score_std_col,
             contributions_col=contributions_col,
+            severity_col=severity_col,
         )
 
         registry_client = AnomalyModelRegistry(df_to_score.sparkSession)
@@ -243,8 +260,8 @@ def has_no_anomalies(
     # Create condition directly from _dq_info.anomaly.is_anomaly (no intermediate column needed)
     message = F.concat_ws(
         "",
-        F.lit("Anomaly score "),
-        F.round(F.col("_dq_info").anomaly.score, 3).cast("string"),
+        F.lit("Anomaly severity "),
+        F.round(F.col("_dq_info").anomaly.severity_percentile, 1).cast("string"),
         F.lit(f" exceeded threshold {threshold}"),
     )
     condition_expr = F.col("_dq_info").anomaly.is_anomaly
@@ -270,6 +287,7 @@ class ScoringConfig:
     score_col: str = "anomaly_score"
     score_std_col: str = "anomaly_score_std"
     contributions_col: str = "anomaly_contributions"
+    severity_col: str = "severity_percentile"
 
 
 _INTERNAL_ROW_ID = "_dqx_row_id"
@@ -283,11 +301,12 @@ def _ensure_merge_columns(df: DataFrame) -> tuple[DataFrame, list[str], str | No
     return df.withColumn(_INTERNAL_ROW_ID, F.monotonically_increasing_id()), [_INTERNAL_ROW_ID], _INTERNAL_ROW_ID
 
 
-def _resolve_internal_columns(df: DataFrame) -> tuple[str, str, str]:
+def _resolve_internal_columns(df: DataFrame) -> tuple[str, str, str, str]:
     """Resolve internal scoring column names to avoid collisions with user columns."""
     score_col = "anomaly_score"
     score_std_col = "anomaly_score_std"
     contributions_col = "anomaly_contributions"
+    severity_col = "severity_percentile"
 
     if score_col in df.columns:
         score_col = "_dq_anomaly_score"
@@ -295,8 +314,10 @@ def _resolve_internal_columns(df: DataFrame) -> tuple[str, str, str]:
         score_std_col = "_dq_anomaly_score_std"
     if contributions_col in df.columns:
         contributions_col = "_dq_anomaly_contributions"
+    if severity_col in df.columns:
+        severity_col = "_dq_severity_percentile"
 
-    return score_col, score_std_col, contributions_col
+    return score_col, score_std_col, contributions_col, severity_col
 
 
 def set_driver_only_for_tests(enabled: bool) -> None:
@@ -415,6 +436,14 @@ def _score_single_segment(
     if config.include_contributions and "anomaly_contributions" in segment_scored.columns:
         segment_scored = segment_scored.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
+    quantile_points = _extract_quantile_points(segment_model)
+    segment_scored = add_severity_percentile_column(
+        segment_scored,
+        score_col=config.score_col,
+        severity_col=config.severity_col,
+        quantile_points=quantile_points,
+    )
+
     # Add _info column with segment values
     segment_scored = add_info_column(
         segment_scored,
@@ -426,6 +455,7 @@ def _score_single_segment(
         score_col=config.score_col,
         score_std_col=config.score_std_col,
         contributions_col=config.contributions_col,
+        severity_col=config.severity_col,
     )
 
     return segment_scored
@@ -487,6 +517,7 @@ def _score_segmented(
             score_col=config.score_col,
             score_std_col=config.score_std_col,
             contributions_col=config.contributions_col,
+            severity_col=config.severity_col,
         )
     else:
         result = scored_dfs[0]
@@ -497,6 +528,7 @@ def _score_segmented(
     result = result.drop(config.score_std_col)  # Always drop (null if not ensemble)
     if config.include_contributions:
         result = result.drop(config.contributions_col)  # Drop top-level, use _dq_info instead
+    result = result.drop(config.severity_col)
 
     # Always join back to original DataFrame to include unscored rows
     # (rows with segment combinations not seen during training will have null scores)
@@ -775,7 +807,7 @@ def _format_shap_contributions(
     if shap_values.size == 0:
         return contributions
 
-    # Normalize absolute SHAP values to sum to 1.0 per row
+    # Normalize absolute SHAP values to sum to 1.0 per row, then convert to percent (0-100)
     abs_shap = np.abs(shap_values)
     totals = abs_shap.sum(axis=1, keepdims=True)
     normalized = np.divide(abs_shap, totals, out=np.zeros_like(abs_shap), where=totals > 0)
@@ -787,7 +819,8 @@ def _format_shap_contributions(
     for i in range(num_rows):
         if valid_indices[i]:
             contributions[i] = {
-                engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j]), 3) for j in range(num_features)
+                engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j] * 100.0), 1)
+                for j in range(num_features)
             }
             valid_row_idx += 1
 
@@ -1018,9 +1051,9 @@ def _validate_required_name(value: str, *, label: str, example: str) -> None:
 
 def _validate_threshold(threshold: float) -> None:
     if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
-        raise InvalidParameterError("threshold must be a float between 0.0 and 1.0.")
-    if not 0.0 <= float(threshold) <= 1.0:
-        raise InvalidParameterError("threshold must be between 0.0 and 1.0.")
+        raise InvalidParameterError("threshold must be a float between 0.0 and 100.0.")
+    if not 0.0 <= float(threshold) <= 100.0:
+        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
 
 
 def _validate_optional_sql_expression(row_filter: str | None) -> None:
@@ -1051,6 +1084,27 @@ def _select_segment_record(all_segments: list[AnomalyModelRecord]) -> AnomalyMod
             record.identity.model_name,
         ),
     )
+
+
+def _extract_quantile_points(record: AnomalyModelRecord) -> list[tuple[float, float]]:
+    """Extract percentile->score points for severity mapping."""
+    quantiles = record.training.score_quantiles
+    if not quantiles:
+        raise InvalidParameterError(
+            f"Model '{record.identity.model_name}' is missing score quantiles required for severity mapping. "
+            "Retrain the model to compute severity percentiles."
+        )
+
+    points: list[tuple[float, float]] = []
+    for percentile, key in SEVERITY_QUANTILE_KEYS:
+        value = quantiles.get(key)
+        if value is None:
+            raise InvalidParameterError(
+                f"Model '{record.identity.model_name}' is missing quantile '{key}'. "
+                "Retrain the model to compute severity percentiles."
+            )
+        points.append((percentile, float(value)))
+    return points
 
 
 def _discover_model_and_config(
@@ -1470,6 +1524,14 @@ def _score_global_model(
     if config.include_contributions and "anomaly_contributions" in scored_df.columns:
         scored_df = scored_df.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
+    quantile_points = _extract_quantile_points(record)
+    scored_df = add_severity_percentile_column(
+        scored_df,
+        score_col=config.score_col,
+        severity_col=config.severity_col,
+        quantile_points=quantile_points,
+    )
+
     # Add _dq_info column (before dropping internal columns)
     scored_df = add_info_column(
         scored_df,
@@ -1481,12 +1543,14 @@ def _score_global_model(
         score_col=config.score_col,
         score_std_col=config.score_std_col,
         contributions_col=config.contributions_col,
+        severity_col=config.severity_col,
     )
 
     # Post-process: drop internal columns that are now in _dq_info
     scored_df = scored_df.drop(config.score_std_col)  # Always drop (null if not ensemble)
     if config.include_contributions:
         scored_df = scored_df.drop(config.contributions_col)  # Drop top-level, use _dq_info instead
+    scored_df = scored_df.drop(config.severity_col)
 
     if config.row_filter:
         scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns, config.score_col)

@@ -154,7 +154,7 @@ def test_multiple_checks_combined(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=0.6,
+            threshold=60.0,
         ),
     ]
 
@@ -207,7 +207,7 @@ def test_criticality_error(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=0.6,
+            threshold=60.0,
         )
     ]
 
@@ -235,7 +235,7 @@ def test_criticality_warn(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=0.6,
+            threshold=60.0,
             criticality="warn",
         )
     ]
@@ -313,7 +313,7 @@ def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=0.6,
+            threshold=60.0,
             include_contributions=False,  # Test without optional fields
             include_confidence=False,
         )
@@ -355,7 +355,7 @@ def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
     assert anomaly.check_name == "has_no_anomalies", "check_name should be 'has_no_anomalies'"
     assert isinstance(anomaly.score, (float, type(None))), "score should be float or None"
     assert isinstance(anomaly.is_anomaly, (bool, type(None))), "is_anomaly should be boolean or None"
-    assert anomaly.threshold == 0.6, f"threshold should be 0.6, got {anomaly.threshold}"
+    assert anomaly.threshold == 60.0, f"threshold should be 60.0, got {anomaly.threshold}"
     assert model_name in anomaly.model, f"model should contain {model_name}"
 
     # Verify optional fields are None when not requested
@@ -381,7 +381,7 @@ def test_info_column_with_contributions(ws, spark: SparkSession, shared_3d_model
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=0.6,
+            threshold=60.0,
             include_contributions=True,  # Request contributions
         )
     ]

@@ -61,6 +61,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_SAMPLE_FRACTION = 0.3
 DEFAULT_MAX_ROWS = 1_000_000
 DEFAULT_TRAIN_RATIO = 0.8
+SCORE_QUANTILE_PROBS = [0.0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 1.0]
+SCORE_QUANTILE_KEYS = ["p00", "p01", "p05", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "p100"]
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,7 @@ class TrainingResult:
     run_id: str | None
     hyperparams: dict[str, Any]
     validation_metrics: dict[str, float]
+    score_quantiles: dict[str, float]
     feature_metadata: SparkFeatureMetadata
     ensemble_size: int
     algorithm: str
@@ -111,7 +114,7 @@ class IsolationForestTrainingStrategy(AnomalyTrainingStrategy):
         ensemble_size = params.ensemble_size if allow_ensemble and params.ensemble_size else 1
 
         if ensemble_size > 1:
-            model_uris, hyperparams, validation_metrics, feature_metadata = _train_ensemble(
+            model_uris, hyperparams, validation_metrics, score_quantiles, feature_metadata = _train_ensemble(
                 train_df, val_df, columns, params, ensemble_size, model_name
             )
             model_uri = ",".join(model_uris)
@@ -119,6 +122,7 @@ class IsolationForestTrainingStrategy(AnomalyTrainingStrategy):
         else:
             model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, columns, params)
             validation_metrics = _compute_validation_metrics(model, val_df, columns, feature_metadata)
+            score_quantiles = _compute_score_quantiles(model, train_df, columns, feature_metadata)
             model_uri, run_id = _register_single_model_to_mlflow(
                 model, train_df, feature_metadata, model_name, hyperparams, validation_metrics
             )
@@ -129,6 +133,7 @@ class IsolationForestTrainingStrategy(AnomalyTrainingStrategy):
             run_id=run_id,
             hyperparams=hyperparams,
             validation_metrics=validation_metrics,
+            score_quantiles=score_quantiles,
             feature_metadata=feature_metadata,
             ensemble_size=ensemble_size,
             algorithm=algorithm,
@@ -160,6 +165,7 @@ class TrainingArtifacts:
     hyperparams: dict[str, Any]
     training_rows: int
     validation_metrics: dict[str, float]
+    score_quantiles: dict[str, float]
     baseline_stats: dict[str, dict[str, float]]
     algorithm: str
     segment_values: dict[str, Any] | None = None
@@ -310,6 +316,7 @@ class AnomalyTrainingService:
             hyperparams=result.hyperparams,
             training_rows=train_df.count(),
             validation_metrics=result.validation_metrics,
+            score_quantiles=result.score_quantiles,
             baseline_stats=baseline_stats,
             algorithm=result.algorithm,
         )
@@ -413,6 +420,7 @@ class AnomalyTrainingService:
             hyperparams=result.hyperparams,
             training_rows=train_df.count(),
             validation_metrics=result.validation_metrics,
+            score_quantiles=result.score_quantiles,
             baseline_stats=baseline_stats,
             algorithm=result.algorithm,
             segment_values=segment_values,
@@ -442,6 +450,7 @@ class AnomalyTrainingService:
                 training_rows=artifacts.training_rows,
                 training_time=datetime.utcnow(),
                 metrics=artifacts.validation_metrics,
+                score_quantiles=artifacts.score_quantiles,
                 baseline_stats=artifacts.baseline_stats,
             ),
             features=FeatureEngineering(
@@ -957,6 +966,52 @@ def _score_with_model(model: Any, df: DataFrame, feature_cols: list[str], featur
     return result
 
 
+def _score_with_ensemble_models(
+    models: list[Any], df: DataFrame, feature_cols: list[str], feature_metadata: Any
+) -> DataFrame:
+    """
+    Score DataFrame using an ensemble of models (distributed) and return mean scores.
+
+    This mirrors the ensemble scoring behavior used at inference time.
+    """
+    column_infos = reconstruct_column_infos(feature_metadata)
+
+    engineered_df, updated_metadata = apply_feature_engineering(
+        df.select(*feature_cols),
+        column_infos,
+        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
+        frequency_maps=feature_metadata.categorical_frequency_maps,
+        onehot_categories=feature_metadata.onehot_categories,
+    )
+
+    engineered_feature_cols = updated_metadata.engineered_feature_names
+    models_bytes = [cloudpickle.dumps(model) for model in models]
+
+    schema = StructType([StructField("anomaly_score", DoubleType(), True)])
+
+    @pandas_udf(schema)  # type: ignore[call-overload]
+    def predict_udf(*cols: pd.Series) -> pd.DataFrame:
+        import cloudpickle
+        import numpy as np
+        import pandas as pd
+
+        features_df = pd.concat(cols, axis=1)
+        features_df.columns = engineered_feature_cols
+
+        scores_list = []
+        for model_bytes in models_bytes:
+            model_local = cloudpickle.loads(model_bytes)
+            scores_list.append(-model_local.score_samples(features_df))
+
+        mean_scores = np.mean(np.vstack(scores_list), axis=0)
+        return pd.DataFrame({"anomaly_score": mean_scores})
+
+    result = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
+    result = result.select("*", "_scores.anomaly_score").drop("_scores")
+
+    return result
+
+
 def _compute_validation_metrics(
     model: Any, val_df: DataFrame, feature_cols: list[str], feature_metadata: Any
 ) -> dict[str, float]:
@@ -999,6 +1054,34 @@ def _compute_validation_metrics(
     metrics = {k: v for k, v in metrics.items() if v is not None}
 
     return metrics
+
+
+def _compute_score_quantiles(
+    model: Any, df: DataFrame, feature_cols: list[str], feature_metadata: Any
+) -> dict[str, float]:
+    """Compute score quantiles from the training score distribution."""
+    if df.count() == 0:
+        return {}
+
+    scored = _score_with_model(model, df, feature_cols, feature_metadata)
+    scores_df = scored.select(F.col("anomaly_score").alias("score"))
+    quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, 0.01)
+
+    return dict(zip(SCORE_QUANTILE_KEYS, quantiles))
+
+
+def _compute_score_quantiles_ensemble(
+    models: list[Any], df: DataFrame, feature_cols: list[str], feature_metadata: Any
+) -> dict[str, float]:
+    """Compute score quantiles using ensemble mean scores."""
+    if df.count() == 0:
+        return {}
+
+    scored = _score_with_ensemble_models(models, df, feature_cols, feature_metadata)
+    scores_df = scored.select(F.col("anomaly_score").alias("score"))
+    quantiles = scores_df.approxQuantile("score", SCORE_QUANTILE_PROBS, 0.01)
+
+    return dict(zip(SCORE_QUANTILE_KEYS, quantiles))
 
 
 def _compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict[str, dict[str, float]]:
@@ -1166,18 +1249,19 @@ def _train_ensemble(
     params: AnomalyParams,
     ensemble_size: int,
     model_name: str,
-) -> tuple[list[str], dict[str, Any], dict[str, float], Any]:
+) -> tuple[list[str], dict[str, Any], dict[str, float], dict[str, float], Any]:
     """
     Train ensemble of models with different random seeds.
 
     Returns:
-        Tuple of (model_uris, hyperparams, aggregated_metrics, feature_metadata).
+        Tuple of (model_uris, hyperparams, aggregated_metrics, score_quantiles, feature_metadata).
         feature_metadata is from the first ensemble member (all members use same features).
     """
     _ensure_mlflow_registry_uri()
 
     model_uris = []
     all_metrics = []
+    models = []
     first_feature_metadata = None
 
     for i in range(ensemble_size):
@@ -1187,6 +1271,7 @@ def _train_ensemble(
 
         # Train model (sklearn IsolationForest on driver)
         model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, columns, modified_params)
+        models.append(model)
 
         # Capture feature_metadata from first member (all use same feature engineering)
         if i == 0:
@@ -1205,7 +1290,10 @@ def _train_ensemble(
     # Aggregate metrics across ensemble
     aggregated_metrics = _aggregate_ensemble_metrics(all_metrics)
 
-    return model_uris, hyperparams, aggregated_metrics, first_feature_metadata
+    assert first_feature_metadata is not None, "Failed to compute feature metadata for ensemble training"
+    score_quantiles = _compute_score_quantiles_ensemble(models, train_df, columns, first_feature_metadata)
+
+    return model_uris, hyperparams, aggregated_metrics, score_quantiles, first_feature_metadata
 
 
 def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:

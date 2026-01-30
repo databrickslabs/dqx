@@ -1,7 +1,7 @@
 all: clean dev lint fmt test integration perf coverage e2e
 
 clean: docs-clean
-	rm -fr .venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml
+	rm -fr .venv clean htmlcov .mypy_cache .pytest_cache .ruff_cache .coverage coverage.xml ./mlruns
 	rm -fr **/*.pyc
 
 .venv/bin/python:

@@ -299,7 +299,7 @@ def test_has_no_anomalies_requires_shap_when_enabled():
     "kwargs, match",
     [
         ({"threshold": "0.5"}, "threshold must be a float"),  # type: ignore[arg-type]
-        ({"threshold": 1.5}, "threshold must be between"),
+        ({"threshold": 150.0}, "threshold must be between"),
         ({"row_filter": 123}, "row_filter must be a SQL expression"),  # type: ignore[arg-type]
         ({"drift_threshold": "bad"}, "drift_threshold must be a float"),  # type: ignore[arg-type]
         ({"drift_threshold": -1.0}, "drift_threshold must be greater than 0"),
@@ -372,13 +372,13 @@ def test_create_null_scored_dataframe_updates_existing_info(spark: SparkSession)
 def test_add_info_column_preserves_existing_info(spark: SparkSession):
     """Test info column addition preserves existing _dq_info fields."""
     df = spark.createDataFrame(
-        [(1, 0.5, {"existing": "value"})],
-        "id int, anomaly_score double, _dq_info struct<existing:string>",
+        [(1, 0.5, 70.0, {"existing": "value"})],
+        "id int, anomaly_score double, severity_percentile double, _dq_info struct<existing:string>",
     )
     result = add_info_column(
         df,
         model_name="catalog.schema.model",
-        threshold=0.6,
+        threshold=60.0,
         include_contributions=False,
         include_confidence=False,
     )

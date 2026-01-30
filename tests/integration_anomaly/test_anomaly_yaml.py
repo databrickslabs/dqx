@@ -161,7 +161,7 @@ def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
         arguments:
           model: {model_name}
           registry_table: {registry_table}
-          threshold: 0.9
+          threshold: 90.0
     """
 
     checks = yaml.safe_load(checks_yaml)
@@ -175,7 +175,7 @@ def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
     dq_engine = DQEngine(ws, spark)
     result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
 
-    # With high threshold (0.9), slightly unusual data should pass
+    # With high threshold (90.0), slightly unusual data should pass
     assert "_errors" in result_df.columns
     rows = result_df.collect()
     # With high threshold, expect no or few errors (handle both None and empty list)

@@ -14,6 +14,7 @@ from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 
 from databricks.labs.dqx.anomaly.utils import format_contributions_map
+from databricks.labs.dqx.errors import InvalidParameterError
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +190,17 @@ def add_top_contributors_to_message(df: DataFrame, threshold: float, top_n: int 
     """
     format_udf = F.udf(lambda m: format_contributions_map(m, top_n), StringType())
 
+    if "severity_percentile" in df.columns:
+        severity_col = F.col("severity_percentile")
+    elif "_dq_info" in df.columns:
+        severity_col = F.col("_dq_info").anomaly.severity_percentile
+    else:
+        raise InvalidParameterError(
+            "severity_percentile is required to determine top contributors. "
+            "Ensure scoring adds severity_percentile before calling this helper."
+        )
+
     return df.withColumn(
         "_top_contributors",
-        F.when(F.col("anomaly_score") >= threshold, format_udf(F.col("anomaly_contributions"))).otherwise(F.lit("")),
+        F.when(severity_col >= threshold, format_udf(F.col("anomaly_contributions"))).otherwise(F.lit("")),
     )

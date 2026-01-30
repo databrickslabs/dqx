@@ -503,9 +503,12 @@ print("   • Each row is a trained model ready to score new data")
 # MAGIC
 # MAGIC Now that we have our anomaly detection model trained, let's apply it alongside traditional rule-based checks to score all transactions.
 # MAGIC The anomalies will be reported in the _warn and _error columns similar to other DQX checks.
-# MAGIC In addition, _dq_info column will contain anomaly score (0-1) and feature contributions explaining WHY it was flagged.
-# MAGIC For analysis purposes, the score will be present in all records, not just anomalies.
-# MAGIC This allows you to understand the "unusualness" of every record, and tune the threshold as needed.
+# MAGIC In addition, _dq_info column will contain:
+# MAGIC - **severity_percentile (0–100)**: how severe this record is relative to training data
+# MAGIC - **score**: raw model score (diagnostic only; not comparable across datasets)
+# MAGIC - **contributions**: feature-level explanations for why it was flagged
+# MAGIC For analysis purposes, severity and raw score are present for all records, not just anomalies.
+# MAGIC This allows you to tune the threshold with an intuitive, percentile-based knob.
 # MAGIC
 
 # COMMAND ----------
@@ -528,7 +531,7 @@ checks_combined = [
         check_func_kwargs={
             "model": model_name_auto,
             "registry_table": registry_table
-            # Default: 2 models for confidence, explains why data is anomalous, threshold 0.60
+            # Default: 2 models for confidence, explains why data is anomalous, demo threshold 98 (percentile)
         }
     )
 ]
@@ -541,8 +544,8 @@ print("\n💡 What Just Happened:")
 print("   • Rule-based checks caught known issues (nulls, out-of-range values)")
 print("   • Anomaly detection found unusual patterns you didn't explicitly define")
 print("   • The 'why_anomalous' column explains what made each record unusual")
-print("   • Percentile band shows how unusual a record is within this dataset")
-print("   • Threshold of 0.60 balances finding issues vs false alarms")
+print("   • Severity percentile shows how unusual a record is within this dataset")
+print("   • Demo threshold of 98 (percentile) balances finding issues vs false alarms")
 
 # COMMAND ----------
 
@@ -551,28 +554,26 @@ print("   • Threshold of 0.60 balances finding issues vs false alarms")
 # MAGIC
 # MAGIC ## Section 3: Understanding Your Results
 # MAGIC
-# MAGIC Let's explore the anomalies we found and learn how to interpret anomaly scores.
+# MAGIC Let's explore the anomalies we found and learn how to interpret anomaly severity.
 # MAGIC
 # MAGIC **What you'll learn:**
-# MAGIC - How anomaly scores work (0 to 1 unusualness scale)
-# MAGIC - What makes a score "high" vs "normal"  
+# MAGIC - How severity percentiles work (0–100 scale)
+# MAGIC - What makes a record "high severity" vs "normal"
 # MAGIC - Why certain records were flagged as unusual
 # MAGIC
-# MAGIC **Important**: Anomaly scores are NOT probabilities or confidence levels! Think of the score as how
-# MAGIC easy it is to separate a record from the rest of your data. Easier to separate = more unusual.
+# MAGIC **Important**: Raw anomaly scores are NOT probabilities or confidence levels!
+# MAGIC We normalize them into **severity percentiles** so the threshold is intuitive and consistent.
 # MAGIC
 
 # COMMAND ----------
 
 df_anomalies = dq_engine.get_invalid(df_scored)
 score_col = F.col("_dq_info.anomaly.score")
-
-score_df = df_scored.select(score_col.alias("score")).where(score_col.isNotNull())
-p90, p95, p99 = score_df.stat.approxQuantile("score", [0.9, 0.95, 0.99], 0.0)
+severity_col = F.col("_dq_info.anomaly.severity_percentile")
 percentile_band = (
-    F.when(score_col >= p99, F.lit("p99+ (top 1%)"))
-    .when(score_col >= p95, F.lit("p95-99 (top 5%)"))
-    .when(score_col >= p90, F.lit("p90-95 (top 10%)"))
+    F.when(severity_col >= 99, F.lit("p99+ (top 1%)"))
+    .when(severity_col >= 95, F.lit("p95-99 (top 5%)"))
+    .when(severity_col >= 90, F.lit("p90-95 (top 10%)"))
     .otherwise(F.lit("<p90 (bottom 90%)"))
 )
 total_scored = df_scored.count()
@@ -582,94 +583,82 @@ print(f"✅ Quality checks complete!")
 print(f"\n📊 Results:")
 print(f"   Total transactions: {total_rows}")
 print(f"   Anomalies found: {anomalies_count} ({(anomalies_count / total_rows) * 100:.1f}%)")
-print("ℹ️  Each record receives an anomaly score.")
-print("   The score threshold decides whether a record is flagged as anomalous.")
-print("   Even records that are not flagged still get a score for analysis.")
-print("   Think of the score as a 0-1 unusualness rating: higher = more likely anomalous.")
+print("ℹ️  Each record receives a severity percentile.")
+print("   The percentile threshold decides whether a record is flagged as anomalous.")
+print("   Even records that are not flagged still get severity for analysis.")
+print("   Higher percentile = more severe relative to training data.")
 print(f"\n🔝 Top 10 anomalies:\n")
 
-display(df_anomalies.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
+display(df_anomalies.orderBy(severity_col.desc()).select(
     "transaction_id", "date", "amount", "quantity", "category", "region",
-    F.round("_dq_info.anomaly.score", 3).alias("anomaly_score"),
-    percentile_band.alias("score_percentile"),
+    F.round(severity_col, 1).alias("severity_percentile"),
+    F.round(score_col, 3).alias("anomaly_score"),
+    percentile_band.alias("severity_band"),
     F.col("_dq_info.anomaly.contributions").alias("why_anomalous")
 ).limit(10))
 
-print("   Example pattern: high amount + off-hours timing + unusual region/category")
+print("   Use the existing 'why_anomalous' display column above (from _dq_info.anomaly.contributions) to understand drivers.")
 
 # COMMAND ----------
 
-# Analyze score distribution
-print("📊 Anomaly Score Distribution:\n")
+# Analyze severity distribution
+print("📊 Severity Percentile Distribution:\n")
 
-score_stats = df_scored.select("_dq_info.anomaly.score").describe()
-display(score_stats)
+severity_stats = df_scored.select(severity_col.alias("severity_percentile")).describe()
+display(severity_stats)
 
-# Show score ranges (aligned with 0.60 threshold)
-print("📈 Score Range Breakdown (raw scores):\n")
+# Show severity ranges (aligned with 98 threshold)
+print("📈 Severity Range Breakdown (percentiles):\n")
 
-score_ranges = df_scored.select(
-    F.count(F.when(F.col("_dq_info.anomaly.score") < 0.5, 1)).alias("normal_0.0_0.5"),
-    F.count(F.when((F.col("_dq_info.anomaly.score") >= 0.5) & (F.col("_dq_info.anomaly.score") < 0.6), 1)).alias("borderline_0.5_0.6"),
-    F.count(F.when((F.col("_dq_info.anomaly.score") >= 0.6) & (F.col("_dq_info.anomaly.score") < 0.75), 1)).alias("flagged_0.6_0.75"),
-    F.count(F.when(F.col("_dq_info.anomaly.score") >= 0.75, 1)).alias("highly_anomalous_0.75_1.0"),
+severity_ranges = df_scored.select(
+    F.count(F.when(severity_col < 90, 1)).alias("normal_0_90"),
+    F.count(F.when((severity_col >= 90) & (severity_col < 98), 1)).alias("borderline_90_98"),
+    F.count(F.when((severity_col >= 98) & (severity_col < 99), 1)).alias("flagged_98_99"),
+    F.count(F.when(severity_col >= 99, 1)).alias("highly_anomalous_99_100"),
 ).first()
 
 total = total_scored
-print(f"Likely Normal (0.0-0.5):      {score_ranges['normal_0.0_0.5']:4d} ({score_ranges['normal_0.0_0.5']/total*100:5.1f}%) ← Not flagged")
-print(f"Near Threshold (0.5-<0.6):    {score_ranges['borderline_0.5_0.6']:4d} ({score_ranges['borderline_0.5_0.6']/total*100:5.1f}%) ← Not flagged")
-print(f"Flagged (0.6-0.75):           {score_ranges['flagged_0.6_0.75']:4d} ({score_ranges['flagged_0.6_0.75']/total*100:5.1f}%) ← ANOMALIES (flagged)")
-print(f"Highly Anomalous (0.75-1.0):  {score_ranges['highly_anomalous_0.75_1.0']:4d} ({score_ranges['highly_anomalous_0.75_1.0']/total*100:5.1f}%) ← ANOMALIES (extreme)")
+print(f"Likely Normal (0-<90):        {severity_ranges['normal_0_90']:4d} ({severity_ranges['normal_0_90']/total*100:5.1f}%) ← Not flagged")
+print(f"Near Threshold (90-<98):      {severity_ranges['borderline_90_98']:4d} ({severity_ranges['borderline_90_98']/total*100:5.1f}%) ← Not flagged")
+print(f"Flagged (98-<99):             {severity_ranges['flagged_98_99']:4d} ({severity_ranges['flagged_98_99']/total*100:5.1f}%) ← ANOMALIES (flagged)")
+print(f"Highly Anomalous (99-100):    {severity_ranges['highly_anomalous_99_100']:4d} ({severity_ranges['highly_anomalous_99_100']/total*100:5.1f}%) ← ANOMALIES (extreme)")
 
 print("\n📊 Percentile-Based Breakdown (easy to interpret):\n")
-percentile_ranges = df_scored.select(
-    F.count(F.when(score_col < p90, 1)).alias("normal_p90"),
-    F.count(F.when((score_col >= p90) & (score_col < p95), 1)).alias("borderline_p90_p95"),
-    F.count(F.when((score_col >= p95) & (score_col < p99), 1)).alias("flagged_p95_p99"),
-    F.count(F.when(score_col >= p99, 1)).alias("highly_anomalous_p99"),
-).first()
-
-print(f"Normal (<p90):                {percentile_ranges['normal_p90']:4d} ({percentile_ranges['normal_p90']/total*100:5.1f}%) ← Typical")
-print(f"Upper tail (p90-p95):         {percentile_ranges['borderline_p90_p95']:4d} ({percentile_ranges['borderline_p90_p95']/total*100:5.1f}%) ← Unusual")
-print(f"Top tail (p95-p99):           {percentile_ranges['flagged_p95_p99']:4d} ({percentile_ranges['flagged_p95_p99']/total*100:5.1f}%) ← Very unusual")
-print(f"Extreme (p99+):               {percentile_ranges['highly_anomalous_p99']:4d} ({percentile_ranges['highly_anomalous_p99']/total*100:5.1f}%) ← Extremely unusual")
-
 print(f"\nℹ️ Percentiles compare records within this dataset.")
-print(f"   p90~{p90:.3f}, p95~{p95:.3f}, p99~{p99:.3f} (top 10%, 5%, 1%)")
 print("   Percentile bands are for interpretation only; the threshold is the actual rule.")
 
 print(f"\n💡 What Do These Scores Mean?")
-print(f"   • Scores are based on how 'isolated' a record is from normal patterns")
-print(f"   • Low scores (0.0-0.5): Blend in with normal data (NOT flagged)")
-print(f"   • Near-threshold (0.5-<0.6): Close to 0.60 (NOT flagged)")
-print(f"   • High scores (≥0.6): Stands out as different (FLAGGED as anomalies)")
-print(f"   • This is NOT a probability - it is a relative unusualness score")
-print(f"   • The threshold (0.60) is tuned empirically, not a statistical significance level")
+print(f"   • Severity is based on percentile rank within the training distribution")
+print(f"   • Low severity (0-<90): Typical patterns (NOT flagged)")
+print(f"   • Near-threshold (90-<98): Close to threshold (NOT flagged)")
+print(f"   • High severity (≥98): Unusual patterns (FLAGGED as anomalies)")
+print(f"   • This is NOT a probability - it is a relative unusualness percentile")
+print(f"   • The threshold (98) is tuned empirically, not a statistical significance level")
 
 
 # COMMAND ----------
 
-# Compare normal vs anomalous transactions (using 0.60 threshold)
+# Compare normal vs anomalous transactions (using 98 threshold)
 print("🔍 Normal vs Anomalous Transaction Comparison:\n")
 
-normal_stats = df_scored.filter(F.col("_dq_info.anomaly.score") < 0.6).agg(
+normal_stats = df_scored.filter(severity_col < 98).agg(
     F.avg("amount").alias("avg_amount"),
     F.avg("quantity").alias("avg_quantity"),
     F.count("*").alias("count")
 ).first()
 
-anomaly_stats = df_scored.filter(F.col("_dq_info.anomaly.score") >= 0.6).agg(
+anomaly_stats = df_scored.filter(severity_col >= 98).agg(
     F.avg("amount").alias("avg_amount"),
     F.avg("quantity").alias("avg_quantity"),
     F.count("*").alias("count")
 ).first()
 
-print("Normal Transactions (score < 0.60):")
+print("Normal Transactions (severity < 98):")
 print(f"   Count: {normal_stats['count']} ({normal_stats['count']/total_scored*100:.1f}%)")
 print(f"   Avg Amount: ${normal_stats['avg_amount']:.2f}")
 print(f"   Avg Quantity: {normal_stats['avg_quantity']:.1f}")
 
-print("\nFlagged Anomalies (score ≥ 0.60):")
+print("\nFlagged Anomalies (severity ≥ 98):")
 print(f"   Count: {anomaly_stats['count']} ({anomaly_stats['count']/total_scored*100:.1f}%)")
 print(f"   Avg Amount: ${anomaly_stats['avg_amount']:.2f}")
 print(f"   Avg Quantity: {anomaly_stats['avg_quantity']:.1f}")
@@ -688,14 +677,14 @@ print("   • Anomalies should be ~5% with extreme or unusual patterns")
 # MAGIC
 # MAGIC The threshold controls which records get flagged as anomalies. It's like setting a "sensitivity dial":
 # MAGIC
-# MAGIC - **Lower threshold** (e.g., 0.50-0.55): More sensitive, flags more records as unusual
-# MAGIC - **Higher threshold** (e.g., 0.65-0.75): Less sensitive, flags only very unusual records
+# MAGIC - **Lower threshold** (e.g., 90-95): More sensitive, flags more records as unusual
+# MAGIC - **Higher threshold** (e.g., 98-99): Less sensitive, flags only very unusual records
 # MAGIC
-# MAGIC **The default of 0.60** was chosen through testing across various datasets. It balances:
+# MAGIC **The demo uses 98** to keep alert volume low. The product default is **95**.
 # MAGIC - Finding real issues (recall)
 # MAGIC - Avoiding false alarms (precision)
 # MAGIC
-# MAGIC **Remember**: This is NOT a statistical confidence level! It's a cutoff on the "isolation score" that determines what's unusual enough to investigate.
+# MAGIC **Remember**: This is NOT a statistical confidence level! It's a cutoff on the **severity percentile** that determines what's unusual enough to investigate.
 # MAGIC
 # MAGIC **Important**: We already computed scores for every record. You can change the threshold and re-filter the
 # MAGIC results without re-running the anomaly check.
@@ -710,26 +699,26 @@ print("🎚️  Testing Different Thresholds:\n")
 print("Threshold | Anomalies | % of Data | Interpretation")
 print("-" * 70)
 
-thresholds = [0.5, 0.6, 0.7]
+thresholds = [95, 98, 99]
 total_count = total_scored
 
 for threshold in thresholds:
-    anomaly_count = df_scored.filter(F.col("_dq_info.anomaly.score") >= threshold).count()
+    anomaly_count = df_scored.filter(severity_col >= threshold).count()
     percentage = (anomaly_count / total_count) * 100
     
-    if threshold <= 0.5:
+    if threshold <= 80:
         interpretation = "Sensitive (more alerts)"
-    elif threshold <= 0.6:
+    elif threshold <= 90:
         interpretation = "Balanced (recommended)"
     else:
         interpretation = "Strict (fewer alerts)"
     
-    print(f"   {threshold:.1f}   |   {anomaly_count:4d}    |  {percentage:5.1f}%  | {interpretation}")
+    print(f"   {threshold:>3d}   |   {anomaly_count:4d}    |  {percentage:5.1f}%  | {interpretation}")
 
 print("\n💡 How to Choose Your Threshold:")
-print("   • Start with default 0.60 (balanced for most use cases)")
-print("   • Too many alerts to investigate? → Increase to 0.65 or 0.70")
-print("   • Missing real issues? → Decrease to 0.50 or 0.55")
+print("   • Start with default 95 (balanced for most use cases)")
+print("   • Too many alerts to investigate? → Increase to 99")
+print("   • Missing real issues? → Decrease to 95 or 90")
 print("   • The 'right' threshold depends on:")
 print("     - Your investigation capacity (how many alerts can you handle?)")
 print("     - Your risk tolerance (cost of missing an issue vs false alarm)")
@@ -738,17 +727,18 @@ print("     - Your risk tolerance (cost of missing an issue vs false alarm)")
 # COMMAND ----------
 
 # Let's look at borderline cases
-print("🔍 Examining Borderline Cases (scores 0.50-<0.60):\n")
+print("🔍 Examining Borderline Cases (severity 95-<98):\n")
 
 borderline = df_scored.filter(
-    (F.col("_dq_info.anomaly.score") >= 0.50) & 
-    (F.col("_dq_info.anomaly.score") < 0.60)
-).orderBy(F.col("_dq_info.anomaly.score").desc())
+    (severity_col >= 95) &
+    (severity_col < 98)
+).orderBy(severity_col.desc())
 
 print(f"Found {borderline.count()} borderline transactions:\n")
 display(borderline.select(
     "transaction_id", "amount", "quantity", "category", "region",
-    F.round("_dq_info.anomaly.score", 3).alias("score")
+    F.round(severity_col, 1).alias("severity_percentile"),
+    F.round(score_col, 3).alias("score")
 ).limit(10))
 
 print("\n💡 These are on the edge - slight threshold changes will include/exclude them")
@@ -826,7 +816,7 @@ checks_manual = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "model": model_name_manual,
-            "threshold": 0.5,
+            "threshold": 98.0,
             "registry_table": registry_table
         }
     )
@@ -839,8 +829,9 @@ print(f"   (Auto model found {df_anomalies.count()} anomalies)")
 print(f"\n🔝 Top 5 anomalies from manual model:\n")
 
 
-display(df_anomalies_manual.orderBy(F.col("_dq_info.anomaly.score").desc()).select(
+display(df_anomalies_manual.orderBy(F.col("_dq_info.anomaly.severity_percentile").desc()).select(
     "transaction_id", "amount", "quantity", "date",
+    F.round("_dq_info.anomaly.severity_percentile", 1).alias("severity_percentile"),
     F.round("_dq_info.anomaly.score", 3).alias("score")
 ).limit(5))
 
@@ -872,7 +863,7 @@ checks_with_contrib = [
         check_func=has_no_anomalies,
         check_func_kwargs={
             "model": model_name_manual,
-            "threshold": 0.5,
+            "threshold": 98.0,
             "include_contributions": True,  # Add this to get explanations!
             "registry_table": registry_table
         }
@@ -887,13 +878,14 @@ print("\n🎯 Top Anomalies with Explanations:\n")
 # Filter by _errors column (standard DQX pattern) to get flagged anomalies
 anomalies_explained = df_with_contrib.filter(
     F.size(F.col("_errors")) > 0
-).orderBy(F.col("_dq_info.anomaly.score").desc()).limit(5)
+).orderBy(F.col("_dq_info.anomaly.severity_percentile").desc()).limit(5)
 
 display(anomalies_explained.select(
     "transaction_id",
     "amount",
     "quantity",
     F.date_format("date", "yyyy-MM-dd HH:mm").alias("date"),
+    F.round("_dq_info.anomaly.severity_percentile", 1).alias("severity_percentile"),
     F.round("_dq_info.anomaly.score", 3).alias("score"),
     F.col("_dq_info.anomaly.contributions").alias("contributions")
 ))
@@ -923,6 +915,7 @@ anomalies_flattened = anomalies_explained.select(
     "amount",
     "quantity",
     "date",
+    F.col("_dq_info.anomaly.severity_percentile").alias("severity_percentile"),
     F.col("_dq_info.anomaly.score").alias("score"),
     F.col("_dq_info.anomaly.contributions").alias("contributions")
 )
@@ -930,7 +923,8 @@ anomalies_flattened = anomalies_explained.select(
 top_anomaly = anomalies_flattened.first()
 
 print(f"Transaction ID: {top_anomaly['transaction_id']}")
-print(f"Anomaly Score: {top_anomaly['score']:.3f}")
+print(f"Severity Percentile: {top_anomaly['severity_percentile']:.1f}")
+print(f"Anomaly Score (raw): {top_anomaly['score']:.3f}")
 print(f"\nTransaction Details:")
 print(f"   Amount: ${top_anomaly['amount']:.2f}")
 print(f"   Quantity: {top_anomaly['quantity']}")

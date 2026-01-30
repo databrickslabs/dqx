@@ -10,8 +10,8 @@ RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
 EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID)
 
 # Default thresholds used across anomaly integration tests.
-DEFAULT_SCORE_THRESHOLD = 0.5
-DQENGINE_SCORE_THRESHOLD = 0.6
+DEFAULT_SCORE_THRESHOLD = 95.0
+DQENGINE_SCORE_THRESHOLD = 95.0
 DRIFT_THRESHOLD = 3.0
 DRIFT_TRAIN_SIZE = 1500
 

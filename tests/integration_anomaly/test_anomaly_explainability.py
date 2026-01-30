@@ -60,8 +60,8 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_
     assert "discount" in contribs
 
 
-def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):
-    """Test that contribution percentages sum to approximately 1.0."""
+def test_contribution_percentages_sum_to_hundred(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):
+    """Test that contribution percentages sum to approximately 100.0."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
@@ -92,7 +92,7 @@ def test_contribution_percentages_sum_to_one(spark: SparkSession, shared_3d_mode
     total = sum(v for v in contribs.values() if v is not None)
 
     # Allow small floating point error
-    assert abs(total - 1.0) < 0.01
+    assert abs(total - 100.0) < 0.5
 
 
 def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_df_factory, anomaly_scorer):
@@ -195,26 +195,26 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
     # Amount should likely be the top contributor (or at least significant)
     # Since amount is the most anomalous feature
     assert top_feature in {"amount", "discount", "quantity"}
-    assert valid_contribs[top_feature] > 0.2  # Should have significant contribution
+    assert valid_contribs[top_feature] > 20.0  # Should have significant contribution
 
 
 def test_add_top_contributors_message(spark: SparkSession):
     """Top contributors are added only for rows above threshold."""
     df = spark.createDataFrame(
         [
-            (0.7, {"amount": 0.8, "quantity": 0.2}),
-            (0.2, {"amount": 0.9, "quantity": 0.1}),
+            (0.7, 70.0, {"amount": 80.0, "quantity": 20.0}),
+            (0.2, 20.0, {"amount": 90.0, "quantity": 10.0}),
         ],
-        "anomaly_score double, anomaly_contributions map<string,double>",
+        "anomaly_score double, severity_percentile double, anomaly_contributions map<string,double>",
     )
 
-    result = add_top_contributors_to_message(df, threshold=0.6, top_n=2)
+    result = add_top_contributors_to_message(df, threshold=60.0, top_n=2)
     assert "_top_contributors" in result.columns
 
-    rendered = format_contributions_map({"amount": 0.8, "quantity": 0.2}, 2)
+    rendered = format_contributions_map({"amount": 80.0, "quantity": 20.0}, 2)
     assert "amount" in rendered
     assert "quantity" in rendered
-    assert format_contributions_map({"amount": 0.9, "quantity": 0.1}, 2) != ""
+    assert format_contributions_map({"amount": 90.0, "quantity": 10.0}, 2) != ""
 
 
 def test_add_top_contributors_handles_null_map(spark: SparkSession):
@@ -340,5 +340,5 @@ def test_format_contributions_map():
     """Formatting helper should handle None and sort by magnitude."""
     assert format_contributions_map(None, 2) == ""
     assert format_contributions_map({}, 2) == ""
-    rendered = format_contributions_map({"a": 0.7, "b": None, "c": 0.2}, 2)
+    rendered = format_contributions_map({"a": 70.0, "b": None, "c": 20.0}, 2)
     assert "a" in rendered

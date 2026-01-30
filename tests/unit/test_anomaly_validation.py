@@ -249,16 +249,16 @@ def test_max_input_columns_validation():
 
 
 def test_threshold_bounds():
-    """Test anomaly score threshold validation (0-1 range)."""
+    """Test anomaly severity threshold validation (0-100 range)."""
     # Valid thresholds
-    valid_thresholds = [0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
+    valid_thresholds = [0.0, 10.0, 30.0, 50.0, 70.0, 90.0, 100.0]
     for threshold in valid_thresholds:
-        assert 0.0 <= threshold <= 1.0
+        assert 0.0 <= threshold <= 100.0
 
     # Invalid thresholds
-    invalid_thresholds = [-0.1, 1.1, 2.0]
+    invalid_thresholds = [-0.1, 120.0, 200.0]
     for threshold in invalid_thresholds:
-        assert threshold < 0.0 or threshold > 1.0
+        assert threshold < 0.0 or threshold > 100.0
 
 
 def test_drift_threshold_validation():

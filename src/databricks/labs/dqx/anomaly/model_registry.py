@@ -45,7 +45,8 @@ def compute_config_hash(columns: list[str], segment_by: list[str] | None) -> str
 ANOMALY_MODEL_TABLE_SCHEMA = (
     "identity struct<model_name:string, model_uri:string, algorithm:string, mlflow_run_id:string, status:string>, "
     "training struct<columns:array<string>, hyperparameters:map<string,string>, training_rows:bigint, "
-    "training_time:timestamp, metrics:map<string,double>, baseline_stats:map<string,map<string,double>>>, "
+    "training_time:timestamp, metrics:map<string,double>, score_quantiles:map<string,double>, "
+    "baseline_stats:map<string,map<string,double>>>, "
     "features struct<mode:string, column_types:map<string,string>, feature_metadata:string, "
     "feature_importance:map<string,double>, temporal_config:map<string,string>>, "
     "segmentation struct<segment_by:array<string>, segment_values:map<string,string>, "
@@ -66,13 +67,14 @@ class ModelIdentity:
 
 @dataclass
 class TrainingMetadata:
-    """Training configuration and metrics (6 fields)."""
+    """Training configuration and metrics (7 fields)."""
 
     columns: list[str]
     hyperparameters: dict[str, str]
     training_rows: int
     training_time: datetime
     metrics: dict[str, float] | None = None
+    score_quantiles: dict[str, float] | None = None
     baseline_stats: dict[str, dict[str, float]] | None = None
 
 
@@ -156,6 +158,7 @@ class AnomalyModelRegistry:
                 "training_rows": record.training.training_rows,
                 "training_time": record.training.training_time,
                 "metrics": record.training.metrics,
+                "score_quantiles": record.training.score_quantiles,
                 "baseline_stats": record.training.baseline_stats,
             },
             "features": {

@@ -19,6 +19,7 @@ def create_null_scored_dataframe(
     score_col: str = "anomaly_score",
     score_std_col: str = "anomaly_score_std",
     contributions_col: str = "anomaly_contributions",
+    severity_col: str = "severity_percentile",
 ) -> DataFrame:
     """Create a DataFrame with null anomaly scores (for empty segments or filtered rows).
 
@@ -29,6 +30,7 @@ def create_null_scored_dataframe(
         score_col: Name for the score column
         score_std_col: Name for the standard deviation column
         contributions_col: Name for the contributions column
+        severity_col: Name for the severity percentile column
 
     Returns:
         DataFrame with null anomaly scores and properly structured _dq_info column
@@ -38,6 +40,7 @@ def create_null_scored_dataframe(
         result = result.withColumn(score_std_col, F.lit(None).cast(DoubleType()))
     if include_contributions:
         result = result.withColumn(contributions_col, F.lit(None).cast(MapType(StringType(), DoubleType())))
+    result = result.withColumn(severity_col, F.lit(None).cast(DoubleType()))
 
     # Add null _dq_info column with proper schema (direct struct, not array)
     null_anomaly_info = F.lit(None).cast(
@@ -45,6 +48,7 @@ def create_null_scored_dataframe(
             [
                 StructField("check_name", StringType(), True),
                 StructField("score", DoubleType(), True),
+                StructField("severity_percentile", DoubleType(), True),
                 StructField("is_anomaly", BooleanType(), True),
                 StructField("threshold", DoubleType(), True),
                 StructField("model", StringType(), True),
@@ -75,6 +79,7 @@ def add_info_column(
     score_col: str = "anomaly_score",
     score_std_col: str = "anomaly_score_std",
     contributions_col: str = "anomaly_contributions",
+    severity_col: str = "severity_percentile",
 ) -> DataFrame:
     """Add _dq_info struct column with anomaly metadata.
 
@@ -83,11 +88,12 @@ def add_info_column(
         model_name: Name of the model used for scoring.
         threshold: Threshold used for anomaly detection.
         segment_values: Segment values if model is segmented (None for global models).
-        include_contributions: Whether anomaly_contributions are available.
+        include_contributions: Whether anomaly_contributions are available (0–100 percent).
         include_confidence: Whether anomaly_score_std is available.
         score_col: Column name for anomaly scores (internal, collision-safe).
         score_std_col: Column name for ensemble std scores (internal, collision-safe).
-        contributions_col: Column name for SHAP contributions (internal, collision-safe).
+        contributions_col: Column name for SHAP contributions (internal, collision-safe, 0–100 percent).
+        severity_col: Column name for severity percentile (internal, collision-safe).
 
     Returns:
         DataFrame with _dq_info column added/updated.
@@ -95,8 +101,9 @@ def add_info_column(
     # Build anomaly info struct
     anomaly_info_fields = {
         "check_name": F.lit("has_no_anomalies"),
-        "score": F.col(score_col),
-        "is_anomaly": F.col(score_col) >= F.lit(threshold),
+        "score": F.round(F.col(score_col), 3),
+        "severity_percentile": F.round(F.col(severity_col), 1),
+        "is_anomaly": F.col(severity_col) >= F.lit(threshold),
         "threshold": F.lit(threshold),
         "model": F.lit(model_name),
     }
@@ -130,6 +137,52 @@ def add_info_column(
     if "_dq_info" in df.columns:
         return df.withColumn("_dq_info", F.col("_dq_info").withField("anomaly", anomaly_info))
     return df.withColumn("_dq_info", info_struct)
+
+
+def add_severity_percentile_column(
+    df: DataFrame,
+    *,
+    score_col: str,
+    severity_col: str,
+    quantile_points: list[tuple[float, float]],
+) -> DataFrame:
+    """Add a severity percentile column using piecewise linear interpolation.
+
+    Args:
+        df: DataFrame with anomaly score column.
+        score_col: Column name containing anomaly scores.
+        severity_col: Output column name for severity percentile (0–100).
+        quantile_points: Ordered list of (percentile, score) points.
+
+    Returns:
+        DataFrame with severity percentile column added.
+    """
+    if not quantile_points:
+        return df.withColumn(severity_col, F.lit(None).cast(DoubleType()))
+
+    # Ensure points are sorted by percentile
+    points = sorted(quantile_points, key=lambda p: p[0])
+    score_expr = F.col(score_col)
+
+    # Handle null scores
+    expr = F.when(score_expr.isNull(), F.lit(None).cast(DoubleType()))
+
+    prev_p, prev_q = points[0]
+    expr = expr.when(score_expr <= F.lit(prev_q), F.lit(float(prev_p)))
+
+    for current_p, current_q in points[1:]:
+        if current_q == prev_q:
+            interpolated = F.lit(float(current_p))
+        else:
+            interpolated = F.lit(float(prev_p)) + (
+                (score_expr - F.lit(prev_q)) * (float(current_p) - float(prev_p)) / (float(current_q) - float(prev_q))
+            )
+        expr = expr.when(score_expr <= F.lit(current_q), interpolated)
+        prev_p, prev_q = current_p, current_q
+
+    expr = expr.otherwise(F.lit(float(prev_p)))
+
+    return df.withColumn(severity_col, expr)
 
 
 def create_udf_schema(include_contributions: bool) -> StructType:

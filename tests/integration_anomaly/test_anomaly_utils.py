@@ -227,24 +227,16 @@ def get_percentile_threshold_from_data(
     registry_table: str,
     percentile: float = 0.95,
 ) -> float:
-    """Derive a score threshold from the given data at a target percentile."""
-    if "transaction_id" not in df.columns:
-        df = df.withColumn("transaction_id", F.monotonically_increasing_id())
-
-    scored = apply_anomaly_check_direct(
-        df,
-        model_name,
-        registry_table,
-        threshold=1.0,
-    )
-    threshold = scored.approxQuantile("anomaly_score", [percentile], 0.01)[0]
-    return float(threshold)
+    """Derive a severity percentile threshold (0–100) from a target percentile."""
+    _ = (df, model_name, registry_table)
+    # Severity threshold is expressed directly in percentile terms (0–100)
+    return float(percentile * 100.0)
 
 
 def create_anomaly_check_rule(
     model_name: str,
     registry_table: str,
-    threshold: float = 0.6,
+    threshold: float = 60.0,
     criticality: str = "error",
     **kwargs: Any,
 ) -> DQDatasetRule:
@@ -256,7 +248,7 @@ def create_anomaly_check_rule(
     Args:
         model_name: Name of the trained model
         registry_table: Full path to registry table
-        threshold: Anomaly score threshold (default: 0.6)
+        threshold: Severity percentile threshold (default: 60.0)
         criticality: Rule criticality (default: "error")
         **kwargs: Additional check_func_kwargs
 
@@ -287,7 +279,7 @@ def apply_anomaly_check_direct(
     test_df: Any,
     model_name: str,
     registry_table: str,
-    threshold: float = 0.5,
+    threshold: float = 60.0,
     **kwargs: Any,
 ) -> Any:
     """
@@ -299,7 +291,7 @@ def apply_anomaly_check_direct(
         test_df: Test DataFrame
         model_name: Model name
         registry_table: Registry table path
-        threshold: Score threshold
+        threshold: Severity percentile threshold (0–100)
         **kwargs: Additional has_no_anomalies kwargs
 
     Returns:
@@ -318,8 +310,10 @@ def apply_anomaly_check_direct(
     )
     result_df = apply_fn(test_df)
 
-    # Extract _dq_info.anomaly.score as top-level anomaly_score column for test convenience
-    return result_df.withColumn("anomaly_score", F.col("_dq_info.anomaly.score"))
+    # Extract _dq_info fields as top-level columns for test convenience
+    return result_df.withColumn("anomaly_score", F.col("_dq_info.anomaly.score")).withColumn(
+        "severity_percentile", F.col("_dq_info.anomaly.severity_percentile")
+    )
 
 
 def train_simple_2d_model(
@@ -486,7 +480,7 @@ def score_with_anomaly_check(
     df: DataFrame,
     model_name: str,
     registry_table: str,
-    threshold: float = 0.5,
+    threshold: float = 60.0,
 ):
     """
     Helper to score a DataFrame using has_no_anomalies and collect results.
@@ -497,7 +491,7 @@ def score_with_anomaly_check(
         df (DataFrame): DataFrame to score
         model_name (str): Model name
         registry_table (str): Registry table path
-        threshold (float): Anomaly score threshold (default: 0.5)
+        threshold (float): Severity percentile threshold (0–100, default: 60.0)
 
     Returns:
         Scored DataFrame with results collected
@@ -549,7 +543,7 @@ def create_anomaly_dataset_rule(
     model_name: str,
     registry_table: str,
     criticality: str = "error",
-    threshold: float = 0.5,
+    threshold: float = 60.0,
     **kwargs,
 ):
     """
@@ -561,7 +555,7 @@ def create_anomaly_dataset_rule(
         model_name: Model name
         registry_table: Registry table path
         criticality: Rule criticality (default: "error")
-        threshold: Anomaly score threshold (default: 0.5)
+        threshold: Severity percentile threshold (default: 60.0)
         **kwargs: Additional has_no_anomalies arguments
 
     Returns:

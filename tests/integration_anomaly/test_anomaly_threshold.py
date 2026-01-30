@@ -47,13 +47,13 @@ def test_threshold_affects_flagging(
     dq_engine = DQEngine(ws, spark)
 
     # Aggressive threshold (0.3) - flags more
-    rule_aggressive = create_anomaly_dataset_rule(model_name, registry_table, threshold=0.3)
+    rule_aggressive = create_anomaly_dataset_rule(model_name, registry_table, threshold=30.0)
 
     result_aggressive = dq_engine.apply_checks(test_df, [rule_aggressive])
     errors_aggressive = result_aggressive.filter(F.size("_errors") > 0).count()
 
     # Conservative threshold (0.9) - flags less
-    rule_conservative = create_anomaly_dataset_rule(model_name, registry_table, threshold=0.9)
+    rule_conservative = create_anomaly_dataset_rule(model_name, registry_table, threshold=90.0)
 
     result_conservative = dq_engine.apply_checks(test_df, [rule_conservative])
     errors_conservative = result_conservative.filter(F.size("_errors") > 0).count()
@@ -90,13 +90,13 @@ def test_precision_recall_tradeoff(
     dq_engine = DQEngine(ws, spark)
 
     # High threshold (low recall) - use helper
-    rule_low_recall = create_anomaly_dataset_rule(model_name, registry_table, threshold=0.95)
+    rule_low_recall = create_anomaly_dataset_rule(model_name, registry_table, threshold=95.0)
 
     result_low_recall = dq_engine.apply_checks(test_df, [rule_low_recall])
     flagged_low_recall = result_low_recall.filter(F.size("_errors") > 0).count()
 
     # Low threshold (high recall) - use helper
-    rule_high_recall = create_anomaly_dataset_rule(model_name, registry_table, threshold=0.3)
+    rule_high_recall = create_anomaly_dataset_rule(model_name, registry_table, threshold=30.0)
 
     result_high_recall = dq_engine.apply_checks(test_df, [rule_high_recall])
     flagged_high_recall = result_high_recall.filter(F.size("_errors") > 0).count()
@@ -122,8 +122,8 @@ def test_threshold_edge_cases(ws, spark, test_df_factory, quick_model_factory):
     # Should flag most/all rows
     assert flagged_zero >= 1
 
-    # Threshold 1.0 - flags nothing (almost impossible to exceed) - use helper
-    rule_one = create_anomaly_dataset_rule(model_name, registry_table, threshold=1.0)
+    # Threshold 100.0 - flags nothing (almost impossible to exceed) - use helper
+    rule_one = create_anomaly_dataset_rule(model_name, registry_table, threshold=100.0)
 
     result_one = dq_engine.apply_checks(test_df, [rule_one])
     flagged_one = result_one.filter(F.size("_errors") > 0).count()
