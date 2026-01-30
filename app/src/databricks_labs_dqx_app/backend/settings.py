@@ -21,72 +21,58 @@ class SettingsManager:
         return self.default_dqx_folder
 
     def get_settings(self) -> InstallationSettings:
+        """Read app settings from app.yml.
+
+        The app.yml file stores app-specific settings, e.g. which DQX installation folder to use).
+        This is separate from config.yml which contains DQX configuration.
+        """
         try:
-            # Try to read app.yml using Workspace API (export)
-            # Export returns response with content field (base64 encoded usually if not direct download,
-            # but SDK helper .download might handle it?
-            # ws.workspace.export returns ExportResponse(content=..., file_type=...)
-
-            # Using download() context manager helper from SDK mixin if available,
-            # but SDK documentation says 'export' returns the content.
-            # Let's use the standard export method.
-
             resp = self.ws.workspace.export(self.app_settings_path, format=ExportFormat.SOURCE)
             if resp.content:
-                # Content is base64 encoded string in the response object
                 decoded = base64.b64decode(resp.content).decode("utf-8")
                 data = yaml.safe_load(decoded)
                 if data and "install_folder" in data:
-                    return InstallationSettings(install_folder=data["install_folder"], is_default=False)
+                    install_folder = data["install_folder"]
+                    return InstallationSettings(install_folder=install_folder)
         except ResourceDoesNotExist:
             pass
         except Exception as e:
-            logger.warning(f"Failed to read app settings: {e}")
+            logger.warning(f"Failed to read app settings from {self.app_settings_path}: {e}")
 
         # Return default if not found or error
-        return InstallationSettings(install_folder=self.get_default_install_folder(), is_default=True)
+        return InstallationSettings(install_folder=self.get_default_install_folder())
 
     def save_settings(self, settings: InstallationSettings) -> InstallationSettings:
-        default_folder = self.get_default_install_folder()
+        """Save app settings to app.yml.
 
-        path_str = settings.install_folder.strip()
+        The app.yml file stores app-specific configuration, e.g. which install folder to use for DQX.
+        This is separate from config.yml which contains the actual DQX configuration.
+        """
+        install_folder = settings.install_folder.strip()
 
-        if not path_str.endswith(".yml") and not path_str.endswith(".yaml"):
-            raise ValueError("Configuration path must be a valid .yml or .yaml file")
-
-        # Normalize for comparison
-        # If the user provided path is exactly the default folder (without config.yml),
-        # or default folder + /config.yml, we treat it as default.
-
-        is_default = False
-        if path_str == default_folder or path_str == f"{default_folder}/config.yml":
-            is_default = True
-
-        if is_default:
-            # It is default, remove app.yml if exists
-            try:
-                self.ws.workspace.delete(self.app_settings_path)
-            except ResourceDoesNotExist:
-                pass
-            except Exception as e:
-                logger.warning(f"Failed to delete app settings: {e}")
-
-            return InstallationSettings(
-                install_folder=default_folder, is_default=True  # Return the folder by default? Or explicit path?
-            )
-        # Ensure .dqx folder exists (where app.yml lives)
-        # Workspace API 'mkdirs'
+        # Ensure the .dqx folder exists (where app.yml lives)
         try:
             self.ws.workspace.mkdirs(self.default_dqx_folder)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to create .dqx folder {self.default_dqx_folder}: {e}")
+            raise ValueError(f"Could not create .dqx folder: {self.default_dqx_folder}") from e
 
-        # Save app.yml using Workspace API import
-        content = yaml.dump({"install_folder": path_str})
-        encoded_content = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        # Ensure the install folder exists (create if needed)
+        try:
+            self.ws.workspace.mkdirs(install_folder)
+        except Exception as e:
+            logger.error(f"Failed to create install folder {install_folder}: {e}")
+            raise ValueError(f"Could not create install folder: {install_folder}") from e
 
-        self.ws.workspace.import_(
-            self.app_settings_path, content=encoded_content, format=ImportFormat.SOURCE, overwrite=True
-        )
+        # Save app.yml with the install folder
+        content = yaml.dump({"install_folder": install_folder})
+        content_bytes = content.encode("utf-8")
 
-        return InstallationSettings(install_folder=path_str, is_default=False)
+        try:
+            self.ws.workspace.upload(self.app_settings_path, content_bytes, format=ImportFormat.AUTO, overwrite=True)
+            logger.info(f"Saved app settings to {self.app_settings_path}: install_folder={install_folder}")
+        except Exception as e:
+            logger.error(f"Failed to save app settings to {self.app_settings_path}: {e}", exc_info=True)
+            raise ValueError(f"Could not save app settings to: {self.app_settings_path}") from e
+
+        return InstallationSettings(install_folder=install_folder)

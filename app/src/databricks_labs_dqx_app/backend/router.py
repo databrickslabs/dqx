@@ -1,5 +1,6 @@
 from typing import Annotated
 
+from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
@@ -28,15 +29,7 @@ def get_install_folder(ws: WorkspaceClient, path: str | None) -> str:
     folder = path
     if not folder:
         folder = SettingsManager(ws).get_settings().install_folder
-
-    # ConfigSerializer expects a folder path and appends config.yml internally (via underlying blueprint/installation)
-    # If the user provided a full file path ending in .yml, we strip it.
-    folder = folder.strip()
-    if folder.endswith(".yml") or folder.endswith(".yaml"):
-        if "/" in folder:
-            folder = folder.rsplit("/", 1)[0]
-
-    return folder
+    return folder.strip()
 
 
 @api.get("/version", response_model=VersionOut, operation_id="version")
@@ -162,12 +155,10 @@ def get_run_checks(
     except ResourceDoesNotExist:
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
-    # Use the factory to get the handler and storage config
-    # Accessing protected member _checks_handler_factory as it seems to be the way to get the storage config
-    # properly constructed from the RunConfig
+    checks_config = InstallationChecksStorageConfig(run_config_name=run_config.name, install_folder=install_folder)
+
     try:
-        _, storage_config = engine._checks_handler_factory.create_for_run_config(run_config)
-        checks = engine.load_checks(storage_config)
+        checks = engine.load_checks(checks_config)
         return ChecksOut(checks=checks)
     except Exception as e:
         # Checks might not exist yet, or other issues
@@ -194,7 +185,6 @@ def save_run_checks(
     except ResourceDoesNotExist:
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
-    _, storage_config = engine._checks_handler_factory.create_for_run_config(run_config)
-
-    engine.save_checks(body.checks, storage_config)
+    checks_config = InstallationChecksStorageConfig(run_config_name=run_config.name, install_folder=install_folder)
+    engine.save_checks(body.checks, checks_config)
     return ChecksOut(checks=body.checks)

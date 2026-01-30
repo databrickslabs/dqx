@@ -40,4 +40,3 @@ class ChecksIn(BaseModel):
 
 class InstallationSettings(BaseModel):
     install_folder: str = Field(description="Path to the folder containing config.yml")
-    is_default: bool = Field(default=False, description="Whether this is the default location")

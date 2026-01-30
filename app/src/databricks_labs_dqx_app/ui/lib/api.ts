@@ -97,8 +97,6 @@ export interface InputConfig {
 export interface InstallationSettings {
   /** Path to the folder containing config.yml */
   install_folder: string;
-  /** Whether this is the default location */
-  is_default?: boolean;
 }
 
 export interface LLMConfig {

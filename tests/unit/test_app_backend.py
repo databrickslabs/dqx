@@ -45,25 +45,10 @@ class TestGetInstallFolder:
         result = get_install_folder(mock_workspace_client, "  /Workspace/my_project/dqx  ")
         assert result == "/Workspace/my_project/dqx"
 
-    def test_strips_yml_extension(self, mock_workspace_client):
-        """Should strip .yml file from path and return folder."""
-        result = get_install_folder(mock_workspace_client, "/Workspace/my_project/dqx/config.yml")
-        assert result == "/Workspace/my_project/dqx"
-
-    def test_strips_yaml_extension(self, mock_workspace_client):
-        """Should strip .yaml file from path and return folder."""
-        result = get_install_folder(mock_workspace_client, "/Workspace/my_project/dqx/config.yaml")
-        assert result == "/Workspace/my_project/dqx"
-
     def test_handles_yml_only_filename(self, mock_workspace_client):
         """Should handle path that is just a yml filename with no folder."""
         result = get_install_folder(mock_workspace_client, "config.yml")
         assert result == "config.yml"
-
-    def test_strips_yml_with_nested_path(self, mock_workspace_client):
-        """Should handle deeply nested paths with yml extension."""
-        result = get_install_folder(mock_workspace_client, "/Workspace/Users/user/project/subdir/config.yml")
-        assert result == "/Workspace/Users/user/project/subdir"
 
 
 class TestGetOboWs:
@@ -230,11 +215,10 @@ class TestSettingsManager:
         result = manager.get_settings()
 
         assert result.install_folder == "/Users/test_user@example.com/.dqx"
-        assert result.is_default is True
 
     def test_get_settings_returns_custom_when_file_exists(self, mock_workspace_client):
         """Should return custom settings when app.yml exists."""
-        yaml_content = "install_folder: /custom/path/config.yml"
+        yaml_content = "install_folder: /custom/path"
         encoded = base64.b64encode(yaml_content.encode()).decode()
 
         mock_response = ExportResponse(content=encoded)
@@ -243,57 +227,135 @@ class TestSettingsManager:
         manager = SettingsManager(mock_workspace_client)
         result = manager.get_settings()
 
-        assert result.install_folder == "/custom/path/config.yml"
-        assert result.is_default is False
+        assert result.install_folder == "/custom/path"
 
-    def test_get_settings_returns_default_on_exception(self, mock_workspace_client):
-        """Should return default settings when export fails with unexpected error."""
+    def test_get_settings_returns_default_when_file_has_default_path(self, mock_workspace_client):
+        """Should return default settings when app.yml contains default path."""
+        yaml_content = "install_folder: /Users/test_user@example.com/.dqx"
+        encoded = base64.b64encode(yaml_content.encode()).decode()
+
+        mock_response = ExportResponse(content=encoded)
+        mock_workspace_client.workspace.export.return_value = mock_response
+
+        manager = SettingsManager(mock_workspace_client)
+        result = manager.get_settings()
+
+        assert result.install_folder == "/Users/test_user@example.com/.dqx"
+
+    def test_get_settings_returns_default_when_yaml_malformed(self, mock_workspace_client):
+        """Should return default settings when app.yml has malformed YAML."""
+        yaml_content = "install_folder: [unclosed bracket"
+        encoded = base64.b64encode(yaml_content.encode()).decode()
+
+        mock_response = ExportResponse(content=encoded)
+        mock_workspace_client.workspace.export.return_value = mock_response
+
+        manager = SettingsManager(mock_workspace_client)
+        result = manager.get_settings()
+
+        assert result.install_folder == "/Users/test_user@example.com/.dqx"
+
+    def test_get_settings_returns_default_when_missing_install_folder_key(self, mock_workspace_client):
+        """Should return default settings when app.yml is missing install_folder key."""
+        yaml_content = "some_other_key: value"
+        encoded = base64.b64encode(yaml_content.encode()).decode()
+
+        mock_response = ExportResponse(content=encoded)
+        mock_workspace_client.workspace.export.return_value = mock_response
+
+        manager = SettingsManager(mock_workspace_client)
+        result = manager.get_settings()
+
+        assert result.install_folder == "/Users/test_user@example.com/.dqx"
+
+    def test_get_settings_returns_default_when_content_empty(self, mock_workspace_client):
+        """Should return default settings when app.yml has empty content."""
+        mock_response = ExportResponse(content=None)
+        mock_workspace_client.workspace.export.return_value = mock_response
+
+        manager = SettingsManager(mock_workspace_client)
+        result = manager.get_settings()
+
+        assert result.install_folder == "/Users/test_user@example.com/.dqx"
+
+    def test_get_settings_returns_default_on_generic_exception(self, mock_workspace_client):
+        """Should return default settings when export throws unexpected error."""
         mock_workspace_client.workspace.export.side_effect = Exception("Unexpected error")
 
         manager = SettingsManager(mock_workspace_client)
         result = manager.get_settings()
 
-        assert result.is_default is True
-
-    def test_save_settings_raises_on_invalid_extension(self, mock_workspace_client):
-        """Should raise ValueError when path doesn't end with .yml or .yaml."""
-        manager = SettingsManager(mock_workspace_client)
-        settings = InstallationSettings(install_folder="/path/to/config.txt", is_default=False)
-
-        with pytest.raises(ValueError, match="must be a valid .yml or .yaml file"):
-            manager.save_settings(settings)
-
-    def test_save_settings_deletes_file_for_default_path(self, mock_workspace_client):
-        """Should delete app.yml when saving default path."""
-        manager = SettingsManager(mock_workspace_client)
-        default_path = f"{manager.default_dqx_folder}/config.yml"
-        settings = InstallationSettings(install_folder=default_path, is_default=False)
-
-        result = manager.save_settings(settings)
-
-        mock_workspace_client.workspace.delete.assert_called_once_with(manager.app_settings_path)
-        assert result.is_default is True
+        assert result.install_folder == "/Users/test_user@example.com/.dqx"
 
     def test_save_settings_creates_file_for_custom_path(self, mock_workspace_client):
         """Should create app.yml when saving custom path."""
         manager = SettingsManager(mock_workspace_client)
-        settings = InstallationSettings(install_folder="/custom/path/config.yml", is_default=False)
+        settings = InstallationSettings(install_folder="/custom/path")
 
         result = manager.save_settings(settings)
 
-        mock_workspace_client.workspace.mkdirs.assert_called_once()
-        mock_workspace_client.workspace.import_.assert_called_once()
-        assert result.install_folder == "/custom/path/config.yml"
-        assert result.is_default is False
+        assert mock_workspace_client.workspace.mkdirs.call_count == 2
+        mock_workspace_client.workspace.upload.assert_called_once()
+        assert result.install_folder == "/custom/path"
 
-    def test_save_settings_handles_delete_not_found(self, mock_workspace_client):
-        """Should handle ResourceDoesNotExist when deleting app.yml for default."""
-        mock_workspace_client.workspace.delete.side_effect = ResourceDoesNotExist("Not found")
+    def test_save_settings_creates_file_for_default_path(self, mock_workspace_client):
+        """Should create app.yml even when saving default path."""
+        manager = SettingsManager(mock_workspace_client)
+        settings = InstallationSettings(install_folder="/Users/test_user@example.com/.dqx")
+
+        result = manager.save_settings(settings)
+
+        assert mock_workspace_client.workspace.mkdirs.call_count == 2
+        mock_workspace_client.workspace.upload.assert_called_once()
+        assert result.install_folder == "/Users/test_user@example.com/.dqx"
+
+    def test_save_settings_strips_whitespace(self, mock_workspace_client):
+        """Should strip whitespace from install folder path."""
+        manager = SettingsManager(mock_workspace_client)
+        settings = InstallationSettings(install_folder="  /custom/path  ")
+
+        result = manager.save_settings(settings)
+
+        assert result.install_folder == "/custom/path"
+        # Verify mkdirs was called with stripped path
+        assert mock_workspace_client.workspace.mkdirs.call_args_list[1][0][0] == "/custom/path"
+
+    def test_save_settings_raises_error_when_dqx_folder_creation_fails(self, mock_workspace_client):
+        """Should raise ValueError when .dqx folder creation fails."""
+        mock_workspace_client.workspace.mkdirs.side_effect = [Exception("Permission denied"), None]
 
         manager = SettingsManager(mock_workspace_client)
-        default_path = f"{manager.default_dqx_folder}/config.yml"
-        settings = InstallationSettings(install_folder=default_path, is_default=False)
+        settings = InstallationSettings(install_folder="/custom/path")
 
-        # Should not raise
+        with pytest.raises(ValueError, match="Could not create .dqx folder"):
+            manager.save_settings(settings)
+
+    def test_save_settings_raises_error_when_install_folder_creation_fails(self, mock_workspace_client):
+        """Should raise ValueError when install folder creation fails."""
+        mock_workspace_client.workspace.mkdirs.side_effect = [None, Exception("Permission denied")]
+
+        manager = SettingsManager(mock_workspace_client)
+        settings = InstallationSettings(install_folder="/custom/path")
+
+        with pytest.raises(ValueError, match="Could not create install folder"):
+            manager.save_settings(settings)
+
+    def test_save_settings_raises_error_when_upload_fails(self, mock_workspace_client):
+        """Should raise ValueError when upload fails."""
+        mock_workspace_client.workspace.upload.side_effect = Exception("Upload failed")
+
+        manager = SettingsManager(mock_workspace_client)
+        settings = InstallationSettings(install_folder="/custom/path")
+
+        with pytest.raises(ValueError, match="Could not save app settings to"):
+            manager.save_settings(settings)
+
+    def test_save_settings_with_empty_install_folder(self, mock_workspace_client):
+        """Should handle empty install folder path."""
+        manager = SettingsManager(mock_workspace_client)
+        settings = InstallationSettings(install_folder="")
+
         result = manager.save_settings(settings)
-        assert result.is_default is True
+
+        # Empty string strips to empty string
+        assert result.install_folder == ""
