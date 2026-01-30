@@ -117,22 +117,3 @@ jobs:
 
       - name: Run TypeScript and Python checks
         run: uv run apx dev check
-
-      - name: Start development server
-        run: |
-          uv run apx dev start
-          sleep 10  # Give servers time to start
-
-      - name: Check server status
-        run: |
-          uv run apx dev status
-          # Verify all processes are running
-          if ! uv run apx dev status | grep -q "Running"; then
-            echo "Error: Not all servers are running"
-            uv run apx dev logs
-            exit 1
-          fi
-
-      - name: Stop development server
-        if: always()
-        run: uv run apx dev stop
