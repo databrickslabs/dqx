@@ -2715,7 +2715,7 @@ anomaly_engine = AnomalyEngine(WorkspaceClient())
 model_name = anomaly_engine.train(
     df=spark.table("catalog.schema.orders"),
     model_name="catalog.schema.orders_monitor",
-    columns=["amount", "quantity", "shipping_cost"],
+    columns=["amount", "quantity", "shipping_cost"],  # optional; omit to use all supported columns
     registry_table="catalog.schema.dqx_anomaly_models",
 )
 ```
@@ -2731,9 +2731,9 @@ run_configs:
     input_config:
       location: catalog.schema.orders
     anomaly_config:
-      columns: [amount, quantity, shipping_cost]
-      # model_name: catalog.schema.orders_monitor
-      # registry_table: catalog.schema.dqx_anomaly_models
+      columns: [amount, quantity, shipping_cost]   # optional; omit to use all supported columns
+      model_name: catalog.schema.orders_monitor
+      registry_table: catalog.schema.dqx_anomaly_models
 ```
 
 ### Define checks
@@ -2748,7 +2748,7 @@ checks = [
     has_no_anomalies(
         model="catalog.schema.orders_monitor",
         registry_table="catalog.schema.dqx_anomaly_models",
-        threshold=0.6,  # higher = more anomalous, default is 0.6 (balanced)
+        threshold=95.0,  # percentile cutoff (0-100); higher = fewer anomalies
     )
 ]
 ```
@@ -2762,22 +2762,22 @@ checks = [
     arguments:
       model: catalog.schema.dqx_anomaly_orders
       registry_table: catalog.schema.dqx_anomaly_models
-      threshold: 0.6  # optional
+      threshold: 95.0  # optional
 ```
 
 **Score thresholds**
-- 0.3 aggressive (potentially many anomalies), 0.6 balanced (default), 0.7 conservative (fewer anomalies), 0.9 very conservative (extreme anomalies only).
+- 90 sensitive (more alerts), 95 balanced (default), 98 strict (fewer anomalies).
 
 **Parameters**
 - `registry_table`: Registry table (required, fully qualified `catalog.schema.table`).
-- `threshold`: Anomaly score threshold (default 0.6).
+- `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
 - `drift_threshold`: Drift detection threshold (default 3.0, `None` to disable). See the section below for more details.
 - `include_contributions`: Include per-feature contributions in `_dq_info.anomaly.contributions` (default `True`). See the section below for more details.
-- `include_confidence`: Include `anomaly_score_std` for ensembles (default `False`). Useful when using ensemble training.
+- `include_confidence`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
 
 **Notes**
-- For workflow training, `model_name` is required and should be fully qualified.
+- For workflow training, `model_name` and `registry_table` are required and must be fully qualified.
 - Scoring uses the columns the model was trained on.
 - Rows with nulls in anomaly columns are skipped (not flagged).
 - When `row_filter` is used, all original rows are preserved; non-filtered rows have `null` scores.
@@ -2810,13 +2810,21 @@ checks = [
     has_no_anomalies(
         model="catalog.schema.orders_monitor",
         registry_table="catalog.schema.dqx_anomaly_models",
-        threshold=0.6,
+        threshold=95.0,
         include_contributions=False,
     )
 ]
 ```
 
 When contributions are enabled (default), the `_dq_info` column includes `contributions` showing per-feature contribution percentages.
+
+Example: triage top anomalies and inspect contributions:
+```python
+import pyspark.sql.functions as F
+
+top = scored_df.orderBy(F.col("_dq_info.anomaly.severity_percentile").desc()).limit(20)
+top.select("order_id", "_dq_info.anomaly.severity_percentile", "_dq_info.anomaly.contributions").show(truncate=False)
+```
 
 **Drift Detection**
 

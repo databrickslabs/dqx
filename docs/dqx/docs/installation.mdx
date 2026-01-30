@@ -280,9 +280,9 @@ run_configs:                        # <- list of run configurations, each run co
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
 
   anomaly_config:                        # <- optional anomaly detection configuration (model training via workflow)
-    columns: [amount, quantity, discount]
-    # model_name: orders_monitor          # <- optional, defaults to dqx_anomaly_<run_config.name>
-    # registry_table: main.iot.dqx_anomaly_models  # <- optional
+    columns: [amount, quantity, discount]  # <- optional, omit to use all supported columns
+    model_name: main.iot.orders_monitor    # <- required, fully qualified
+    registry_table: main.iot.dqx_anomaly_models  # <- required, fully qualified
 
   # if wanting to store checks in lakebase table
   # checks_location: dqx.config.checks                        # <- fully qualified Lakebase table for storing quality rules (checks)

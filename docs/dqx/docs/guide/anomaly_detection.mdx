@@ -19,6 +19,15 @@ This complements rule-based checks:
 
 Example: amount, quantity, and discount are all valid individually, but the combination is rare for your data. Anomaly detection can flag that row.
 
+## Why teams use it
+
+It finds issues that look "valid" to rules but are still suspicious when you look at the full row. This is especially useful for:
+- unexpected spikes or dips that are hard to encode as a rule
+- unusual combinations across columns
+- silent pipeline changes that shift behavior without breaking schemas
+
+In practice, it helps reduce blind spots and speeds up triage because you can focus on the top‑ranked unusual rows first.
+
 ## Complements Databricks data quality monitoring
 
 Databricks data quality monitoring focuses on table-level signals like freshness and completeness. DQX anomaly detection focuses on unusual rows and cross-column patterns.
@@ -29,8 +38,15 @@ Use both together to cover:
 Example: monitoring tells you new data arrived as expected; DQX flags a spike in unusual orders inside it.
 
 <Admonition type="tip" title="Use both together">
-Use Databricks data quality monitoring for table health (freshness/completeness) and DQX anomaly detection for row-level content quality.
+Use Databricks data quality monitoring for table health without looking inside the actual data (freshness/completeness) and DQX anomaly detection for discovering anomalies in the data.
 </Admonition>
+
+## What you get out of the box
+
+Each row is scored and enriched with:
+- **Severity percentile (0–100)**: how unusual the row is compared to training data.
+- **Anomaly flag**: whether it crosses your chosen threshold.
+- **Top contributors**: which fields most influenced the anomaly score.
 
 ## Prerequisites
 
@@ -63,7 +79,7 @@ an explicit `columns` list of behavioral fields (amounts, counts, rates, timesta
     model_name = anomaly_engine.train(
         df=spark.table("catalog.schema.orders"),
         model_name="catalog.schema.orders_monitor",
-        columns=["amount", "quantity", "discount"],
+        columns=["amount", "quantity", "discount"],  # optional; omit to use all supported columns
         registry_table="catalog.schema.dqx_anomaly_models",
     )
 
@@ -87,16 +103,18 @@ an explicit `columns` list of behavioral fields (amounts, counts, rates, timesta
         input_config:
           location: catalog.schema.orders
         anomaly_config:
-          columns: [amount, quantity, discount]
+          columns: [amount, quantity, discount]  # optional; omit to use all supported columns
+          model_name: catalog.schema.orders_monitor
+          registry_table: catalog.schema.dqx_anomaly_models
     ```
 
-    Define checks separately (YAML or Python). See the reference section for examples.
+    Define checks separately (YAML or Python). See [Anomaly Detection in Quality Checks](/docs/reference/quality_checks#anomaly-detection).
   </TabItem>
 </Tabs>
 
 ## Investigate anomalies
 
-Anomaly checks add `_dq_info` with structured metadata. Feature contributions are enabled by default; disable them for faster scoring:
+Anomaly checks add results to `_errors`/`_warnings` and `_dq_info` with structured metadata. Feature contributions are enabled by default; disable them for faster scoring:
 
 ```python
 has_no_anomalies(
@@ -114,6 +132,26 @@ import pyspark.sql.functions as F
 top = scored_df.orderBy(F.col("_dq_info.anomaly.score").desc()).limit(20)
 top.select("order_id", "_dq_info.anomaly.score", "_dq_info.anomaly.contributions").show(truncate=False)
 ```
+
+Scores are normalized into `severity_percentile` (0–100). The anomaly threshold is a percentile cutoff (default 95) that you should tune to your data and alert tolerance.
+
+## How to choose a threshold
+
+Think of the threshold as an alert volume control:
+- **Lower** = more alerts (more sensitive).
+- **Higher** = fewer alerts (more strict).
+
+Start with the default (95), then tune based on how many rows you can reasonably review and how costly misses are.
+
+## Practical examples (non‑technical)
+
+- A sudden surge of high‑value orders in a region that usually has low spend.
+- Orders placed at unusual hours for a business that operates during the day.
+- A big jump in quantity for a category that normally sells in small units.
+
+## When to retrain
+
+Retrain when "normal" changes: seasonality, new pricing rules, new products, or major pipeline changes. A simple cadence (monthly or quarterly) is often enough.
 
 If you want to quarantine anomalies for investigation, use DQX output/quarantine patterns (see [Applying Checks](/docs/guide/quality_checks_apply)).
 
