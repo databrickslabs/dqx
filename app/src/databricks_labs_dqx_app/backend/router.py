@@ -3,8 +3,9 @@ from typing import Annotated
 from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError
 from databricks.sdk import WorkspaceClient
-from databricks.sdk.errors import ResourceDoesNotExist
+from databricks.sdk.errors import NotFound, ResourceDoesNotExist
 from databricks.sdk.service.iam import User as UserOut
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -60,9 +61,6 @@ def get_config(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ConfigOut:
-    # ask user which configuration should be used in the UI
-    # there is always just one single configuration config.yml per the whole workspace.
-    # and one single config.yml can include multiple run configurations.
     install_folder = get_install_folder(obo_ws, path)
     serializer = ConfigSerializer(obo_ws)
     try:
@@ -89,16 +87,13 @@ def get_run_config(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> RunConfigOut:
-    # per each run config there is a separate, single unique checks_location.
-    # checks_location can be a workspace file path or a table name.
-    # it also can be a volume file path.
-    # it also can be a delta table name.
-    # it also can be a lakebase table name.
+    # per each run config there is a separate, single unique checks_location
+    # checks_location can be one of the following: file path, delta or lakebase table name, volume file path
     install_folder = get_install_folder(obo_ws, path)
     serializer = ConfigSerializer(obo_ws)
     try:
         return RunConfigOut(config=serializer.load_run_config(run_config_name=name, install_folder=install_folder))
-    except ResourceDoesNotExist:
+    except (ResourceDoesNotExist, InvalidConfigError):
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
 
@@ -127,7 +122,7 @@ def delete_run_config(
 
     try:
         config = serializer.load_config(install_folder=install_folder)
-    except ResourceDoesNotExist:
+    except (ResourceDoesNotExist, InvalidConfigError):
         raise HTTPException(status_code=404, detail=f"Configuration not found at {install_folder}")
 
     # Filter out the run config with the given name
@@ -152,7 +147,7 @@ def get_run_checks(
     serializer = ConfigSerializer(obo_ws)
     try:
         run_config = serializer.load_run_config(run_config_name=name, install_folder=install_folder)
-    except ResourceDoesNotExist:
+    except (ResourceDoesNotExist, InvalidConfigError):
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
     checks_config = InstallationChecksStorageConfig(run_config_name=run_config.name, install_folder=install_folder)
@@ -160,14 +155,15 @@ def get_run_checks(
     try:
         checks = engine.load_checks(checks_config)
         return ChecksOut(checks=checks)
-    except Exception as e:
-        # Checks might not exist yet, or other issues
-        # If it's just missing, maybe return empty list?
-        # But for now let's propagate or return empty if we want to allow empty checks
-        # If checks are missing, engine might raise.
-        # But let's assume engine handles missing checks by returning empty list or raising.
-        # If it raises ResourceDoesNotExist, we might want 404.
-        raise HTTPException(status_code=500, detail=str(e))
+    except (NotFound, FileNotFoundError):
+        # Checks file doesn't exist yet - return empty list
+        return ChecksOut(checks=[])
+    except InvalidCheckError as e:
+        # Checks file exists but has invalid format
+        raise HTTPException(status_code=400, detail=f"Invalid checks format: {e}")
+    except InvalidConfigError as e:
+        # Configuration issue
+        raise HTTPException(status_code=400, detail=f"Invalid configuration: {e}")
 
 
 @api.post("/config/run/{name}/checks", response_model=ChecksOut, operation_id="save_run_checks")
@@ -182,7 +178,7 @@ def save_run_checks(
     serializer = ConfigSerializer(obo_ws)
     try:
         run_config = serializer.load_run_config(run_config_name=name, install_folder=install_folder)
-    except ResourceDoesNotExist:
+    except (ResourceDoesNotExist, InvalidConfigError):
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
     checks_config = InstallationChecksStorageConfig(run_config_name=run_config.name, install_folder=install_folder)
