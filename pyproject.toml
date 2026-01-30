@@ -236,7 +236,7 @@ exclude_lines = [
 # License: https://github.com/google/styleguide/blob/gh-pages/LICENSE
 
 # Add app/src to sys.path for pylint to find databricks_labs_dqx_app
-init-hook = "import sys; import os; sys.path.insert(0, os.path.join(os.getcwd(), 'app/src'))"
+init-hook = "import sys; sys.path.insert(0, 'app/src')"
 
 # Clear in-memory caches upon conclusion of linting. Useful if running pylint in
 # a server-like mode.
