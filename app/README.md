@@ -282,17 +282,89 @@ make integration
 
 ## 🚢 Deployment
 
-Deploy to Databricks (using databricks.yml):
+> **Note**: Production deployment uses the **Databricks CLI**, not `apx`. The `apx` tool is only for local development.
+
+### Deploy the App to Databricks Workspace
+
+Deploy to Databricks using Databricks Asset Bundles:
 ```bash
 databricks bundle deploy -p <your-profile>
 ```
 
 The deployment:
+- Uses app definition from `databricks.yml`
 - Uploads the built wheel from `app/.build/` to Databricks
 - Configures the app with the necessary resources (compute, permissions)
-- Makes the app available at your workspace URL
+- Registers the app in your Databricks workspace
+
+### Start the App
+
+After deployment, start the app using the **Databricks CLI** (not apx):
+```bash
+databricks apps start databricks-labs-dqx-app -p <your-profile>
+```
+
+Or start it from the Databricks workspace UI:
+1. Navigate to **Apps** in the sidebar
+2. Find the **databricks-labs-dqx-app** app
+3. Click **Start**
+
+### Access the App
+
+Once started, access the app at:
+```
+https://<your-workspace-url>/apps/dqx
+```
+
+You can also find the app URL in:
+- **Databricks UI**: Apps → dqx → Click on the app name
+- **CLI output**: After running `databricks apps start databricks-labs-dqx-app`
+
+### Monitor and Manage
+
+```bash
+# Check app status
+databricks apps get databricks-labs-dqx-app -p <your-profile>
+
+# View app logs
+databricks apps logs databricks-labs-dqx-app -p <your-profile>
+
+# Stop the app
+databricks apps stop databricks-labs-dqx-app -p <your-profile>
+
+# Redeploy after changes
+databricks bundle deploy -p <your-profile>
+# Then restart: databricks apps start databricks-labs-dqx-app -p <your-profile>
+```
 
 ## 🐛 Troubleshooting
+
+### Bundle deployment errors
+
+If you see errors like "App with name X does not exist or is deleted" during deployment:
+
+```bash
+# Clean local bundle cache
+cd app
+rm -rf .databricks
+
+# Clean remote bundle state (optional)
+databricks workspace delete /Workspace/Users/<your-username>/.bundle/<bundle-name> -p <your-profile> --recursive
+
+# Try deploying again
+databricks bundle deploy -p <your-profile>
+```
+
+Or use the `--force-deploy` flag to override existing state:
+```bash
+databricks bundle deploy -p <your-profile> --force
+```
+
+**When to clean the cache:**
+- After changing the bundle or app name in `databricks.yml`
+- When switching between different workspaces
+- If deployment fails with "app does not exist" errors
+- After manually deleting an app from the workspace UI
 
 ### uv hangs
 

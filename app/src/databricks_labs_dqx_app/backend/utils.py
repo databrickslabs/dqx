@@ -19,9 +19,11 @@ def add_not_found_handler(app: FastAPI):
             # Heuristic: if the last path segment looks like a file (has a dot), don't SPA-fallback
             looks_like_asset = "." in path.split("/")[-1]
 
-            if (not is_api) and is_get_page_nav and (not looks_like_asset):
+            # Only do SPA fallback if static assets exist (i.e., frontend is built) for testing
+            index_file = conf.static_assets_path / "index.html"
+            if (not is_api) and is_get_page_nav and (not looks_like_asset) and index_file.exists():
                 # Let the SPA router handle it
-                return FileResponse(conf.static_assets_path / "index.html")
+                return FileResponse(index_file)
         # Default: return the original HTTP error (JSON 404 for API, etc.)
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 

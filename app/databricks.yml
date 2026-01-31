@@ -1,0 +1,22 @@
+bundle:
+  name: "databricks-labs-dqx-app"
+
+sync:
+  include:
+    - .build
+
+artifacts:
+  default:
+    build: uv run apx build
+
+resources:
+  apps:
+    databricks-labs-dqx-app:
+      name: "databricks-labs-dqx-app"
+      description: "Databricks DQX App for Data Quality Monitoring"
+      source_code_path: .build
+
+targets:
+  dev:
+    mode: development
+    default: true

@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .config import conf
 from .dependencies import get_dqx_engine, get_obo_ws
+from .logger import logger
 from .models import (
     ChecksIn,
     ChecksOut,
@@ -29,7 +30,11 @@ api = APIRouter(prefix=conf.api_prefix)
 def get_install_folder(ws: WorkspaceClient, path: str | None) -> str:
     folder = path
     if not folder:
-        folder = SettingsManager(ws).get_settings().install_folder
+        settings = SettingsManager(ws).get_settings()
+        folder = settings.install_folder
+        logger.info(f"Using install folder from settings: {folder}")
+    else:
+        logger.info(f"Using install folder from path parameter: {folder}")
     return folder.strip()
 
 
@@ -62,10 +67,14 @@ def get_config(
     path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ConfigOut:
     install_folder = get_install_folder(obo_ws, path)
+    logger.info(f"Loading config from install folder: {install_folder}")
     serializer = ConfigSerializer(obo_ws)
     try:
-        return ConfigOut(config=serializer.load_config(install_folder=install_folder))
-    except ResourceDoesNotExist:
+        config = serializer.load_config(install_folder=install_folder)
+        logger.info(f"Successfully loaded config with {len(config.run_configs)} run configs")
+        return ConfigOut(config=config)
+    except ResourceDoesNotExist as e:
+        logger.error(f"Configuration not found at {install_folder}: {e}")
         raise HTTPException(status_code=404, detail=f"Configuration not found at {install_folder}")
 
 
