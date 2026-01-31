@@ -60,7 +60,8 @@ import { toast } from "sonner";
 import { useState, useEffect, Suspense } from "react";
 import yaml from "js-yaml";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, QueryErrorResetBoundary } from "@tanstack/react-query";
+import { ErrorBoundary } from "react-error-boundary";
 
 export const Route = createFileRoute("/_sidebar/runs")({
   component: RunsPage,
@@ -130,24 +131,42 @@ function RunsPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-1">
-            <Suspense fallback={<RunsListSkeleton />}>
-              <RunsSidebarList
-                currentRunName={currentRunName}
-                isDeleting={isDeletingRun}
-              />
-            </Suspense>
+            <QueryErrorResetBoundary>
+              {({ reset }) => (
+                <ErrorBoundary
+                  onReset={reset}
+                  fallbackRender={RunsListError}
+                >
+                  <Suspense fallback={<RunsListSkeleton />}>
+                    <RunsSidebarList
+                      currentRunName={currentRunName}
+                      isDeleting={isDeletingRun}
+                    />
+                  </Suspense>
+                </ErrorBoundary>
+              )}
+            </QueryErrorResetBoundary>
           </div>
         </aside>
 
         {/* Content Area */}
         <main className="flex-1 overflow-hidden flex flex-col">
-          <Suspense fallback={<RunEditorSkeleton />}>
-            <RunEditorContainer
-              currentRunName={currentRunName}
-              onAddRun={() => setIsCreateOpen(true)}
-              onDeletingChange={setIsDeletingRun}
-            />
-          </Suspense>
+          <QueryErrorResetBoundary>
+            {({ reset }) => (
+              <ErrorBoundary
+                onReset={reset}
+                fallbackRender={RunEditorError}
+              >
+                <Suspense fallback={<RunEditorSkeleton />}>
+                  <RunEditorContainer
+                    currentRunName={currentRunName}
+                    onAddRun={() => setIsCreateOpen(true)}
+                    onDeletingChange={setIsDeletingRun}
+                  />
+                </Suspense>
+              </ErrorBoundary>
+            )}
+          </QueryErrorResetBoundary>
         </main>
       </div>
 
@@ -278,6 +297,47 @@ function RunEditorSkeleton() {
       <div className="flex-1 mt-4">
         <Skeleton className="h-full w-full rounded-lg" />
       </div>
+    </div>
+  );
+}
+
+function RunsListError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-8 text-center">
+      <AlertCircle className="h-12 w-12 text-destructive/30 mb-3" />
+      <p className="text-muted-foreground text-sm mb-1">Failed to load runs</p>
+      <p className="text-muted-foreground/70 text-xs mb-3">
+        Please check your configuration settings
+      </p>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={resetErrorBoundary}
+        className="gap-2"
+      >
+        <RotateCcw className="h-3 w-3" />
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function RunEditorError({ resetErrorBoundary }: { resetErrorBoundary: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full text-center">
+      <AlertCircle className="h-16 w-16 text-destructive/30 mb-4" />
+      <h3 className="text-lg font-semibold mb-2">Failed to load run editor</h3>
+      <p className="text-muted-foreground text-sm mb-4">
+        Please check your configuration settings
+      </p>
+      <Button
+        variant="outline"
+        onClick={resetErrorBoundary}
+        className="gap-2"
+      >
+        <RotateCcw className="h-4 w-4" />
+        Retry
+      </Button>
     </div>
   );
 }

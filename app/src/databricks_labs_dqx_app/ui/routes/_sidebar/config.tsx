@@ -73,8 +73,9 @@ function ConfigLocationSettings() {
       {
         onSuccess: () => {
           setIsOpen(false);
-          queryClient.invalidateQueries({ queryKey: ["getSettings"] });
-          queryClient.invalidateQueries({ queryKey: ["config"] });
+          // Invalidate settings and config queries to refetch with new data
+          queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/config"] });
           toast.success("Configuration location updated");
         },
         onError: (error) => {
@@ -420,7 +421,8 @@ function YamlConfigEditor() {
           onSuccess: () => {
             toast.success("Configuration saved successfully");
             setIsModified(false);
-            queryClient.invalidateQueries({ queryKey: ["config"] });
+            // Invalidate config queries to refetch with new data
+            queryClient.invalidateQueries({ queryKey: ["/api/config"] });
           },
           onError: (error) => {
             console.error(error);

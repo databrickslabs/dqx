@@ -3,7 +3,9 @@ from typing import Annotated
 from databricks.connect import DatabricksSession
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
-from fastapi import Depends, Header
+from fastapi import Depends, Header, HTTPException, status
+
+from .logger import logger
 
 
 def get_obo_ws(
@@ -30,7 +32,7 @@ def get_obo_ws(
         WorkspaceClient: Configured with the user's token for OBO operations.
 
     Raises:
-        ValueError: If the X-Forwarded-Access-Token header is not present.
+        HTTPException: 401 Unauthorized if the X-Forwarded-Access-Token header is not present.
 
     Example usage:
         @router.get("/current-user")
@@ -40,7 +42,12 @@ def get_obo_ws(
     """
 
     if not token:
-        raise ValueError("OBO token is not provided in the header X-Forwarded-Access-Token")
+        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please refresh the page or contact your administrator.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     return WorkspaceClient(token=token, auth_type="pat")  # set pat explicitly to avoid issues with SP client
 
