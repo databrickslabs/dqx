@@ -15,12 +15,17 @@ resources:
       name: "databricks-labs-dqx-app"
       description: "Databricks DQX App for Data Quality Monitoring"
       source_code_path: ".build"
-      user_api_scopes:
-        - files.files
-        - sql
-        - catalog.catalogs:read
-        - catalog.tables:read
-        - catalog.schemas:read
+
+      # Below are scopes available today, but they are not enough for the app features to work properly.
+      # After deploying the app, you need to enable additional scopes by running:
+      # Login: databricks auth login --host https://accounts.cloud.databricks.com --account-id <dbx-account-id> --profile <profile-name>
+      # `databricks account custom-app-integration update '<oauth2-app-client-id>' --json '{"scopes": ["openid", "profile", "email", "all-apis", "offline_access", "iam.current-user"]}'`
+      # where: <oauth2-app-client-id> is the Oauth2 App Client ID which can be found in the Apps UI under User authorization
+      # alternatively, you can find it by running: `databricks account custom-app-integration list`
+
+      # use all-apis scope for full functionality instead of the limited scopes below
+      #user_api_scopes:
+      #  - files.files
 
 targets:
   dev:

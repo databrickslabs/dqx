@@ -144,6 +144,7 @@ Before you begin, ensure you have:
 - **Node.js 18+** (for bun)
 - **Databricks CLI** installed: `pip install databricks-cli`
 - **Access to a Databricks workspace**
+- **Enabled Preview in the workspace: Databricks Apps - On-Behalf-Of User Authorization**
 
 ### Development Mode
 
@@ -303,7 +304,35 @@ This does not:
 - Start the app
 - Deploy the actual source code to the app runtime
 
-### Step 2: Start the App Compute
+### Step 2: Configure OAuth Scopes (⚠️ Critical)
+
+**Important**: After the initial deployment, you **must** enable additional OAuth scopes for the app to function properly. The default scopes configured in `databricks.yml` are not sufficient for all app features.
+
+Run the following commands:
+
+```bash
+# 1. Login to your Databricks account (not workspace)
+databricks auth login --host https://accounts.cloud.databricks.com --account-id <dbx-account-id> --profile <profile-name>
+
+# 2. Update the OAuth app integration
+databricks account custom-app-integration update '<oauth2-app-client-id>' --json '{"scopes": ["openid", "profile", "email", "all-apis", "offline_access", "iam.current-user"]}'
+```
+
+**Where to find the OAuth2 App Client ID:**
+- **Option A - UI**: Navigate to Apps → Your App → User authorization section
+- **Option B - CLI**: Run `databricks account custom-app-integration list`
+
+**Why is this needed?**
+The default scopes available in `databricks.yml` are limited and don't cover all workspace operations (like workspace file access). The `all-apis` scope grants the necessary permissions for the app to work with workspace files, configurations, and other resources on behalf of the user.
+
+To confirm the scope has been added run:
+```bash
+databricks account custom-app-integration get '<oauth2-app-client-id>'
+```
+
+**Note**: This is a one-time configuration per app. You only need to do this after the initial deployment or when changing the app's OAuth integration.
+
+### Step 3: Start the App Compute
 
 **Using CLI:**
 ```bash
@@ -315,14 +344,14 @@ databricks apps start databricks-labs-dqx-app -p <your-profile>
 2. Find the **databricks-labs-dqx-app** app
 3. Click **Start**
 
-### Step 3: Deploy the Source Code
+### Step 4: Deploy the Source Code
 
 After the bundle is deployed, you need to deploy the actual source code to the app.
 
 **Option A: Using Databricks CLI**
 ```bash
 databricks apps deploy databricks-labs-dqx-app \
-  /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
+  --source-code-path /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
   -p <your-profile>
 ```
 
@@ -333,12 +362,36 @@ databricks apps deploy databricks-labs-dqx-app \
 4. Enter the source code path: `/Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build`
 5. Click **Deploy**
 
-> **Why two steps?** The bundle deployment creates the app infrastructure, but the source code deployment tells the app runtime where to find the code. This separation allows you to update code without redeploying infrastructure.
+### Step 5: Access and Configure the App
 
+Once the app is deployed and started, you can access it at:
+```
+https://<your-workspace-url>/apps/databricks-labs-dqx-app
+```
+
+**Finding the App URL:**
+- **In Databricks UI**: Navigate to **Apps** in the sidebar → Click on **databricks-labs-dqx-app** → Copy the URL from the address bar
+- **Via CLI**: Run `databricks apps get databricks-labs-dqx-app -p <your-profile>` and look for the `url` field
+
+**Initial Configuration:**
+
+When you first open the app, you'll need to configure the workspace installation folder (folder where config.yml is located):
+
+1. **Settings Page**: Click on the **Settings** icon (⚙️) in the app navigation
+2. **Set Install Folder**: Specify where your DQX configuration will be stored
+   - Default location: `/Users/<your-username>/.dqx`
+   - Or choose a custom location (e.g., `/Workspace/Shared/dqx-config`)
+3. **Save Settings**: Click **Save** to persist your settings
+
+**What Gets Created:**
+- **App Settings**: Stored in `/Users/<your-username>/.dqx/app.yml` (contains the install folder path)
+- **Install Folder**: Created automatically if it doesn't exist
+- **Default config.yml**: Automatically created in your install folder with an empty configuration if it doesn't already exist
+  - You can then add run configurations through the Configuration page in the app
 
 ### Complete Deployment Script
 
-Here's a complete script that performs all three steps:
+Here's a complete script that performs all deployment steps:
 
 ```bash
 cd app
@@ -348,23 +401,14 @@ databricks bundle deploy -p <your-profile>
 
 # Step 2: Deploy source code
 databricks apps deploy databricks-labs-dqx-app \
-  /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
+  --source-code-path /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
   -p <your-profile>
 
 # Step 3: Start the app
 databricks apps start databricks-labs-dqx-app -p <your-profile>
 ```
 
-### Access the App
-
-Once started, access the app at:
-```
-https://<your-workspace-url>/apps/databricks-labs-dqx-app
-```
-
-You can also find the app URL in:
-- **Databricks UI**: Apps → dqx → Click on the app name
-- **CLI output**: After running `databricks apps start databricks-labs-dqx-app`
+After deployment, continue with [Step 5: Access and Configure the App](#step-5-access-and-configure-the-app)
 
 ### Monitor and Manage
 
@@ -396,7 +440,11 @@ databricks apps deploy databricks-labs-dqx-app \
 # The app will automatically restart after deployment
 ```
 
-**Update OAuth scopes (after changing `databricks.yml`):**
+**Update OAuth scopes (after changing `databricks.yml` or initial deployment):**
+
+⚠️ **Important**: After the initial deployment, you must configure the `all-apis` scope. See [Step 1.5: Configure OAuth Scopes](#step-15-configure-oauth-scopes--critical) for details.
+
+If you're updating scopes in `databricks.yml`:
 ```bash
 # Deploy bundle with updated config
 databricks bundle deploy -p <your-profile>

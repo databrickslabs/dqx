@@ -14,9 +14,35 @@ from databricks.sdk.errors import ResourceDoesNotExist
 
 
 @pytest.fixture
-def settings_manager(ws):
-    """Fixture that provides a SettingsManager instance."""
-    return SettingsManager(ws)
+def test_app_folder(ws, make_random):
+    """Fixture that provides a unique test folder shared by settings_manager and api_client.
+
+    This ensures both fixtures use the same folder to avoid conflicts.
+    """
+    user = ws.current_user.me()
+    user_home = f"/Users/{user.user_name}"
+    test_folder = f"{user_home}/.dqx_test_{make_random(8)}"
+
+    yield test_folder
+
+    # Cleanup: delete the test folder
+    try:
+        ws.workspace.delete(test_folder, recursive=True)
+    except ResourceDoesNotExist:
+        pass
+
+
+@pytest.fixture
+def settings_manager(ws, test_app_folder):
+    """Fixture that provides a SettingsManager instance with isolated test folder."""
+    test_app_yml = f"{test_app_folder}/app.yml"
+
+    # Create SettingsManager and override its paths
+    manager = SettingsManager(ws)
+    manager.default_dqx_folder = test_app_folder
+    manager.app_settings_path = test_app_yml
+
+    return manager
 
 
 @pytest.fixture
@@ -44,21 +70,25 @@ def installation_folder(ws, make_random):
 
 
 @pytest.fixture
-def app_settings_file(ws, settings_manager):
-    """Fixture that ensures app.yml is cleaned up after test."""
-    yield settings_manager.app_settings_path
-
-    try:
-        ws.workspace.delete(settings_manager.app_settings_path, recursive=True)
-    except ResourceDoesNotExist:
-        pass
-
-
-@pytest.fixture
-def api_client(ws, spark):
+def api_client(ws, spark, test_app_folder, monkeypatch):
     """Fixture that provides a FastAPI test client with dependency overrides."""
     # Import app lazy here to avoid module-level initialization during fixture collection
     from databricks_labs_dqx_app.backend.app import app
+
+    test_app_yml = f"{test_app_folder}/app.yml"
+
+    # Store original SettingsManager.__init__
+    original_init = SettingsManager.__init__
+
+    def patched_init(self, ws_client):
+        """Patched SettingsManager init that uses test folders."""
+        original_init(self, ws_client)
+        # Override paths to use test folders (same as settings_manager fixture)
+        self.default_dqx_folder = test_app_folder
+        self.app_settings_path = test_app_yml
+
+    # Patch SettingsManager to use test folders
+    monkeypatch.setattr(SettingsManager, "__init__", patched_init)
 
     def override_get_obo_ws() -> WorkspaceClient:
         """Override OBO workspace client to use the test workspace client."""
@@ -106,9 +136,7 @@ class TestSettingsManagerIntegration:
         settings = settings_manager.get_settings()
         assert ws.current_user.me().user_name in settings.install_folder
 
-    def test_save_and_get_settings_roundtrip_custom_folder(
-        self, settings_manager, installation_folder, app_settings_file
-    ):
+    def test_save_and_get_settings_roundtrip_custom_folder(self, settings_manager, installation_folder):
         """Should successfully save and retrieve custom install folder."""
         custom_folder = installation_folder()
 
@@ -122,9 +150,7 @@ class TestSettingsManagerIntegration:
         retrieved_settings = settings_manager.get_settings()
         assert retrieved_settings.install_folder == custom_folder
 
-    def test_save_settings_creates_install_folder_if_not_exists(
-        self, ws, settings_manager, installation_folder, app_settings_file
-    ):
+    def test_save_settings_creates_install_folder_if_not_exists(self, ws, settings_manager, installation_folder):
         """Should create install folder if it doesn't exist."""
         custom_folder = installation_folder()
 
@@ -142,7 +168,7 @@ class TestSettingsManagerIntegration:
         folder = ws.workspace.get_status(custom_folder)
         assert folder is not None
 
-    def test_save_settings_overwrites_existing_app_yml(self, settings_manager, installation_folder, app_settings_file):
+    def test_save_settings_overwrites_existing_app_yml(self, settings_manager, installation_folder):
         """Should overwrite existing app.yml with new settings."""
         folder1 = installation_folder()
         folder2 = installation_folder()
@@ -163,7 +189,7 @@ class TestSettingsManagerIntegration:
         retrieved2 = settings_manager.get_settings()
         assert retrieved2.install_folder == folder2
 
-    def test_save_settings_strips_whitespace_from_path(self, settings_manager, installation_folder, app_settings_file):
+    def test_save_settings_strips_whitespace_from_path(self, settings_manager, installation_folder):
         """Should strip whitespace from install folder path."""
         custom_folder = installation_folder()
         folder_with_whitespace = f"  {custom_folder}  "
@@ -180,9 +206,7 @@ class TestSettingsManagerIntegration:
         retrieved_settings = settings_manager.get_settings()
         assert retrieved_settings.install_folder == custom_folder
 
-    def test_save_settings_with_nested_folder_structure(
-        self, ws, settings_manager, installation_folder, app_settings_file, make_random
-    ):
+    def test_save_settings_with_nested_folder_structure(self, ws, settings_manager, installation_folder, make_random):
         """Should handle nested folder structures correctly."""
         user_home = f"/Users/{ws.current_user.me().user_name}"
         nested_folder = f"{user_home}/test/nested/dqx_{make_random(8)}"
@@ -204,6 +228,52 @@ class TestSettingsManagerIntegration:
         # Verify can retrieve
         retrieved_settings = settings_manager.get_settings()
         assert retrieved_settings.install_folder == nested_folder
+
+    def test_save_settings_creates_default_config_yml(self, ws, settings_manager, installation_folder):
+        """Should create a default config.yml when saving settings if it doesn't exist."""
+        custom_folder = installation_folder()
+
+        # Save settings - should create both app.yml and config.yml
+        settings_to_save = InstallationSettings(install_folder=custom_folder)
+        settings_manager.save_settings(settings_to_save)
+
+        # Verify config.yml was created
+        config_path = f"{custom_folder}/config.yml"
+        config_status = ws.workspace.get_status(config_path)
+        assert config_status is not None
+        assert config_status.path == config_path
+
+        # Verify it's a valid empty config
+        serializer = ConfigSerializer(ws)
+        config = serializer.load_config(install_folder=custom_folder)
+        assert len(config.run_configs) == 0
+
+    def test_save_settings_does_not_overwrite_existing_config_yml(self, ws, settings_manager, installation_folder):
+        """Should not overwrite existing config.yml when saving settings."""
+        custom_folder = installation_folder()
+
+        # Create a config with some data
+        serializer = ConfigSerializer(ws)
+        existing_config = WorkspaceConfig(
+            run_configs=[
+                RunConfig(
+                    name="existing_run",
+                    input_config=InputConfig(location="main.default.input"),
+                    output_config=OutputConfig(location="main.default.output"),
+                    checks_location="checks.yml",
+                )
+            ]
+        )
+        serializer.save_config(existing_config, install_folder=custom_folder)
+
+        # Now save settings - should NOT overwrite the existing config
+        settings_to_save = InstallationSettings(install_folder=custom_folder)
+        settings_manager.save_settings(settings_to_save)
+
+        # Verify the existing config is still there
+        loaded_config = serializer.load_config(install_folder=custom_folder)
+        assert len(loaded_config.run_configs) == 1
+        assert loaded_config.run_configs[0].name == "existing_run"
 
 
 class TestRouterIntegration:
@@ -240,9 +310,12 @@ class TestRouterIntegration:
         assert response.status_code == 200
         data = response.json()
         assert "install_folder" in data
-        assert data["install_folder"].endswith("/.dqx")
+        # Should return a path under the user's home directory with .dqx in it
+        user_name = ws.current_user.me().user_name
+        assert user_name in data["install_folder"]
+        assert ".dqx" in data["install_folder"]
 
-    def test_save_and_get_settings_roundtrip(self, api_client, installation_folder, app_settings_file):
+    def test_save_and_get_settings_roundtrip(self, api_client, installation_folder):
         """Should save and retrieve custom settings via API."""
         custom_folder = installation_folder()
 
@@ -257,7 +330,7 @@ class TestRouterIntegration:
         assert response.status_code == 200
         assert response.json()["install_folder"] == custom_folder
 
-    def test_save_settings_with_whitespace(self, api_client, installation_folder, app_settings_file):
+    def test_save_settings_with_whitespace(self, api_client, installation_folder):
         """Should strip whitespace from install folder path."""
         custom_folder = installation_folder()
         folder_with_whitespace = f"  {custom_folder}  "
@@ -266,6 +339,25 @@ class TestRouterIntegration:
 
         assert response.status_code == 200
         assert response.json()["install_folder"] == custom_folder
+
+    def test_save_settings_creates_default_config_via_api(self, api_client, ws, installation_folder):
+        """Should create default config.yml when saving settings via API."""
+        custom_folder = installation_folder()
+
+        # Save settings via API
+        response = api_client.post("/api/settings", json={"install_folder": custom_folder})
+        assert response.status_code == 200
+
+        # Verify config.yml was created
+        config_path = f"{custom_folder}/config.yml"
+        config_status = ws.workspace.get_status(config_path)
+        assert config_status is not None
+        assert config_status.path == config_path
+
+        # Verify it's a valid empty config
+        serializer = ConfigSerializer(ws)
+        config = serializer.load_config(install_folder=custom_folder)
+        assert len(config.run_configs) == 0
 
     # ============= Config Endpoints =============
 
@@ -310,7 +402,7 @@ class TestRouterIntegration:
         assert retrieved_config["run_configs"][0]["name"] == "test_run"
 
     def test_get_config_uses_default_path_from_settings(
-        self, api_client, ws, settings_manager, installation_folder, app_settings_file, config_file
+        self, api_client, ws, settings_manager, installation_folder, config_file
     ):
         """Should use install folder from settings when path not provided."""
         # Save settings with custom folder

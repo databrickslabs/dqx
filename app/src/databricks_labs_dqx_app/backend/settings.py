@@ -1,6 +1,8 @@
 import base64
 
 import yaml
+from databricks.labs.dqx.config import WorkspaceConfig
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceDoesNotExist
 from databricks.sdk.service.workspace import ExportFormat, ImportFormat
@@ -43,10 +45,15 @@ class SettingsManager:
         return InstallationSettings(install_folder=self.get_default_install_folder())
 
     def save_settings(self, settings: InstallationSettings) -> InstallationSettings:
-        """Save app settings to app.yml.
+        """Save app settings to app.yml and ensure default config exists.
 
-        The app.yml file stores app-specific configuration, e.g. which install folder to use for DQX.
-        This is separate from config.yml which contains the actual DQX configuration.
+        This method:
+        1. Saves the install folder path to app.yml
+        2. Creates the install folder if it doesn't exist
+        3. Creates a default config.yml in the install folder if it doesn't exist
+
+        The app.yml file stores app-specific configuration (which install folder to use).
+        The config.yml file stores the actual DQX configuration (run configs, checks, etc.).
         """
         install_folder = settings.install_folder.strip()
 
@@ -76,4 +83,37 @@ class SettingsManager:
             logger.error(f"Failed to save app settings to {self.app_settings_path}: {e}", exc_info=True)
             raise ValueError(f"Could not save app settings to: {self.app_settings_path}") from e
 
+        # Create default config.yml if it doesn't exist
+        self._ensure_default_config_exists(install_folder)
+
         return InstallationSettings(install_folder=install_folder)
+
+    def _ensure_default_config_exists(self, install_folder: str) -> None:
+        """Create a default config.yml in the install folder if it doesn't exist.
+
+        Args:
+            install_folder: The folder where config.yml should be located.
+        """
+        config_path = f"{install_folder}/config.yml"
+
+        # Check if config.yml already exists
+        try:
+            self.ws.workspace.get_status(config_path)
+            logger.info(f"Config file already exists at {config_path}")
+            return  # Config already exists, nothing to do
+        except ResourceDoesNotExist:
+            # Config doesn't exist, create a default one
+            logger.info(f"Config file not found at {config_path}, creating default config")
+        except Exception as e:
+            logger.warning(f"Error checking for config file at {config_path}: {e}")
+            return  # Don't fail the save_settings operation if we can't check
+
+        # Create a default empty config
+        try:
+            default_config = WorkspaceConfig(run_configs=[])
+            serializer = ConfigSerializer(self.ws)
+            serializer.save_config(default_config, install_folder=install_folder)
+            logger.info(f"Created default config at {config_path}")
+        except Exception as e:
+            # Log the error but don't fail the save_settings operation
+            logger.warning(f"Failed to create default config at {config_path}: {e}")
