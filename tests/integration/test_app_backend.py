@@ -3,7 +3,6 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from databricks_labs_dqx_app.backend.app import app
 from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_dqx_engine
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.settings import SettingsManager
@@ -58,6 +57,8 @@ def app_settings_file(ws, settings_manager):
 @pytest.fixture
 def api_client(ws, spark):
     """Fixture that provides a FastAPI test client with dependency overrides."""
+    # Import app lazy here to avoid module-level initialization during fixture collection
+    from databricks_labs_dqx_app.backend.app import app
 
     def override_get_obo_ws() -> WorkspaceClient:
         """Override OBO workspace client to use the test workspace client."""
