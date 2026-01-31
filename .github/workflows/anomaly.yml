@@ -100,7 +100,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
         run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -rs -n 5 --cov --cov-report=xml --timeout=1200 --reruns 1 --reruns-delay 5
 
       # Recursively search the entire workspace directory for all coverage reports.
       # All uploaded test coverage reports will be used even if publish is done multiple time.
@@ -188,7 +188,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
         run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 2 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -rs -n 5 --cov --cov-report=xml --timeout=1200 --reruns 1 --reruns-delay 5
 
 
       # collects all coverage reports
