@@ -17,6 +17,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     TrainingMetadata,
     compute_config_hash,
 )
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.test_anomaly_utils import (
     get_standard_2d_training_data,
@@ -289,6 +290,35 @@ def test_registry_stores_metadata(
 
     # Verify metrics exist
     assert record["training"]["metrics"] is not None
+
+
+def test_expected_anomaly_rate_applied_when_contamination_unset(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
+):
+    """Verify expected_anomaly_rate sets contamination when not explicitly provided."""
+    unique_id = make_random(8).lower()
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+    model_name = f"{anomaly_registry_prefix}.test_expected_rate_{make_random(4).lower()}"
+
+    training_data = get_standard_2d_training_data()
+    train_df = spark.createDataFrame(training_data, "amount double, quantity double")
+
+    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=None))
+    expected_rate = 0.02
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+        expected_anomaly_rate=expected_rate,
+    )
+
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
+    assert record is not None
+    contamination = float(record["training"]["hyperparameters"]["contamination"])
+    assert contamination == expected_rate
 
 
 def test_nonexistent_registry_returns_none(spark: SparkSession, anomaly_registry_prefix):

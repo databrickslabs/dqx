@@ -31,7 +31,7 @@ def test_apply_checks_by_metadata(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=DQENGINE_SCORE_THRESHOLD,
+            threshold=95.0,
         )
     ]
 
@@ -68,7 +68,7 @@ def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=DQENGINE_SCORE_THRESHOLD,
+            threshold=99.0,
         )
     ]
 

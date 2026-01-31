@@ -9,6 +9,7 @@ import pytest
 
 from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import (
     OUTLIER_AMOUNT,
@@ -100,7 +101,14 @@ def shared_2d_model(ws, spark, make_schema, make_random):
     train_df = spark.createDataFrame(training_data, "amount double, quantity double")
 
     engine = AnomalyEngine(ws, spark)
-    full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
+    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.1))
+    full_model_name = engine.train(
+        df=train_df,
+        columns=columns,
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+    )
 
     return {
         "model_name": full_model_name,
