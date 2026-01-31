@@ -12,6 +12,7 @@ shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min t
 import numpy as np
 import pytest
 from pyspark.sql import SparkSession
+from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -342,3 +343,61 @@ def test_format_contributions_map():
     assert format_contributions_map({}, 2) == ""
     rendered = format_contributions_map({"a": 70.0, "b": None, "c": 20.0}, 2)
     assert "a" in rendered
+
+
+def test_compute_feature_contributions_udf_path(spark: SparkSession, shared_2d_model):
+    """Compute feature contributions via pandas UDF using a real registry model."""
+    if explainer_mod.shap is None or explainer_mod.np is None or explainer_mod.pd is None:
+        pytest.skip("Explainability dependencies not available")
+    if "pyspark.sql.connect" in spark.__class__.__module__:
+        pytest.skip("Spark Connect workers may not have test package available for UDFs")
+
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+
+    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
+    assert record is not None
+    model_uri = record["identity"]["model_uri"].split(",")[0]
+
+    df = spark.createDataFrame([(100.0, 10.0), (110.0, 12.0)], "amount double, quantity double")
+    result = explainer_mod.compute_feature_contributions(model_uri, df, ["amount", "quantity"])
+
+    row = result.collect()[0]
+    assert "anomaly_contributions" in row.asDict()
+    assert set(row["anomaly_contributions"].keys()) == {"amount", "quantity"}
+
+
+def test_add_top_contributors_uses_dq_info(spark: SparkSession):
+    """Top contributors can be derived from _dq_info.severity_percentile."""
+    schema = StructType(
+        [
+            StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True),
+            StructField(
+                "_dq_info",
+                StructType(
+                    [
+                        StructField(
+                            "anomaly",
+                            StructType(
+                                [
+                                    StructField("severity_percentile", DoubleType()),
+                                ]
+                            ),
+                        )
+                    ]
+                ),
+                True,
+            ),
+        ]
+    )
+
+    df = spark.createDataFrame(
+        [({"amount": 70.0, "quantity": 30.0}, {"anomaly": {"severity_percentile": 80.0}})],
+        schema=schema,
+    )
+
+    result = add_top_contributors_to_message(df, threshold=60.0, top_n=2)
+    assert "_top_contributors" in result.columns
+    if "pyspark.sql.connect" not in spark.__class__.__module__:
+        row = result.collect()[0]
+        assert row["_top_contributors"] != ""

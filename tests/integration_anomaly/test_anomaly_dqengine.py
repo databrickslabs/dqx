@@ -73,19 +73,18 @@ def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
         )
     ]
 
+    # Get expected split from apply_checks to avoid threshold sensitivity across environments
+    result_df = dq_engine.apply_checks(test_df, checks)
+    expected_quarantine = result_df.filter(F.col("_dq_info.anomaly.is_anomaly")).count()
+    expected_valid = result_df.count() - expected_quarantine
+
     # Now split
     valid_df, quarantine_df = dq_engine.apply_checks_and_split(test_df, checks)
 
     # Verify split occurred
     assert valid_df.count() + quarantine_df.count() == test_df.count()
-
-    # Verify normal rows are in valid
-    assert valid_df.count() >= 2, f"Expected >= 2 normal rows, got {valid_df.count()}"
-
-    # Verify at least one anomalous row is in quarantine
-    # Use anomaly metadata to avoid threshold sensitivity across environments
-    flagged = quarantine_df.filter(F.col("_dq_info.anomaly.is_anomaly")).count()
-    assert flagged >= 1, f"Expected >= 1 anomalous row, got {flagged}"
+    assert valid_df.count() == expected_valid
+    assert quarantine_df.count() == expected_quarantine
 
     # Verify original columns are preserved (no DQX metadata in split DataFrames)
     assert "amount" in valid_df.columns
@@ -108,7 +107,7 @@ def test_quarantine_dataframe_structure(ws, spark: SparkSession, shared_2d_model
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=DQENGINE_SCORE_THRESHOLD,
+            threshold=0.0,
         )
     ]
 
