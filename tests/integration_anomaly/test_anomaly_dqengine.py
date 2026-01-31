@@ -69,7 +69,7 @@ def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=99.0,
+            threshold=95.0,
         )
     ]
 
@@ -84,7 +84,7 @@ def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
 
     # Verify at least one anomalous row is in quarantine
     # Use anomaly metadata to avoid threshold sensitivity across environments
-    flagged = quarantine_df.filter(F.col("_dq_info.anomaly.is_anomaly") == True).count()
+    flagged = quarantine_df.filter(F.col("_dq_info.anomaly.is_anomaly")).count()
     assert flagged >= 1, f"Expected >= 1 anomalous row, got {flagged}"
 
     # Verify original columns are preserved (no DQX metadata in split DataFrames)

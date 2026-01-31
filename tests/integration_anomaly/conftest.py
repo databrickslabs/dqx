@@ -101,7 +101,7 @@ def shared_2d_model(ws, spark, make_schema, make_random):
     train_df = spark.createDataFrame(training_data, "amount double, quantity double")
 
     engine = AnomalyEngine(ws, spark)
-    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.1))
+    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.1, random_seed=42))
     full_model_name = engine.train(
         df=train_df,
         columns=columns,
