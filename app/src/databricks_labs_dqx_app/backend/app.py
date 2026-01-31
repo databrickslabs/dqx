@@ -16,11 +16,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=f"{conf.app_name}", lifespan=lifespan)
-ui = StaticFiles(directory=conf.static_assets_path, html=True)
 
-# note the order of includes and mounts!
+# Configure route for the backend API (/api) using fastapi
 app.include_router(api)
-app.mount("/", ui)
 
+# Configure route for the UI (static files)
+# Mount static files for the UI only if the dist directory exists (e.g., after build)
+# This allows the API to work in test environments without requiring a frontend build
+if conf.static_assets_path.exists():
+    # serve static files for the UI
+    ui = StaticFiles(directory=conf.static_assets_path, html=True)
+    # configure main route: anything that is not API is considered to be UI
+    app.mount("/", ui)
+else:  # for testing in CI environments
+    logger.warning(f"Static assets path {conf.static_assets_path} not found. UI will not be available.")
 
 add_not_found_handler(app)

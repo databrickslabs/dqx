@@ -28,7 +28,7 @@ metadata-path = "src/databricks_labs_dqx_app/_metadata.py"
 
 [tool.uv.sources]
 databricks-labs-dqx = { path = "../", editable = true }
-apx = { git = "https://github.com/databricks-solutions/apx.git" }
+apx = { git = "https://github.com/databricks-solutions/apx.git" }  # PyPi package not available yet
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
