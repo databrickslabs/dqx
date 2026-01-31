@@ -305,7 +305,7 @@ class TestSettingsManager:
 
         result = manager.save_settings(settings)
 
-        assert mock_workspace_client.workspace.mkdirs.call_count == 2
+        assert mock_workspace_client.workspace.mkdirs.call_count == 1
         mock_workspace_client.workspace.upload.assert_called_once()
         assert result.install_folder == "/Users/test_user@example.com/.dqx"
 

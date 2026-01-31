@@ -57,14 +57,15 @@ class SettingsManager:
             logger.error(f"Failed to create .dqx folder {self.default_dqx_folder}: {e}")
             raise ValueError(f"Could not create .dqx folder: {self.default_dqx_folder}") from e
 
-        # Ensure the install folder exists (create if needed)
-        try:
-            self.ws.workspace.mkdirs(install_folder)
-        except Exception as e:
-            logger.error(f"Failed to create install folder {install_folder}: {e}")
-            raise ValueError(f"Could not create install folder: {install_folder}") from e
+        if install_folder != self.default_dqx_folder:
+            # Ensure the install folder exists (create if needed)
+            try:
+                self.ws.workspace.mkdirs(install_folder)
+            except Exception as e:
+                logger.error(f"Failed to create install folder {install_folder}: {e}")
+                raise ValueError(f"Could not create install folder: {install_folder}") from e
 
-        # Save app.yml with the install folder
+        # Save app.yml with info about install folder
         content = yaml.dump({"install_folder": install_folder})
         content_bytes = content.encode("utf-8")
 

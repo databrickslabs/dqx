@@ -165,7 +165,7 @@ databricks auth login --host https://your-workspace.cloud.databricks.com
 
 Create a `.env` file in the app directory:
 ```bash
-DATABRICKS_CONFIG_PROFILE=<your-databricks-profile>
+DATABRICKS_CONFIG_PROFILE=<your-profile>
 ```
 
 This is useful when you have multiple [Databricks CLI profiles](https://docs.databricks.com/aws/en/dev-tools/cli/profiles) and want to use a specific one.
@@ -284,36 +284,82 @@ make integration
 
 > **Note**: Production deployment uses the **Databricks CLI**, not `apx`. The `apx` tool is only for local development.
 
-### Deploy the App to Databricks Workspace
+Deploying a Databricks App requires **three steps**:
 
-Deploy to Databricks using Databricks Asset Bundles:
+### Step 1: Deploy the Bundle
+
+Deploy the app infrastructure using Databricks Asset Bundles (DAB):
 ```bash
+cd app
 databricks bundle deploy -p <your-profile>
 ```
 
-The deployment:
-- Uses app definition from `databricks.yml`
-- Uploads the built wheel from `app/.build/` to Databricks
-- Configures the app with the necessary resources (compute, permissions)
-- Registers the app in your Databricks workspace
+This command:
+- Creates/updates the app resource in Databricks
+- Uploads the `.build/` directory to workspace (at `.bundle/<app-name>/dev/files/.build`)
+- Configures app settings from `databricks.yml` (name, scopes, permissions)
 
-### Start the App
+This does not:
+- Start the app
+- Deploy the actual source code to the app runtime
 
-After deployment, start the app using the **Databricks CLI** (not apx):
+### Step 2: Start the App Compute
+
+**Using CLI:**
 ```bash
 databricks apps start databricks-labs-dqx-app -p <your-profile>
 ```
 
-Or start it from the Databricks workspace UI:
+**Using UI:**
 1. Navigate to **Apps** in the sidebar
 2. Find the **databricks-labs-dqx-app** app
 3. Click **Start**
+
+### Step 3: Deploy the Source Code
+
+After the bundle is deployed, you need to deploy the actual source code to the app.
+
+**Option A: Using Databricks CLI**
+```bash
+databricks apps deploy databricks-labs-dqx-app \
+  /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
+  -p <your-profile>
+```
+
+**Option B: Using Databricks UI**
+1. Navigate to **Apps** in the sidebar
+2. Find and click on **databricks-labs-dqx-app**
+3. Click the **Deploy** button
+4. Enter the source code path: `/Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build`
+5. Click **Deploy**
+
+> **Why two steps?** The bundle deployment creates the app infrastructure, but the source code deployment tells the app runtime where to find the code. This separation allows you to update code without redeploying infrastructure.
+
+
+### Complete Deployment Script
+
+Here's a complete script that performs all three steps:
+
+```bash
+cd app
+
+# Step 1: Deploy bundle
+databricks bundle deploy -p <your-profile>
+
+# Step 2: Deploy source code
+databricks apps deploy databricks-labs-dqx-app \
+  /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
+  -p <your-profile>
+
+# Step 3: Start the app
+databricks apps start databricks-labs-dqx-app -p <your-profile>
+```
 
 ### Access the App
 
 Once started, access the app at:
 ```
-https://<your-workspace-url>/apps/dqx
+https://<your-workspace-url>/apps/databricks-labs-dqx-app
 ```
 
 You can also find the app URL in:
@@ -322,19 +368,44 @@ You can also find the app URL in:
 
 ### Monitor and Manage
 
+**Check app status:**
 ```bash
-# Check app status
 databricks apps get databricks-labs-dqx-app -p <your-profile>
+```
 
-# View app logs
+**View app logs:**
+```bash
 databricks apps logs databricks-labs-dqx-app -p <your-profile>
+```
 
-# Stop the app
+**Stop the app:**
+```bash
+databricks apps stop databricks-labs-dqx-app -p <your-profile>
+```
+
+**Redeploy after code changes:**
+```bash
+# Deploy bundle
+databricks bundle deploy -p <your-profile>
+
+# Deploy updated source code
+databricks apps deploy databricks-labs-dqx-app \
+  /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
+  -p <your-profile>
+
+# The app will automatically restart after deployment
+```
+
+**Update OAuth scopes (after changing `databricks.yml`):**
+```bash
+# Deploy bundle with updated config
+databricks bundle deploy -p <your-profile>
+
+# Stop the app to clear old OAuth tokens
 databricks apps stop databricks-labs-dqx-app -p <your-profile>
 
-# Redeploy after changes
-databricks bundle deploy -p <your-profile>
-# Then restart: databricks apps start databricks-labs-dqx-app -p <your-profile>
+# Start the app to get new OAuth tokens with updated scopes
+databricks apps start databricks-labs-dqx-app -p <your-profile>
 ```
 
 ## 🐛 Troubleshooting

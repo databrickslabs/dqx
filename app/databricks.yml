@@ -14,7 +14,13 @@ resources:
     databricks-labs-dqx-app:
       name: "databricks-labs-dqx-app"
       description: "Databricks DQX App for Data Quality Monitoring"
-      source_code_path: .build
+      source_code_path: ".build"
+      user_api_scopes:
+        - files.files
+        - sql
+        - catalog.catalogs:read
+        - catalog.tables:read
+        - catalog.schemas:read
 
 targets:
   dev:
