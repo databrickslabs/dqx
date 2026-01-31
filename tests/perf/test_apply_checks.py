@@ -148,6 +148,126 @@ def test_benchmark_foreach_is_not_null(benchmark, ws, generated_string_df):
     assert result == EXPECTED_ROWS
 
 
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
+@pytest.mark.benchmark(group="test_benchmark_is_null")
+def test_benchmark_is_null(benchmark, ws, generated_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_null",
+            criticality="warn",
+            check_func=check_funcs.is_null,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5, "percentNulls": 0.20}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_null")
+def test_benchmark_foreach_is_null(benchmark, ws, generated_string_df):
+    columns, df, n_rows = generated_string_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_null,
+            columns=columns,
+            criticality="error",
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
+@pytest.mark.benchmark(group="test_benchmark_is_empty")
+def test_benchmark_is_empty(benchmark, ws, generated_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_empty",
+            criticality="warn",
+            check_func=check_funcs.is_empty,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_empty")
+def test_benchmark_foreach_is_empty(benchmark, ws, generated_string_df):
+    columns, df, n_rows = generated_string_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_empty,
+            columns=columns,
+            criticality="error",
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
+@pytest.mark.benchmark(group="test_benchmark_is_null_or_empty")
+def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        DQRowRule(
+            name=f"{column}_is_null_or_empty",
+            criticality="warn",
+            check_func=check_funcs.is_null_or_empty,
+            column=column,
+        ),
+    ]
+    benchmark.group += f" {column}"
+    checked = dq_engine.apply_checks(generated_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+@pytest.mark.parametrize(
+    "generated_string_df",
+    [{"n_rows": DEFAULT_ROWS, "n_columns": 5}],
+    indirect=True,
+    ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
+)
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_null_or_empty")
+def test_benchmark_foreach_is_null_or_empty(benchmark, ws, generated_string_df):
+    columns, df, n_rows = generated_string_df
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    checks = [
+        *DQForEachColRule(
+            check_func=check_funcs.is_null_or_empty,
+            columns=columns,
+            criticality="error",
+        ).get_rules()
+    ]
+    benchmark.group += f"_{n_rows}_rows_{len(columns)}_columns"
+    result = benchmark(lambda: dq_engine.apply_checks(df, checks).count())
+    assert result == EXPECTED_ROWS
+
+
 @pytest.mark.parametrize("column", ["col1", "col2", "col3"])
 @pytest.mark.benchmark(group="test_benchmark_is_not_null_and_is_in_list")
 def test_benchmark_is_not_null_and_is_in_list(benchmark, ws, generated_df, column):
