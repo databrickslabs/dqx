@@ -1,5 +1,6 @@
 import logging
 import datetime
+from decimal import Decimal
 
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.profiler import DQProfile
@@ -34,6 +35,12 @@ test_rules = [
         column='d1',
         description='Real min/max values were used',
         parameters={'max': 333323.00, 'min': 1.23},
+    ),
+    DQProfile(
+        name='min_max',
+        column='price',
+        description='Real min/max values were used',
+        parameters={'min': Decimal("0.01"), 'max': Decimal("999.99")},
     ),
 ]
 
@@ -95,6 +102,14 @@ def test_generate_dq_rules(ws, spark):
             "name": "d1_isnt_in_range",
             "criticality": "error",
         },
+        {
+            "check": {
+                "function": "is_in_range",
+                "arguments": {"column": "price", "min_limit": Decimal("0.01"), "max_limit": Decimal("999.99")},
+            },
+            "name": "price_isnt_in_range",
+            "criticality": "error",
+        },
     ]
     assert expectations == expected, f"Actual expectations: {expectations}"
 
@@ -154,6 +169,14 @@ def test_generate_dq_rules_warn(ws, spark):
                 "arguments": {"column": "d1", "min_limit": 1.23, "max_limit": 333323.00},
             },
             "name": "d1_isnt_in_range",
+            "criticality": "warn",
+        },
+        {
+            "check": {
+                "function": "is_in_range",
+                "arguments": {"column": "price", "min_limit": Decimal("0.01"), "max_limit": Decimal("999.99")},
+            },
+            "name": "price_isnt_in_range",
             "criticality": "warn",
         },
     ]

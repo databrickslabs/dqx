@@ -17,7 +17,9 @@ def test_decimal_both_bounds_is_in_range():
 
 def test_decimal_only_min_is_not_less_than():
     """Test min_max generator with Decimal type for minimum bound only."""
-    result = DQGenerator.dq_generate_min_max("amount_col", **{"min": Decimal("10.50"), "max": None})
+    result = DQGenerator.dq_generate_min_max(
+        "amount_col", **{"min": Decimal("10.50"), "max": None}
+    )
     assert result["check"]["function"] == "is_not_less_than"
     args = result["check"]["arguments"]
     assert args["column"] == "amount_col"
@@ -53,9 +55,14 @@ def test_float_both_bounds_is_in_range():
     assert args["max_limit"] == 1000.0
 
 
-def test_mixed_numeric_types_not_generated():
-    """Test that mixing int/float with Decimal in the same rule returns None."""
-    # int min, Decimal max - should not generate a rule due to type mismatch
-    result = DQGenerator.dq_generate_min_max("mixed_col", **{"min": 10, "max": Decimal("100.00")})
-    # The _same_family check should prevent this combination
-    assert result is None or result["check"]["function"] in ["is_not_greater_than"]
+def test_mixed_int_and_decimal_is_in_range():
+    """Test that mixing int and Decimal produces is_in_range since both are numeric."""
+    result = DQGenerator.dq_generate_min_max(
+        "mixed_col", **{"min": 10, "max": Decimal("100.00")}
+    )
+    assert result is not None
+    assert result["check"]["function"] == "is_in_range"
+    args = result["check"]["arguments"]
+    assert args["column"] == "mixed_col"
+    assert args["min_limit"] == 10
+    assert args["max_limit"] == Decimal("100.00")
