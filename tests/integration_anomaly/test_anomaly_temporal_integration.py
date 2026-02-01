@@ -7,7 +7,7 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
-from databricks.labs.dqx.anomaly.temporal import extract_temporal_features
+from databricks.labs.dqx.anomaly.temporal import extract_temporal_features, get_temporal_column_names
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.test_anomaly_utils import qualify_model_name
 
@@ -271,3 +271,89 @@ def test_temporal_features_with_nulls(spark: SparkSession):
 
     # Second row with null timestamp should have null temporal_hour
     assert rows[1]["temporal_hour"] is None
+
+
+def test_unknown_temporal_feature_raises_error(spark: SparkSession):
+    """Test that unknown temporal feature raises ValueError (line 59)."""
+    df = spark.sql("SELECT 100.0 as amount, timestamp('2024-01-01 09:00:00') as event_time FROM range(5)")
+
+    # Try to extract an unknown feature
+    with pytest.raises(ValueError, match="Unknown temporal feature: invalid_feature"):
+        df_with_temporal = extract_temporal_features(
+            df, timestamp_column="event_time", features=["hour", "invalid_feature"]
+        )
+        # Force evaluation
+        df_with_temporal.collect()
+
+
+def test_all_temporal_features(spark: SparkSession):
+    """Test all available temporal features including day_of_month and week_of_year."""
+    df = spark.sql("SELECT 100.0 as amount, timestamp('2024-03-15 14:30:00') as event_time FROM range(5)")
+
+    # Extract all available features
+    df_with_temporal = extract_temporal_features(
+        df,
+        timestamp_column="event_time",
+        features=["hour", "day_of_week", "day_of_month", "month", "quarter", "week_of_year", "is_weekend"],
+    )
+
+    # Verify all columns are created
+    assert "temporal_hour" in df_with_temporal.columns
+    assert "temporal_day_of_week" in df_with_temporal.columns
+    assert "temporal_day_of_month" in df_with_temporal.columns
+    assert "temporal_month" in df_with_temporal.columns
+    assert "temporal_quarter" in df_with_temporal.columns
+    assert "temporal_week_of_year" in df_with_temporal.columns
+    assert "temporal_is_weekend" in df_with_temporal.columns
+
+    # Verify values
+    row = df_with_temporal.collect()[0]
+    assert row["temporal_hour"] == 14
+    assert row["temporal_day_of_month"] == 15
+    assert row["temporal_month"] == 3
+    assert row["temporal_quarter"] == 1
+    assert row["temporal_week_of_year"] is not None
+
+
+def test_get_temporal_column_names_with_none():
+    """Test get_temporal_column_names with None returns default columns (lines 74-75, 77)."""
+    # Call with None - should use default features
+    column_names = get_temporal_column_names(features=None)
+
+    # Verify default features: ["hour", "day_of_week", "month"]
+    assert column_names == ["temporal_hour", "temporal_day_of_week", "temporal_month"]
+
+
+def test_get_temporal_column_names_with_custom_features():
+    """Test get_temporal_column_names with custom features."""
+    # Test with custom features
+    column_names = get_temporal_column_names(features=["hour", "quarter", "is_weekend"])
+
+    assert column_names == ["temporal_hour", "temporal_quarter", "temporal_is_weekend"]
+
+
+def test_get_temporal_column_names_with_all_features():
+    """Test get_temporal_column_names with all available features (line 77 mapping)."""
+    # Test all features to cover the full mapping dictionary
+    all_features = ["hour", "day_of_week", "day_of_month", "month", "quarter", "week_of_year", "is_weekend"]
+    column_names = get_temporal_column_names(features=all_features)
+
+    expected = [
+        "temporal_hour",
+        "temporal_day_of_week",
+        "temporal_day_of_month",
+        "temporal_month",
+        "temporal_quarter",
+        "temporal_week_of_year",
+        "temporal_is_weekend",
+    ]
+    assert column_names == expected
+
+
+def test_get_temporal_column_names_filters_invalid():
+    """Test get_temporal_column_names filters out invalid features (line 87)."""
+    # Include invalid feature - should be filtered out
+    column_names = get_temporal_column_names(features=["hour", "invalid_feature", "month"])
+
+    # Should only return valid features
+    assert column_names == ["temporal_hour", "temporal_month"]

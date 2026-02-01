@@ -1,5 +1,6 @@
 """Integration tests for anomaly feature transformers."""
 
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
@@ -158,3 +159,221 @@ def test_column_type_classifier_warnings_for_limits_and_unsupported(spark):
     assert "Skipping unsupported columns" in warnings_text
     assert "Feature engineering will create" in warnings_text
     assert "appears to be an ID field" in warnings_text
+
+
+def test_id_field_detection_with_high_cardinality_integers(spark):
+    """Test ID field detection for integer columns with >1000 distinct and >80% unique."""
+    # Create integer column with >1000 distinct values and >80% unique ratio
+    data = [(i, 100.0 + i) for i in range(1500)]
+    df = spark.createDataFrame(data, "user_id int, amount double")
+
+    classifier = ColumnTypeClassifier()
+    _infos, warnings = classifier.analyze_columns(df, ["user_id", "amount"])
+
+    # Should have warning about user_id being an ID field
+    warnings_text = " ".join(warnings)
+    assert "user_id" in warnings_text
+    assert "appears to be an ID field" in warnings_text
+    assert "high cardinality" in warnings_text
+    assert "exclude_columns" in warnings_text or "removing from columns list" in warnings_text
+
+
+def test_float_columns_high_cardinality_no_id_warning(spark):
+    """Test that float/double columns with high cardinality do NOT trigger ID warnings."""
+    # Float columns naturally have high cardinality due to decimal precision
+    # These should NOT be flagged as ID fields
+    data = [(i * 1.5, i * 2.3, i * 0.7) for i in range(1500)]
+    df = spark.createDataFrame(data, "speed_mph double, revenue double, temperature float")
+
+    classifier = ColumnTypeClassifier()
+    infos, warnings = classifier.analyze_columns(df, ["speed_mph", "revenue", "temperature"])
+
+    # Should NOT have any ID field warnings (floats excluded from cardinality check)
+    warnings_text = " ".join(warnings)
+    assert "appears to be an ID field" not in warnings_text
+    assert "high cardinality" not in warnings_text
+
+    # All should be classified as numeric
+    info_by_name = {info.name: info for info in infos}
+    assert info_by_name["speed_mph"].category == "numeric"
+    assert info_by_name["revenue"].category == "numeric"
+    assert info_by_name["temperature"].category == "numeric"
+
+
+def test_id_pattern_detection_in_column_names(spark):
+    """Test ID field detection based on column name patterns (_id, _key, etc)."""
+    data = [(i, i * 2, i * 3, 100.0 + i) for i in range(100)]
+    df = spark.createDataFrame(data, "user_id int, account_key int, transaction_uuid int, amount double")
+
+    classifier = ColumnTypeClassifier()
+    _infos, warnings = classifier.analyze_columns(df, ["user_id", "account_key", "transaction_uuid", "amount"])
+
+    # Should have warnings for columns matching ID patterns
+    warnings_text = " ".join(warnings)
+    assert "user_id" in warnings_text and "appears to be an ID field" in warnings_text
+    assert "account_key" in warnings_text and "appears to be an ID field" in warnings_text
+    assert "transaction_uuid" in warnings_text and "appears to be an ID field" in warnings_text
+
+    # amount should NOT have ID warning
+    assert warnings_text.count("appears to be an ID field") >= 3
+
+
+def test_numeric_columns_with_null_handling(spark):
+    """Test numeric column processing with null values and null indicators."""
+    data = [(100.0, None, 50.0), (101.0, 200.0, None), (None, 201.0, 52.0)]
+    df = spark.createDataFrame(data, "col1 double, col2 double, col3 double")
+
+    classifier = ColumnTypeClassifier()
+    infos, _warnings = classifier.analyze_columns(df, ["col1", "col2", "col3"])
+
+    engineered_df, _metadata = apply_feature_engineering(df, infos)
+    engineered_cols = set(engineered_df.columns)
+
+    # Should have numeric columns
+    assert "col1" in engineered_cols
+    assert "col2" in engineered_cols
+    assert "col3" in engineered_cols
+
+    # Should have null indicators for all columns (all have nulls)
+    assert "col1_is_null" in engineered_cols
+    assert "col2_is_null" in engineered_cols
+    assert "col3_is_null" in engineered_cols
+
+    # Verify null imputation (should be 0.0)
+    result = engineered_df.collect()
+    assert result[0]["col2"] == 0.0  # Was None, imputed to 0.0
+    assert result[1]["col3"] == 0.0  # Was None, imputed to 0.0
+    assert result[2]["col1"] == 0.0  # Was None, imputed to 0.0
+
+
+def test_categorical_onehot_vs_frequency_encoding(spark):
+    """Test that low cardinality uses OneHot and high cardinality uses Frequency encoding."""
+    # Low cardinality: 3 distinct values
+    # High cardinality: 50 distinct values
+    data = []
+    for i in range(200):
+        data.append((f"cat_{i % 3}", f"user_{i % 50}", 100.0 + i))
+
+    df = spark.createDataFrame(data, "low_card string, high_card string, amount double")
+
+    classifier = ColumnTypeClassifier(categorical_cardinality_threshold=20)
+    infos, _warnings = classifier.analyze_columns(df, ["low_card", "high_card", "amount"])
+
+    engineered_df, metadata = apply_feature_engineering(df, infos, categorical_cardinality_threshold=20)
+    engineered_cols = set(engineered_df.columns)
+
+    # Low cardinality should use OneHot (creates multiple columns)
+    assert any(col.startswith("low_card_") for col in engineered_cols)
+    assert "low_card_cat_0" in engineered_cols or "low_card_cat_1" in engineered_cols
+
+    # High cardinality should use Frequency (creates single _freq column)
+    assert "high_card_freq" in engineered_cols
+    assert not any(col.startswith("high_card_user_") for col in engineered_cols)
+
+    # Verify metadata stores encoding info
+    assert "low_card" in metadata.onehot_categories
+    assert "high_card" in metadata.categorical_frequency_maps
+
+
+def test_datetime_cyclical_encoding(spark):
+    """Test datetime columns are encoded with cyclical sin/cos features."""
+    data = [
+        (datetime(2024, 1, 1, 10, 0, 0), 100.0),  # Monday, 10am
+        (datetime(2024, 1, 6, 14, 0, 0), 101.0),  # Saturday, 2pm
+        (datetime(2024, 1, 7, 18, 0, 0), 102.0),  # Sunday, 6pm
+    ]
+    df = spark.createDataFrame(data, "event_ts timestamp, amount double")
+
+    classifier = ColumnTypeClassifier()
+    infos, _warnings = classifier.analyze_columns(df, ["event_ts", "amount"])
+
+    engineered_df, _metadata = apply_feature_engineering(df, infos)
+    engineered_cols = set(engineered_df.columns)
+
+    # Should have cyclical encoding features
+    assert "event_ts_hour_sin" in engineered_cols
+    assert "event_ts_hour_cos" in engineered_cols
+    assert "event_ts_dow_sin" in engineered_cols
+    assert "event_ts_dow_cos" in engineered_cols
+    assert "event_ts_month_sin" in engineered_cols
+    assert "event_ts_month_cos" in engineered_cols
+    assert "event_ts_is_weekend" in engineered_cols
+
+    # Original timestamp column should be dropped
+    assert "event_ts" not in engineered_cols
+
+    # Verify is_weekend feature (Saturday and Sunday should be 1.0)
+    result = engineered_df.collect()
+    assert result[0]["event_ts_is_weekend"] == 0.0  # Monday
+    assert result[1]["event_ts_is_weekend"] == 1.0  # Saturday
+    assert result[2]["event_ts_is_weekend"] == 1.0  # Sunday
+
+
+def test_boolean_to_binary_encoding(spark):
+    """Test boolean columns are encoded to 0.0/1.0 with null handling."""
+    data = [(True, None, 100.0), (False, True, 101.0), (None, False, 102.0)]
+    df = spark.createDataFrame(data, "flag1 boolean, flag2 boolean, amount double")
+
+    classifier = ColumnTypeClassifier()
+    infos, _warnings = classifier.analyze_columns(df, ["flag1", "flag2", "amount"])
+
+    engineered_df, _metadata = apply_feature_engineering(df, infos)
+    engineered_cols = set(engineered_df.columns)
+
+    # Should have boolean features with _bool suffix
+    assert "flag1_bool" in engineered_cols
+    assert "flag2_bool" in engineered_cols
+
+    # Should have null indicators
+    assert "flag1_is_null" in engineered_cols
+    assert "flag2_is_null" in engineered_cols
+
+    # Verify boolean encoding: True→1.0, False→0.0, None→0.0
+    result = engineered_df.collect()
+    assert result[0]["flag1_bool"] == 1.0  # True
+    assert result[0]["flag2_bool"] == 0.0  # None (imputed)
+    assert result[1]["flag1_bool"] == 0.0  # False
+    assert result[1]["flag2_bool"] == 1.0  # True
+    assert result[2]["flag1_bool"] == 0.0  # None (imputed)
+
+
+def test_mixed_column_types_in_single_dataframe(spark):
+    """Test feature engineering with all column types mixed together."""
+    data = [
+        (100, 150.0, "cat_A", True, datetime(2024, 1, 1), "user_1"),
+        (200, 250.0, "cat_B", False, datetime(2024, 1, 2), "user_2"),
+        (None, None, None, None, None, "user_3"),
+    ]
+    df = spark.createDataFrame(
+        data, "int_col int, float_col double, category string, flag boolean, ts timestamp, id string"
+    )
+
+    classifier = ColumnTypeClassifier(categorical_cardinality_threshold=5)
+    infos, _warnings = classifier.analyze_columns(df, ["int_col", "float_col", "category", "flag", "ts"])
+
+    engineered_df, _metadata = apply_feature_engineering(df, infos, categorical_cardinality_threshold=5)
+    engineered_cols = set(engineered_df.columns)
+
+    # Numeric features
+    assert "int_col" in engineered_cols
+    assert "float_col" in engineered_cols
+
+    # Categorical (OneHot due to low cardinality)
+    assert any(col.startswith("category_") for col in engineered_cols)
+
+    # Boolean
+    assert "flag_bool" in engineered_cols
+
+    # Datetime (cyclical encoding)
+    assert "ts_hour_sin" in engineered_cols
+    assert "ts_is_weekend" in engineered_cols
+
+    # Null indicators (all columns have nulls in row 3)
+    assert "int_col_is_null" in engineered_cols
+    assert "float_col_is_null" in engineered_cols
+    assert "category_is_null" in engineered_cols
+    assert "flag_is_null" in engineered_cols
+    assert "ts_is_null" in engineered_cols
+
+    # Extra columns preserved
+    assert "id" in engineered_cols
