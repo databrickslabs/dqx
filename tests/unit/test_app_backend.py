@@ -3,6 +3,7 @@
 import base64
 import logging
 from unittest.mock import create_autospec
+from fastapi import HTTPException
 
 import pytest
 from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
@@ -55,14 +56,18 @@ class TestGetOboWs:
     """Unit tests for the get_obo_ws dependency function."""
 
     def test_raises_when_no_token(self):
-        """Should raise ValueError when no token is provided."""
-        with pytest.raises(ValueError, match="OBO token is not provided"):
+        """Should raise HTTPException when no token is provided."""
+        with pytest.raises(HTTPException) as exc_info:
             get_obo_ws(token=None)
+        assert exc_info.value.status_code == 401
+        assert "Authentication required" in exc_info.value.detail
 
     def test_raises_when_empty_token(self):
-        """Should raise ValueError when empty token is provided."""
-        with pytest.raises(ValueError, match="OBO token is not provided"):
+        """Should raise HTTPException when empty token is provided."""
+        with pytest.raises(HTTPException) as exc_info:
             get_obo_ws(token="")
+        assert exc_info.value.status_code == 401
+        assert "Authentication required" in exc_info.value.detail
 
 
 class TestCustomFormatter:

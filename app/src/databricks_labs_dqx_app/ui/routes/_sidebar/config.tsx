@@ -43,6 +43,7 @@ import {
   Package,
   UploadCloud,
   LayoutDashboard,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import yaml from "js-yaml";
@@ -53,13 +54,14 @@ export const Route = createFileRoute("/_sidebar/config")({
   component: () => <ConfigPage />,
 });
 
-function ConfigLocationSettings() {
+function ConfigLocationSettings({ onSettingsSaved }: { onSettingsSaved?: () => void }) {
   const { data: settings } = useGetSettingsSuspense(selector());
   const { mutate: save, isPending } = useSaveSettings();
   const queryClient = useQueryClient();
 
   const [isOpen, setIsOpen] = useState(false);
   const [path, setPath] = useState(settings.install_folder);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -68,17 +70,42 @@ function ConfigLocationSettings() {
   }, [isOpen, settings.install_folder]);
 
   const onSave = () => {
+    setIsSaving(true);
     save(
       { data: { install_folder: path } },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
           setIsOpen(false);
-          // Invalidate settings and config queries to refetch with new data
-          queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/config"] });
-          toast.success("Configuration location updated");
+          try {
+            // Refetch settings first
+            await queryClient.refetchQueries({ queryKey: ["/api/settings"] });
+            
+            // Then refetch config from the new location
+            // This will update all active queries and trigger re-renders
+            await queryClient.refetchQueries({ queryKey: ["/api/config"] });
+            
+            toast.success("Configuration location updated");
+            
+            // Force complete remount of config components
+            if (onSettingsSaved) {
+              onSettingsSaved();
+            }
+          } catch (error) {
+            // If config doesn't exist yet in new location, that's okay
+            // The error boundaries will handle it gracefully
+            console.warn("Config refetch after settings save:", error);
+            toast.success("Configuration location updated");
+            
+            // Still trigger remount even on error
+            if (onSettingsSaved) {
+              onSettingsSaved();
+            }
+          } finally {
+            setIsSaving(false);
+          }
         },
         onError: (error) => {
+          setIsSaving(false);
           const msg = (error as any).response?.data?.detail || error.message;
           toast.error("Failed to save: " + msg);
         },
@@ -87,39 +114,55 @@ function ConfigLocationSettings() {
   };
 
   return (
-    <Popover open={isOpen} onOpenChange={setIsOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
-          <Settings className="h-4 w-4" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[500px]" align="end">
-        <div className="grid gap-4">
-          <div className="space-y-2">
-            <h4 className="font-medium leading-none">
-              DQX Installation Folder
-            </h4>
-            <p className="text-sm text-muted-foreground">
-              Path to the config.yml file.
-            </p>
+    <>
+      <Popover open={isOpen} onOpenChange={setIsOpen}>
+        <PopoverTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
+            <Settings className="h-4 w-4" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-[500px]" align="end">
+          <div className="grid gap-4">
+            <div className="space-y-2">
+              <h4 className="font-medium leading-none">
+                DQX Installation Folder
+              </h4>
+              <p className="text-sm text-muted-foreground">
+                Path to the config.yml file.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="config-path">Path</Label>
+              <Input
+                id="config-path"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                className="h-8 font-mono text-[10px]"
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button size="sm" onClick={onSave} disabled={isPending}>
+                {isPending ? "Saving..." : "Save"}
+              </Button>
+            </div>
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="config-path">Path</Label>
-            <Input
-              id="config-path"
-              value={path}
-              onChange={(e) => setPath(e.target.value)}
-              className="h-8 font-mono text-[10px]"
-            />
-          </div>
-          <div className="flex justify-end">
-            <Button size="sm" onClick={onSave} disabled={isPending}>
-              {isPending ? "Saving..." : "Save"}
-            </Button>
+        </PopoverContent>
+      </Popover>
+
+      {isSaving && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4 p-8 rounded-lg bg-card border shadow-lg">
+            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            <div className="text-center space-y-2">
+              <div className="text-lg font-semibold">Saving Configuration</div>
+              <p className="text-sm text-muted-foreground">
+                Updating install folder and refreshing config...
+              </p>
+            </div>
           </div>
         </div>
-      </PopoverContent>
-    </Popover>
+      )}
+    </>
   );
 }
 
@@ -418,11 +461,11 @@ function YamlConfigEditor() {
       saveConfig(
         { data: { config: parsed } },
         {
-          onSuccess: () => {
+          onSuccess: async () => {
             toast.success("Configuration saved successfully");
             setIsModified(false);
-            // Invalidate config queries to refetch with new data
-            queryClient.invalidateQueries({ queryKey: ["/api/config"] });
+            // Refetch config queries to immediately update the display
+            await queryClient.refetchQueries({ queryKey: ["/api/config"] });
           },
           onError: (error) => {
             console.error(error);
@@ -492,6 +535,12 @@ function YamlConfigEditor() {
 
 function ConfigPage() {
   const [view, setView] = useState<"ui" | "yaml">("ui");
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Force complete remount of config components after settings save
+  const forceRefresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
 
   return (
     <div className="space-y-6 h-full flex flex-col">
@@ -539,7 +588,7 @@ function ConfigPage() {
                     <Settings className="h-4 w-4 animate-spin text-muted-foreground" />
                   }
                 >
-                  <ConfigLocationSettings />
+                  <ConfigLocationSettings onSettingsSaved={forceRefresh} />
                 </Suspense>
               </ErrorBoundary>
             )}
@@ -547,7 +596,7 @@ function ConfigPage() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0" key={refreshKey}>
         <QueryErrorResetBoundary>
           {({ reset }) =>
             view === "ui" ? (

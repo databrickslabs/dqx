@@ -214,7 +214,7 @@ All servers run in the background, with logs kept in-memory of the apx dev serve
 - ✅ **Frontend (UI)**: Well-suited for AI code generation (e.g., Cursor Composer, Copilot)
   - Component structure and styling can be efficiently generated
   - React patterns and TypeScript types benefit from AI assistance
-- ⚠️ **Backend (API)**: Should be primarily human-written with careful review
+- ⚠️ **Backend (API)**: You can use AI code generation but a careful review is required
   - Business logic requires deep understanding and validation
   - Security and data handling need human oversight
   - AI can assist with boilerplate, but critical logic should be manually crafted
