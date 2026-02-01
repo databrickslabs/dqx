@@ -29,8 +29,8 @@ def test_benchmark_apply_checks_all_dataset_checks(benchmark, ws, all_dataset_ch
 
 
 @pytest.mark.parametrize("column", ["col1", "col2", "col3", "col4", "col5", "col6", "col7", "col8"])
-@pytest.mark.benchmark(group="test_benchmark_is_null_or_empty")
-def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
+@pytest.mark.benchmark(group="test_benchmark_is_not_null_and_not_empty")
+def test_benchmark_is_not_null_and_not_empty(benchmark, ws, generated_df, column):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [
         DQRowRule(
@@ -52,8 +52,8 @@ def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
     indirect=True,
     ids=lambda param: f"n_rows_{param['n_rows']}_n_columns_{param['n_columns']}",
 )
-@pytest.mark.benchmark(group="test_benchmark_foreach_is_null_or_empty")
-def test_benchmark_foreach_is_null_or_empty(benchmark, ws, generated_string_df):
+@pytest.mark.benchmark(group="test_benchmark_foreach_is_not_null_and_not_empty")
+def test_benchmark_foreach_is_not_null_and_not_empty(benchmark, ws, generated_string_df):
     columns, df, n_rows = generated_string_df
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checks = [

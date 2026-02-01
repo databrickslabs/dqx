@@ -30,7 +30,7 @@ You can also define your own custom checks in Python (see [Creating custom check
 | `is_not_null`                      | Checks whether the values in the input column are not null.                                                                                                                                                                                                                                                                                                                                                                       | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_null`                          | Checks whether the values in the input column are null.                                                                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_not_empty`                     | Checks whether the values in the input column are not empty (but may be null).                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `is_empty`                         | Checks whether the values in the input column are empty (but may be null).                                                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `is_empty`                         | Checks whether the values in the input column are empty.                                                                                                                                                                                                                                                                                                                                                                          | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_not_null_and_not_empty`        | Checks whether the values in the input column are not null and not empty.                                                                                                                                                                                                                                                                                                                                                         | `column`: column to check (can be a string column name or a column expression); `trim_strings`: optional boolean flag to trim spaces from strings                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `is_null_or_empty`                 | Checks whether the values in the input column are null or empty.                                                                                                                                                                                                                                                                                                                                                                  | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_in_list`                       | Checks whether the values in the input column are present in the list of allowed values (null values are allowed). Can optionally perform a case-insensitive comparison. This check is not suited for `MapType` or `StructType` columns. For best performance with large lists of allowed values, use the `foreign_key` dataset-level check instead.                                                                              | `column`: column to check (can be a string column name or a column expression); `allowed`: list of allowed values; `case_sensitive`: optional boolean flag for case-sensitive comparison (default: True)                                                                                                                                                                                                                                                                                                                                             |
@@ -139,6 +139,14 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: col1
       trim_strings: true
 
+# is_not_null_and_not_empty check
+- criticality: error
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col1
+      trim_strings: true
+
 # is_null_or_empty check
 - criticality: error
   check:
@@ -146,10 +154,10 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col1
 
-# is_not_null_and_not_empty check
+# is_null_or_empty check
 - criticality: error
   check:
-    function: is_not_null_and_not_empty
+    function: is_null_or_empty
     arguments:
       column: col1
       trim_strings: true
@@ -827,6 +835,13 @@ checks = [
       criticality="error",
       check_func=check_funcs.is_not_null_and_not_empty,
       column="col1", # or as expr: F.col("col1")
+    ),
+
+    # is_not_null_and_not_empty check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_null_and_not_empty,
+      column="col1", # or as expr: F.col("col1")
       check_func_kwargs={"trim_strings": True}
     ),
 
@@ -835,6 +850,14 @@ checks = [
       criticality="error",
       check_func=check_funcs.is_null_or_empty,
       column="col1" # or as expr: F.col("col1")
+    ),
+
+    # is_null_or_empty check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_null_or_empty,
+      column="col1" # or as expr: F.col("col1"),
+      check_func_kwargs={"trim_strings": True}
     ),
 
     # is_in_list check
