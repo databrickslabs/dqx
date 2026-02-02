@@ -30,6 +30,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.app-installed
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -172,5 +173,6 @@ docs/dqx/docs/reference/api
 !docs/dqx/docs/reference/api/index.mdx
 
 .databricks
-databricks.yml
 
+# app specific - unignore the lib folder
+!app/src/databricks_labs_dqx_app/ui/lib/
