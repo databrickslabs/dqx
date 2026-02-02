@@ -12,13 +12,13 @@
         "  case when lower(table_name) LIKE '%\\_quarantine' THEN SUBSTRING_INDEX(lower(table_name), '_quarantine', 1) ELSE table_name END as display_table_name,\n",
         "  column_name\n",
         "FROM system.information_schema.columns\n",
-        "WHERE table_catalog=:catalog and (column_name = (:error_col_name) or column_name = :warn_col_name)\n",
+        "WHERE table_catalog=:catalog_name and (column_name = (:error_col_name) or column_name = :warn_col_name)\n",
         "ORDER BY table_catalog, table_schema, table_name; "
       ],
       "parameters": [
         {
-          "displayName": "catalog",
-          "keyword": "catalog",
+          "displayName": "catalog_name",
+          "keyword": "catalog_name",
           "dataType": "STRING",
           "defaultSelection": {
             "values": {
@@ -192,7 +192,7 @@
         "  column_name\n",
         "FROM system.information_schema.columns\n",
         "WHERE \n",
-        "table_catalog=:catalog and table_schema=:schema and table_name=:table_name and columns.data_type='DATE'"
+        "table_catalog=:catalog_name and table_schema=:schema and table_name=:table_name and columns.data_type='DATE'"
       ],
       "parameters": [
         {
@@ -211,8 +211,8 @@
           }
         },
         {
-          "displayName": "catalog",
-          "keyword": "catalog",
+          "displayName": "catalog_name",
+          "keyword": "catalog_name",
           "dataType": "STRING",
           "defaultSelection": {
             "values": {
@@ -226,8 +226,8 @@
           }
         },
         {
-          "displayName": "schema",
-          "keyword": "schema",
+          "displayName": "schema_name",
+          "keyword": "schema_name",
           "dataType": "STRING",
           "defaultSelection": {
             "values": {
@@ -944,13 +944,13 @@
         "  case when lower(table_name) LIKE '%\\_quarantine' THEN SUBSTRING_INDEX(lower(table_name), '_quarantine', 1) ELSE table_name END as base_table_name,\n",
         "  lower(table_name) as quarantine_table_name\n",
         "FROM system.information_schema.columns\n",
-        "WHERE table_catalog=:catalog and (column_name = '_errors' or column_name = '_warnings') and table_schema = :schema_name)\n",
+        "WHERE table_catalog=:catalog_name and (column_name = '_errors' or column_name = '_warnings') and table_schema = :schema_name)\n",
         "where base_table_name=:base_table_name"
       ],
       "parameters": [
         {
-          "displayName": "catalog",
-          "keyword": "catalog",
+          "displayName": "catalog_name",
+          "keyword": "catalog_name",
           "dataType": "STRING",
           "defaultSelection": {
             "values": {
@@ -1001,15 +1001,15 @@
       "queryLines": [
         "SELECT table_name, table_schema\n",
         "FROM   system.information_schema.columns\n",
-        "WHERE  table_catalog=:catalog and column_name IN ('run_id', 'metric_name', 'metric_value')\n",
+        "WHERE  table_catalog=:catalog_name and column_name IN ('run_id', 'metric_name', 'metric_value')\n",
         "and table_schema=:summary_schema\n",
         "GROUP  BY table_name, table_schema\n",
         "HAVING COUNT(DISTINCT column_name) = 3;"
       ],
       "parameters": [
         {
-          "displayName": "catalog",
-          "keyword": "catalog",
+          "displayName": "catalog_name",
+          "keyword": "catalog_name",
           "dataType": "STRING",
           "defaultSelection": {
             "values": {
@@ -2093,8 +2093,8 @@
                   "datasetName": "dd89cac0",
                   "parameters": [
                     {
-                      "name": "catalog",
-                      "keyword": "catalog"
+                      "name": "catalog_name",
+                      "keyword": "catalog_name"
                     }
                   ],
                   "disaggregated": false
@@ -2141,7 +2141,7 @@
                     "queryName": "parameter_dashboards/01f0fed83a2a1c4f954b20f877ec907c/datasets/01f0fed83a2b14b3aa8866768d555391_catalog_name"
                   },
                   {
-                    "parameterName": "catalog",
+                    "parameterName": "catalog_name",
                     "queryName": "parameter_dashboards/01f0fed83a2a1c4f954b20f877ec907c/datasets/01f0fed83a2b1466bdbe872810f5f5c4_catalog"
                   },
                   {
@@ -4210,8 +4210,8 @@
                   "datasetName": "13f52868",
                   "parameters": [
                     {
-                      "name": "schema",
-                      "keyword": "schema"
+                      "name": "schema_name",
+                      "keyword": "schema_name"
                     }
                   ],
                   "disaggregated": false
@@ -4362,7 +4362,7 @@
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361cf6a6dc5c8f76af2464_schema_name"
                   },
                   {
-                    "parameterName": "schema",
+                    "parameterName": "schema_name",
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361d0da1b4ca3d90ad9296_schema"
                   },
                   {
@@ -4443,8 +4443,8 @@
                   "datasetName": "2d9fe698",
                   "parameters": [
                     {
-                      "name": "catalog",
-                      "keyword": "catalog"
+                      "name": "catalog_name",
+                      "keyword": "catalog_name"
                     }
                   ],
                   "disaggregated": false
@@ -4456,8 +4456,8 @@
                   "datasetName": "13f52868",
                   "parameters": [
                     {
-                      "name": "catalog",
-                      "keyword": "catalog"
+                      "name": "catalog_name",
+                      "keyword": "catalog_name"
                     }
                   ],
                   "disaggregated": false
@@ -4495,8 +4495,8 @@
                   "datasetName": "c1208fd8",
                   "parameters": [
                     {
-                      "name": "catalog",
-                      "keyword": "catalog"
+                      "name": "catalog_name",
+                      "keyword": "catalog_name"
                     }
                   ],
                   "disaggregated": false
@@ -4613,11 +4613,11 @@
               "encodings": {
                 "fields": [
                   {
-                    "parameterName": "catalog",
+                    "parameterName": "catalog_name",
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361ca2a0f124eabbab3de4_catalog"
                   },
                   {
-                    "parameterName": "catalog",
+                    "parameterName": "catalog_name",
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361d0da1b4ca3d90ad9296_catalog"
                   },
                   {
@@ -4629,7 +4629,7 @@
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361d31ad3f64c008fa1d9b_catalog_name"
                   },
                   {
-                    "parameterName": "catalog",
+                    "parameterName": "catalog_name",
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361d54be1828b7dcdc01dd_catalog"
                   },
                   {
@@ -5612,8 +5612,8 @@
                   "datasetName": "13f52868",
                   "parameters": [
                     {
-                      "name": "schema",
-                      "keyword": "schema"
+                      "name": "schema_name",
+                      "keyword": "schema_name"
                     }
                   ],
                   "disaggregated": false
@@ -5751,7 +5751,7 @@
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361cf6a6dc5c8f76af2464_schema_name"
                   },
                   {
-                    "parameterName": "schema",
+                    "parameterName": "schema_name",
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361d0da1b4ca3d90ad9296_schema"
                   },
                   {
@@ -5828,8 +5828,8 @@
                   "datasetName": "2d9fe698",
                   "parameters": [
                     {
-                      "name": "catalog",
-                      "keyword": "catalog"
+                      "name": "catalog_name",
+                      "keyword": "catalog_name"
                     }
                   ],
                   "disaggregated": false
@@ -5841,8 +5841,8 @@
                   "datasetName": "13f52868",
                   "parameters": [
                     {
-                      "name": "catalog",
-                      "keyword": "catalog"
+                      "name": "catalog_name",
+                      "keyword": "catalog_name"
                     }
                   ],
                   "disaggregated": false
@@ -5880,8 +5880,8 @@
                   "datasetName": "c1208fd8",
                   "parameters": [
                     {
-                      "name": "catalog",
-                      "keyword": "catalog"
+                      "name": "catalog_name",
+                      "keyword": "catalog_name"
                     }
                   ],
                   "disaggregated": false
@@ -5985,11 +5985,11 @@
               "encodings": {
                 "fields": [
                   {
-                    "parameterName": "catalog",
+                    "parameterName": "catalog_name",
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361ca2a0f124eabbab3de4_catalog"
                   },
                   {
-                    "parameterName": "catalog",
+                    "parameterName": "catalog_name",
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361d0da1b4ca3d90ad9296_catalog"
                   },
                   {
@@ -6001,7 +6001,7 @@
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361d31ad3f64c008fa1d9b_catalog_name"
                   },
                   {
-                    "parameterName": "catalog",
+                    "parameterName": "catalog_name",
                     "queryName": "parameter_dashboards/01f0fe180d36155c9d0b4adce3b5cb96/datasets/01f0fe180d361d54be1828b7dcdc01dd_catalog"
                   },
                   {
