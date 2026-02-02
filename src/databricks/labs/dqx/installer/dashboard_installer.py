@@ -212,7 +212,7 @@ class DashboardInstaller:
         """
         metadata = DashboardMetadata.from_path(file)
         logger.debug(f"Dashboard Metadata retrieved: {metadata.display_name}")
-        stem = file.stem.title()
+        stem = file.stem.replace("_", " ")
         if stem.lower().endswith(".lvdash"):
             stem = stem[: -len(".lvdash")]
         metadata.display_name = stem
@@ -269,6 +269,6 @@ class DashboardInstaller:
         if dashboard.dashboard_id:
             try:
                 self._ws.lakeview.publish(dashboard.dashboard_id)
-                logger.info(f"Published dashboard: {display_name}")
+                logger.info(f"Published dashboard: '{display_name}'")
             except Exception as e:
                 logger.warning(f"Failed to publish dashboard: {e}")
