@@ -1,5 +1,6 @@
 """Integration tests for temporal features in anomaly detection."""
 
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pyspark.sql.functions as F
@@ -357,3 +358,59 @@ def test_get_temporal_column_names_filters_invalid():
 
     # Should only return valid features
     assert column_names == ["temporal_hour", "temporal_month"]
+
+
+def test_temporal_features_default_in_full_training_workflow(
+    spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix
+):
+    """Test default temporal features (lines 36-37) in full train → score workflow."""
+    unique_id = make_random(8).lower()
+    model_name = f"{anomaly_registry_prefix}.test_default_temporal_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    # Create training data with timestamps
+    base_time = datetime(2024, 1, 15, 9, 0, 0)
+    train_data = [(100.0 + (i % 10), base_time + timedelta(hours=i)) for i in range(50)]
+    train_df = spark.createDataFrame(train_data, "amount double, event_time timestamp")
+
+    # Extract temporal features WITHOUT specifying features parameter
+    # Should use defaults: ["hour", "day_of_week", "month"]
+    train_df_with_temporal = extract_temporal_features(train_df, timestamp_column="event_time")
+
+    # Verify default features were added
+    assert "temporal_hour" in train_df_with_temporal.columns
+    assert "temporal_day_of_week" in train_df_with_temporal.columns
+    assert "temporal_month" in train_df_with_temporal.columns
+    # Non-default features should NOT be present
+    assert "temporal_quarter" not in train_df_with_temporal.columns
+    assert "temporal_is_weekend" not in train_df_with_temporal.columns
+
+    # Train model using default temporal features
+    anomaly_engine.train(
+        df=train_df_with_temporal,
+        columns=["amount", "temporal_hour", "temporal_day_of_week", "temporal_month"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    # Create test data and apply same default temporal extraction
+    test_time = datetime(2024, 1, 20, 14, 0, 0)
+    test_df = spark.createDataFrame([(100.0, test_time)], "amount double, event_time timestamp")
+    test_df_with_temporal = extract_temporal_features(test_df, timestamp_column="event_time")
+
+    # Score with trained model - verifies defaults work end-to-end
+    _, apply_fn = has_no_anomalies(
+        model=qualify_model_name(model_name, registry_table),
+        registry_table=registry_table,
+        threshold=DEFAULT_SCORE_THRESHOLD,
+    )
+    result_df = apply_fn(test_df_with_temporal)
+
+    # Verify scoring worked with default temporal features
+    assert "_dq_info" in result_df.columns
+    row = result_df.collect()[0]
+    assert row["_dq_info"]["anomaly"]["score"] is not None
+
+    # Verify get_temporal_column_names also respects defaults
+    default_column_names = get_temporal_column_names()  # No features parameter
+    assert default_column_names == ["temporal_hour", "temporal_day_of_week", "temporal_month"]

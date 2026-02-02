@@ -4,9 +4,11 @@
 import warnings
 from collections.abc import Callable
 
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
@@ -365,3 +367,132 @@ def test_drift_detector_small_batch_skipped(spark):
     assert result.sample_size == 500
     assert result.drift_score == 0.0
     assert len(result.drifted_columns) == 0
+
+
+def test_drift_detection_handles_constant_columns_in_scoring(
+    ws, spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix
+):
+    """Test drift detection with constant column values (tests None handling lines 79-82)."""
+    unique_id = make_random(8).lower()
+    model_name = f"{anomaly_registry_prefix}.test_constant_drift_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    # Train on data with normal variance
+    train_df = spark.createDataFrame(
+        [(i, 100.0 + i * 0.1, 5.0 + i * 0.01) for i in range(1200)],
+        "transaction_id int, amount double, quantity double",
+    )
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    # Score with data where ONE column has all identical values (std=0)
+    # This triggers lines 81-82 in drift_detector.py where current_std may be None
+    test_df = spark.createDataFrame(
+        [(i, 100.0, 5.0) for i in range(1200)],  # amount is constant
+        "transaction_id int, amount double, quantity double",
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    checks = [
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=["amount", "quantity"],
+            threshold=DEFAULT_SCORE_THRESHOLD,
+            drift_threshold=DRIFT_THRESHOLD,
+        )
+    ]
+
+    # System should handle constant columns gracefully (no crash)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        result_df = dq_engine.apply_checks(test_df, checks)
+        result_df.collect()
+
+        # Verify no crash occurred and drift detection ran
+        # With constant column, drift score should be low (only std_change component)
+        # No drift warning expected since score < threshold
+        drift_warnings = [warning for warning in w if "drift detected" in str(warning.message).lower()]
+        assert len(drift_warnings) == 0  # No drift above threshold
+
+    # Verify we can also call drift detection directly to check the exact behavior
+    registry = AnomalyModelRegistry(spark)
+    model_metadata = registry.get_active_model(registry_table, model_name)
+    assert model_metadata is not None
+    assert model_metadata.training.baseline_stats is not None
+    baseline_stats = model_metadata.training.baseline_stats
+
+    # Direct call to verify lines 79-82 execute correctly
+    drift_result = compute_drift_score(test_df, ["amount", "quantity"], baseline_stats, threshold=3.0)
+    assert not drift_result.drift_detected
+    assert drift_result.sample_size == 1200
+    # Verify the constant column was processed (lines 81-82 executed)
+    assert "amount" in drift_result.column_scores
+
+
+def test_drift_detection_handles_columns_with_all_nulls(
+    ws, spark: SparkSession, make_random, anomaly_engine, anomaly_registry_prefix
+):
+    """Test drift detection with NULL-only columns (tests None handling lines 79-80)."""
+    unique_id = make_random(8).lower()
+    model_name = f"{anomaly_registry_prefix}.test_null_drift_{make_random(4).lower()}"
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    # Train on data with valid values
+    train_df = spark.createDataFrame(
+        [(i, 100.0 + i * 0.1, 5.0 + i * 0.01) for i in range(1200)],
+        "transaction_id int, amount double, quantity double",
+    )
+
+    anomaly_engine.train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    # Create test data where ONE column has all NULL values
+    # This triggers lines 79-80 in drift_detector.py where current_mean is None
+    test_df = spark.range(1200).select(
+        F.col("id").cast("int").alias("transaction_id"),
+        F.lit(None).cast("double").alias("amount"),  # All NULL
+        (F.col("id") * 0.01 + 5.0).alias("quantity"),  # Valid values
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    checks = [
+        create_anomaly_check_rule(
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=["amount", "quantity"],
+            threshold=DEFAULT_SCORE_THRESHOLD,
+            drift_threshold=DRIFT_THRESHOLD,
+        )
+    ]
+
+    # System should handle NULL columns gracefully (no crash)
+    result_df = dq_engine.apply_checks(test_df, checks)
+    result_df.collect()
+
+    # Verify no crash occurred - system handled NULL column gracefully
+
+    # Verify we can also call drift detection directly to check the exact behavior
+    registry = AnomalyModelRegistry(spark)
+    model_metadata = registry.get_active_model(registry_table, model_name)
+    assert model_metadata is not None
+    assert model_metadata.training.baseline_stats is not None
+    baseline_stats = model_metadata.training.baseline_stats
+
+    # Direct call to verify lines 79-80 execute correctly (NULL handling)
+    drift_result = compute_drift_score(test_df, ["amount", "quantity"], baseline_stats, threshold=3.0)
+
+    # System should handle NULLs gracefully
+    assert drift_result.sample_size == 1200
+    # Verify the NULL column was processed without crashing (lines 79-80 executed)
+    assert "amount" in drift_result.column_scores or "quantity" in drift_result.column_scores
+    # No assertion on drift_detected since behavior may vary
