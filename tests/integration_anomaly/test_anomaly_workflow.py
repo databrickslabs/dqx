@@ -5,7 +5,7 @@ import pytest
 
 from databricks.labs.dqx.anomaly.anomaly_workflow import AnomalyTrainerWorkflow
 from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig
-from databricks.labs.dqx.errors import InvalidConfigError, MissingParameterError
+from databricks.labs.dqx.errors import InvalidConfigError
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_utils import get_standard_2d_training_data
 
@@ -72,19 +72,4 @@ def test_anomaly_workflow_missing_model_name_raises(ws, spark):
     ctx = SimpleNamespace(run_config=run_config, spark=spark, workspace_client=ws)
 
     with pytest.raises(InvalidConfigError, match="model_name is required"):
-        AnomalyTrainerWorkflow().train_model(ctx)
-
-
-def test_anomaly_workflow_requires_optional_dependencies(monkeypatch, ws, spark):
-    monkeypatch.setattr("databricks.labs.dqx.anomaly.anomaly_workflow.ANOMALY_ENABLED", False)
-    monkeypatch.setattr("databricks.labs.dqx.anomaly.anomaly_workflow.AnomalyEngine", None)
-
-    run_config = RunConfig(
-        name="missing_deps",
-        input_config=InputConfig(location="catalog.schema.table"),
-        anomaly_config=AnomalyConfig(columns=["amount"], registry_table="catalog.schema.registry"),
-    )
-    ctx = SimpleNamespace(run_config=run_config, spark=spark, workspace_client=ws)
-
-    with pytest.raises(MissingParameterError, match="optional dependencies"):
         AnomalyTrainerWorkflow().train_model(ctx)

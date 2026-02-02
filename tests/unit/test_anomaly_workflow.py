@@ -16,7 +16,6 @@ def test_anomaly_workflow_requires_model_name(monkeypatch):
         def train(self, **_kwargs):
             return None
 
-    monkeypatch.setattr(anomaly_workflow, "ANOMALY_ENABLED", True)
     monkeypatch.setattr(anomaly_workflow, "AnomalyEngine", FakeEngine)
     monkeypatch.setattr(anomaly_workflow, "read_input_data", lambda _spark, _input_config: Mock())
 

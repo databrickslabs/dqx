@@ -333,15 +333,10 @@ load-plugins = [
     "pylint.extensions.typing",
     "pylint_per_file_ignores",
 ]
-# Per-file pylint ignores for anomaly detection UDFs
-# - import-outside-toplevel: Required for Spark Connect compatibility (imports inside pandas UDFs)
-# - redefined-outer-name: Acceptable in UDF factory functions
-# - reimported: cloudpickle and other imports needed in multiple UDFs
-# Note: too-complex removed - using max-complexity=12 instead (see [tool.pylint.design])
 # Per-file pylint ignores for tests/conftest.py
 # - wrong-import-order: tests.compat must be imported before third-party imports to apply numba/coverage patches
 # - unused-import: tests.compat is imported for side effects (applying patches), not for direct use
-per-file-ignores = "src/databricks/labs/dqx/anomaly/check_funcs.py:import-outside-toplevel,redefined-outer-name,reimported\nsrc/databricks/labs/dqx/anomaly/trainer.py:import-outside-toplevel,redefined-outer-name,reimported\nsrc/databricks/labs/dqx/anomaly/explainer.py:import-outside-toplevel,redefined-outer-name,reimported\ntests/conftest.py:wrong-import-order,unused-import"
+per-file-ignores = "tests/conftest.py:wrong-import-order,unused-import"
 
 # Pickle collected data for later comparisons.
 persistent = true

@@ -3,72 +3,48 @@ Explainability utilities for anomaly detection.
 
 Provides TreeSHAP-based feature contribution analysis to understand which columns
 contribute most to anomaly scores for individual records.
+
+Requires the 'anomaly' extras: pip install databricks-labs-dqx[anomaly]
 """
 
 import logging
 from typing import Any
 
+import mlflow.sklearn as mlflow_sklearn
+import numpy as np
+import pandas as pd
 import pyspark.sql.functions as F
+import shap
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
+from sklearn.pipeline import Pipeline
 
 from databricks.labs.dqx.anomaly.utils import format_contributions_map
 from databricks.labs.dqx.errors import InvalidParameterError
 
 logger = logging.getLogger(__name__)
 
-# Optional dependencies for anomaly detection explainability
-try:
-    import numpy as np
-    import pandas as pd
-except ImportError:
-    pd = None  # type: ignore
-    np = None  # type: ignore
 
-try:
-    import shap
-except ImportError:
-    shap = None  # type: ignore
-
-try:
-    import mlflow.sklearn as mlflow_sklearn
-except ImportError:
-    mlflow_sklearn = None  # type: ignore
-
-try:
-    from sklearn.pipeline import Pipeline
-except ImportError:
-    Pipeline = None  # type: ignore
-
-
-def create_optimal_tree_explainer(tree_model: Any) -> Any:
+def create_optimal_tree_explainer(tree_model: Any) -> shap.TreeExplainer:
     """Create TreeSHAP explainer for the given tree model.
 
     Uses SHAP's TreeExplainer, which provides efficient SHAP value computation
     for tree-based models via optimized C++ implementations.
 
     Args:
-        tree_model (Any): Trained tree-based model (e.g., IsolationForest)
+        tree_model: Trained tree-based model (e.g., IsolationForest)
 
     Returns:
-        Any: Configured SHAP TreeExplainer
-
-    Raises:
-        ImportError: If SHAP library is not installed
+        Configured SHAP TreeExplainer
     """
-    if shap is None:
-        raise ImportError("SHAP library required for explainability")
-
     return shap.TreeExplainer(tree_model)
 
 
 def compute_contributions_for_matrix(
-    model_local: Any, feature_matrix: "np.ndarray", columns: list[str]
+    model_local: Any, feature_matrix: np.ndarray, columns: list[str]
 ) -> list[dict[str, float | None]]:
     """Compute normalized SHAP contributions for a feature matrix."""
-    if pd is None or np is None or shap is None or Pipeline is None:
-        raise ImportError("Explainability dependencies are not available.")
 
     # If model is a Pipeline (due to feature scaling), extract components
     # SHAP's TreeExplainer only supports tree models, not pipelines
@@ -131,36 +107,11 @@ def compute_feature_contributions(
         DataFrame with additional 'anomaly_contributions' map column containing
         normalized SHAP values (absolute contributions summing to 1.0 per row).
     """
-    # Validate that required dependencies are available
-    if pd is None or np is None:
-        raise ImportError(
-            "pandas and numpy are required for feature contributions. "
-            "Install with: pip install 'databricks-labs-dqx[anomaly]'"
-        )
-
-    if shap is None or mlflow_sklearn is None or Pipeline is None:
-        raise ImportError(
-            "To use feature contributions (include_contributions=True), install 'shap', 'mlflow', and 'scikit-learn'.\n"
-            "Install with: pip install 'databricks-labs-dqx[anomaly]' or manually install shap>=0.42.0,<0.46"
-        )
-
-    # Define pandas UDF for distributed SHAP computation
     return_schema = StructType([StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)])
 
-    @pandas_udf(return_schema)  # type: ignore[call-overload]  # StructType is valid but mypy has incomplete stubs
+    @pandas_udf(return_schema)  # type: ignore[call-overload]
     def compute_shap_udf(feature_struct: pd.Series) -> pd.DataFrame:
-        """Compute SHAP values for each row using TreeExplainer.
-
-        Args:
-            feature_struct: Pandas Series containing struct with all feature columns
-
-        Returns:
-            DataFrame with anomaly_contributions column
-        """
-        import mlflow.sklearn as mlflow_sklearn
-        import pandas as pd
-
-        # Load model once per executor
+        """Compute SHAP values for each row using TreeExplainer."""
         model_local = mlflow_sklearn.load_model(model_uri)
 
         # feature_struct is already a DataFrame with struct fields as columns

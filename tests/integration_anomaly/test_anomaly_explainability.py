@@ -302,41 +302,6 @@ def test_compute_contributions_pipeline_and_nan():
     assert set(contributions[1].keys()) == {"amount", "quantity"}
 
 
-def test_create_optimal_tree_explainer_requires_shap():
-    """Missing SHAP should raise a clear ImportError."""
-    shap_saved = explainer_mod.shap
-    try:
-        explainer_mod.shap = None
-        with pytest.raises(ImportError, match="SHAP library required"):
-            create_optimal_tree_explainer(object())
-    finally:
-        explainer_mod.shap = shap_saved
-
-
-def test_compute_contributions_requires_deps():
-    """Missing pandas/numpy should raise ImportError before any computation."""
-    pd_saved = explainer_mod.pd
-    try:
-        explainer_mod.pd = None
-        model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1]]))
-        with pytest.raises(ImportError, match="Explainability dependencies are not available"):
-            explainer_mod.compute_contributions_for_matrix(model, np.array([[0.0, 0.1]]), ["amount", "quantity"])
-    finally:
-        explainer_mod.pd = pd_saved
-
-
-def test_compute_feature_contributions_requires_deps(spark: SparkSession):
-    """Missing pandas/numpy should raise ImportError before loading model."""
-    pd_saved = explainer_mod.pd
-    try:
-        explainer_mod.pd = None
-        df = spark.createDataFrame([(1.0, 2.0)], "amount double, quantity double")
-        with pytest.raises(ImportError, match="pandas and numpy are required"):
-            explainer_mod.compute_feature_contributions("models:/dummy", df, ["amount", "quantity"])
-    finally:
-        explainer_mod.pd = pd_saved
-
-
 def test_format_contributions_map():
     """Formatting helper should handle None and sort by magnitude."""
     assert format_contributions_map(None, 2) == ""
@@ -347,8 +312,6 @@ def test_format_contributions_map():
 
 def test_compute_feature_contributions_udf_path(spark: SparkSession, shared_2d_model):
     """Compute feature contributions via pandas UDF using a real registry model."""
-    if explainer_mod.shap is None or explainer_mod.np is None or explainer_mod.pd is None:
-        pytest.skip("Explainability dependencies not available")
     if "pyspark.sql.connect" in spark.__class__.__module__:
         pytest.skip("Spark Connect workers may not have test package available for UDFs")
 

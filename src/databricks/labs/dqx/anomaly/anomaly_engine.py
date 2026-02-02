@@ -4,7 +4,7 @@ AnomalyEngine entrypoint for anomaly detection.
 
 from pyspark.sql import DataFrame, SparkSession
 
-from databricks.labs.dqx.anomaly.trainer import AnomalyTrainingService
+from databricks.labs.dqx.anomaly.service import AnomalyTrainingService
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.telemetry import log_telemetry, telemetry_logger

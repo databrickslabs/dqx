@@ -1401,13 +1401,20 @@ def test_save_results_in_table_batch_with_metrics(
     [DQEngine.apply_checks_and_split, DQEngine.apply_checks_by_metadata_and_split],
 )
 def test_save_results_in_table_streaming_with_metrics(
-    skip_if_classic_compute, apply_checks_method, spark, ws, make_schema, make_volume, make_random
+    skip_if_classic_compute,
+    apply_checks_method,
+    spark_keep_alive,
+    ws,
+    make_schema,
+    make_volume,
+    make_random,
 ):
-    schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
+    schema_info = make_schema(catalog_name=TEST_CATALOG)
+    volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_info.name).name
+    spark = spark_keep_alive.spark
+    spark.sql(f"USE CATALOG {TEST_CATALOG}; USE SCHEMA {schema_info.name}")
 
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
 
     observer = DQMetricsObserver(name="test_save_batch_observer")
     dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
@@ -1421,26 +1428,28 @@ def test_save_results_in_table_streaming_with_metrics(
         ],
         TEST_SCHEMA,
     )
-    input_df.write.format("delta").saveAsTable(input_table_name)
-    test_df = spark.readStream.table(input_table_name)
+    input_table = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
+    input_df.write.format("delta").saveAsTable(input_table)
+    test_df = spark.readStream.table(input_table)
 
     if apply_checks_method == DQEngine.apply_checks_and_split:
-        checks = deserialize_checks(TEST_CHECKS)
-        output_df, quarantine_df, _ = dq_engine.apply_checks_and_split(test_df, checks)
+        output_df, quarantine_df, _ = dq_engine.apply_checks_and_split(test_df, deserialize_checks(TEST_CHECKS))
     elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_split:
         output_df, quarantine_df, _ = dq_engine.apply_checks_by_metadata_and_split(test_df, TEST_CHECKS)
     else:
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
     output_config = OutputConfig(
-        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
-        options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
+        location=f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}",
+        options={
+            "checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_info.name}/{volume_name}/{make_random(6).lower()}"
+        },
         trigger={"availableNow": True},
     )
     quarantine_config = OutputConfig(
-        location=f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}",
+        location=f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}",
         options={
-            "checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/quarantine_{make_random(6).lower()}"
+            "checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_info.name}/{volume_name}/quarantine_{make_random(6).lower()}"
         },
         trigger={"availableNow": True},
     )
@@ -1534,9 +1543,14 @@ def test_save_results_in_table_streaming_with_metrics(
     "apply_checks_method",
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
-def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_schema, make_volume, make_random):
+def test_streaming_observer_metrics_output(
+    apply_checks_method, spark_keep_alive, ws, make_schema, make_volume, make_random
+):
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
+    spark = spark_keep_alive.spark
+    spark.sql(f"USE CATALOG {TEST_CATALOG}")
+    spark.sql(f"USE SCHEMA {schema_name}")
 
     metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
     checkpoint_location = f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"
@@ -1700,15 +1714,17 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
 def test_streaming_observer_metrics_output_and_quarantine(
-    apply_checks_method, spark, ws, make_schema, make_volume, make_random
+    apply_checks_method, spark_keep_alive, ws, make_schema, make_volume, make_random
 ):
-    schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
+    schema_info = make_schema(catalog_name=TEST_CATALOG)
+    volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_info.name).name
+    spark = spark_keep_alive.spark
+    spark.sql(f"USE CATALOG {TEST_CATALOG}; USE SCHEMA {schema_info.name}")
 
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
+    output_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
+    quarantine_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
 
     observer = DQMetricsObserver(
         name="test_streaming_observer_with_quarantine",
@@ -1733,21 +1749,24 @@ def test_streaming_observer_metrics_output_and_quarantine(
     input_config = InputConfig(location=input_table_name, is_streaming=True)
     output_config = OutputConfig(
         location=output_table_name,
-        options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
+        options={
+            "checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_info.name}/{volume_name}/{make_random(6).lower()}"
+        },
         trigger={"availableNow": True},
     )
     quarantine_config = OutputConfig(
         location=quarantine_table_name,
-        options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
+        options={
+            "checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_info.name}/{volume_name}/{make_random(6).lower()}"
+        },
         trigger={"availableNow": True},
     )
     metrics_config = OutputConfig(location=metrics_table_name)
     checks_location = "fake.yml"
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        checks = deserialize_checks(TEST_CHECKS)
         dq_engine.apply_checks_and_save_in_table(
-            checks=checks,
+            checks=deserialize_checks(TEST_CHECKS),
             input_config=input_config,
             output_config=output_config,
             quarantine_config=quarantine_config,
@@ -1872,10 +1891,13 @@ def test_streaming_observer_metrics_output_and_quarantine(
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
 def test_streaming_observer_metrics_output_with_empty_checks(
-    apply_checks_method, spark, ws, make_schema, make_volume, make_random
+    apply_checks_method, spark_keep_alive, ws, make_schema, make_volume, make_random
 ):
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
+    spark = spark_keep_alive.spark
+    spark.sql(f"USE CATALOG {TEST_CATALOG}")
+    spark.sql(f"USE SCHEMA {schema_name}")
 
     input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
     output_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
@@ -2027,31 +2049,36 @@ def test_streaming_observer_metrics_output_with_empty_checks(
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
 def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
-    apply_checks_method, spark, ws, make_schema, make_volume, make_random
+    apply_checks_method, spark_keep_alive, ws, make_schema, make_volume, make_random
 ):
-    schema_name = make_schema(catalog_name=TEST_CATALOG).name
-    volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
+    schema_info = make_schema(catalog_name=TEST_CATALOG)
+    volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_info.name).name
+    spark = spark_keep_alive.spark
+    spark.sql(f"USE CATALOG {TEST_CATALOG}; USE SCHEMA {schema_info.name}")
 
-    input_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    output_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    quarantine_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
-    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.{make_random(6).lower()}"
+    input_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
+    output_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
+    quarantine_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
+    metrics_table_name = f"{TEST_CATALOG}.{schema_info.name}.{make_random(6).lower()}"
 
-    observer = DQMetricsObserver(
-        name="test_streaming_observer",
-        custom_metrics=[
-            "avg(case when dq_errors is not null then age else null end) as avg_error_age",
-            "sum(case when dq_warnings is not null then salary else null end) as total_warning_salary",
-        ],
-    )
     user_metadata = {"key1": "value1", "key2": "value2"}
-    extra_params_custom = ExtraParams(
-        run_time_overwrite=EXTRA_PARAMS.run_time_overwrite,
-        result_column_names={"errors": "dq_errors", "warnings": "dq_warnings"},
-        user_metadata=user_metadata,
-        run_id_overwrite=EXTRA_PARAMS.run_id_overwrite,
+    dq_engine = DQEngine(
+        workspace_client=ws,
+        spark=spark,
+        observer=DQMetricsObserver(
+            name="test_streaming_observer",
+            custom_metrics=[
+                "avg(case when dq_errors is not null then age else null end) as avg_error_age",
+                "sum(case when dq_warnings is not null then salary else null end) as total_warning_salary",
+            ],
+        ),
+        extra_params=ExtraParams(
+            run_time_overwrite=EXTRA_PARAMS.run_time_overwrite,
+            result_column_names={"errors": "dq_errors", "warnings": "dq_warnings"},
+            user_metadata=user_metadata,
+            run_id_overwrite=EXTRA_PARAMS.run_id_overwrite,
+        ),
     )
-    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=extra_params_custom)
 
     test_df = spark.createDataFrame(
         [
@@ -2067,12 +2094,16 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
     input_config = InputConfig(location=input_table_name, is_streaming=True)
     output_config = OutputConfig(
         location=output_table_name,
-        options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
+        options={
+            "checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_info.name}/{volume_name}/{make_random(6).lower()}"
+        },
         trigger={"availableNow": True},
     )
     quarantine_config = OutputConfig(
         location=quarantine_table_name,
-        options={"checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_name}/{volume_name}/{make_random(6).lower()}"},
+        options={
+            "checkPointLocation": f"/Volumes/{TEST_CATALOG}/{schema_info.name}/{volume_name}/{make_random(6).lower()}"
+        },
         trigger={"availableNow": True},
     )
     metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")

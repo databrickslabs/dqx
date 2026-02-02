@@ -3,7 +3,7 @@
 import pytest
 from pyspark.sql import types as T
 
-from databricks.labs.dqx.anomaly import trainer
+from databricks.labs.dqx.anomaly import service
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
@@ -20,23 +20,23 @@ from tests.unit.test_anomaly_test_helpers import STANDARD_REGION_PRODUCT_FEATURE
 
 def test_validate_fully_qualified_name_accepts_valid():
     """Test fully qualified name validation with valid values."""
-    trainer.validate_fully_qualified_name("catalog.schema.model", label="model_name")
-    trainer.validate_fully_qualified_name("catalog.schema.registry", label="registry_table")
+    service.validate_fully_qualified_name("catalog.schema.model", label="model_name")
+    service.validate_fully_qualified_name("catalog.schema.registry", label="registry_table")
 
 
 def test_validate_fully_qualified_name_rejects_invalid():
     """Test fully qualified name validation with invalid values."""
     with pytest.raises(InvalidParameterError):
-        trainer.validate_fully_qualified_name("model", label="model_name")
+        service.validate_fully_qualified_name("model", label="model_name")
 
     with pytest.raises(InvalidParameterError):
-        trainer.validate_fully_qualified_name("schema.model", label="model_name")
+        service.validate_fully_qualified_name("schema.model", label="model_name")
 
 
 def test_expected_anomaly_rate_applies_when_contamination_unset():
     """expected_anomaly_rate should set contamination when unset (None)."""
     params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=None))
-    updated = trainer.apply_expected_anomaly_rate_if_default_contamination(params, 0.02)
+    updated = service.apply_expected_anomaly_rate_if_default_contamination(params, 0.02)
 
     assert updated.algorithm_config.contamination == 0.02
     # Ensure caller params were not mutated
@@ -46,7 +46,7 @@ def test_expected_anomaly_rate_applies_when_contamination_unset():
 def test_expected_anomaly_rate_does_not_override_explicit_contamination():
     """expected_anomaly_rate should not override explicit contamination."""
     params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.15))
-    updated = trainer.apply_expected_anomaly_rate_if_default_contamination(params, 0.02)
+    updated = service.apply_expected_anomaly_rate_if_default_contamination(params, 0.02)
 
     assert updated.algorithm_config.contamination == 0.15
     # Ensure caller params were not mutated

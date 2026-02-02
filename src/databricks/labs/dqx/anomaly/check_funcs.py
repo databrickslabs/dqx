@@ -16,6 +16,7 @@ import mlflow.sklearn
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
+import shap
 import sklearn
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.functions import col, pandas_udf
@@ -28,8 +29,9 @@ from pyspark.sql.types import (
 )
 
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
+from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name
+from databricks.labs.dqx.anomaly.mlflow_registry import get_default_registry
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry, compute_config_hash
-from databricks.labs.dqx.anomaly.trainer import _ensure_mlflow_registry_uri
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
@@ -599,8 +601,8 @@ def _load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomal
     Raises:
         RuntimeError with actionable error message if loading fails
     """
-    # Ensure MLflow registry URI is configured (shared helper from trainer module)
-    _ensure_mlflow_registry_uri()
+    # Ensure MLflow registry URI is configured
+    get_default_registry().ensure_registry_configured()
 
     try:
         return mlflow.sklearn.load_model(model_uri)
@@ -676,11 +678,7 @@ def _create_scoring_udf(
 
     @pandas_udf(schema)  # type: ignore[call-overload]
     def predict_udf(*cols: pd.Series) -> pd.DataFrame:
-        """Pandas UDF for distributed scoring (Spark Connect compatible)."""
-        import cloudpickle
-        import pandas as pd
-
-        # Deserialize model and prepare input
+        """Pandas UDF for distributed scoring."""
         model_local = cloudpickle.loads(model_bytes)
         feature_matrix = pd.concat(cols, axis=1)
         feature_matrix.columns = engineered_feature_cols
@@ -701,11 +699,7 @@ def _create_scoring_udf_with_contributions(
 
     @pandas_udf(schema)  # type: ignore[call-overload]
     def predict_with_shap_udf(*cols: pd.Series) -> pd.DataFrame:
-        """Pandas UDF for distributed scoring with optional SHAP (Spark Connect compatible)."""
-        import cloudpickle
-        import pandas as pd
-
-        # Deserialize model and prepare input
+        """Pandas UDF for distributed scoring with SHAP contributions."""
         model_local = cloudpickle.loads(model_bytes)
         feature_matrix = pd.concat(cols, axis=1)
         feature_matrix.columns = engineered_feature_cols
@@ -717,7 +711,6 @@ def _create_scoring_udf_with_contributions(
             model_local,
             feature_matrix,
             engineered_feature_cols,
-            allow_missing=True,
         )
         contributions_list = _format_shap_contributions(
             shap_values, valid_indices, len(feature_matrix), engineered_feature_cols
@@ -798,8 +791,6 @@ def _format_shap_contributions(
     engineered_feature_cols: list[str],
 ) -> list[dict[str, float | None]]:
     """Format SHAP values into contribution dictionaries."""
-    import numpy as np
-
     num_features = len(engineered_feature_cols)
     contributions: list[dict[str, float | None]] = [{c: None for c in engineered_feature_cols} for _ in range(num_rows)]
 
@@ -830,20 +821,8 @@ def _compute_shap_values(
     model_local: Any,
     feature_matrix: pd.DataFrame,
     engineered_feature_cols: list[str],
-    *,
-    allow_missing: bool,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute SHAP values for a model and feature matrix."""
-    import numpy as np
-    import pandas as pd
-
-    try:
-        import shap
-    except ImportError as e:
-        if allow_missing:
-            return np.array([]), np.zeros(len(feature_matrix), dtype=bool)
-        raise ImportError("SHAP library not available for driver-only scoring.") from e
-
     scaler = getattr(model_local, "named_steps", {}).get("scaler")
     tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
 
@@ -872,8 +851,6 @@ def _score_with_sklearn_model_local(
     model_record: AnomalyModelRecord,
 ) -> DataFrame:
     """Score DataFrame using scikit-learn model locally on the driver."""
-    import pandas as pd
-
     sklearn_model = _load_and_validate_model(model_uri, model_record)
     column_infos, feature_metadata = _prepare_feature_metadata(feature_metadata_json)
     engineered_df = _apply_feature_engineering_for_scoring(
@@ -894,7 +871,6 @@ def _score_with_sklearn_model_local(
             sklearn_model,
             feature_matrix,
             engineered_feature_cols,
-            allow_missing=False,
         )
         result["anomaly_contributions"] = _format_shap_contributions(
             shap_values, valid_indices, len(local_pdf), engineered_feature_cols
@@ -927,9 +903,6 @@ def _score_ensemble_models_local(
     model_record: AnomalyModelRecord,
 ) -> DataFrame:
     """Score ensemble models locally on the driver."""
-    import numpy as np
-    import pandas as pd
-
     models = [_load_and_validate_model(uri, model_record) for uri in model_uris]
     column_infos, feature_metadata = _prepare_feature_metadata(feature_metadata_json)
     engineered_df = _apply_feature_engineering_for_scoring(
@@ -950,7 +923,6 @@ def _score_ensemble_models_local(
             models[0],
             feature_matrix,
             engineered_feature_cols,
-            allow_missing=False,
         )
         result["anomaly_contributions"] = _format_shap_contributions(
             shap_values, valid_indices, len(local_pdf), engineered_feature_cols
@@ -1007,12 +979,6 @@ def _load_segment_models(
     return all_segments
 
 
-def _validate_fully_qualified_name(value: str, *, label: str) -> None:
-    """Validate that a name is in catalog.schema.name format."""
-    if value.count(".") != 2:
-        raise InvalidParameterError(f"{label} must be fully qualified as catalog.schema.name, got: {value!r}.")
-
-
 def _validate_has_no_anomalies_args(
     *,
     model: str,
@@ -1034,8 +1000,8 @@ def _validate_has_no_anomalies_args(
         label="registry_table",
         example="registry_table='catalog.schema.dqx_anomaly_models'",
     )
-    _validate_fully_qualified_name(model, label="model")
-    _validate_fully_qualified_name(registry_table, label="registry_table")
+    validate_fully_qualified_name(model, label="model")
+    validate_fully_qualified_name(registry_table, label="registry_table")
     _validate_threshold(threshold)
     _validate_optional_sql_expression(row_filter)
     _validate_optional_positive_float(drift_threshold, label="drift_threshold")
@@ -1123,8 +1089,8 @@ def _discover_model_and_config(
             "model parameter is required. Example: has_no_anomalies(model='catalog.schema.my_model', ...)"
         )
 
-    _validate_fully_qualified_name(registry, label="registry_table")
-    _validate_fully_qualified_name(model, label="model")
+    validate_fully_qualified_name(registry, label="registry_table")
+    validate_fully_qualified_name(model, label="model")
     model_name = model
 
     registry_client = AnomalyModelRegistry(df.sparkSession)
@@ -1304,17 +1270,11 @@ def _create_ensemble_scoring_udf(
 
     @pandas_udf(schema)  # type: ignore[call-overload]
     def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
-        """Score with all ensemble models in single pass (Spark Connect compatible)."""
-        import cloudpickle
-        import numpy as np
-        import pandas as pd
-
-        # Deserialize all models and prepare input
+        """Score with all ensemble models in single pass."""
         models = [cloudpickle.loads(mb) for mb in models_bytes]
         feature_matrix = pd.concat(cols, axis=1)
         feature_matrix.columns = engineered_feature_cols
 
-        # Score with all ensemble models and compute stats
         scores_matrix = np.array([-model.score_samples(feature_matrix) for model in models])
         mean_scores = scores_matrix.mean(axis=0)
         std_scores = scores_matrix.std(axis=0, ddof=1)
@@ -1333,31 +1293,22 @@ def _create_ensemble_scoring_udf_with_contributions(
 
     @pandas_udf(schema)  # type: ignore[call-overload]
     def ensemble_scoring_udf(*cols: pd.Series) -> pd.DataFrame:
-        """Score with all ensemble models in single pass (Spark Connect compatible)."""
-        import cloudpickle
-        import numpy as np
-        import pandas as pd
-
-        # Deserialize all models and prepare input
+        """Score with all ensemble models and compute SHAP contributions."""
         models = [cloudpickle.loads(mb) for mb in models_bytes]
         feature_matrix = pd.concat(cols, axis=1)
         feature_matrix.columns = engineered_feature_cols
 
-        # Score with all ensemble models and compute stats
         scores_matrix = np.array([-model.score_samples(feature_matrix) for model in models])
         mean_scores = scores_matrix.mean(axis=0)
         std_scores = scores_matrix.std(axis=0, ddof=1)
 
-        # Build result
         result = {"anomaly_score": mean_scores, "anomaly_score_std": std_scores}
 
-        # Compute SHAP contributions using first model
         model_local = models[0]
         shap_values, valid_indices = _compute_shap_values(
             model_local,
             feature_matrix,
             engineered_feature_cols,
-            allow_missing=True,
         )
         result["anomaly_contributions"] = _format_shap_contributions(
             shap_values, valid_indices, len(feature_matrix), engineered_feature_cols
