@@ -1,0 +1,489 @@
+---
+sidebar_position: 15
+---
+
+import Admonition from '@theme/Admonition';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Anomaly Detection (ML-based)
+
+Detect unusual rows by learning what "normal" looks like across multiple columns, then flag rows that deviate.
+
+## What it is (and why it helps)
+
+Anomaly detection learns typical patterns from recent "good" data, then highlights rows that look unusual when you consider multiple columns together.
+This complements rule-based checks:
+- Rules catch the issues you can anticipate and describe.
+- Anomaly detection surfaces unusual patterns you did not think to write rules for.
+
+Example: amount, quantity, and discount are all valid individually, but the combination is rare for your data. Anomaly detection can flag that row.
+
+## Why teams use it
+
+It finds issues that look "valid" to rules but are still suspicious when you look at the full row. This is especially useful for:
+- unexpected spikes or dips that are hard to encode as a rule
+- unusual combinations across columns
+- silent pipeline changes that shift behavior without breaking schemas
+
+In practice, it helps reduce blind spots and speeds up triage because you can focus on the top‑ranked unusual rows first.
+
+## When to use anomaly detection
+
+### Decision Matrix
+
+| Scenario | Use Rule Checks | Use Anomaly Detection | Recommended Approach |
+|----------|----------------|----------------------|---------------------|
+| **Null values** | ✅ Always | ❌ No | Rules only |
+| **Schema validation** | ✅ Explicit | ❌ No | Rules only |
+| **Known valid ranges** | ✅ Easy to define | ❌ Overkill | Rules only |
+| **Compliance checks** | ✅ Required for audit | ⚠️ Not audit-friendly | Rules only |
+| **Unusual combinations** | ⚠️ Hard to specify | ✅ Natural fit | ✅ Anomaly + Rules |
+| **Temporal patterns** | ⚠️ Complex rules | ✅ Auto-learns | ✅ Anomaly + Rules |
+| **Unknown/unexpected issues** | ❌ Can't anticipate | ✅ Discovers | Anomaly only |
+| **Cross-column dependencies** | ⚠️ Very complex | ✅ Excels | ✅ Anomaly + Rules |
+
+### Data Quality vs Domain-Specific Detection
+
+**DQX Anomaly Detection focuses on data quality issues**:
+- Unusual data patterns (statistical outliers)
+- Distribution shifts (drift detection)
+- Cross-column inconsistencies
+- Temporal anomalies (timing-based patterns)
+
+**Not designed for**:
+- Fraud detection (requires labeled fraud examples)
+- Predictive maintenance (needs failure labels)
+- Sentiment analysis (domain-specific NLP)
+- Medical diagnosis (specialized models)
+
+**When domain expertise is critical**: DQX can identify unusual patterns, but domain-specific fine-tuned models will outperform for specialized use cases (e.g., credit card fraud, network intrusion).
+
+**Use DQX for**: "Is this data unusual?" ✅  
+**Use domain models for**: "Is this data fraudulent/faulty/malicious?" 🎯
+
+## Complements Databricks data quality monitoring
+
+Databricks data quality monitoring focuses on table-level signals like freshness and completeness. DQX anomaly detection focuses on unusual rows and cross-column patterns.
+Use both together to cover:
+- **Data availability**: Is new data arriving as expected?
+- **Data content quality**: Are the rows themselves unusual or inconsistent?
+
+Example: monitoring tells you new data arrived as expected; DQX flags a spike in unusual orders inside it.
+
+<Admonition type="tip" title="Use both together">
+Use Databricks data quality monitoring for table health without looking inside the actual data (freshness/completeness) and DQX anomaly detection for discovering anomalies in the data.
+</Admonition>
+
+## What you get out of the box
+
+Each row is scored and enriched with:
+- **Severity percentile (0–100)**: how unusual the row is compared to training data.
+- **Anomaly flag**: whether it crosses your chosen threshold.
+- **Top contributors**: which fields most influenced the anomaly score.
+
+## Prerequisites
+
+Install DQX with anomaly support:
+
+```bash
+pip install 'databricks-labs-dqx[anomaly]'
+```
+
+## Quick start
+
+Train a model on recent "good" data, then use it in checks:
+
+<Admonition type="warning" title="Exclude identifier columns">
+Avoid ID‑like columns (e.g., `order_id`, `user_id`) in anomaly training. IDs often look unique and can drown out real
+patterns, which makes the model less useful. If you need to keep them in your table, use `exclude_columns` or provide
+an explicit `columns` list of behavioral fields (amounts, counts, rates, timestamps).
+</Admonition>
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+    from databricks.labs.dqx.engine import DQEngine
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+    anomaly_engine = AnomalyEngine(ws)
+
+    model_name = anomaly_engine.train(
+        df=spark.table("catalog.schema.orders"),
+        model_name="catalog.schema.orders_monitor",
+        columns=["amount", "quantity", "discount"],  # optional; omit to use all supported columns
+        registry_table="catalog.schema.dqx_anomaly_models",
+    )
+
+    checks = [
+        has_no_anomalies(
+            model=model_name,
+            registry_table="catalog.schema.dqx_anomaly_models",
+        )
+    ]
+
+    dq_engine = DQEngine(ws, spark)
+    scored_df = dq_engine.apply_checks(spark.table("catalog.schema.orders"), checks)
+    ```
+  </TabItem>
+  <TabItem value="Workflows" label="Workflows">
+    Configure anomaly training per run config:
+
+    ```yaml
+    run_configs:
+      - name: orders
+        input_config:
+          location: catalog.schema.orders
+        anomaly_config:
+          columns: [amount, quantity, discount]  # optional; omit to use all supported columns
+          model_name: catalog.schema.orders_monitor
+          registry_table: catalog.schema.dqx_anomaly_models
+    ```
+
+    Define checks separately (YAML or Python). See [Anomaly Detection in Quality Checks](/docs/reference/quality_checks#anomaly-detection).
+  </TabItem>
+</Tabs>
+
+## Investigate anomalies
+
+Anomaly checks add results to `_errors`/`_warnings` and `_dq_info` with structured metadata. Feature contributions are enabled by default; disable them for faster scoring:
+
+```python
+has_no_anomalies(
+    model=model_name,
+    registry_table="catalog.schema.dqx_anomaly_models",
+    include_contributions=False,
+)
+```
+
+To review the most unusual rows:
+
+```python
+import pyspark.sql.functions as F
+
+top = scored_df.orderBy(F.col("_dq_info.anomaly.score").desc()).limit(20)
+top.select("order_id", "_dq_info.anomaly.score", "_dq_info.anomaly.contributions").show(truncate=False)
+```
+
+Scores are normalized into `severity_percentile` (0–100). The anomaly threshold is a percentile cutoff (default 95) that you should tune to your data and alert tolerance.
+
+## How to choose a threshold
+
+Think of the threshold as an alert volume control:
+- **Lower** = more alerts (more sensitive).
+- **Higher** = fewer alerts (more strict).
+
+Start with the default (95), then tune based on how many rows you can reasonably review and how costly misses are.
+
+## How it works (under the hood)
+
+Understanding the internals helps you tune models, debug issues, and build trust in results.
+
+### Architecture Overview
+
+**4 Key Components**:
+
+1. **Feature Engineering** (Automatic)
+   - Numerical columns → 1 feature each (standardized via z-score)
+   - Categorical columns → N features (one-hot or frequency encoding)
+   - Temporal columns → Multiple features (hour, day_of_week, month, is_weekend, etc.)
+   - Auto-discovery: DQX detects column types and creates features appropriately
+
+2. **Ensemble Training** (Isolation Forest)
+   - Multiple Isolation Forest models trained in parallel
+   - Each model uses different random subsets (bootstrap)
+   - Ensemble voting reduces false positives
+   - Baseline statistics captured for drift detection
+
+3. **Model Registry** (Unity Catalog)
+   - Models stored in MLflow Model Registry
+   - Metadata stored in Delta table (training columns, segments, statistics, model URIs, training time, status)
+   - Supports versioning and rollback
+
+4. **Scoring & Explanation**
+   - Raw anomaly scores from ensemble (0-1 range)
+   - Normalized to severity percentile (0-100)
+   - Threshold applied (default 95 = top 5%)
+   - SHAP contributions (optional, compute-intensive)
+
+### Why Isolation Forest?
+
+**Strengths**:
+- ✅ Fast training (O(n log n))
+- ✅ Handles mixed data types (numerical, categorical, temporal)
+- ✅ Robust to noise and outliers
+- ✅ Explainable (via SHAP)
+- ✅ No assumptions about data distribution
+
+**How it works**: Measures how "easy" it is to isolate a data point. Anomalies are isolated quickly (few splits), normal points require many splits.
+
+### Training Data Requirements
+
+| Aspect | Recommendation | Why |
+|--------|---------------|-----|
+| **Quantity** | 1,000+ rows preferred | More data helps model learn patterns |
+| **Quality** | Clean, representative data | Anomalies in training → model learns them as "normal" |
+| **Coverage** | All realistic scenarios | Model can only detect deviations from what it's seen |
+| **Time range** | 1-3 months typical | Capture normal variation, avoid stale patterns |
+| **Segments** | 100+ rows per segment | Segmentation requires sufficient data per group |
+
+**Key insight**: Quality and coverage matter more than quantity. 1,000 rows covering all scenarios > 100,000 rows of limited patterns.
+
+**Example**:
+- ❌ Bad: 1M rows, only weekday 9-5 data → won't detect weekend anomalies
+- ✅ Good: 10K rows, full week, all regions → learns comprehensive patterns
+
+### Severity Percentile vs Raw Score
+
+**Raw Score** (`_dq_info.anomaly.score`):
+- Direct output from Isolation Forest (0-1 range, higher = more anomalous)
+- Unbounded, can vary between models
+- **Use for**: Diagnostics only
+
+**Severity Percentile** (`_dq_info.anomaly.severity_percentile`):
+- Normalized to 0-100 percentile vs training data
+- 95 = "more unusual than 95% of training data"
+- **Use for**: Thresholds and decision-making
+
+**Example**:
+- Score = 0.67 (raw, hard to interpret)
+- Severity percentile = 98.2 (clear: top 1.8% most unusual)
+
+### Understanding `_dq_info.anomaly` Structure
+
+Each scored row contains anomaly metadata:
+
+```json
+{
+  "anomaly": {
+    "score": 0.847,                    // Raw anomaly score (0-1)
+    "severity_percentile": 97.3,       // Percentile vs training data
+    "is_anomaly": true,                // Threshold check (>= 95)
+    "contributions": {                 // SHAP feature explanations
+      "amount": 0.62,                  // 62% of score from this feature
+      "quantity": 0.28,
+      "hour_of_day": 0.10
+    }
+  }
+}
+```
+
+**Key fields**:
+- `severity_percentile`: Use this for decisions (0-100 scale)
+- `is_anomaly`: Pre-computed threshold check
+- `contributions`: Shows why (only if `include_contributions=True`)
+
+**Note**: Feature names in contributions correspond to engineered features. Temporal columns generate multiple features (e.g., `order_time` → `hour_of_day`, `day_of_week`, `month`).
+
+### Feature Contributions (SHAP)
+
+**What**: Explains which features drove the anomaly score for each row.
+
+**Interpretation**: "This transaction was flagged primarily due to unusual `amount` feature (62%), with `quantity` as secondary driver (28%)"
+
+**Cost**: 5-10x slower than scoring without contributions. Disable for production, enable for investigation.
+
+### Drift Detection (Optional)
+
+**What**: Warns when scoring data distribution differs from training data.
+
+**Use case**: Detect when model is stale and needs retraining.
+
+**Example**:
+```python
+has_no_anomalies(
+    model=model_name,
+    registry_table=registry_table,
+    drift_threshold=3.0,  # Warn if shift > 3 standard deviations
+)
+```
+
+**Output**: Warning message listing drifted columns, recommend retraining.
+
+## Practical examples (non‑technical)
+
+- A sudden surge of high‑value orders in a region that usually has low spend.
+- Orders placed at unusual hours for a business that operates during the day.
+- A big jump in quantity for a category that normally sells in small units.
+
+## When to retrain
+
+Retrain when "normal" changes: seasonality, new pricing rules, new products, or major pipeline changes. A simple cadence (monthly or quarterly) is often enough.
+
+If you want to quarantine anomalies for investigation, use DQX output/quarantine patterns (see [Applying Checks](/docs/guide/quality_checks_apply)).
+
+<Admonition type="tip" title="When to use anomaly detection">
+Use anomaly detection when you want to catch unusual combinations across columns that are hard to capture with static rules.
+</Admonition>
+
+## Frequently Asked Questions
+
+<details>
+<summary><strong>Q: How much training data do I really need?</strong></summary>
+
+**No hard minimum**, but quality matters more than quantity:
+
+**Recommended**: 1,000+ rows covering realistic scenarios  
+**Acceptable**: 100+ rows if data is clean and representative  
+**Per-segment**: 100+ rows per segment (for segmented models)
+
+**Key insight**: 10,000 diverse rows > 1,000,000 repetitive rows
+
+**Example**:
+- ❌ Bad: 100K rows, only one product category → can't detect issues in other categories
+- ✅ Good: 5K rows, all categories, all regions, full week → comprehensive coverage
+
+**Check coverage**: Ensure training data includes all realistic values for categorical columns (regions, types, etc.)
+</details>
+
+<details>
+<summary><strong>Q: How often should I retrain?</strong></summary>
+
+**Retrain when**:
+- Drift warnings appear (distribution changed)
+- Business logic changes (new products, pricing, processes)
+- Seasonality shifts (quarterly/annual patterns)
+- Major data pipeline changes
+
+**Typical cadence**:
+- Stable data: Monthly or quarterly
+- Changing data: Weekly
+- High volatility: Daily (with automation)
+
+**Monitor drift**: Enable `drift_threshold=3.0` to get warnings when retraining is needed
+</details>
+
+<details>
+<summary><strong>Q: Does this work with streaming data?</strong></summary>
+
+**Yes!** Train on batch, score on streaming:
+
+1. Train model on historical batch data
+2. Apply checks to streaming DataFrame
+3. **Recommended**: Disable contributions: `include_contributions=False` (SHAP too slow for real-time)
+
+**Two approaches**:
+- **DIY**: You manage `readStream`/`writeStream` (use `apply_checks()` on streaming DataFrame)
+- **End-to-end**: DQX manages streaming (use `InputConfig(is_streaming=True)` with end-to-end methods)
+
+See [Streaming Demos](https://github.com/databrickslabs/dqx/tree/main/demos):
+- `dqx_streaming_demo_diy.py` - DIY approach
+- `dqx_streaming_demo_native.py` - End-to-end approach with `InputConfig`
+</details>
+
+<details>
+<summary><strong>Q: What's the difference between score and severity_percentile?</strong></summary>
+
+**Use `severity_percentile` for decisions, not raw `score`**:
+
+| Field | Range | Meaning | Use for |
+|-------|-------|---------|---------|
+| `score` | 0-1 (unbounded) | Raw Isolation Forest output | Diagnostics only |
+| `severity_percentile` | 0-100 | Percentile vs training data | **Thresholds & decisions** |
+
+**Example**: 
+- `severity_percentile=97` = "More unusual than 97% of training data"
+- Clear, interpretable, stable across models
+</details>
+
+<details>
+<summary><strong>Q: Can I use this with PII/sensitive data?</strong></summary>
+
+**Yes**, with considerations:
+
+✅ **Safe**:
+- Training happens in your Databricks environment (data never leaves)
+- Models stored in Unity Catalog (your control)
+- No external API calls
+
+⚠️ **Consider**:
+- SHAP contributions may expose sensitive patterns in explanations
+- Model metadata includes column names and statistics
+- Use column-level security for model registry if needed
+
+**Recommendation**: Train on pseudonymized features or aggregate metrics when possible.
+</details>
+
+<details>
+<summary><strong>Q: How does this compare to Databricks Lakehouse Monitoring?</strong></summary>
+
+**They're complementary, not competing**:
+
+**Databricks Lakehouse Monitoring**:
+- Table-level metrics (row count, freshness, schema)
+- Column-level statistics (mean, stddev, null rate)
+- Automated profile monitoring
+
+**DQX Anomaly Detection**:
+- Row-level anomaly scores
+- Cross-column pattern detection
+- Per-row explanations (SHAP contributions)
+- Integrates with DQ rules in one engine
+
+**Use both**: Lakehouse Monitoring for table health + DQX for row-level issues.
+</details>
+
+<details>
+<summary><strong>Q: Why am I getting different results each training run?</strong></summary>
+
+**Cause**: Isolation Forest uses randomness (bootstrap sampling, random splits) for ensemble diversity.
+
+**To get reproducible results** (testing/debugging only):
+```python
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
+
+# Set fixed random seed in algorithm config
+params = AnomalyParams(
+    algorithm_config=IsolationForestConfig(
+        random_seed=42  # Fixed seed for reproducibility
+    )
+)
+
+anomaly_engine.train(
+    df=df,
+    model_name=model_name,
+    registry_table=registry_table,
+    params=params,  # Pass params with fixed seed
+)
+```
+
+**Important**: This is NOT recommended for production. Small variations between runs are:
+- **Expected**: Due to ensemble randomness (default: 2 models with seeds 42, 43)
+- **Healthy**: Ensemble diversity improves robustness
+- **Acceptable**: Focus on trend consistency (e.g., "top 10 anomalies stay in top 20"), not exact scores
+
+**Production approach**: If you need stability, retrain less frequently and version your models using the registry.
+</details>
+
+<details>
+<summary><strong>Q: What's the difference between columns and features?</strong></summary>
+
+**Columns** = Raw DataFrame columns you specify in `columns=["a", "b", "c"]`
+
+**Features** = Engineered inputs to the ML model (after transformation)
+
+**Example**:
+```python
+# You specify 3 columns
+columns=["amount", "order_time", "region"]
+
+# Model sees ~8 features after transformation:
+# - amount → 1 feature (scaled)
+# - order_time → 4 features (hour, day_of_week, month, is_weekend)
+# - region → 3 features (if 3 unique regions: region_north, region_south, region_east)
+```
+
+**Why it matters**: Training time depends on number of features (not columns). More categorical/temporal columns → more features → slower training.
+
+**Optimization**: If training is slow, reduce high-cardinality categorical columns or exclude unnecessary temporal columns.
+</details>
+
+## Troubleshooting
+
+Having issues? See the [Troubleshooting Guide](./troubleshooting) for solutions to common problems.
+
+## Next steps
+
+For training options, parameters, and YAML examples, see [Anomaly Detection in Quality Checks](/docs/reference/quality_checks#anomaly-detection).
