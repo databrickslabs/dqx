@@ -28,9 +28,7 @@ def test_anomaly_check_with_custom_info_column_name(
     model_name = f"{anomaly_registry_prefix}.test_custom_info_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
-    train_df = spark.createDataFrame(
-        [(i, 100.0 + i * 0.1) for i in range(100)], "transaction_id int, amount double"
-    )
+    train_df = spark.createDataFrame([(i, 100.0 + i * 0.1) for i in range(100)], "transaction_id int, amount double")
 
     anomaly_engine.train(
         df=train_df,
@@ -89,9 +87,7 @@ def test_anomaly_check_with_default_info_column_name(
     model_name = f"{anomaly_registry_prefix}.test_default_info_{make_random(4).lower()}"
     registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
 
-    train_df = spark.createDataFrame(
-        [(i, 100.0 + i * 0.1) for i in range(100)], "transaction_id int, amount double"
-    )
+    train_df = spark.createDataFrame([(i, 100.0 + i * 0.1) for i in range(100)], "transaction_id int, amount double")
 
     anomaly_engine.train(
         df=train_df,
