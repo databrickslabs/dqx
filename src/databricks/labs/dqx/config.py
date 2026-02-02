@@ -122,7 +122,7 @@ class AnomalyParams:
         sample_fraction: Fraction of data to sample for training (default 0.3).
         max_rows: Maximum rows to use for training (default 1,000,000).
         train_ratio: Train/validation split ratio (default 0.8).
-        ensemble_size: Number of models in ensemble (default 2). Set to None for single model.
+        ensemble_size: Number of models in ensemble (default 3). Set to None for single model.
             Ensemble models provide:
             - More robust anomaly scores (averaged across models)
             - Confidence scores via standard deviation
@@ -135,7 +135,7 @@ class AnomalyParams:
     sample_fraction: float = 0.3
     max_rows: int = 1_000_000
     train_ratio: float = 0.8
-    ensemble_size: int | None = 2  # Default 2-model ensemble for robustness and confidence scores
+    ensemble_size: int | None = 3  # Default 3-model ensemble for robustness, tie-breaking, and confidence scores
     algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
     feature_engineering: FeatureEngineeringConfig = field(default_factory=FeatureEngineeringConfig)
 

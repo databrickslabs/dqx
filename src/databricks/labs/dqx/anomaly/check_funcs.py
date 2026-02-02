@@ -168,7 +168,7 @@ def has_no_anomalies(
         include_contributions: Include SHAP feature contributions for explainability (default True).
             Requires SHAP library. Performance-optimized with native batching.
         include_confidence: Include ensemble confidence scores in _dq_info and top-level (default False).
-            Automatically available when training with ensemble_size > 1 (default is 2).
+            Automatically available when training with ensemble_size > 1 (default is 3).
 
     Returns:
         Tuple of condition expression and apply function.

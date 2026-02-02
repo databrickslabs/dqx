@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 import cloudpickle
 import mlflow
@@ -821,21 +821,19 @@ def _train_validation_split(df: DataFrame, params: AnomalyParams) -> tuple[DataF
     return train_df, val_df
 
 
-def _fit_isolation_forest(
+def _prepare_training_features(
     train_df: DataFrame, feature_columns: list[str], params: AnomalyParams
-) -> tuple[Any, dict[str, Any], Any]:
+) -> tuple[Any, Any]:
     """
-    Train IsolationForest model with distributed feature engineering and driver-based training.
+    Prepare training features using Spark-based feature engineering.
 
-    Architecture: Feature engineering runs on Spark, then the model trains on the driver.
-    This hybrid approach maximizes performance while remaining Spark Connect compatible.
+    Analyzes column types, applies transformations (one-hot encoding, frequency maps, etc.),
+    and collects the result to the driver as a pandas DataFrame.
 
     Returns:
-        - pipeline: sklearn Pipeline (RobustScaler + IsolationForest) - only standard components
-        - hyperparams: Model configuration for MLflow tracking
-        - feature_metadata: Transformation metadata for distributed scoring (categorical maps, etc.)
+        - train_pandas: pandas DataFrame with engineered numeric features
+        - feature_metadata: Transformation metadata for distributed scoring
     """
-    algo_cfg = params.algorithm_config or IsolationForestConfig()
     fe_config = params.feature_engineering
 
     classifier = ColumnTypeClassifier(
@@ -847,7 +845,6 @@ def _fit_isolation_forest(
     feature_df = train_df.select(*feature_columns)
     column_infos, _ = classifier.analyze_columns(feature_df, feature_columns)
 
-    # Feature engineering transforms all column types to numeric features in Spark.
     engineered_df, feature_metadata = apply_feature_engineering(
         feature_df,
         column_infos,
@@ -856,6 +853,19 @@ def _fit_isolation_forest(
     )
 
     train_pandas = engineered_df.toPandas()
+
+    return train_pandas, feature_metadata
+
+
+def _fit_sklearn_model(train_pandas: Any, params: AnomalyParams) -> tuple[Any, dict[str, Any]]:
+    """
+    Train sklearn IsolationForest pipeline on pre-engineered pandas DataFrame.
+
+    Returns:
+        - pipeline: sklearn Pipeline (RobustScaler + IsolationForest)
+        - hyperparams: Model configuration for MLflow tracking
+    """
+    algo_cfg = params.algorithm_config or IsolationForestConfig()
 
     iso_forest = IsolationForest(
         contamination=algo_cfg.contamination,
@@ -867,10 +877,8 @@ def _fit_isolation_forest(
         n_jobs=-1,
     )
 
-    # Pipeline design: RobustScaler (median/IQR) is resilient to outliers, critical for anomaly detection
-    # where training data may contain unlabeled anomalies. Standard sklearn components enable serialization.
+    # RobustScaler uses median/IQR, which is resilient to outliers in training data
     pipeline = Pipeline([('scaler', RobustScaler()), ('model', iso_forest)])
-
     pipeline.fit(train_pandas)
 
     hyperparams: dict[str, Any] = {
@@ -878,8 +886,29 @@ def _fit_isolation_forest(
         "num_trees": algo_cfg.num_trees,
         "max_samples": algo_cfg.subsampling_rate,
         "random_seed": algo_cfg.random_seed,
-        "feature_scaling": "RobustScaler",  # Document that we use robust scaling
+        "feature_scaling": "RobustScaler",
     }
+
+    return pipeline, hyperparams
+
+
+def _fit_isolation_forest(
+    train_df: DataFrame, feature_columns: list[str], params: AnomalyParams
+) -> tuple[Any, dict[str, Any], Any]:
+    """
+    Train IsolationForest model with distributed feature engineering and driver-based training.
+
+    Feature engineering runs on Spark, then the model trains on the driver.
+
+    Returns:
+        - pipeline: sklearn Pipeline (RobustScaler + IsolationForest)
+        - hyperparams: Model configuration for MLflow tracking
+        - feature_metadata: Transformation metadata for distributed scoring
+    """
+    train_pandas, feature_metadata = _prepare_training_features(train_df, feature_columns, params)
+
+    # Train sklearn model
+    pipeline, hyperparams = _fit_sklearn_model(train_pandas, params)
 
     return pipeline, hyperparams, feature_metadata
 
@@ -1155,25 +1184,14 @@ def _ensure_mlflow_registry_uri() -> None:
 
 def _register_ensemble_member_to_mlflow(
     model: Any,
-    train_df: DataFrame,
     model_name: str,
     ensemble_index: int,
     ensemble_size: int,
     hyperparams: dict[str, Any],
     metrics: dict[str, float],
-    feature_metadata: SparkFeatureMetadata,
+    signature: Any,
 ) -> str:
     """Register a single ensemble member model to MLflow/Unity Catalog.
-
-    Args:
-        model: Trained sklearn model
-        train_df: Training DataFrame with original columns (for signature inference)
-        model_name: Base model name
-        ensemble_index: Index of this ensemble member (0-based)
-        ensemble_size: Total number of ensemble members
-        hyperparams: Model hyperparameters
-        metrics: Validation metrics
-        feature_metadata: Feature engineering metadata (for reconstructing transformations)
 
     Returns:
         Model URI in format: models:/<model_name>_ensemble_<index>/<version>
@@ -1182,22 +1200,6 @@ def _register_ensemble_member_to_mlflow(
     run_name = f"{model_name}_ensemble_{ensemble_index}"
 
     with mlflow.start_run(run_name=run_name):
-        # Infer model signature for Unity Catalog (required)
-        # CRITICAL: Apply feature engineering to train_df before signature inference
-        # train_df has original columns (e.g., 'date' as Timestamp), but model expects engineered features
-        column_infos_reconstructed = reconstruct_column_infos(feature_metadata)
-        engineered_train_df, _ = apply_feature_engineering(
-            train_df,
-            column_infos_reconstructed,
-            categorical_cardinality_threshold=20,
-            frequency_maps=feature_metadata.categorical_frequency_maps,
-            onehot_categories=feature_metadata.onehot_categories,
-        )
-        train_pandas = cast(pd.DataFrame, engineered_train_df.toPandas())
-        predictions = model.predict(train_pandas)
-        signature = infer_signature(train_pandas, predictions)
-
-        # Log scikit-learn model for this ensemble member
         model_info = mlflow.sklearn.log_model(
             sk_model=model,
             name="model",
@@ -1253,47 +1255,49 @@ def _train_ensemble(
     """
     Train ensemble of models with different random seeds.
 
+    Feature engineering is performed once and reused across all ensemble members.
+    Each member is trained with a different random seed (base_seed + index).
+
     Returns:
         Tuple of (model_uris, hyperparams, aggregated_metrics, score_quantiles, feature_metadata).
-        feature_metadata is from the first ensemble member (all members use same features).
     """
     _ensure_mlflow_registry_uri()
+
+    base_params = params or AnomalyParams()
+    train_pandas, feature_metadata = _prepare_training_features(train_df, columns, base_params)
 
     model_uris = []
     all_metrics = []
     models = []
-    first_feature_metadata = None
+    hyperparams = None
+    signature = None
 
     for i in range(ensemble_size):
-        # Create modified params with different seed (deep copy to avoid mutation)
-        modified_params = deepcopy(params or AnomalyParams())
+        modified_params = deepcopy(base_params)
         modified_params.algorithm_config.random_seed += i
 
-        # Train model (sklearn IsolationForest on driver)
-        model, hyperparams, feature_metadata = _fit_isolation_forest(train_df, columns, modified_params)
+        model, model_hyperparams = _fit_sklearn_model(train_pandas, modified_params)
         models.append(model)
 
-        # Capture feature_metadata from first member (all use same feature engineering)
         if i == 0:
-            first_feature_metadata = feature_metadata
+            hyperparams = model_hyperparams
+            predictions = model.predict(train_pandas)
+            signature = infer_signature(train_pandas, predictions)
 
-        # Compute metrics (distributed scoring on Spark)
         metrics = _compute_validation_metrics(model, val_df, columns, feature_metadata)
         all_metrics.append(metrics)
 
-        # Register to MLflow
         model_uri = _register_ensemble_member_to_mlflow(
-            model, train_df, model_name, i, ensemble_size, hyperparams, metrics, feature_metadata
+            model, model_name, i, ensemble_size, model_hyperparams, metrics, signature
         )
         model_uris.append(model_uri)
 
-    # Aggregate metrics across ensemble
     aggregated_metrics = _aggregate_ensemble_metrics(all_metrics)
 
-    assert first_feature_metadata is not None, "Failed to compute feature metadata for ensemble training"
-    score_quantiles = _compute_score_quantiles_ensemble(models, train_df, columns, first_feature_metadata)
+    assert hyperparams is not None, "Failed to capture hyperparams for ensemble training"
+    score_quantiles = _compute_score_quantiles_ensemble(models, train_df, columns, feature_metadata)
 
-    return model_uris, hyperparams, aggregated_metrics, score_quantiles, first_feature_metadata
+    return model_uris, hyperparams, aggregated_metrics, score_quantiles, feature_metadata
 
 
 def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:

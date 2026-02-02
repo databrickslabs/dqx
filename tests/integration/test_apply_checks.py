@@ -5544,7 +5544,7 @@ def test_apply_checks_all_row_geo_checks_as_yaml_with_streaming(
     assert_df_equality(checked_df, expected, ignore_nullable=True)
 
 
-def test_apply_checks_all_checks_as_yaml(ws, spark):
+def test_apply_checks_all_checks_as_yaml(ws, spark_keep_alive):
     """Test applying all checks from a yaml file.
 
     The checks used in the test are also showcased in the docs under /docs/reference/quality_checks.mdx
@@ -5560,6 +5560,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
 
     # Geo checks are executed in a separate test as they require specific DBR
 
+    spark = spark_keep_alive.spark
     dq_engine = DQEngine(ws)
     status = dq_engine.validate_checks(checks)
     assert not status.has_errors
@@ -5691,8 +5692,9 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
 
 
-def test_apply_checks_all_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible, ws, spark):
+def test_apply_checks_all_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible, ws, spark_keep_alive):
     """Test applying all geo checks from a yaml file."""
+    spark = spark_keep_alive.spark
     file_path = Path(__file__).parent.parent / "resources" / "all_row_geo_checks.yaml"
     with open(file_path, "r", encoding="utf-8") as f:
         checks = yaml.safe_load(f)

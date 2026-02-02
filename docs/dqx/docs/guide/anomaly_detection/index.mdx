@@ -434,10 +434,10 @@ See [Streaming Demos](https://github.com/databrickslabs/dqx/tree/main/demos):
 ```python
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 
-# Set fixed random seed in algorithm config
+# Set fixed base random seed in algorithm config
 params = AnomalyParams(
     algorithm_config=IsolationForestConfig(
-        random_seed=42  # Fixed seed for reproducibility
+        random_seed=42  # Base seed for reproducibility
     )
 )
 
@@ -449,8 +449,18 @@ anomaly_engine.train(
 )
 ```
 
+<Admonition type="info" title="Ensemble seed handling">
+Each ensemble model automatically gets a different seed (base_seed + model_index).
+With `random_seed=42` and `ensemble_size=3`:
+- Model 0 → seed 42
+- Model 1 → seed 43
+- Model 2 → seed 44
+
+This ensures ensemble diversity while maintaining reproducibility.
+</Admonition>
+
 **Important**: This is NOT recommended for production. Small variations between runs are:
-- **Expected**: Due to ensemble randomness (default: 2 models with seeds 42, 43)
+- **Expected**: Due to ensemble randomness (default: 3 models with seeds 42, 43, 44)
 - **Healthy**: Ensemble diversity improves robustness
 - **Acceptable**: Focus on trend consistency (e.g., "top 10 anomalies stay in top 20"), not exact scores
 
