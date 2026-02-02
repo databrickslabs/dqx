@@ -119,6 +119,7 @@ dependencies = [
     "pyparsing~=3.2.3",
     "jmespath~=1.0.1",
     "psycopg2-binary~=2.9.10",
+    "fastapi>=0.119.0",
 ]
 
 python="3.12" # must match the version required by databricks-connect and python version on the test clusters
@@ -195,6 +196,7 @@ ignore_missing_imports = true
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
+pythonpath = ["src", "app/src"]
 
 [tool.black]
 target-version = ["py310"]
@@ -232,6 +234,9 @@ exclude_lines = [
 # PyLint configuration is adapted from Google Python Style Guide with modifications.
 # Sources https://google.github.io/styleguide/pylintrc
 # License: https://github.com/google/styleguide/blob/gh-pages/LICENSE
+
+# Add app/src to sys.path for pylint to find databricks_labs_dqx_app
+init-hook = "import sys; sys.path.insert(0, 'app/src')"
 
 # Clear in-memory caches upon conclusion of linting. Useful if running pylint in
 # a server-like mode.
@@ -650,7 +655,9 @@ disable = [
     "rewrite-as-for-loop",
     "redundant-returns-doc",
     # dbx pylint is not up-to-date, e.g. spark.catalog.tableExists is compatible with UC since DBR 14+
-    "incompatible-with-uc"
+    "incompatible-with-uc",
+    # Test fixtures may use closure to capture spark from outer scope
+    "no-spark-argument-in-function"
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can
@@ -841,6 +848,9 @@ ignored-argument-names = "_.*|^ignored_|^unused_"
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules = ["six.moves", "past.builtins", "future.builtins", "builtins", "io"]
+
+[tool.pylint-per-file-ignores]
+"tests/integration/test_app_backend.py" = "import-outside-toplevel"
 
 # This plugin is used to generate correct links in README showed on PyPi
 [tool.hatch.metadata.hooks.fancy-pypi-readme]
