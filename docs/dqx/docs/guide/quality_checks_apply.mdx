@@ -481,8 +481,17 @@ input_data.writeStream.foreachBatch(validate_and_write_micro_batch_data).start()
 The quality check results (DataFrames) can be saved by the user to arbitrary tables using Spark APIs.
 DQX also offers convenient methods to save the results to tables without the need to use Spark APIs directly.
 Users can also use end-to-end methods that handle applying checks and saving results in a single method.
+A complete list of `DQEngine` methods is available in the [reference documentation](/docs/reference/engine).
 
-You can see the full list of `DQEngine` methods [here](/docs/reference/engine).
+Table properties, partition columns, and liquid clustering columns can be specified when using any ofDQX's 
+built-in methods to write data to a table.
+
+<Admonition type="warning" title="Streaming support for liquid clustering">
+Writing streaming data to a liquid clustered table requires use of Databricks Runtime version 16 or later. Users
+must set the Spark config `spark.databricks.delta.liquid.eagerClustering.streaming.enabled` to `true`. See
+[Liquid Clustering for Streaming Workloads](https://docs.databricks.com/aws/en/delta/clustering#streaming-workloads)
+for more details.
+</Admonition>
 
 Below are examples on how to save the quality checking results in tables using the `DQEngine` methods:
 
@@ -508,11 +517,13 @@ dq_engine.save_results_in_table(
     location="catalog.schema.valid",
     mode="append",  # or "overwrite"
     options={"mergeSchema": "true"},  # default {}
+    cluster_by=["modified_date"], # default []
   ),
   quarantine_config=OutputConfig(
     location="catalog.schema.quarantine",
     mode="append",  # or "overwrite"
     options={"mergeSchema": "true"},  # default {}
+    cluster_by=["modified_date"], # default []
   ),
 )
 
@@ -524,12 +535,14 @@ dq_engine.save_results_in_table(
       location="catalog.schema.valid",
       trigger={"availableNow": True},
       options={"checkpointLocation": "/path/to/checkpoint_output", "mergeSchema": "true"},
+      partition_by=["modified_date"], # default []
     ),
     # required if quarantine_df is defined
     quarantine_config=OutputConfig(
       location="catalog.schema.quarantine",
       trigger={"availableNow": True},
       options={"checkpointLocation": "/path/to/checkpoint_quarantine", "mergeSchema": "true"},
+      partition_by=["modified_date"], # default []
     ),
 )
 
@@ -549,11 +562,13 @@ dq_engine.apply_checks_and_save_in_table(
     output_config=OutputConfig(
       location="catalog.schema.valid",
       mode="append",  # or "overwrite"
+      cluster_by=["modified_date"],
     ),
     # optional
     quarantine_config=OutputConfig(
       location="catalog.schema.quarantine",
       mode="append",  # or "overwrite"
+      cluster_by=["modified_date"]
     ),
 )
 
@@ -569,6 +584,7 @@ dq_engine.apply_checks_and_save_in_table(
       mode="append",  # or "update" or "complete"
       trigger={"availableNow": True},
       options={"checkpointLocation": "/path/to/checkpoint_output", "mergeSchema": "true"},
+      partition_by=["modified_date"]
     ),
     # optional
     quarantine_config=OutputConfig(
@@ -576,6 +592,7 @@ dq_engine.apply_checks_and_save_in_table(
       mode="append",  # or "update" or "complete"
       trigger={"availableNow": True},
       options={"checkpointLocation": "/path/to/checkpoint_quarantine", "mergeSchema": "true"},
+      partition_by=["modified_date"]
     ),
 )
 ```
@@ -695,7 +712,7 @@ Example of the configuration file (relevant fields only):
     quarantine_config: # optional
       format: delta
       location: main.nytaxi.quarantine
-      mode: append
+      mode: appendx
       #partition_by: [pickup_date] # optional; sets the partition columns in the output data; use only one of partition_by or cluster_by
       #cluster_by: [pickup_zip, dropoff_zip] # optional; sets the liquid clustering columns in the output data; use only one of partition_by or cluster_by
       #checkpointLocation: /Volumes/catalog/schema/volume/checkpoint  # only applicable if input_config.is_streaming is enabled
