@@ -210,6 +210,7 @@ def deserialize_checks(checks: list[dict], custom_checks: dict[str, Callable] | 
         else:
             rule_type = CHECK_FUNC_REGISTRY.get(func_name)
             if rule_type == "dataset":
+                row_filter = check_func_kwargs.get("row_filter", None)
                 dq_rule_checks.append(
                     DQDatasetRule(
                         column=column,
@@ -218,7 +219,7 @@ def deserialize_checks(checks: list[dict], custom_checks: dict[str, Callable] | 
                         check_func_kwargs=check_func_kwargs,
                         name=name,
                         criticality=criticality,
-                        filter=filter_str,
+                        filter=filter_str or row_filter,
                         user_metadata=user_metadata,
                     )
                 )
