@@ -78,6 +78,20 @@ export interface ExtraParams {
   run_id_overwrite?: ExtraParamsRunIdOverwrite;
 }
 
+export interface GenerateChecksIn {
+  /** Natural language description of data quality requirements */
+  user_input: string;
+}
+
+export type GenerateChecksOutChecksItem = { [key: string]: unknown };
+
+export interface GenerateChecksOut {
+  /** Generated checks in YAML format */
+  yaml_output: string;
+  /** Generated checks as a list of dictionaries */
+  checks: GenerateChecksOutChecksItem[];
+}
+
 export interface HTTPValidationError {
   detail?: ValidationError[];
 }
@@ -2447,6 +2461,94 @@ export const useSaveRunChecks = <
   TContext
 > => {
   const mutationOptions = getSaveRunChecksMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Generate data quality checks from natural language using AI-assisted generation.
+ * @summary Ai Generate Checks
+ */
+export const aiAssistedChecksGeneration = (
+  generateChecksIn: GenerateChecksIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<GenerateChecksOut>> => {
+  return axios.default.post(
+    `/api/ai-generate-checks`,
+    generateChecksIn,
+    options,
+  );
+};
+
+export const getAiAssistedChecksGenerationMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+    TError,
+    { data: GenerateChecksIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+  TError,
+  { data: GenerateChecksIn },
+  TContext
+> => {
+  const mutationKey = ["aiAssistedChecksGeneration"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+    { data: GenerateChecksIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return aiAssistedChecksGeneration(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiAssistedChecksGenerationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>
+>;
+export type AiAssistedChecksGenerationMutationBody = GenerateChecksIn;
+export type AiAssistedChecksGenerationMutationError =
+  AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Ai Generate Checks
+ */
+export const useAiAssistedChecksGeneration = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+      TError,
+      { data: GenerateChecksIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+  TError,
+  { data: GenerateChecksIn },
+  TContext
+> => {
+  const mutationOptions = getAiAssistedChecksGenerationMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };

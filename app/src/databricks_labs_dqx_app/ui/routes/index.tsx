@@ -1,16 +1,33 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
-import { GradientBackground } from "@/components/backgrounds/gradient";
 import Navbar from "@/components/apx/Navbar";
 import { motion } from "motion/react";
-
 import { Settings } from "lucide-react";
+import { AICheckGenerator } from "@/components/AICheckGenerator";
+import { useState } from "react";
+import axios from "axios";
 
 export const Route = createFileRoute("/")({
   component: () => <Index />,
 });
 
 function Index() {
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  const handleGenerate = async (userInput: string) => {
+    setIsGenerating(true);
+    try {
+      const response = await axios.post<{ yaml_output: string; checks: any[] }>(
+        "/api/ai-generate-checks",
+        { user_input: userInput },
+        { withCredentials: true }
+      );
+      return response.data;
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden">
       {/* Navbar - Top */}
@@ -18,9 +35,9 @@ function Index() {
 
       {/* Main Content - Side by side */}
       <div className="flex-1 flex relative overflow-hidden">
-        {/* Left side - Animated Gradient Background (full height) */}
-        <div className="w-1/2 h-full relative">
-          <GradientBackground />
+        {/* Left side - AI-Assisted Rules Generation (full height) */}
+        <div className="w-1/2 h-full relative border-r border-border">
+          <AICheckGenerator onGenerate={handleGenerate} isGenerating={isGenerating} />
         </div>
 
         {/* Right side - Content (full height) */}

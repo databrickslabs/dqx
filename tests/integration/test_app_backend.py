@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_dqx_engine
+from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_engine
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.settings import SettingsManager
 from databricks.labs.dqx.config import RunConfig, InputConfig, OutputConfig, WorkspaceConfig
@@ -94,12 +94,12 @@ def api_client(ws, spark, test_app_folder, monkeypatch):
         """Override OBO workspace client to use the test workspace client."""
         return ws
 
-    def override_get_dqx_engine() -> DQEngine:
+    def override_get_engine() -> DQEngine:
         """Override DQX engine to use test spark session."""
         return DQEngine(workspace_client=ws, spark=spark)
 
     app.dependency_overrides[get_obo_ws] = override_get_obo_ws
-    app.dependency_overrides[get_dqx_engine] = override_get_dqx_engine
+    app.dependency_overrides[get_engine] = override_get_engine
 
     client = TestClient(app)
     yield client

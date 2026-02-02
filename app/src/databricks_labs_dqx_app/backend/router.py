@@ -1,5 +1,7 @@
 from typing import Annotated
 
+import yaml
+from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.config import InstallationChecksStorageConfig
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.engine import DQEngine
@@ -10,13 +12,15 @@ from databricks.sdk.service.iam import User as UserOut
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .config import conf
-from .dependencies import get_dqx_engine, get_obo_ws
+from .dependencies import get_engine, get_generator, get_obo_ws
 from .logger import logger
 from .models import (
     ChecksIn,
     ChecksOut,
     ConfigIn,
     ConfigOut,
+    GenerateChecksIn,
+    GenerateChecksOut,
     InstallationSettings,
     RunConfigIn,
     RunConfigOut,
@@ -149,7 +153,7 @@ def delete_run_config(
 def get_run_checks(
     name: str,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    engine: Annotated[DQEngine, Depends(get_dqx_engine)],
+    engine: Annotated[DQEngine, Depends(get_engine)],
     path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ChecksOut:
     install_folder = get_install_folder(obo_ws, path)
@@ -180,7 +184,7 @@ def save_run_checks(
     name: str,
     body: ChecksIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    engine: Annotated[DQEngine, Depends(get_dqx_engine)],
+    engine: Annotated[DQEngine, Depends(get_engine)],
     path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ChecksOut:
     install_folder = get_install_folder(obo_ws, path)
@@ -193,3 +197,21 @@ def save_run_checks(
     checks_config = InstallationChecksStorageConfig(run_config_name=run_config.name, install_folder=install_folder)
     engine.save_checks(body.checks, checks_config)
     return ChecksOut(checks=body.checks)
+
+
+@api.post("/ai-generate-checks", response_model=GenerateChecksOut, operation_id="ai_assisted_checks_generation")
+def ai_generate_checks(
+    body: GenerateChecksIn,
+    generator: Annotated[DQGenerator, Depends(get_generator)],
+) -> GenerateChecksOut:
+    """Generate data quality checks from natural language using AI-assisted generation."""
+    try:
+        checks = generator.generate_dq_rules_ai_assisted(user_input=body.user_input)
+
+        # Convert checks to YAML
+        yaml_output = yaml.dump(checks, default_flow_style=False, sort_keys=False)
+
+        return GenerateChecksOut(yaml_output=yaml_output, checks=checks)
+    except Exception as e:
+        logger.error(f"Failed to generate checks: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to generate checks: {str(e)}")

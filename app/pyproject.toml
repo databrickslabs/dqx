@@ -8,7 +8,7 @@ dependencies = [
     "fastapi~=0.119",
     "pydantic-settings~=2.11",
     "uvicorn~=0.37",
-    "databricks-labs-dqx",
+    "databricks-labs-dqx[llm]",
     "databricks-sdk~=0.73",
     "databricks-connect~=15.4",
 ]

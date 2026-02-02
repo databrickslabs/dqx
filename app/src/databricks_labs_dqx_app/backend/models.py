@@ -40,3 +40,12 @@ class ChecksIn(BaseModel):
 
 class InstallationSettings(BaseModel):
     install_folder: str = Field(description="Path to the folder containing config.yml")
+
+
+class GenerateChecksIn(BaseModel):
+    user_input: str = Field(description="Natural language description of data quality requirements")
+
+
+class GenerateChecksOut(BaseModel):
+    yaml_output: str = Field(description="Generated checks in YAML format")
+    checks: list[dict[str, Any]] = Field(description="Generated checks as a list of dictionaries")
