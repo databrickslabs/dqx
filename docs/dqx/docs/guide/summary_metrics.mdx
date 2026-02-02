@@ -18,12 +18,12 @@ Summary metrics in DQX capture both **built-in metrics** (automatically calculat
 
 DQX automatically captures the following built-in metrics for every data quality check execution:
 
-| Metric Name              | Data Type                                       | Description                                        |
-|--------------------------|-------------------------------------------------|----------------------------------------------------|
-| `input_row_count`        | `int`                                           | Total number of input rows processed               |
-| `error_row_count`        | `int`                                           | Number of rows that failed error-level checks      |
-| `warning_row_count`      | `int`                                           | Number of rows that triggered warning-level checks |
-| `valid_row_count`        | `int`                                           | Number of rows that passed all checks              |
+| Metric Name              | Data Type                                       | Description                                                         |
+|--------------------------|-------------------------------------------------|---------------------------------------------------------------------|
+| `input_row_count`        | `int`                                           | Total number of input rows processed                                |
+| `error_row_count`        | `int`                                           | Number of rows that failed error-level checks                       |
+| `warning_row_count`      | `int`                                           | Number of rows that triggered warning-level checks                  |
+| `valid_row_count`        | `int`                                           | Number of rows that passed all checks (have no errors and warnings) |
 
 ### Custom Metrics
 

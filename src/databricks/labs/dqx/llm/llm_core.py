@@ -29,6 +29,11 @@ class LLMModelConfigurator:
 
     def configure(self) -> None:
         """Configure the DSPy language model with the provided settings."""
+        # Check if DSPy is already configured to avoid reconfiguration errors
+        if dspy.settings.lm is not None:
+            logger.debug("DSPy is already configured, skipping reconfiguration")
+            return
+
         language_model = dspy.LM(
             model=self._model_config.model_name,
             model_type="chat",
@@ -179,7 +184,7 @@ class DspyRuleGenerationWithSchemaInference(dspy.Module):
         # Infer schema if not provided
         if not schema_info or not schema_info.strip():
             logger.info("Inferring schema from business description...")
-            schema_result = self.schema_inferrer.forward(business_description)
+            schema_result = self.schema_inferrer(business_description)
             schema_info = schema_result.guessed_schema_json
             guessed_schema_json = schema_result.guessed_schema_json
             assumptions_bullets = schema_result.assumptions_bullets

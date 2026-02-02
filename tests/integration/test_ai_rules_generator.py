@@ -184,3 +184,20 @@ def test_generate_dq_rules_ai_assisted_with_summary_stats_only(ws, spark):
     # Verify checks were generated and are valid
     assert len(actual_checks) > 0
     assert not DQEngineCore.validate_checks(actual_checks).has_errors
+
+
+def test_multiple_generator_instances_no_reconfiguration_error(ws, spark):
+    """
+    Test that creating multiple DQGenerator instances doesn't cause DSPy reconfiguration errors.
+    """
+    user_input = "Age should be between 0 and 120"
+
+    # Create first generator and generate checks
+    generator1 = DQGenerator(ws, spark)
+    checks1 = generator1.generate_dq_rules_ai_assisted(user_input=user_input)
+    assert len(checks1) > 0
+
+    # Create second generator and generate checks
+    generator2 = DQGenerator(ws, spark)
+    checks2 = generator2.generate_dq_rules_ai_assisted(user_input=user_input)
+    assert len(checks2) > 0

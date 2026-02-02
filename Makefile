@@ -34,7 +34,7 @@ perf:
 coverage:
 	hatch run coverage; open htmlcov/index.html
 
-docs-build: 
+docs-build:
 	hatch run docs:pydoc-markdown
 	yarn --cwd docs/dqx build
 
