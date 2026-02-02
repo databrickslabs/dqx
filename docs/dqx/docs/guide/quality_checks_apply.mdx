@@ -483,7 +483,7 @@ DQX also offers convenient methods to save the results to tables without the nee
 Users can also use end-to-end methods that handle applying checks and saving results in a single method.
 A complete list of `DQEngine` methods is available in the [reference documentation](/docs/reference/engine).
 
-Table properties, partition columns, and liquid clustering columns can be specified when using any ofDQX's 
+Table properties, partition columns, and liquid clustering columns can be specified when using any of DQX's 
 built-in methods to write data to a table.
 
 <Admonition type="warning" title="Streaming support for liquid clustering">
@@ -712,7 +712,7 @@ Example of the configuration file (relevant fields only):
     quarantine_config: # optional
       format: delta
       location: main.nytaxi.quarantine
-      mode: appendx
+      mode: append
       #partition_by: [pickup_date] # optional; sets the partition columns in the output data; use only one of partition_by or cluster_by
       #cluster_by: [pickup_zip, dropoff_zip] # optional; sets the liquid clustering columns in the output data; use only one of partition_by or cluster_by
       #checkpointLocation: /Volumes/catalog/schema/volume/checkpoint  # only applicable if input_config.is_streaming is enabled

@@ -289,7 +289,8 @@ def test_save_streaming_dataframe_in_table_with_cluster_by(spark, make_schema, m
     assert_df_equality(input_df, result_df)
     assert any(
         r.levelno == logging.WARNING
-        and "Ignoring cluster_by for streaming writes; Delta Liquid Clustering is batch-only." in r.message
+        and "Ignoring 'cluster_by' for streaming writes; Cluster on-write is supported for streaming workloads with Databricks Runtime versions 16 or later"
+        in r.message
         for r in caplog.records
     )
 

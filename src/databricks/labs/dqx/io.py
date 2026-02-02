@@ -128,7 +128,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
                 stream_writer = stream_writer.clusterBy(output_config.cluster_by)
             else:
                 logger.warning(
-                    "Ignoring 'cluster_by' for streaming writes; Cluster on-write is not currently supported with structured streaming."
+                    "Ignoring 'cluster_by' for streaming writes; Cluster on-write is supported for streaming workloads with Databricks Runtime versions 16 or later"
                 )
 
         if output_config.partition_by:
