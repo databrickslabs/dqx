@@ -146,41 +146,6 @@ class DashboardInstaller:
             return None  # Recreate the dashboard if it's reference is corrupted (manually)
         return dashboard_id  # Update the existing dashboard
 
-    @staticmethod
-    def _resolve_table_name_in_dashboard(
-        src_tbl_name: str, replaced_tbl_name: str, dashboard_def: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Replaces table name variable in dashboard definition
-
-        This method replaces the placeholder table name with the actual table name
-        in all queries within the dashboard definition.
-
-        Args:
-            src_tbl_name: The source table name to be replaced (placeholder)
-            replaced_tbl_name: The table name to replace the source table name with
-            dashboard_def: The dashboard definition containing datasets with queries
-
-        Returns:
-            Updated dashboard definition with replaced table names
-        """
-        logger.debug(f"Replacing '{src_tbl_name}' with '{replaced_tbl_name}' in dashboard queries")
-
-        # Deep copy to avoid modifying original
-        updated_def = json.loads(json.dumps(dashboard_def))
-
-        # Replace table names in all datasets
-        for dataset in updated_def.get("datasets", []):
-            # Handle queryLines array (exported Lakeview format)
-            if "queryLines" in dataset and isinstance(dataset["queryLines"], list):
-                dataset["queryLines"] = [
-                    line.replace(src_tbl_name, replaced_tbl_name) for line in dataset["queryLines"]
-                ]
-            # Handle query string (alternative format)
-            elif "query" in dataset and isinstance(dataset["query"], str):
-                dataset["query"] = dataset["query"].replace(src_tbl_name, replaced_tbl_name)
-
-        return updated_def
-
     @retried(on=[InternalError, DeadlineExceeded], timeout=timedelta(minutes=4))
     def _create_dashboard(self, file: Path, *, parent_path: str) -> None:
         """
@@ -193,31 +158,21 @@ class DashboardInstaller:
         logger.info(f"Reading dashboard from {file}...")
 
         run_config = self._config.get_run_config()
-        if run_config.quarantine_config:
-            dq_table = run_config.quarantine_config.location.lower()
-            logger.info(f"Using '{dq_table}' quarantine table as the source table for the dashboard...")
-        else:
-            assert run_config.output_config  # output config is always required
-            dq_table = run_config.output_config.location.lower()
-            logger.info(f"Using '{dq_table}' output table as the source table for the dashboard...")
 
         try:
-            self._create_dashboard_from_metadata(file, parent_path, run_config, dq_table)
+            self._create_dashboard_from_metadata(file, parent_path, run_config)
         except Exception as e:
             logger.error(f"Failed to create dashboard from {file}: {e}", exc_info=True)
             raise
 
-    def _create_dashboard_from_metadata(
-        self, file: Path, parent_path: str, run_config: RunConfig, dq_table: str
-    ) -> None:
+    def _create_dashboard_from_metadata(self, file: Path, parent_path: str, run_config: RunConfig) -> None:
         """
         Create dashboard using exported Lakeview metadata.
 
         Args:
             file: Path to the .lvdash.json file
             parent_path: Parent path where the dashboard will be created
-            run_config: Run configuration containing warehouse settings
-            dq_table: The actual table name to use in queries
+            run_config: Run configuration
         """
         # Load metadata
         metadata = self._prepare_dashboard_metadata(file)
@@ -228,19 +183,13 @@ class DashboardInstaller:
         if dashboard_id is not None:
             dashboard_id = self._handle_existing_dashboard(dashboard_id, metadata.display_name, parent_path)
 
-        # Replace source table name in dashboard definition
-        src_table_name = "$catalog.schema.table"
-        updated_dashboard_def = self._resolve_table_name_in_dashboard(
-            src_tbl_name=src_table_name, replaced_tbl_name=dq_table, dashboard_def=metadata.dashboard_def
-        )
-
         # Create or update the dashboard
         dashboard = self._create_or_update_dashboard(
             dashboard_id=dashboard_id,
             metadata=metadata,
             parent_path=parent_path,
             run_config=run_config,
-            dashboard_def=updated_dashboard_def,
+            dashboard_def=json.loads(json.dumps(metadata.dashboard_def)),
         )
 
         # Publish the dashboard
@@ -266,7 +215,7 @@ class DashboardInstaller:
         stem = file.stem.title()
         if stem.lower().endswith(".lvdash"):
             stem = stem[: -len(".lvdash")]
-        metadata.display_name = f"DQX_{stem}"
+        metadata.display_name = stem
         return metadata
 
     def _create_or_update_dashboard(
