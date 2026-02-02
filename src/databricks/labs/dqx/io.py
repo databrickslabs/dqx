@@ -119,23 +119,18 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
         on write for streaming workloads.
     """
     if df.isStreaming:
+        stream_writer = (
+            df.writeStream.format(output_config.format).options(**output_config.options).outputMode(output_config.mode)
+        )
+
         if output_config.cluster_by:
             if _supports_streaming_cluster_on_write():
-                stream_writer = (
-                    df.writeStream.format(output_config.format)
-                    .outputMode(output_config.mode)
-                    .clusterBy(output_config.cluster_by)
-                )
+                stream_writer = stream_writer.clusterBy(output_config.cluster_by)
             else:
                 logger.warning(
                     "Ignoring 'cluster_by' for streaming writes; Cluster on-write is not currently supported with structured streaming."
                 )
-        else:
-            stream_writer = (
-                df.writeStream.format(output_config.format)
-                .outputMode(output_config.mode)
-                .options(**output_config.options)
-            )
+
         if output_config.partition_by:
             stream_writer = stream_writer.partitionBy(*output_config.partition_by)
 
