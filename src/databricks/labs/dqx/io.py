@@ -125,7 +125,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
 
         if output_config.cluster_by:
             if _supports_streaming_cluster_on_write():
-                stream_writer = stream_writer.clusterBy(output_config.cluster_by)
+                stream_writer = stream_writer.clusterBy(*output_config.cluster_by)
             else:
                 logger.warning(
                     "Ignoring 'cluster_by' for streaming writes; Cluster on-write is supported for streaming workloads with Databricks Runtime versions 16 or later"
@@ -208,21 +208,26 @@ def _supports_streaming_cluster_on_write() -> bool:
     environment_version = os.environ.get("DATABRICKS_RUNTIME_VERSION", "")
     if not environment_version:
         logger.warning(
-            "Ignoring 'cluster_by' for streaming writes; Could not parse 'DATABRICKS_RUNTIME_VERSION' from environment variables"
+            "Ignoring 'cluster_by' for streaming writes; Missing 'DATABRICKS_RUNTIME_VERSION' in environment variables"
         )
         return False
 
     if "IS_SERVERLESS" in os.environ:
-        _supported_version = 3
-        runtime_version_pattern = re.compile(r"client\.(.*)")
-        matched = re.match(runtime_version_pattern, environment_version)
-        runtime_version = float(matched.group(1)) if matched else 0
-
+        _supported_major_version = 3
+        runtime_version_pattern = re.compile(r"client\.(\d+)\.(\d+)")
     else:
-        _supported_version = 16
-        runtime_version = float(environment_version) if environment_version else 0
+        _supported_major_version = 16
+        runtime_version_pattern = re.compile(r"(\d+)\.(\d+)")
 
-    return runtime_version >= _supported_version
+    matched = re.match(runtime_version_pattern, environment_version)
+    if not matched:
+        logger.warning(
+            f"Ignoring 'cluster_by' for streaming writes; Could not parse Databricks Runtime version '{environment_version}'"
+        )
+        return False
+
+    major_version = int(matched.group(1))
+    return major_version >= _supported_major_version
 
 
 def is_one_time_trigger(trigger: dict[str, Any] | None) -> bool:
