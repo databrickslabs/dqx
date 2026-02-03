@@ -246,7 +246,7 @@ def test_col_is_empty(spark):
                 "Column 'a' value is not empty",
                 "Column 'b' value is not empty",
                 None,
-                "Column 'try_element_at(d, 1)' value is not empty",
+                None,
             ],
         ],
         checked_schema,
@@ -267,8 +267,8 @@ def test_col_is_null_or_empty(spark):
     )
 
     actual = test_df.select(
-        is_null_or_empty("a"),
-        is_null_or_empty("b", True),
+        is_null_or_empty("a", trim_strings=True),
+        is_null_or_empty("b"),
         is_null_or_empty(F.col("c").getItem("val")),
         is_null_or_empty(F.try_element_at("d", F.lit(1))),
     )
