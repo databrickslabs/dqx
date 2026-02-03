@@ -202,7 +202,7 @@ def _supports_streaming_cluster_on_write() -> bool:
         The `cluster_by` method of Spark's `DataStreamWriter` is supported for creating liquid clustered tables as of
         Databricks Runtime version 16+ (see: https://docs.databricks.com/aws/en/delta/clustering#create-tables-with-clustering).
         Users must manually enable `spark.databricks.delta.liquid.eagerClustering.streaming.enabled` to allow clustering
-        on write for streaming workloads. This method is used in `save_dataframe_as_table` to validate that the
+        on write for streaming workloads. This method is used to validate that the
         execution environment supports streaming writes with liquid clustering.
     """
     environment_version = os.environ.get("DATABRICKS_RUNTIME_VERSION", "")
