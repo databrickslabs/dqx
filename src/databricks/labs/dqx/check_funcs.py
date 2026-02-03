@@ -197,7 +197,7 @@ def is_empty(column: str | Column) -> Column:
 
 @register_rule("row")
 def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
-    """Checks whether the values in the input column are null or empty.
+    """Checks whether the values in the input column are either null or empty.
 
     Args:
         column: column to check; can be a string column name or a column expression
