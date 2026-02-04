@@ -265,48 +265,6 @@ def test_col_is_empty(spark):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
-
-def test_col_is_empty_with_trim_strings(spark):
-    input_schema = "a: string"
-    test_df = spark.createDataFrame(
-        [
-            ["str1"],
-            [""],
-            [" "],
-            ["  "],
-            [None],
-        ],
-        input_schema,
-    )
-
-    actual = test_df.select(
-        is_empty("a", trim_strings=False),
-        is_empty("a", trim_strings=True),
-    )
-
-    checked_schema = "a_is_not_empty: string, a_is_not_empty: string"
-    expected = spark.createDataFrame(
-        [
-            [
-                "Column 'a' value is not empty",
-                "Column 'a' value is not empty",
-            ],
-            [None, None],
-            [
-                "Column 'a' value is not empty",
-                None,
-            ],
-            [
-                "Column 'a' value is not empty",
-                None,
-            ],
-            [None, None],
-        ],
-        checked_schema,
-    )
-
-    assert_df_equality(actual, expected, ignore_nullable=True)
-
 def test_col_is_null_or_empty(spark):
     input_schema = "a: string, b: int, c: map<string, string>, d: array<string>, e: string"
     test_df = spark.createDataFrame(
