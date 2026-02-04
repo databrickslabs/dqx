@@ -3061,7 +3061,6 @@ def _is_aggr_compare(
             tolerance_match = _match_values_with_tolerance(F.col(metric_col), limit_expr, abs_tolerance, rel_tolerance)
 
             # Adjust based on compare_op:
-            # - py_operator.ne is used for is_aggr_equal (condition fails when NOT equal)
             if compare_op == py_operator.ne:
                 # is_aggr_equal case: fail when values don't match within tolerance
                 condition_result = ~tolerance_match
