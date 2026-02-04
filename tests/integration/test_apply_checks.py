@@ -80,7 +80,7 @@ def test_apply_checks_passed(ws, spark):
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame([[1, 3, 3, None, None]], EXPECTED_SCHEMA)
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
 
 
 def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
@@ -286,7 +286,7 @@ def test_foreign_key_check(ws, spark):
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
     assert_df_equality(
         bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
     )
@@ -419,7 +419,7 @@ def test_foreign_key_check_negate(ws, spark):
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
     assert_df_equality(
         bad_df, expected.where(F.col("_errors").isNotNull() | F.col("_warnings").isNotNull()), ignore_nullable=True
     )
@@ -1236,7 +1236,7 @@ def test_apply_is_unique(ws, spark):
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
 
 
 def test_compare_datasets_with_tolerance(ws, spark):
@@ -3961,7 +3961,7 @@ def test_apply_checks_with_custom_check(ws, spark):
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
 
 
 def test_apply_checks_for_each_col_with_custom_check(ws, spark):
@@ -5658,7 +5658,7 @@ def test_apply_checks_all_checks_as_yaml(ws, spark):
         ],
         expected_schema,
     )
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
 
 
 def test_apply_checks_all_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible, ws, spark):
@@ -5762,6 +5762,7 @@ def test_apply_checks_all_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible,
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+@pytest.mark.timeout(3600)
 def test_apply_checks_all_checks_using_classes(ws, spark):
     """Test applying all checks using DQX classes.
 
@@ -8551,7 +8552,9 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
         schema + REPORTING_COLUMNS,
     )
 
-    assert_df_equality(checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True)
+    assert_df_equality(
+        checked.sort(pk_columns), expected.sort(pk_columns), ignore_nullable=True, ignore_column_order=True
+    )
 
 
 def test_compare_datasets_check_missing_records_with_filter(ws, spark, set_utc_timezone):

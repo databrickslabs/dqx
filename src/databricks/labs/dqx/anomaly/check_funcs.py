@@ -29,11 +29,12 @@ import mlflow
 import mlflow.sklearn
 
 try:
-    import shap  # type: ignore
+    import shap as _shap  # type: ignore
 
+    SHAP = _shap
     SHAP_AVAILABLE = True
 except Exception:  # pragma: no cover - optional dependency
-    shap = None
+    SHAP = None
     SHAP_AVAILABLE = False
 
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
@@ -840,7 +841,7 @@ def _compute_shap_values(
         if len(engineered_feature_cols) == 1:
             shap_values = np.ones((len(shap_data[valid_indices]), 1))
         else:
-            explainer = shap.TreeExplainer(tree_model)
+            explainer = SHAP.TreeExplainer(tree_model)
             shap_values = explainer.shap_values(shap_data[valid_indices])
 
     return shap_values, valid_indices
