@@ -15,7 +15,6 @@ import cloudpickle
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
-import shap
 import sklearn
 from pyspark.sql import Column, DataFrame
 from pyspark.sql.functions import col, pandas_udf
@@ -28,6 +27,7 @@ from pyspark.sql.types import (
 )
 import mlflow
 import mlflow.sklearn
+import shap
 
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name
@@ -49,12 +49,8 @@ from databricks.labs.dqx.anomaly.utils import (
 )
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.package_utils import missing_required_packages
 from databricks.labs.dqx.rule import register_rule
 
-# Check if SHAP is available (required for feature contributions)
-# sklearn is always available when this module loads (required dependency for anomaly extras)
-SHAP_AVAILABLE = not missing_required_packages(["shap"])
 _DRIVER_ONLY = {"value": False}
 SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
     (0.0, "p00"),
@@ -190,13 +186,6 @@ def has_no_anomalies(
         include_contributions=include_contributions,
         include_confidence=include_confidence,
     )
-    if include_contributions and not SHAP_AVAILABLE:
-        raise ImportError(
-            "Feature contributions require SHAP (not included in base DQX installation).\n\n"
-            "Install DQX anomaly extras:\n"
-            "  %pip install 'databricks-labs-dqx[anomaly]'\n"
-            "  dbutils.library.restartPython()"
-        )
 
     def apply(df: DataFrame) -> DataFrame:
         df_to_score, local_merge_columns, row_id_col = _ensure_merge_columns(df)

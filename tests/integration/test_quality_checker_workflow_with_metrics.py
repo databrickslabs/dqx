@@ -7,9 +7,7 @@ from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
 from tests.integration.conftest import assert_quarantine_and_output_dfs, assert_output_df, RUN_TIME, RUN_ID
 
 
-def test_quality_checker_workflow_with_metrics(
-    spark_keep_alive, setup_workflows_with_metrics, expected_quality_checking_output
-):
+def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics, expected_quality_checking_output):
     """Test that quality checker workflow saves metrics when configured."""
     ctx, run_config = setup_workflows_with_metrics()
     ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
@@ -74,7 +72,6 @@ def test_quality_checker_workflow_with_metrics(
         },
     ]
 
-    spark = spark_keep_alive.spark
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy(
         "metric_name"
     )
@@ -85,7 +82,7 @@ def test_quality_checker_workflow_with_metrics(
 
 
 def test_quality_checker_workflow_with_quarantine_and_metrics(
-    ws, spark_keep_alive, setup_workflows_with_metrics, expected_quality_checking_output
+    ws, spark, setup_workflows_with_metrics, expected_quality_checking_output
 ):
     """Test workflow with both quarantine and metrics configurations."""
     ctx, run_config = setup_workflows_with_metrics(quarantine=True, custom_metrics=["count(1) as total_ids"])
@@ -166,7 +163,6 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
         },
     ]
 
-    spark = spark_keep_alive.spark
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy(
         "metric_name"
     )
@@ -178,7 +174,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
     )
 
 
-def test_e2e_workflow_with_metrics(spark_keep_alive, setup_workflows_with_metrics, expected_quality_checking_output):
+def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected_quality_checking_output):
     """Test that e2e workflow generates checks and applies them with metrics."""
     ctx, run_config = setup_workflows_with_metrics(custom_metrics=["max(id) as max_id", "min(id) as min_id"])
 
@@ -230,7 +226,6 @@ def test_e2e_workflow_with_metrics(spark_keep_alive, setup_workflows_with_metric
         },
     ]
 
-    spark = spark_keep_alive.spark
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy(
         "metric_name"
     )
@@ -244,7 +239,7 @@ def test_e2e_workflow_with_metrics(spark_keep_alive, setup_workflows_with_metric
 
 
 def test_custom_metrics_in_workflow_for_all_run_configs(
-    spark_keep_alive, setup_workflows_with_metrics, expected_quality_checking_output
+    spark, setup_workflows_with_metrics, expected_quality_checking_output
 ):
     """Test workflow with custom metrics for all run configs."""
     custom_metrics = [
@@ -347,7 +342,6 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
 
     ctx.deployed_workflows.run_workflow("quality-checker", run_config_name="")  # run for all run configs
 
-    spark = spark_keep_alive.spark
     expected_metrics_df = spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).orderBy(
         "metric_name"
     )
@@ -362,7 +356,7 @@ def test_custom_metrics_in_workflow_for_all_run_configs(
 
 
 def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
-    ws, spark_keep_alive, setup_workflows_with_metrics, expected_quality_checking_output
+    ws, spark, setup_workflows_with_metrics, expected_quality_checking_output
 ):
     """Test workflow with both quarantine and metrics configurations in streaming."""
     ctx, run_config = setup_workflows_with_metrics(
@@ -447,7 +441,6 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
         },
     ]
 
-    spark = spark_keep_alive.spark
     expected_metrics_df = (
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
@@ -460,7 +453,7 @@ def test_quality_checker_workflow_with_streaming_quarantine_and_metrics(
 
 
 def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metrics(
-    ws, spark_keep_alive, setup_workflows_with_metrics, expected_quality_checking_output
+    ws, spark, setup_workflows_with_metrics, expected_quality_checking_output
 ):
     """Test workflow with both quarantine and metrics configurations in continuous streaming."""
     ctx, run_config = setup_workflows_with_metrics(
@@ -549,7 +542,6 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
         },
     ]
 
-    spark = spark_keep_alive.spark
     expected_metrics_df = (
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
@@ -562,7 +554,7 @@ def test_quality_checker_workflow_with_continuous_streaming_quarantine_and_metri
 
 
 def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
-    ws, spark_keep_alive, installation_ctx, setup_workflows_with_metrics, expected_quality_checking_output
+    ws, spark, installation_ctx, setup_workflows_with_metrics, expected_quality_checking_output
 ):
     """Test workflow with both quarantine and metrics configurations for patterns."""
     ctx, run_config = setup_workflows_with_metrics(quarantine=True)
@@ -570,7 +562,6 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
     input_table = run_config.input_config.location
     catalog_name, schema_name, _ = input_table.split('.')
 
-    spark = spark_keep_alive.spark
     dq_engine = DQEngine(ws, spark)
     checks = dq_engine.load_checks(
         config=WorkspaceFileChecksStorageConfig(location=f"{installation_ctx.installation.install_folder()}/checks.yml")

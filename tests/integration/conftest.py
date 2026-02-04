@@ -1,34 +1,36 @@
 import logging
 import os
-import threading
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
 
-import pytest
 from chispa import assert_df_equality  # type: ignore
 from pyspark.sql import DataFrame
+import pytest
+from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
+from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
-from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig
+from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
-from databricks.labs.pytester.fixtures.baseline import factory
+from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk.service.compute import DataSecurityMode, Kind
-from databricks.sdk.service.workspace import ImportFormat
 
 from tests.constants import TEST_CATALOG
-from tests.integration_anomaly.test_anomaly_constants import (
-    EXTRA_PARAMS,
-    REPORTING_COLUMNS,
-    RUN_ID,
-    RUN_TIME,
-)
+
 
 logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
+
+
+REPORTING_COLUMNS = f", _errors: {dq_result_schema.simpleString()}, _warnings: {dq_result_schema.simpleString()}"
+RUN_TIME = datetime(2025, 1, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
+RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
+EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID)
 
 
 def build_quality_violation(
@@ -50,69 +52,6 @@ def build_quality_violation(
         "run_id": RUN_ID,
         "user_metadata": {},
     }
-
-
-class SparkKeepAlive:
-    """
-    Utility to keep Spark Connect session alive during long-running operations.
-
-    Runs lightweight queries periodically to prevent INACTIVITY_TIMEOUT.
-    """
-
-    def __init__(self, spark, interval_seconds=60):
-        """
-        Args:
-            spark: SparkSession to keep alive
-            interval_seconds: How often to run keep-alive query (default 60s)
-        """
-        self.spark = spark
-        self.interval = interval_seconds
-        self._stop_flag = threading.Event()
-        self._thread = None
-
-    def _keep_alive_loop(self):
-        """Background thread that runs periodic queries."""
-        logger.debug(f"SparkKeepAlive started (interval={self.interval}s)")
-
-        while not self._stop_flag.is_set():
-            try:
-                # Lightweight query to keep session active
-                self.spark.sql("SELECT 1").collect()
-                logger.debug("SparkKeepAlive: sent keep-alive query")
-            except Exception as e:
-                logger.warning(f"SparkKeepAlive: query failed: {e}")
-
-            # Wait for interval or stop signal
-            self._stop_flag.wait(self.interval)
-
-        logger.debug("SparkKeepAlive stopped")
-
-    def start(self):
-        """Start the keep-alive background thread."""
-        if self._thread and self._thread.is_alive():
-            logger.warning("SparkKeepAlive already running")
-            return
-
-        self._stop_flag.clear()
-        self._thread = threading.Thread(target=self._keep_alive_loop, daemon=True)
-        self._thread.start()
-
-    def stop(self):
-        """Stop the keep-alive background thread."""
-        if self._thread and self._thread.is_alive():
-            self._stop_flag.set()
-            self._thread.join(timeout=5)
-
-
-@pytest.fixture
-def spark_keep_alive(spark):
-    """
-    Fixture that provides a SparkKeepAlive utility to avoid session timeouts during long-running tests, e.g. workflows.
-    """
-    keep_alive = SparkKeepAlive(spark, interval_seconds=60)
-    keep_alive.start()
-    yield keep_alive
-    keep_alive.stop()
 
 
 @pytest.fixture
@@ -293,8 +232,6 @@ def setup_workflows_with_custom_folder(
 
 
 class TestInstallationMixin(InstallationMixin):
-    __test__ = False
-
     def get_my_username(self):
         return self._my_username
 

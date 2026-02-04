@@ -10,6 +10,7 @@ Requires the 'anomaly' extras: pip install databricks-labs-dqx[anomaly]
 import logging
 from typing import Any
 
+import mlflow.sklearn as mlflow_sklearn
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
@@ -18,7 +19,6 @@ from pyspark.sql import DataFrame
 from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 from sklearn.pipeline import Pipeline
-import mlflow.sklearn as mlflow_sklearn
 
 from databricks.labs.dqx.anomaly.utils import format_contributions_map
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -45,7 +45,6 @@ def compute_contributions_for_matrix(
     model_local: Any, feature_matrix: np.ndarray, columns: list[str]
 ) -> list[dict[str, float | None]]:
     """Compute normalized SHAP contributions for a feature matrix."""
-
     # If model is a Pipeline (due to feature scaling), extract components
     # SHAP's TreeExplainer only supports tree models, not pipelines
     if isinstance(model_local, Pipeline):
