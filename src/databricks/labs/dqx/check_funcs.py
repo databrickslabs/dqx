@@ -3062,7 +3062,6 @@ def _is_aggr_compare(
 
             # Adjust based on compare_op:
             # - py_operator.ne is used for is_aggr_equal (condition fails when NOT equal)
-            # - py_operator.eq is used for is_aggr_not_equal (condition fails when equal)
             if compare_op == py_operator.ne:
                 # is_aggr_equal case: fail when values don't match within tolerance
                 condition_result = ~tolerance_match
