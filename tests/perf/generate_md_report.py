@@ -66,6 +66,45 @@ for bench in data["benchmarks"]:
         f"| {stats['ops']:.2f} |"
     )
 
+# Optional anomaly benchmark section (extra_info like roc_auc).
+anomaly_benchmarks = [b for b in data["benchmarks"] if b.get("group") == "anomaly_arrhythmia"]
+if anomaly_benchmarks:
+    lines.append("\n## Anomaly Benchmarks\n")
+    lines.append(
+        "| Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | Rounds | Ops/s | ROC-AUC | Precision | Recall | F1 | Precision@N |"
+    )
+    lines.append("|------|----------|------------|---------|---------|------------|--------|-------|---------|-----------|--------|----|-------------|")
+    for bench in anomaly_benchmarks:
+        stats = bench["stats"]
+        extra = bench.get("extra_info", {})
+        roc_auc = extra.get("roc_auc")
+        precision = extra.get("precision")
+        recall = extra.get("recall")
+        f1_score = extra.get("f1_score")
+        precision_at_n = extra.get("precision_at_n")
+        roc_auc_str = f\"{roc_auc:.6f}\" if isinstance(roc_auc, (int, float)) else "n/a"
+        precision_str = f\"{precision:.6f}\" if isinstance(precision, (int, float)) else "n/a"
+        recall_str = f\"{recall:.6f}\" if isinstance(recall, (int, float)) else "n/a"
+        f1_str = f\"{f1_score:.6f}\" if isinstance(f1_score, (int, float)) else "n/a"
+        precision_at_n_str = (
+            f\"{precision_at_n:.6f}\" if isinstance(precision_at_n, (int, float)) else "n/a"
+        )
+        lines.append(
+            f"| {bench['name']} "
+            f"| {stats['mean']:.6f} "
+            f"| {stats['median']:.6f} "
+            f"| {stats['min']:.6f} "
+            f"| {stats['max']:.6f} "
+            f"| {stats['stddev']:.6f} "
+            f"| {stats['rounds']} "
+            f"| {stats['ops']:.2f} "
+            f"| {roc_auc_str} "
+            f"| {precision_str} "
+            f"| {recall_str} "
+            f"| {f1_str} "
+            f"| {precision_at_n_str} |"
+        )
+
 # overwrite the report
 report_path.write_text("\n".join(lines))
 print(f"REPORT_PATH={report_path.resolve()}")

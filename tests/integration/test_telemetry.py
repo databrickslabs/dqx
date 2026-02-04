@@ -8,8 +8,7 @@ from databricks.labs.dqx.telemetry import (
 from tests.constants import TEST_CATALOG
 
 
-def test_get_tables_and_paths_from_file_delta_dataframe(ws, spark_keep_alive, make_schema, make_random, make_volume):
-    spark = spark_keep_alive.spark
+def test_get_tables_and_paths_from_file_delta_dataframe(ws, spark, make_schema, make_random, make_volume):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
@@ -28,8 +27,7 @@ def test_get_tables_and_paths_from_file_delta_dataframe(ws, spark_keep_alive, ma
     assert len(paths) == 1, f"Expected 1 path, but found {len(paths)}"
 
 
-def test_get_tables_and_paths_from_file_parquet_dataframe(ws, spark_keep_alive, make_schema, make_random, make_volume):
-    spark = spark_keep_alive.spark
+def test_get_tables_and_paths_from_file_parquet_dataframe(ws, spark, make_schema, make_random, make_volume):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     volume_name = make_volume(catalog_name=catalog_name, schema_name=schema_name).name
@@ -48,8 +46,7 @@ def test_get_tables_and_paths_from_file_parquet_dataframe(ws, spark_keep_alive, 
     assert len(paths) == 1, f"Expected 1 path, but found {len(paths)}"
 
 
-def test_get_tables_and_paths_from_code_dataframe(ws, spark_keep_alive, make_schema, make_random, make_volume):
-    spark = spark_keep_alive.spark
+def test_get_tables_and_paths_from_code_dataframe(ws, spark, make_schema, make_random, make_volume):
     input_schema = T.StructType([T.StructField("id", T.IntegerType())])
     test_df = spark.createDataFrame([[1]], schema=input_schema)
 
@@ -61,8 +58,7 @@ def test_get_tables_and_paths_from_code_dataframe(ws, spark_keep_alive, make_sch
     assert len(paths) == 0, f"Expected 0 paths, but found {len(paths)}"
 
 
-def test_get_tables_and_paths_from_table_dataframe(ws, spark_keep_alive, make_schema, make_random):
-    spark = spark_keep_alive.spark
+def test_get_tables_and_paths_from_table_dataframe(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
@@ -81,8 +77,7 @@ def test_get_tables_and_paths_from_table_dataframe(ws, spark_keep_alive, make_sc
     assert len(paths) == 0, f"Expected 0 paths, but found {len(paths)}"
 
 
-def test_get_tables_and_paths_from_aggregated_table_dataframe(ws, spark_keep_alive, make_schema, make_random):
-    spark = spark_keep_alive.spark
+def test_get_tables_and_paths_from_aggregated_table_dataframe(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
@@ -101,8 +96,7 @@ def test_get_tables_and_paths_from_aggregated_table_dataframe(ws, spark_keep_ali
     assert len(paths) == 0, f"Expected 0 paths, but found {len(paths)}"
 
 
-def test_get_tables_and_paths_from_joined_tables_dataframe(ws, spark_keep_alive, make_schema, make_random):
-    spark = spark_keep_alive.spark
+def test_get_tables_and_paths_from_joined_tables_dataframe(ws, spark, make_schema, make_random):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name1 = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
