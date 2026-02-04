@@ -593,7 +593,7 @@ def is_equal_to(
         tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
         condition = ~tolerance_match
     else:
-        # Exact equality comparison (backwards compatible)
+        # Exact equality comparison
         condition = col_expr != value_expr
 
     return make_condition(
