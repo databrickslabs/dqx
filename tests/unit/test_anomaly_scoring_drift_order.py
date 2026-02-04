@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import cast
 
 import pytest
@@ -55,7 +55,7 @@ def test_score_global_model_uses_filtered_df_for_drift(monkeypatch) -> None:
             columns=columns,
             hyperparameters={},
             training_rows=10,
-            training_time=datetime.now(timezone.utc),
+        training_time=datetime.utcnow(),
         ),
         features=FeatureEngineering(feature_metadata="{}"),
         segmentation=SegmentationConfig(config_hash=compute_config_hash(columns, None)),
@@ -91,7 +91,7 @@ def test_resolve_internal_columns_hashes_on_double_collision() -> None:
     assert severity_col.startswith("_dq_severity_percentile_")
 
 
-def test_resolve_internal_columns_raises_on_hashed_collision() -> None:
+def test_resolve_internal_columns_raises_on_hashed_collision(monkeypatch) -> None:
     base_columns = [
         "anomaly_score",
         "_dq_anomaly_score",
@@ -109,8 +109,14 @@ def test_resolve_internal_columns_raises_on_hashed_collision() -> None:
     resolve_internal_columns = getattr(check_funcs, "_resolve_internal_columns")
     score_col, _, _, _ = resolve_internal_columns(cast(DataFrame, DummyDf()))
 
+    class FakeHash:
+        def hexdigest(self) -> str:
+            return "deadbeef" * 5
+
+    monkeypatch.setattr(check_funcs.hashlib, "sha1", lambda *_args, **_kwargs: FakeHash())
+
     class DummyDfCollision:
-        columns = base_columns + [score_col]
+        columns = base_columns + [score_col, "_dq_anomaly_score_deadbeef"]
 
     with pytest.raises(InvalidParameterError):
         resolve_internal_columns(cast(DataFrame, DummyDfCollision()))
