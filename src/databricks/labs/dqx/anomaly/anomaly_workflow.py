@@ -33,6 +33,10 @@ class AnomalyTrainerWorkflow(Workflow):
         if not model_name:
             raise InvalidConfigError("model_name is required and must be fully qualified (catalog.schema.name).")
 
+        registry_table = anomaly_config.registry_table
+        if not registry_table:
+            raise InvalidConfigError("registry_table is required and must be fully qualified (catalog.schema.name).")
+
         df = read_input_data(ctx.spark, run_config.input_config)
 
         anomaly_engine = AnomalyEngine(ctx.workspace_client, ctx.spark)
@@ -41,5 +45,5 @@ class AnomalyTrainerWorkflow(Workflow):
             columns=anomaly_config.columns,
             segment_by=anomaly_config.segment_by,
             model_name=model_name,
-            registry_table=anomaly_config.registry_table,
+            registry_table=registry_table,
         )

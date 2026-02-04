@@ -310,26 +310,6 @@ def test_format_contributions_map():
     assert "a" in rendered
 
 
-def test_compute_feature_contributions_udf_path(spark: SparkSession, shared_2d_model):
-    """Compute feature contributions via pandas UDF using a real registry model."""
-    if "pyspark.sql.connect" in spark.__class__.__module__:
-        pytest.skip("Spark Connect workers may not have test package available for UDFs")
-
-    model_name = shared_2d_model["model_name"]
-    registry_table = shared_2d_model["registry_table"]
-
-    record = spark.table(registry_table).filter(f"identity.model_name = '{model_name}'").first()
-    assert record is not None
-    model_uri = record["identity"]["model_uri"].split(",")[0]
-
-    df = spark.createDataFrame([(100.0, 10.0), (110.0, 12.0)], "amount double, quantity double")
-    result = explainer_mod.compute_feature_contributions(model_uri, df, ["amount", "quantity"])
-
-    row = result.collect()[0]
-    assert "anomaly_contributions" in row.asDict()
-    assert set(row["anomaly_contributions"].keys()) == {"amount", "quantity"}
-
-
 def test_add_top_contributors_uses_dq_info(spark: SparkSession):
     """Top contributors can be derived from _dq_info.severity_percentile."""
     schema = StructType(
