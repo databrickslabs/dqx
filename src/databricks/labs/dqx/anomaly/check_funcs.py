@@ -27,7 +27,14 @@ from pyspark.sql.types import (
 )
 import mlflow
 import mlflow.sklearn
-import shap
+
+try:
+    import shap  # type: ignore
+
+    SHAP_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency
+    shap = None
+    SHAP_AVAILABLE = False
 
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name
@@ -1006,6 +1013,11 @@ def _validate_has_no_anomalies_args(
     _validate_optional_positive_float(drift_threshold, label="drift_threshold")
     _validate_boolean(include_contributions, label="include_contributions")
     _validate_boolean(include_confidence, label="include_confidence")
+    if include_contributions and not SHAP_AVAILABLE:
+        raise InvalidParameterError(
+            "include_contributions=True requires the 'shap' dependency. "
+            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+        )
 
 
 def _validate_required_name(value: str, *, label: str, example: str) -> None:
