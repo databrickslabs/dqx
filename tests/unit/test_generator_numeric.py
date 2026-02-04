@@ -5,9 +5,7 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 
 def test_decimal_both_bounds_is_in_range():
     """Test min_max generator with Decimal type for both bounds."""
-    result = DQGenerator.dq_generate_min_max(
-        "price_col", **{"min": Decimal("0.01"), "max": Decimal("999.99")}
-    )
+    result = DQGenerator.dq_generate_min_max("price_col", **{"min": Decimal("0.01"), "max": Decimal("999.99")})
     assert result["check"]["function"] == "is_in_range"
     args = result["check"]["arguments"]
     assert args["column"] == "price_col"
@@ -17,9 +15,7 @@ def test_decimal_both_bounds_is_in_range():
 
 def test_decimal_only_min_is_not_less_than():
     """Test min_max generator with Decimal type for minimum bound only."""
-    result = DQGenerator.dq_generate_min_max(
-        "amount_col", **{"min": Decimal("10.50"), "max": None}
-    )
+    result = DQGenerator.dq_generate_min_max("amount_col", **{"min": Decimal("10.50"), "max": None})
     assert result["check"]["function"] == "is_not_less_than"
     args = result["check"]["arguments"]
     assert args["column"] == "amount_col"
@@ -57,9 +53,7 @@ def test_float_both_bounds_is_in_range():
 
 def test_mixed_int_and_decimal_is_in_range():
     """Test that mixing int and Decimal produces is_in_range since both are numeric."""
-    result = DQGenerator.dq_generate_min_max(
-        "mixed_col", **{"min": 10, "max": Decimal("100.00")}
-    )
+    result = DQGenerator.dq_generate_min_max("mixed_col", **{"min": 10, "max": Decimal("100.00")})
     assert result is not None
     assert result["check"]["function"] == "is_in_range"
     args = result["check"]["arguments"]

@@ -31,16 +31,16 @@ test_rules = [
     ),
     DQProfile(name="is_random", column="vendor_id", parameters={"in": ["1", "4", "2"]}),
     DQProfile(
-        name='min_max',
-        column='d1',
-        description='Real min/max values were used',
-        parameters={'max': 333323.00, 'min': 1.23},
+        name="min_max",
+        column="d1",
+        description="Real min/max values were used",
+        parameters={"max": 333323.00, "min": 1.23},
     ),
     DQProfile(
-        name='min_max',
-        column='price',
-        description='Real min/max values were used',
-        parameters={'min': Decimal("0.01"), 'max': Decimal("999.99")},
+        name="min_max",
+        column="price",
+        description="Real min/max values were used",
+        parameters={"min": Decimal("0.01"), "max": Decimal("999.99")},
     ),
 ]
 
@@ -332,9 +332,9 @@ def test_generate_is_unique_dq_rule(ws, spark):
     generator = DQGenerator(ws, spark)
     test_is_unique_rules = [
         DQProfile(
-            name='is_unique',
-            column='col1,col2',
-            description='LLM-detected primary key columns: col1, col2',
+            name="is_unique",
+            column="col1,col2",
+            description="LLM-detected primary key columns: col1, col2",
             parameters={"nulls_distinct": False, "confidence": "high"},
         ),
     ]
@@ -355,9 +355,9 @@ def test_generate_is_unique_dq_rule_default_criticality(ws, spark):
     generator = DQGenerator(ws, spark)
     test_is_unique_rules = [
         DQProfile(
-            name='is_unique',
-            column='col1',
-            description='LLM-detected primary key columns: col1, col2',
+            name="is_unique",
+            column="col1",
+            description="LLM-detected primary key columns: col1, col2",
             parameters={"nulls_distinct": True, "confidence": "low"},
         ),
     ]
