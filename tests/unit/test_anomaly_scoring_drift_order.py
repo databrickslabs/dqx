@@ -55,7 +55,7 @@ def test_score_global_model_uses_filtered_df_for_drift(monkeypatch) -> None:
             columns=columns,
             hyperparameters={},
             training_rows=10,
-        training_time=datetime.utcnow(),
+        training_time=datetime.now(),
         ),
         features=FeatureEngineering(feature_metadata="{}"),
         segmentation=SegmentationConfig(config_hash=compute_config_hash(columns, None)),
