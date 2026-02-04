@@ -123,9 +123,27 @@ def test_col_is_not_empty(spark):
     )
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None,],
-            ["Column 'a' value is empty", None, "Column 'UnresolvedExtractValue(c, val)' value is empty", None, "Column 'e' value is empty",],
-            [None, None, None, "Column 'try_element_at(d, 1)' value is empty", "Column 'e' value is empty",],
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            [
+                "Column 'a' value is empty",
+                None,
+                "Column 'UnresolvedExtractValue(c, val)' value is empty",
+                None,
+                "Column 'e' value is empty",
+            ],
+            [
+                None,
+                None,
+                None,
+                "Column 'try_element_at(d, 1)' value is empty",
+                "Column 'e' value is empty",
+            ],
         ],
         checked_schema,
     )
@@ -231,7 +249,7 @@ def test_col_is_empty(spark):
         is_empty("b"),
         is_empty(F.col("c").getItem("val")),
         is_empty(F.try_element_at("d", F.lit(1))),
-        is_empty("e", trim_strings=True)
+        is_empty("e", trim_strings=True),
     )
 
     checked_schema = (
@@ -250,7 +268,13 @@ def test_col_is_empty(spark):
                 "Column 'try_element_at(d, 1)' value is not empty",
                 "Column 'e' value is not empty",
             ],
-            [None, None, None, None, None,],
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
             [
                 "Column 'a' value is not empty",
                 "Column 'b' value is not empty",
@@ -281,7 +305,7 @@ def test_col_is_null_or_empty(spark):
         is_null_or_empty("b"),
         is_null_or_empty(F.col("c").getItem("val")),
         is_null_or_empty(F.try_element_at("d", F.lit(1))),
-        is_null_or_empty("e", trim_strings=True)
+        is_null_or_empty("e", trim_strings=True),
     )
 
     checked_schema = (
@@ -300,8 +324,20 @@ def test_col_is_null_or_empty(spark):
                 "Column 'try_element_at(d, 1)' value is not null and not empty",
                 "Column 'e' value is not null and not empty",
             ],
-            [None, None, None, None, None,],
-            ["Column 'a' value is not null and not empty", "Column 'b' value is not null and not empty", None, None, None],
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+            ],
+            [
+                "Column 'a' value is not null and not empty",
+                "Column 'b' value is not null and not empty",
+                None,
+                None,
+                None,
+            ],
         ],
         checked_schema,
     )
