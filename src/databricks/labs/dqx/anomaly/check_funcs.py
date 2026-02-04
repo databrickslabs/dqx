@@ -2,6 +2,7 @@
 Check functions for anomaly detection.
 """
 
+import hashlib
 import logging
 import sys
 import warnings
@@ -304,19 +305,28 @@ def _ensure_merge_columns(df: DataFrame) -> tuple[DataFrame, list[str], str | No
 
 def _resolve_internal_columns(df: DataFrame) -> tuple[str, str, str, str]:
     """Resolve internal scoring column names to avoid collisions with user columns."""
-    score_col = "anomaly_score"
-    score_std_col = "anomaly_score_std"
-    contributions_col = "anomaly_contributions"
-    severity_col = "severity_percentile"
+    columns_set = set(df.columns)
+    suffix_base = ",".join(sorted(columns_set))
 
-    if score_col in df.columns:
-        score_col = "_dq_anomaly_score"
-    if score_std_col in df.columns:
-        score_std_col = "_dq_anomaly_score_std"
-    if contributions_col in df.columns:
-        contributions_col = "_dq_anomaly_contributions"
-    if severity_col in df.columns:
-        severity_col = "_dq_severity_percentile"
+    def resolve(name: str, dq_name: str) -> str:
+        if name not in columns_set:
+            return name
+        if dq_name not in columns_set:
+            return dq_name
+        digest = hashlib.sha1(f"{suffix_base}|{name}".encode("utf-8")).hexdigest()[:8]
+        hashed = f"{dq_name}_{digest}"
+        if hashed in columns_set:
+            raise InvalidParameterError(
+                f"Input DataFrame contains internal scoring column '{name}' and its "
+                f"backup '{dq_name}', and hashed fallback '{hashed}' also collides. "
+                "Rename one of these columns to use anomaly checks."
+            )
+        return hashed
+
+    score_col = resolve("anomaly_score", "_dq_anomaly_score")
+    score_std_col = resolve("anomaly_score_std", "_dq_anomaly_score_std")
+    contributions_col = resolve("anomaly_contributions", "_dq_anomaly_contributions")
+    severity_col = resolve("severity_percentile", "_dq_severity_percentile")
 
     return score_col, score_std_col, contributions_col, severity_col
 
@@ -1414,12 +1424,17 @@ def _score_global_model(
         )
 
     _check_model_staleness(record, config.model_name)
-    _check_and_warn_drift(
-        df, config.columns, record, config.model_name, config.drift_threshold, config.drift_threshold_value
-    )
 
     # Prepare data
     df_filtered = _prepare_scoring_dataframe(df, config.row_filter)
+    _check_and_warn_drift(
+        df_filtered,
+        config.columns,
+        record,
+        config.model_name,
+        config.drift_threshold,
+        config.drift_threshold_value,
+    )
 
     # Score (ensemble or single model)
     model_uris = record.identity.model_uri.split(",")

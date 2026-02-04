@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 import numpy as np
@@ -26,10 +25,6 @@ def _load_arrhythmia_dataset(dataset_path: Path) -> tuple[np.ndarray, np.ndarray
 
 
 def _arrhythmia_path() -> Path | None:
-    env_path = os.environ.get("DQX_ARRHYTHMIA_MAT")
-    if env_path:
-        candidate = Path(env_path)
-        return candidate if candidate.exists() else None
     repo_root = Path(__file__).resolve().parents[2]
     candidate = repo_root / "tests" / "resources" / "arrhythmia.mat"
     return candidate if candidate.exists() else None
@@ -53,7 +48,7 @@ def _prepare_arrhythmia_data(spark, dataset_path: Path):
 def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, make_random):
     dataset_path = _arrhythmia_path()
     if dataset_path is None:
-        pytest.skip("arrhythmia.mat not available (set DQX_ARRHYTHMIA_MAT to enable)")
+        pytest.skip("arrhythmia.mat not available in tests/resources")
 
     try:
         feature_cols, train_df, _ = _prepare_arrhythmia_data(spark, dataset_path)
@@ -83,7 +78,7 @@ def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, m
 def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, make_random):
     dataset_path = _arrhythmia_path()
     if dataset_path is None:
-        pytest.skip("arrhythmia.mat not available (set DQX_ARRHYTHMIA_MAT to enable)")
+        pytest.skip("arrhythmia.mat not available in tests/resources")
 
     try:
         feature_cols, train_df, test_df = _prepare_arrhythmia_data(spark, dataset_path)

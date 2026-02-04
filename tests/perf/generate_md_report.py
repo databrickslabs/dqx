@@ -71,6 +71,12 @@ anomaly_benchmarks = [b for b in data["benchmarks"] if b.get("group") == "anomal
 if anomaly_benchmarks:
     lines.append("\n## Anomaly Benchmarks\n")
     lines.append(
+        "License note: The Arrhythmia dataset is sourced from the UCI Machine Learning Repository "
+        "and is licensed under CC BY 4.0. The benchmark dataset file is distributed via the PyOD "
+        "project, which is BSD-2-Clause licensed."
+    )
+    lines.append("")
+    lines.append(
         "| Test | Mean (s) | Median (s) | Min (s) | Max (s) | Stddev (s) | Rounds | Ops/s | ROC-AUC | Precision | Recall | F1 | Precision@N |"
     )
     lines.append(
