@@ -8,9 +8,9 @@ from copy import deepcopy
 from typing import Any
 
 import pandas as pd
-from mlflow.models import infer_signature
 from pyspark.sql import DataFrame
 from sklearn.pipeline import Pipeline
+from mlflow.models import infer_signature
 
 from databricks.labs.dqx.anomaly.core import (
     aggregate_ensemble_metrics,

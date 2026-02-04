@@ -10,7 +10,6 @@ Requires the 'anomaly' extras: pip install databricks-labs-dqx[anomaly]
 import logging
 from typing import Any
 
-import mlflow.sklearn as mlflow_sklearn
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
@@ -19,6 +18,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 from sklearn.pipeline import Pipeline
+import mlflow.sklearn as mlflow_sklearn
 
 from databricks.labs.dqx.anomaly.utils import format_contributions_map
 from databricks.labs.dqx.errors import InvalidParameterError

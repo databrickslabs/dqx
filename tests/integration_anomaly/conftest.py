@@ -3,9 +3,9 @@
 import logging
 import os
 
-import mlflow
 import pyspark.sql.functions as F
 import pytest
+import mlflow
 
 from databricks.labs.dqx.anomaly import AnomalyEngine
 from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs

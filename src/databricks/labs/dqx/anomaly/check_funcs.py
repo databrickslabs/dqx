@@ -11,8 +11,6 @@ from datetime import datetime
 from typing import Any
 
 import cloudpickle
-import mlflow
-import mlflow.sklearn
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
@@ -27,6 +25,8 @@ from pyspark.sql.types import (
     StructField,
     StructType,
 )
+import mlflow
+import mlflow.sklearn
 
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name

@@ -14,8 +14,8 @@ from datetime import datetime
 from typing import Any
 
 import sklearn
-from mlflow.tracking import MlflowClient
 from pyspark.sql import DataFrame, SparkSession
+from mlflow.tracking import MlflowClient
 
 from databricks.labs.dqx.anomaly.core import (
     compute_baseline_statistics,

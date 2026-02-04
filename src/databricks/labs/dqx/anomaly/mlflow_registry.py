@@ -11,8 +11,8 @@ import os
 from abc import ABC, abstractmethod
 from typing import Any
 
-import mlflow
 import pandas as pd
+import mlflow
 from mlflow.models import infer_signature
 
 from databricks.labs.dqx.anomaly.types import MLflowSignature, TrainedModel
