@@ -3072,7 +3072,7 @@ def _is_aggr_compare(
 
             df = df.withColumn(condition_col, condition_result)
         else:
-            # Exact comparison (backward compatible) or non-equality operators
+            # Exact comparison or non-equality operators
             df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 
         return df
