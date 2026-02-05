@@ -244,7 +244,7 @@ def test_save_and_load_checks_from_lakebase_with_rule_set_fingerprint(
         location=lakebase_location,
         client_id=lakebase_client_id,
         instance_name=instance.name,
-        rule_set_fingerprint="6e87f7de59b32771760892ce94586ff6",
+        rule_set_fingerprint="fa010301f791454858d9db8debade7ec1aa9becd55307351a316f1c5f9d59fcb",
     )
     checks = dq_engine.load_checks(config=config_load)
 

@@ -5,6 +5,7 @@ from pyspark.sql import Column
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.config import (
     InputConfig,
     OutputConfig,
@@ -14,8 +15,16 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
-from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
-from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, RUN_ID, REPORTING_COLUMNS
+from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, register_rule
+from tests.integration.conftest import (
+    EXTRA_PARAMS,
+    RUN_TIME,
+    RUN_ID,
+    REPORTING_COLUMNS,
+    generate_rule_and_set_fingerprint_from_rules,
+    get_rule_fingerprint_from_checks,
+    get_rule_set_fingerprint_from_checks,
+)
 
 from tests.conftest import TEST_CATALOG
 
@@ -47,6 +56,8 @@ def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_rand
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     # Apply checks and write to table (no quarantine table)
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
@@ -74,6 +85,12 @@ def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_rand
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -93,6 +110,12 @@ def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_rand
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -124,6 +147,7 @@ def test_apply_checks_and_save_in_single_table_with_quarantine(ws, spark, make_s
             column="a",
         ),
     ]
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
 
     # Apply checks, split, and write to tables (with quarantine table)
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -156,6 +180,12 @@ def test_apply_checks_and_save_in_single_table_with_quarantine(ws, spark, make_s
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -193,6 +223,7 @@ def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schem
             "check": {"function": "is_not_null", "arguments": {"column": "b"}},
         },
     ]
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
 
     # Apply checks and write to table (no quarantine table)
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -221,6 +252,12 @@ def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schem
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -240,6 +277,12 @@ def test_apply_checks_by_metadata_and_save_in_single_table(ws, spark, make_schem
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -270,6 +313,8 @@ def test_apply_checks_by_metadata_and_save_in_single_table_with_quarantine(ws, s
             "check": {"function": "is_not_null", "arguments": {"column": "a"}},
         },
     ]
+
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
 
     # Apply checks, split, and write to tables (with quarantine table)
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -302,6 +347,12 @@ def test_apply_checks_by_metadata_and_save_in_single_table_with_quarantine(ws, s
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -404,6 +455,8 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     # First write with overwrite mode
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
@@ -430,6 +483,12 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -468,6 +527,12 @@ def test_apply_checks_and_save_in_table_with_different_modes(ws, spark, make_sch
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -492,6 +557,7 @@ def test_apply_checks_by_metadata_and_save_in_table_with_custom_functions(ws, sp
     test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
     # Define custom check function
+    @register_rule("row")
     def custom_string_check(column: str) -> Column:
         """Custom check function for testing."""
         return when(col(column).contains("custom"), lit("Contains custom text")).otherwise(lit(None))
@@ -504,6 +570,8 @@ def test_apply_checks_by_metadata_and_save_in_table_with_custom_functions(ws, sp
             "check": {"function": "custom_string_check", "arguments": {"column": "b"}},
         },
     ]
+    custom_checks = {"custom_string_check": custom_string_check}
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks, custom_checks)
 
     # Apply checks with custom functions
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -533,6 +601,12 @@ def test_apply_checks_by_metadata_and_save_in_table_with_custom_functions(ws, sp
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "custom_string_check", function="custom_string_check"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "custom_string_check", function="custom_string_check"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -569,6 +643,8 @@ def test_apply_checks_and_save_in_table_with_custom_functions(ws, spark, make_sc
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     # Apply checks with custom functions
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
@@ -596,6 +672,12 @@ def test_apply_checks_and_save_in_table_with_custom_functions(ws, spark, make_sc
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "custom_string_check", function="custom_string_check"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "custom_string_check", function="custom_string_check"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -723,6 +805,8 @@ def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, 
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     # Apply checks and write streaming DataFrame
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_and_save_in_table(
@@ -751,6 +835,12 @@ def test_apply_checks_and_save_in_table_streaming_write(ws, spark, make_schema, 
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -786,6 +876,8 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
             "check": {"function": "is_not_null", "arguments": {"column": "b"}},
         },
     ]
+
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
 
     # Save the checks to a workspace file:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -825,6 +917,12 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -844,6 +942,12 @@ def test_apply_checks_and_save_in_tables(ws, spark, make_schema, make_random, ma
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -877,6 +981,8 @@ def test_apply_checks_and_save_in_tables_streaming_write(
             "check": {"function": "is_not_null", "arguments": {"column": "a"}},
         },
     ]
+
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
 
     # Save the checks to a workspace file:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -920,6 +1026,12 @@ def test_apply_checks_and_save_in_tables_streaming_write(
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -962,6 +1074,9 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
             "check": {"function": "is_not_null", "arguments": {"column": "b"}},
         }
     ]
+
+    versioning_rules_checks_table1 = generate_rule_and_set_fingerprint_from_rules(table1_checks)
+    versioning_rules_checks_table2 = generate_rule_and_set_fingerprint_from_rules(table2_checks)
 
     # Save the checks to workspace files:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -1008,6 +1123,12 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1033,6 +1154,12 @@ def test_apply_checks_and_save_in_tables_multiple_tables(ws, spark, make_schema,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1069,6 +1196,8 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
             "check": {"function": "is_not_null", "arguments": {"column": "a"}},
         }
     ]
+
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
 
     # Save the checks to workspace files:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -1115,6 +1244,12 @@ def test_apply_checks_and_save_in_tables_with_quarantine(ws, spark, make_schema,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1269,6 +1404,9 @@ def custom_string_check(column: str) -> Column:
         temp_file.write(custom_function_content.encode())
         custom_check_function_location = temp_file.name
 
+    custom_checks = resolve_custom_check_functions_from_path({"custom_string_check": custom_check_function_location})
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks, custom_checks)
+
     # Configure table checks
     run_configs = [
         RunConfig(
@@ -1302,6 +1440,12 @@ def custom_string_check(column: str) -> Column:
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "custom_string_check", function="custom_string_check"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "custom_string_check", function="custom_string_check"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1399,6 +1543,9 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
         }
     ]
 
+    versioning_rules_checks_table1 = generate_rule_and_set_fingerprint_from_rules(table1_checks)
+    versioning_rules_checks_table2 = generate_rule_and_set_fingerprint_from_rules(table2_checks)
+
     # Save the checks to workspace files:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     workspace_folder = str(make_directory().absolute())
@@ -1433,6 +1580,12 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1458,6 +1611,12 @@ def test_apply_checks_and_save_in_tables_for_patterns(ws, spark, make_schema, ma
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1502,6 +1661,9 @@ def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark,
         }
     ]
 
+    versioning_rules_checks_table1 = generate_rule_and_set_fingerprint_from_rules(table1_checks)
+    versioning_rules_checks_table2 = generate_rule_and_set_fingerprint_from_rules(table2_checks)
+
     # Save the checks to workspace files:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
 
@@ -1539,6 +1701,12 @@ def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1564,6 +1732,12 @@ def test_apply_checks_and_save_in_tables_for_patterns_checks_in_table(ws, spark,
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1610,6 +1784,9 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
             "check": {"function": "is_not_null", "arguments": {"column": "b"}},
         }
     ]
+
+    versioning_rules_checks_table1 = generate_rule_and_set_fingerprint_from_rules(table1_checks)
+    versioning_rules_checks_table2 = generate_rule_and_set_fingerprint_from_rules(table2_checks)
 
     # Save the checks to workspace files:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -1660,6 +1837,12 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1684,6 +1867,12 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_quarantine(
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1729,6 +1918,8 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
             "check": {"function": "is_not_null", "arguments": {"column": "a"}},
         }
     ]
+
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
 
     # Save the checks to workspace files:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
@@ -1776,6 +1967,12 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_exclude_patterns(
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1864,6 +2061,9 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
         }
     ]
 
+    versioning_rules_checks_table1 = generate_rule_and_set_fingerprint_from_rules(table1_checks)
+    versioning_rules_checks_table2 = generate_rule_and_set_fingerprint_from_rules(table2_checks)
+
     # Save the checks to workspace files:
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     workspace_folder = str(make_directory().absolute())
@@ -1927,6 +2127,12 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table1, "a_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1951,6 +2157,12 @@ def test_apply_checks_and_save_in_tables_for_patterns_with_custom_suffix(
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks_table2, "b_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1985,6 +2197,7 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_custom_functions(
         },
     ]
 
+    
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     workspace_folder = str(make_directory().absolute())
     checks_location = f"{workspace_folder}/{input_table}.yml"
@@ -2004,6 +2217,10 @@ def custom_string_check(column: str) -> Column:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".py") as temp_file:
         temp_file.write(custom_function_content.encode())
         custom_check_function_location = temp_file.name
+
+    custom_checks = resolve_custom_check_functions_from_path({"custom_string_check": custom_check_function_location})
+    print(f"custom_checks: {custom_checks}")
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks, custom_checks)
 
     engine.apply_checks_and_save_in_tables_for_patterns(
         patterns=[f"{catalog_name}.{schema.name}.*"],
@@ -2030,6 +2247,12 @@ def custom_string_check(column: str) -> Column:
                         "function": "custom_string_check",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "custom_string_check", function="custom_string_check"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "custom_string_check", function="custom_string_check"
+                        ),
                         "user_metadata": {},
                     }
                 ],

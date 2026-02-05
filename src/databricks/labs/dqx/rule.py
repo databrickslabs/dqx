@@ -199,7 +199,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
 
     @ft.cached_property
     def rule_fingerprint(self) -> str:
-        return hashlib.md5(json.dumps(self.to_dict(), sort_keys=True).encode("utf-8")).hexdigest()
+        return hashlib.sha256(json.dumps(self.to_dict(), sort_keys=True).encode("utf-8")).hexdigest()
 
     def prepare_check_func_args_and_kwargs(self) -> tuple[list, dict]:
         """

@@ -356,7 +356,9 @@ def expected_quality_checking_output(spark) -> DataFrame:
                 None,
                 [
                     build_quality_violation(
-                        "name_is_not_null_and_not_empty", "Column 'name' value is null or empty", ["name"]
+                        "name_is_not_null_and_not_empty",
+                        "Column 'name' value is null or empty",
+                        ["name"],
                     )
                 ],
                 None,
@@ -506,33 +508,52 @@ def generate_random_name_seed(length: int, seed: int) -> str:
     return ''.join(random.choice(charset) for _ in range(length))
 
 
-def generate_rule_and_set_fingerprint_from_rules(rules: list) -> list[dict]:
-    checks_dict = rules
-    if all(isinstance(x, DQRule) for x in rules):
+def generate_rule_and_set_fingerprint_from_rules(rules: list, custom_checks: dict | None = None) -> list[dict]:
+    if all(isinstance(rule, DQRule) for rule in rules):
         checks_dict = serialize_checks(rules)
     else:
         # serialize and deserialize to get check name to link it in the result dataframe.
-        checks_rules = deserialize_checks(rules)
+        checks_rules = deserialize_checks(rules, custom_checks=custom_checks)
         checks_dict = serialize_checks(checks_rules)
     rule_fingerprint_checks = generate_rule_set_fingerprint_from_dict(checks_dict)
     return rule_fingerprint_checks
 
 
-def get_rule_fingerprint_from_checks(checks: list[dict] | None, check_name: str, function: str) -> str | None:
+def get_rule_fingerprint_from_checks(
+    versioning_rules_checks: list[dict] | None,
+    check_name: str,
+    function: str,
+    criticality: str | None = None,
+) -> str | None:
     rule_dict = {}
-    if checks:
-        for check in checks:
-            if check.get("name") == check_name and check["check"]["function"] == function:
-                rule_dict = check
-        return rule_dict.get("rule_fingerprint", None)
-    return None
+    if not versioning_rules_checks:
+        return None
+    for check in versioning_rules_checks:
+        if (
+            check.get("name") == check_name
+            and check["check"]["function"] == function
+            and (criticality is None or check["criticality"] == criticality)
+        ):
+            rule_dict = check
+
+    return rule_dict.get("rule_fingerprint", None)
 
 
-def get_rule_set_fingerprint_from_checks(checks: list[dict] | None, check_name: str, function: str) -> str | None:
+def get_rule_set_fingerprint_from_checks(
+    versioning_rules_checks: list[dict] | None,
+    check_name: str,
+    function: str,
+    criticality: str | None = None,
+) -> str | None:
     rule_dict = {}
-    if checks:
-        for check in checks:
-            if check.get("name") == check_name and check["check"]["function"] == function:
-                rule_dict = check
-        return rule_dict.get("rule_set_fingerprint", None)
-    return None
+    if not versioning_rules_checks:
+        return None
+    for check in versioning_rules_checks:
+        if (
+            check.get("name") == check_name
+            and check["check"]["function"] == function
+            and (criticality is None or check["criticality"] == criticality)
+        ):
+            rule_dict = check
+
+    return rule_dict.get("rule_set_fingerprint", None)

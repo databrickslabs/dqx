@@ -187,8 +187,8 @@ def generate_rule_set_fingerprint(checks: list[DQRule]) -> str:
     return generate_hash(rule_dicts)
 
 
-def generate_hash(input_object: Any) -> str:
-    return hashlib.md5(json.dumps(input_object, sort_keys=True).encode("utf-8")).hexdigest()
+def generate_hash(hash_object: Any) -> str:
+    return hashlib.sha256(json.dumps(hash_object, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def generate_rule_set_fingerprint_from_dict(checks: list[dict]) -> list[dict]:

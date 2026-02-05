@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
-
+from dataclasses import asdict
 import yaml
 import pyspark.sql.functions as F
 import pytest
@@ -115,6 +115,8 @@ def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+    print(versioning_rules_checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     # persist result to materialize run_time
@@ -156,8 +158,12 @@ def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
                         "function": "is_not_null_and_not_empty",
                         "run_time": run_time,
                         "run_id": run_id,
-                        "rule_fingerprint": '5da5ad15720c24b73da4d5f64c6cf2dd',
-                        "rule_set_fingerprint": 'b2a69b7786fddfb1b78a365d53b9392c',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -176,8 +182,12 @@ def test_apply_checks_failed(ws, spark, make_schema, make_table, make_random):
                         "function": "is_not_null_and_not_empty",
                         "run_time": run_time,
                         "run_id": run_id,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": 'b2a69b7786fddfb1b78a365d53b9392c',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -238,6 +248,8 @@ def test_foreign_key_check(ws, spark):
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     refs_df = {"ref_df": ref_df}
 
     checked = dq_engine.apply_checks(src_df, checks, refs_df)
@@ -261,8 +273,12 @@ def test_foreign_key_check(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '6d44820ef0e2a5caef96b8a9cd8a754c',
-                        "rule_set_fingerprint": '3330bec75fe47d58e83ad75ab09c9174',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -280,8 +296,12 @@ def test_foreign_key_check(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '3c2b1573344b02d65355a04a04cce1e0',
-                        "rule_set_fingerprint": '3330bec75fe47d58e83ad75ab09c9174',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_not_exists_in_ref_b", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_not_exists_in_ref_b", function="foreign_key"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -294,8 +314,12 @@ def test_foreign_key_check(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '6d44820ef0e2a5caef96b8a9cd8a754c',
-                        "rule_set_fingerprint": '3330bec75fe47d58e83ad75ab09c9174',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -354,6 +378,8 @@ def test_foreign_key_check_negate(ws, spark):
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     refs_df = {"ref_df": ref_df}
 
     checked = dq_engine.apply_checks(src_df, checks, refs_df)
@@ -375,8 +401,12 @@ def test_foreign_key_check_negate(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'fe66f340fd334a93bf6578ae2e836566',
-                        "rule_set_fingerprint": '1da3bc068e681cbe0347509c52c6addc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -395,8 +425,12 @@ def test_foreign_key_check_negate(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'fe66f340fd334a93bf6578ae2e836566',
-                        "rule_set_fingerprint": '1da3bc068e681cbe0347509c52c6addc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -421,8 +455,12 @@ def test_foreign_key_check_negate(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'd295c64300c8a09b72096b7224bd9fb5',
-                        "rule_set_fingerprint": '1da3bc068e681cbe0347509c52c6addc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_exists_in_ref_b", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_exists_in_ref_b", function="foreign_key"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -435,8 +473,12 @@ def test_foreign_key_check_negate(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'fe66f340fd334a93bf6578ae2e836566',
-                        "rule_set_fingerprint": '1da3bc068e681cbe0347509c52c6addc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -533,6 +575,7 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
 
     refs_df = {"ref_df": ref_df, "ref_df2": ref_df2}
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(src_df, checks, ref_dfs=refs_df)
     checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml, ref_dfs=refs_df)
 
@@ -553,8 +596,16 @@ def test_foreign_key_check_on_composite_keys(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'b70dc31ac9f0c667ac4017cf71c10ef3',
-                        "rule_set_fingerprint": 'ca59250a30f68f99f1413ec6b34ac982',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_as_a_b_as_b_not_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
+                            function="foreign_key",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_as_a_b_as_b_not_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
+                            function="foreign_key",
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -640,6 +691,8 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
 
     refs_df = {"ref_df": ref_df, "ref_df2": ref_df2}
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(src_df, checks, ref_dfs=refs_df)
     checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml, ref_dfs=refs_df)
 
@@ -658,8 +711,16 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '73f168452cb140e4482a0aa09ebb1a37',
-                        "rule_set_fingerprint": 'abb76f566c77f94662d606f1b3c1d180',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_as_a_b_as_b_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
+                            function="foreign_key",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_as_a_b_as_b_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
+                            function="foreign_key",
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -678,8 +739,16 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '73f168452cb140e4482a0aa09ebb1a37',
-                        "rule_set_fingerprint": 'abb76f566c77f94662d606f1b3c1d180',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_as_a_b_as_b_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
+                            function="foreign_key",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_as_a_b_as_b_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
+                            function="foreign_key",
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -763,6 +832,7 @@ def test_foreign_key_check_yaml(ws, spark):
 
     ref_dfs = {"ref_df": ref_df}
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks_by_metadata(src_df, checks, ref_dfs=ref_dfs)
     good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(src_df, checks, ref_dfs=ref_dfs)
 
@@ -784,8 +854,12 @@ def test_foreign_key_check_yaml(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '216eae0a67894fac86441874eb54802d',
-                        "rule_set_fingerprint": 'f04e9f13f2fb7c7a8dbfd1410a6b4547',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -803,8 +877,12 @@ def test_foreign_key_check_yaml(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'baefbbfc57349c01e66b6c97795410ed',
-                        "rule_set_fingerprint": 'f04e9f13f2fb7c7a8dbfd1410a6b4547',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_not_exists_in_ref_a", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_not_exists_in_ref_a", function="foreign_key"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -817,8 +895,12 @@ def test_foreign_key_check_yaml(ws, spark):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '216eae0a67894fac86441874eb54802d',
-                        "rule_set_fingerprint": 'f04e9f13f2fb7c7a8dbfd1410a6b4547',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -913,6 +995,7 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema_seed):
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(src_df, checks)
 
     expected = spark.createDataFrame(
@@ -933,8 +1016,12 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema_seed):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '7e0887d31a55b842804b199ad5c3d3b0',
-                        "rule_set_fingerprint": '9043c45318241202f30dd1ad54b1a0d2',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -952,8 +1039,12 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema_seed):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'cc3200a9b4af036558c95861cd6ebfdb',
-                        "rule_set_fingerprint": '9043c45318241202f30dd1ad54b1a0d2',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_not_exists_in_ref_a", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_not_exists_in_ref_a", function="foreign_key"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -966,8 +1057,12 @@ def test_foreign_key_check_on_tables(ws, spark, make_schema_seed):
                         "function": "foreign_key",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '7e0887d31a55b842804b199ad5c3d3b0',
-                        "rule_set_fingerprint": '9043c45318241202f30dd1ad54b1a0d2',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_has_no_foreign_key", function="foreign_key"
+                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     }
                 ],
@@ -1184,6 +1279,7 @@ def test_apply_is_unique(ws, spark):
             check_func_kwargs={"columns": ["a"], "nulls_distinct": True},
         ),
     ]
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -1203,8 +1299,18 @@ def test_apply_is_unique(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'bcd1a73992cb4a865f1cfd453c7f2935',
-                        "rule_set_fingerprint": '810eb6a1fc34cb7587bab2b050a79dad',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1223,8 +1329,18 @@ def test_apply_is_unique(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'bcd1a73992cb4a865f1cfd453c7f2935',
-                        "rule_set_fingerprint": '810eb6a1fc34cb7587bab2b050a79dad',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1243,8 +1359,18 @@ def test_apply_is_unique(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'bcd1a73992cb4a865f1cfd453c7f2935',
-                        "rule_set_fingerprint": '810eb6a1fc34cb7587bab2b050a79dad',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1262,8 +1388,15 @@ def test_apply_is_unique(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '278c0801366accc066cbdd3a12122ff8',
-                        "rule_set_fingerprint": '810eb6a1fc34cb7587bab2b050a79dad',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="error",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "struct_a_b_is_not_unique", function="is_unique"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1282,8 +1415,18 @@ def test_apply_is_unique(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '278c0801366accc066cbdd3a12122ff8',
-                        "rule_set_fingerprint": '810eb6a1fc34cb7587bab2b050a79dad',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="error",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "struct_a_b_is_not_unique",
+                            function="is_unique",
+                            criticality="error",
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1351,6 +1494,7 @@ def test_compare_datasets_with_tolerance(ws, spark):
 
     refs_df = {"ref_df": ref_df}
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(src_df, checks, refs_df)
 
     # Build expected results: rows only get flagged when outside of both tolerances
@@ -1372,8 +1516,12 @@ def test_compare_datasets_with_tolerance(ws, spark):
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '3f8188a99b1eb070c0ae1b06b153f51b',
-                        "rule_set_fingerprint": 'f7864431706585e8ecbfa6b29c9ea7fe',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "id_compare_with_tolerance", function="compare_datasets"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "id_compare_with_tolerance", function="compare_datasets"
+                        ),
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1391,8 +1539,12 @@ def test_compare_datasets_with_tolerance(ws, spark):
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '3f8188a99b1eb070c0ae1b06b153f51b',
-                        "rule_set_fingerprint": 'f7864431706585e8ecbfa6b29c9ea7fe',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "id_compare_with_tolerance", function="compare_datasets"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "id_compare_with_tolerance", function="compare_datasets"
+                        ),
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1460,6 +1612,7 @@ def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_ma
 
     refs_df = {"ref_df": ref_df}
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(src_df, checks, refs_df)
 
     # Build expected results: rows only get flagged when outside of both tolerances
@@ -1481,8 +1634,12 @@ def test_compare_datasets_with_tolerance_with_disabled_null_safe_column_value_ma
                         "function": "compare_datasets",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '89b656faea3bf5749d20cf430dad8b49',
-                        "rule_set_fingerprint": '1f8c408d40c137d3e8d31c18ce04ccb1',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "id_compare_with_tolerance", function="compare_datasets"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "id_compare_with_tolerance", function="compare_datasets"
+                        ),
                         "user_metadata": {"test": "tolerance"},
                     }
                 ],
@@ -1525,6 +1682,7 @@ def test_apply_checks(ws, spark):
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -1543,8 +1701,12 @@ def test_apply_checks(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'd55ea3c816e795ed34bf949d9e8dd8cc',
-                        "rule_set_fingerprint": 'e2eedf574d1e4c503c94dedd479051e8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     }
                 ],
@@ -1563,8 +1725,12 @@ def test_apply_checks(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '76f7df91597e6c7e8e78de028344f4c5',
-                        "rule_set_fingerprint": 'e2eedf574d1e4c503c94dedd479051e8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {"tag1": "value13", "tag2": "value23"},
                     }
                 ],
@@ -1577,8 +1743,12 @@ def test_apply_checks(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '477bb0ba233ee641693f04cf8d4e4578',
-                        "rule_set_fingerprint": 'e2eedf574d1e4c503c94dedd479051e8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {"tag1": "value11", "tag2": "value21"},
                     }
                 ],
@@ -1596,8 +1766,12 @@ def test_apply_checks(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'd55ea3c816e795ed34bf949d9e8dd8cc',
-                        "rule_set_fingerprint": 'e2eedf574d1e4c503c94dedd479051e8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {"tag1": "value12", "tag2": "value22"},
                     },
                     {
@@ -1608,8 +1782,12 @@ def test_apply_checks(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '76f7df91597e6c7e8e78de028344f4c5',
-                        "rule_set_fingerprint": 'e2eedf574d1e4c503c94dedd479051e8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {"tag1": "value13", "tag2": "value23"},
                     },
                 ],
@@ -1622,8 +1800,12 @@ def test_apply_checks(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '477bb0ba233ee641693f04cf8d4e4578',
-                        "rule_set_fingerprint": 'e2eedf574d1e4c503c94dedd479051e8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {"tag1": "value11", "tag2": "value21"},
                     }
                 ],
@@ -1687,6 +1869,8 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
     """
     )
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -1705,8 +1889,12 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0a8efe75836c93fae3f021d140664e61',
-                        "rule_set_fingerprint": '0ca0c58e7adb0fb5434d8bb93ca3525d',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "col1_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "col1_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -1717,8 +1905,12 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'c0e6db39416f90aeedf782b9c77e677c',
-                        "rule_set_fingerprint": '0ca0c58e7adb0fb5434d8bb93ca3525d',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "col2_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "col2_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -1729,8 +1921,12 @@ def test_apply_checks_from_yaml_missing_criticality(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'fb01cccf691b4ac26393a16f93ee5442',
-                        "rule_set_fingerprint": '0ca0c58e7adb0fb5434d8bb93ca3525d',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "col3_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "col3_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -1762,6 +1958,8 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
         ).get_rules(),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     actual = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -1780,8 +1978,12 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0a8efe75836c93fae3f021d140664e61',
-                        "rule_set_fingerprint": '0ca0c58e7adb0fb5434d8bb93ca3525d',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "col1_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "col1_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -1792,8 +1994,12 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'c0e6db39416f90aeedf782b9c77e677c',
-                        "rule_set_fingerprint": '0ca0c58e7adb0fb5434d8bb93ca3525d',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "col2_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "col2_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -1804,8 +2010,12 @@ def test_apply_checks_from_class_missing_criticality(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'fb01cccf691b4ac26393a16f93ee5442',
-                        "rule_set_fingerprint": '0ca0c58e7adb0fb5434d8bb93ca3525d',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "col3_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "col3_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -1828,6 +2038,7 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
         DQRowRule(criticality="error", check_func=check_funcs.is_not_null_and_not_empty, column="c"),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -1846,8 +2057,12 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": 'a6dc9b36e694f16541a7df6ee6e289bc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1866,8 +2081,12 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'c21b41bcb432dbbe7b80992538437982',
-                        "rule_set_fingerprint": 'a6dc9b36e694f16541a7df6ee6e289bc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1880,8 +2099,12 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": 'a6dc9b36e694f16541a7df6ee6e289bc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1899,8 +2122,12 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": 'a6dc9b36e694f16541a7df6ee6e289bc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -1911,8 +2138,12 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'c21b41bcb432dbbe7b80992538437982',
-                        "rule_set_fingerprint": 'a6dc9b36e694f16541a7df6ee6e289bc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -1925,8 +2156,12 @@ def test_apply_checks_with_autogenerated_columns(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": 'a6dc9b36e694f16541a7df6ee6e289bc',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -1963,6 +2198,7 @@ def test_apply_checks_and_split(ws, spark):
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     good, bad = dq_engine.apply_checks_and_split(test_df, checks)
 
     expected_good = spark.createDataFrame([[1, 3, 3], [None, 4, None]], SCHEMA)
@@ -1983,8 +2219,12 @@ def test_apply_checks_and_split(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": '7fbe0c2e83ea9a27ea5ad2d9f672ff87',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2004,8 +2244,12 @@ def test_apply_checks_and_split(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '7fbe0c2e83ea9a27ea5ad2d9f672ff87',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2016,8 +2260,12 @@ def test_apply_checks_and_split(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ad59d5ffa6e3e6cdf61d0d4d67a7f676',
-                        "rule_set_fingerprint": '7fbe0c2e83ea9a27ea5ad2d9f672ff87',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2035,8 +2283,12 @@ def test_apply_checks_and_split(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": '7fbe0c2e83ea9a27ea5ad2d9f672ff87',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2049,8 +2301,12 @@ def test_apply_checks_and_split(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '7fbe0c2e83ea9a27ea5ad2d9f672ff87',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2061,8 +2317,12 @@ def test_apply_checks_and_split(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ad59d5ffa6e3e6cdf61d0d4d67a7f676',
-                        "rule_set_fingerprint": '7fbe0c2e83ea9a27ea5ad2d9f672ff87',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2106,6 +2366,7 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
         },
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     good, bad = dq_engine.apply_checks_by_metadata_and_split(test_df, checks)
 
     expected_good = spark.createDataFrame([[1, 3, 3], [None, 4, None]], SCHEMA)
@@ -2126,8 +2387,12 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": '96807adcc6c7a4c72dfdd465d5987dcd',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2140,8 +2405,12 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '3a9664f3305bfb17e2372de74a1890fb',
-                        "rule_set_fingerprint": '96807adcc6c7a4c72dfdd465d5987dcd',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_not_in_the_list", function="is_in_list"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_not_in_the_list", function="is_in_list"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2160,8 +2429,12 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '96807adcc6c7a4c72dfdd465d5987dcd',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2172,8 +2445,12 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ad59d5ffa6e3e6cdf61d0d4d67a7f676',
-                        "rule_set_fingerprint": '96807adcc6c7a4c72dfdd465d5987dcd',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2191,8 +2468,12 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": '96807adcc6c7a4c72dfdd465d5987dcd',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2205,8 +2486,12 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '96807adcc6c7a4c72dfdd465d5987dcd',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2217,8 +2502,12 @@ def test_apply_checks_and_split_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ad59d5ffa6e3e6cdf61d0d4d67a7f676',
-                        "rule_set_fingerprint": '96807adcc6c7a4c72dfdd465d5987dcd',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2249,6 +2538,7 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
         },
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     good, bad = dq_engine.apply_checks_by_metadata_and_split(test_df, checks)
 
     expected_good = spark.createDataFrame([[1, 3, 3], [None, 4, None]], SCHEMA)
@@ -2269,8 +2559,12 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2283,8 +2577,12 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '3a9664f3305bfb17e2372de74a1890fb',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_not_in_the_list", function="is_in_list"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_not_in_the_list", function="is_in_list"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2303,8 +2601,12 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2315,8 +2617,12 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ad59d5ffa6e3e6cdf61d0d4d67a7f676',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2334,8 +2640,12 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2348,8 +2658,12 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2360,8 +2674,12 @@ def test_apply_checks_and_split_by_metadata_with_autogenerated_columns(ws, spark
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ad59d5ffa6e3e6cdf61d0d4d67a7f676',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2392,6 +2710,7 @@ def test_apply_checks_by_metadata(ws, spark):
         },
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -2410,8 +2729,12 @@ def test_apply_checks_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2424,8 +2747,12 @@ def test_apply_checks_by_metadata(ws, spark):
                         "function": "is_in_list",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '3a9664f3305bfb17e2372de74a1890fb',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_not_in_the_list", function="is_in_list"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_not_in_the_list", function="is_in_list"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2444,8 +2771,12 @@ def test_apply_checks_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2456,8 +2787,12 @@ def test_apply_checks_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ad59d5ffa6e3e6cdf61d0d4d67a7f676',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2475,8 +2810,12 @@ def test_apply_checks_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '0cdf6577a3e23c388571c95e622a3897',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2489,8 +2828,12 @@ def test_apply_checks_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2501,8 +2844,12 @@ def test_apply_checks_by_metadata(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ad59d5ffa6e3e6cdf61d0d4d67a7f676',
-                        "rule_set_fingerprint": '97333edcadf1597902a38b672767ddd4',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2533,6 +2880,7 @@ def test_apply_checks_with_filter(ws, spark):
         ),
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -2551,8 +2899,12 @@ def test_apply_checks_with_filter(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '820b4d30730e873188595e8393b5850c',
-                        "rule_set_fingerprint": '2e5091425e2de3b69dc71b49d83494af',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2572,8 +2924,12 @@ def test_apply_checks_with_filter(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '5ea8217fc2b03a3c35ab737a064bce2e',
-                        "rule_set_fingerprint": '2e5091425e2de3b69dc71b49d83494af',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2628,6 +2984,8 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
     ref_df = spark.createDataFrame([[1]], "ref_a: int")
     ref_dfs = {"ref_df": ref_df}
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+    print(versioning_rules_checks)
     checked = dq_engine.apply_checks(test_df, checks, ref_dfs)
 
     expected = spark.createDataFrame(
@@ -2646,8 +3004,10 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'eb22f4c44ec82fd4a5a95b1b893be9a4',
-                        "rule_set_fingerprint": 'b0194297eecea40872f8c41e548377ae',
+                        "rule_fingerprint": 'bf02f31f30687fc55693c08eb710b199a8674841a5c7bcf4f94ccb7e1cdad8af',
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2658,8 +3018,10 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '99af91bf53de06a7c49df0fb2b1e88da',
-                        "rule_set_fingerprint": 'b0194297eecea40872f8c41e548377ae',
+                        "rule_fingerprint": 'a91d356aefca33a4b81de3c82c7772c0dad12add41c3b27d9568cecc4216cc3b',
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name2", function="is_unique"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2670,8 +3032,10 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '99af91bf53de06a7c49df0fb2b1e88da',
-                        "rule_set_fingerprint": 'b0194297eecea40872f8c41e548377ae',
+                        "rule_fingerprint": 'a91d356aefca33a4b81de3c82c7772c0dad12add41c3b27d9568cecc4216cc3b',
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name2", function="is_unique"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2690,8 +3054,12 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'db25e851b657f294f011b64d02e7408a',
-                        "rule_set_fingerprint": 'b0194297eecea40872f8c41e548377ae',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2702,8 +3070,12 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '99af91bf53de06a7c49df0fb2b1e88da',
-                        "rule_set_fingerprint": 'b0194297eecea40872f8c41e548377ae',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name2", function="is_unique"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name2", function="is_unique"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -2714,8 +3086,12 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '99af91bf53de06a7c49df0fb2b1e88da',
-                        "rule_set_fingerprint": 'b0194297eecea40872f8c41e548377ae',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name2", function="is_unique"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name2", function="is_unique"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -2746,6 +3122,7 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
         },
     ]
 
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -2764,8 +3141,12 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '820b4d30730e873188595e8393b5850c',
-                        "rule_set_fingerprint": '515819dd89df1c061407c55ee3399a69',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2785,8 +3166,12 @@ def test_apply_checks_by_metadata_with_filter(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '5ea8217fc2b03a3c35ab737a064bce2e',
-                        "rule_set_fingerprint": '515819dd89df1c061407c55ee3399a69',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "c_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2807,7 +3192,7 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
 
     check_file = make_local_check_file_as_json
     checks = dq_engine.load_checks(config=FileChecksStorageConfig(location=check_file))
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -2827,8 +3212,12 @@ def test_apply_checks_from_json_file_by_metadata(ws, spark, make_local_check_fil
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "c0e6db39416f90aeedf782b9c77e677c",
-                        "rule_set_fingerprint": "a8f9f7921703ba6bbd9365a819372d7f",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "col2_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "col2_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -2848,7 +3237,7 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
 
     check_file = make_local_check_file_as_yaml
     checks = dq_engine.load_checks(config=FileChecksStorageConfig(location=check_file))
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     actual = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -2868,8 +3257,12 @@ def test_apply_checks_from_yaml_file_by_metadata(ws, spark, make_local_check_fil
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "c0e6db39416f90aeedf782b9c77e677c",
-                        "rule_set_fingerprint": "a8f9f7921703ba6bbd9365a819372d7f",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "col2_is_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "col2_is_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -3039,6 +3432,8 @@ def test_apply_checks_with_sql_query(ws, spark):
             },
         ),
     ]
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+    print(versioning_rules_checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -3057,8 +3452,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'baecb43d186c4f594a33e106719eaea3',
-                        "rule_set_fingerprint": 'aa27a2b8c618e80674bfa6633cf317d8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "c_query_condition_violation",
+                            function="sql_query",
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "c_query_condition_violation",
+                            function="sql_query",
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -3069,8 +3474,12 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ff49768f0187aa7c4b32d2711c626daf',
-                        "rule_set_fingerprint": 'aa27a2b8c618e80674bfa6633cf317d8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "non_unique_merge_key", function="sql_query", criticality="warn"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "non_unique_merge_key", function="sql_query", criticality="warn"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -3081,8 +3490,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'a055afbca4f212b9cf8808fbf95ffd72',
-                        "rule_set_fingerprint": 'aa27a2b8c618e80674bfa6633cf317d8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "multiple_key_check_violation",
+                            function="sql_query",
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "multiple_key_check_violation",
+                            function="sql_query",
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3101,8 +3520,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'baecb43d186c4f594a33e106719eaea3',
-                        "rule_set_fingerprint": 'aa27a2b8c618e80674bfa6633cf317d8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "c_query_condition_violation",
+                            function="sql_query",
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "c_query_condition_violation",
+                            function="sql_query",
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3120,8 +3549,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'e246021061cfdf6c4fb0eca0f7040603',
-                        "rule_set_fingerprint": 'aa27a2b8c618e80674bfa6633cf317d8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_sql_aggregation_check_negated",
+                            function="sql_query",
+                            criticality="error",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_sql_aggregation_check_negated",
+                            function="sql_query",
+                            criticality="error",
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -3132,8 +3571,18 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '4800ef82ad501b0c10257ee0939f9bd7',
-                        "rule_set_fingerprint": 'aa27a2b8c618e80674bfa6633cf317d8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "c_query_condition_violation",
+                            function="sql_query",
+                            criticality="error",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "c_query_condition_violation",
+                            function="sql_query",
+                            criticality="error",
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3149,8 +3598,12 @@ def test_apply_checks_with_sql_query(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'ff49768f0187aa7c4b32d2711c626daf',
-                        "rule_set_fingerprint": 'aa27a2b8c618e80674bfa6633cf317d8',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "non_unique_merge_key", function="sql_query", criticality="warn"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "non_unique_merge_key", function="sql_query", criticality="warn"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3208,7 +3661,7 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
             },
         ),
     ]
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     ref_dfs = {"sensor_specs": sensor_specs_df}
     checked = dq_engine.apply_checks(sensor_df, checks, ref_dfs=ref_dfs)
 
@@ -3228,8 +3681,12 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "1dee96054b7c549e12e1237a6f52748e",
-                        "rule_set_fingerprint": "17b772df26926a53d927763290e672de",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "sensor_reading_check", function="sql_query", criticality="error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "sensor_reading_check", function="sql_query", criticality="error"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3248,8 +3705,12 @@ def test_apply_checks_with_sql_query_and_ref_df(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "1dee96054b7c549e12e1237a6f52748e",
-                        "rule_set_fingerprint": "17b772df26926a53d927763290e672de",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "sensor_reading_check", function="sql_query", criticality="error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "sensor_reading_check", function="sql_query", criticality="error"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3283,7 +3744,7 @@ def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
             },
         ),
     ]
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     # All rows should have the same error result since it's a dataset-level check
@@ -3302,8 +3763,12 @@ def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "ec550108e70f9e11ed834484bef296d5",
-                        "rule_set_fingerprint": "a37143082f1aba0074d43916d32114d6",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "dataset_check_fail", function="sql_query", criticality="error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "dataset_check_fail", function="sql_query", criticality="error"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3322,8 +3787,12 @@ def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "ec550108e70f9e11ed834484bef296d5",
-                        "rule_set_fingerprint": "a37143082f1aba0074d43916d32114d6",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "dataset_check_fail", function="sql_query", criticality="error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "dataset_check_fail", function="sql_query", criticality="error"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3342,8 +3811,12 @@ def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "ec550108e70f9e11ed834484bef296d5",
-                        "rule_set_fingerprint": "a37143082f1aba0074d43916d32114d6",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "dataset_check_fail", function="sql_query", criticality="error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "dataset_check_fail", function="sql_query", criticality="error"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3362,8 +3835,12 @@ def test_apply_checks_with_sql_query_without_merge_columns(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "ec550108e70f9e11ed834484bef296d5",
-                        "rule_set_fingerprint": "a37143082f1aba0074d43916d32114d6",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "dataset_check_fail", function="sql_query", criticality="error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "dataset_check_fail", function="sql_query", criticality="error"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3428,10 +3905,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_filter(ws, spark)
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_filtered_check", function="sql_query"
+                            versioning_rules_checks, "dataset_filtered_check", function="sql_query", criticality="error"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_filtered_check", function="sql_query"
+                            versioning_rules_checks, "dataset_filtered_check", function="sql_query", criticality="error"
                         ),
                         "user_metadata": {},
                     },
@@ -3452,10 +3929,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_filter(ws, spark)
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_filtered_check", function="sql_query"
+                            versioning_rules_checks, "dataset_filtered_check", function="sql_query", criticality="error"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_filtered_check", function="sql_query"
+                            versioning_rules_checks, "dataset_filtered_check", function="sql_query", criticality="error"
                         ),
                         "user_metadata": {},
                     },
@@ -3584,10 +4061,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_negate(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_min_size_check", function="sql_query"
+                            versioning_rules_checks, "dataset_min_size_check", function="sql_query", criticality="error"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_min_size_check", function="sql_query"
+                            versioning_rules_checks, "dataset_min_size_check", function="sql_query", criticality="error"
                         ),
                         "user_metadata": {},
                     },
@@ -3608,10 +4085,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_negate(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_min_size_check", function="sql_query"
+                            versioning_rules_checks, "dataset_min_size_check", function="sql_query", criticality="error"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_min_size_check", function="sql_query"
+                            versioning_rules_checks, "dataset_min_size_check", function="sql_query", criticality="error"
                         ),
                         "user_metadata": {},
                     },
@@ -3666,10 +4143,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_warn_check", function="sql_query"
+                            versioning_rules_checks, "dataset_warn_check", function="sql_query", criticality="warn"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_warn_check", function="sql_query"
+                            versioning_rules_checks, "dataset_warn_check", function="sql_query", criticality="warn"
                         ),
                         "user_metadata": {},
                     },
@@ -3690,10 +4167,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_warn_check", function="sql_query"
+                            versioning_rules_checks, "dataset_warn_check", function="sql_query", criticality="warn"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_warn_check", function="sql_query"
+                            versioning_rules_checks, "dataset_warn_check", function="sql_query", criticality="warn"
                         ),
                         "user_metadata": {},
                     },
@@ -3714,10 +4191,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_warning(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_warn_check", function="sql_query"
+                            versioning_rules_checks, "dataset_warn_check", function="sql_query", criticality="warn"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "dataset_warn_check", function="sql_query"
+                            versioning_rules_checks, "dataset_warn_check", function="sql_query", criticality="warn"
                         ),
                         "user_metadata": {},
                     },
@@ -3821,10 +4298,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, s
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "multi_dataset_check", function="sql_query"
+                            versioning_rules_checks, "multi_dataset_check", function="sql_query", criticality="error"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "multi_dataset_check", function="sql_query"
+                            versioning_rules_checks, "multi_dataset_check", function="sql_query", criticality="error"
                         ),
                         "user_metadata": {},
                     },
@@ -3845,10 +4322,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, s
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "multi_dataset_check", function="sql_query"
+                            versioning_rules_checks, "multi_dataset_check", function="sql_query", criticality="error"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "multi_dataset_check", function="sql_query"
+                            versioning_rules_checks, "multi_dataset_check", function="sql_query", criticality="error"
                         ),
                         "user_metadata": {},
                     },
@@ -3869,10 +4346,10 @@ def test_apply_checks_with_sql_query_without_merge_columns_and_ref_df_fail(ws, s
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "multi_dataset_check", function="sql_query"
+                            versioning_rules_checks, "multi_dataset_check", function="sql_query", criticality="error"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "multi_dataset_check", function="sql_query"
+                            versioning_rules_checks, "multi_dataset_check", function="sql_query", criticality="error"
                         ),
                         "user_metadata": {},
                     },
@@ -3956,7 +4433,7 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                 GROUP BY sensor_id
         """
     )
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     ref_dfs = {"sensor_specs": sensor_specs_df}
 
     checked = dq_engine.apply_checks_by_metadata(sensor_df, checks, ref_dfs=ref_dfs)
@@ -3977,8 +4454,12 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "a8084ef0ff1900600f64ce5537b61ea2",
-                        "rule_set_fingerprint": "07d24b18cf91e178222d16b501d53838",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "sensor_reading_check", function="sql_query", criticality="error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "sensor_reading_check", function="sql_query", criticality="error"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -3997,8 +4478,12 @@ def test_apply_checks_with_sql_query_and_ref_table(ws, spark):
                         "function": "sql_query",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "a8084ef0ff1900600f64ce5537b61ea2",
-                        "rule_set_fingerprint": "07d24b18cf91e178222d16b501d53838",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "sensor_reading_check", function="sql_query", criticality="error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "sensor_reading_check", function="sql_query", criticality="error"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -4054,10 +4539,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_custom_dataset_check', function='custom_dataset_check_func'
+                            versioning_rules_checks,
+                            'a_custom_dataset_check',
+                            function='custom_dataset_check_func',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_custom_dataset_check', function='custom_dataset_check_func'
+                            versioning_rules_checks,
+                            'a_custom_dataset_check',
+                            function='custom_dataset_check_func',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4078,10 +4569,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_custom_dataset_check', function='custom_dataset_check_func'
+                            versioning_rules_checks,
+                            'a_custom_dataset_check',
+                            function='custom_dataset_check_func',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_custom_dataset_check', function='custom_dataset_check_func'
+                            versioning_rules_checks,
+                            'a_custom_dataset_check',
+                            function='custom_dataset_check_func',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4102,10 +4599,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_or_empty', function='is_not_null_and_not_empty'
+                            versioning_rules_checks,
+                            'a_is_null_or_empty',
+                            function='is_not_null_and_not_empty',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_or_empty', function='is_not_null_and_not_empty'
+                            versioning_rules_checks,
+                            'a_is_null_or_empty',
+                            function='is_not_null_and_not_empty',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4118,10 +4621,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4134,10 +4643,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4153,11 +4668,13 @@ def test_apply_checks_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_registered',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_registered',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4173,11 +4690,13 @@ def test_apply_checks_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_registered',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_registered',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4193,11 +4712,13 @@ def test_apply_checks_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_a_column_no_args',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_a_column_no_args',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4213,11 +4734,13 @@ def test_apply_checks_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_is_null_custom_args',
                             function='custom_row_check_func_custom_args',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_is_null_custom_args',
                             function='custom_row_check_func_custom_args',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4238,10 +4761,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_or_empty', function='is_not_null_and_not_empty'
+                            versioning_rules_checks,
+                            'a_is_null_or_empty',
+                            function='is_not_null_and_not_empty',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_or_empty', function='is_not_null_and_not_empty'
+                            versioning_rules_checks,
+                            'a_is_null_or_empty',
+                            function='is_not_null_and_not_empty',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4254,10 +4783,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4270,10 +4805,16 @@ def test_apply_checks_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4289,11 +4830,13 @@ def test_apply_checks_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_registered',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_registered',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4309,11 +4852,13 @@ def test_apply_checks_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_registered',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_registered',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4329,11 +4874,13 @@ def test_apply_checks_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_a_column_no_args',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_is_null_custom',
                             function='custom_row_check_func_global_a_column_no_args',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4349,11 +4896,13 @@ def test_apply_checks_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_is_null_custom_args',
                             function='custom_row_check_func_custom_args',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_is_null_custom_args',
                             function='custom_row_check_func_custom_args',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4402,10 +4951,16 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'a_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'a_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4418,10 +4973,16 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, 'b_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'b_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, 'b_is_null_custom', function='custom_row_check_func_global'
+                            versioning_rules_checks,
+                            'b_is_null_custom',
+                            function='custom_row_check_func_global',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4445,11 +5006,13 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_custom_dataset_check',
                             function='custom_dataset_check_func_with_ref_dfs',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_custom_dataset_check',
                             function='custom_dataset_check_func_with_ref_dfs',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4465,11 +5028,13 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'b_custom_dataset_check',
                             function='custom_dataset_check_func_with_ref_dfs',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'b_custom_dataset_check',
                             function='custom_dataset_check_func_with_ref_dfs',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4493,11 +5058,13 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'a_custom_dataset_check',
                             function='custom_dataset_check_func_with_ref_dfs',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'a_custom_dataset_check',
                             function='custom_dataset_check_func_with_ref_dfs',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4513,11 +5080,13 @@ def test_apply_checks_for_each_col_with_custom_check(ws, spark):
                             versioning_rules_checks,
                             'b_custom_dataset_check',
                             function='custom_dataset_check_func_with_ref_dfs',
+                            criticality="warn",
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks,
                             'b_custom_dataset_check',
                             function='custom_dataset_check_func_with_ref_dfs',
+                            criticality="warn",
                         ),
                         "user_metadata": {},
                     },
@@ -4556,6 +5125,9 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
             "custom_row_check_func_custom_args": custom_row_check_func_custom_args,
         },
     )
+    custom_checks = globals()
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks, custom_checks)
+
     # or for simplicity use globals
     checked2 = dq_engine.apply_checks_by_metadata(test_df, checks, custom_check_functions=globals())
 
@@ -4577,8 +5149,18 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '4884c3b9ed7b076087fd5c4fa481c7d5',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            'a_is_null_or_empty',
+                            function='is_not_null_and_not_empty',
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            'a_is_null_or_empty',
+                            function='is_not_null_and_not_empty',
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -4589,8 +5171,12 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '083e7c47898051f953746fba9693587a',
-                        "rule_set_fingerprint": '4884c3b9ed7b076087fd5c4fa481c7d5',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_custom", function="custom_row_check_func_global"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_custom", function="custom_row_check_func_global"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -4601,8 +5187,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '7abe5fa510eda2890722883c78c1896e',
-                        "rule_set_fingerprint": '4884c3b9ed7b076087fd5c4fa481c7d5',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom",
+                            function="custom_row_check_func_global_registered",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom",
+                            function="custom_row_check_func_global_registered",
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -4613,8 +5207,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'cc6db9e8577e7d798a15b5b7f7619120',
-                        "rule_set_fingerprint": '4884c3b9ed7b076087fd5c4fa481c7d5',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom_args",
+                            function="custom_row_check_func_custom_args",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom_args",
+                            function="custom_row_check_func_custom_args",
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -4633,8 +5235,12 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'aac28e7f45f1e6bc213fc0cab21886dd',
-                        "rule_set_fingerprint": '4884c3b9ed7b076087fd5c4fa481c7d5',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "a_is_null_or_empty", function="is_not_null_and_not_empty"
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -4645,8 +5251,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "function": "custom_row_check_func_global",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '083e7c47898051f953746fba9693587a',
-                        "rule_set_fingerprint": '4884c3b9ed7b076087fd5c4fa481c7d5',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom",
+                            function="custom_row_check_func_global",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom",
+                            function="custom_row_check_func_global",
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -4657,8 +5271,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "function": "custom_row_check_func_global_registered",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": '7abe5fa510eda2890722883c78c1896e',
-                        "rule_set_fingerprint": '4884c3b9ed7b076087fd5c4fa481c7d5',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom",
+                            function="custom_row_check_func_global_registered",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom",
+                            function="custom_row_check_func_global_registered",
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -4669,8 +5291,16 @@ def test_apply_checks_by_metadata_with_custom_check(ws, spark):
                         "function": "custom_row_check_func_custom_args",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'cc6db9e8577e7d798a15b5b7f7619120',
-                        "rule_set_fingerprint": '4884c3b9ed7b076087fd5c4fa481c7d5',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom_args",
+                            function="custom_row_check_func_custom_args",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_custom_args",
+                            function="custom_row_check_func_custom_args",
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -4850,7 +5480,7 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
     test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None], [None, None, None]], SCHEMA)
 
     checks = [{"criticality": "warn", "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "a"}}}]
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -4871,8 +5501,18 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "aac28e7f45f1e6bc213fc0cab21886dd",
-                        "rule_set_fingerprint": "1e4e68cc1885d8b186183c6578887ee5",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_or_empty",
+                            function="is_not_null_and_not_empty",
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_or_empty",
+                            function="is_not_null_and_not_empty",
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -4891,8 +5531,18 @@ def test_apply_checks_with_custom_column_naming(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": "aac28e7f45f1e6bc213fc0cab21886dd",
-                        "rule_set_fingerprint": "1e4e68cc1885d8b186183c6578887ee5",
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_or_empty",
+                            function="is_not_null_and_not_empty",
+                            criticality="warn",
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks,
+                            "a_is_null_or_empty",
+                            function="is_not_null_and_not_empty",
+                            criticality="warn",
+                        ),
                         "user_metadata": {},
                     }
                 ],
@@ -4937,7 +5587,10 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     4,
                     [
                         build_quality_violation(
-                            "b_is_null_or_empty", "Column 'b' value is null or empty", ["b"], versioning_rules_checks
+                            "b_is_null_or_empty",
+                            "Column 'b' value is null or empty",
+                            ["b"],
+                            versioning_rules_checks,
                         )
                     ],
                     None,
@@ -4949,7 +5602,10 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     None,
                     [
                         build_quality_violation(
-                            "a_is_null_or_empty", "Column 'a' value is null or empty", ["a"], versioning_rules_checks
+                            "a_is_null_or_empty",
+                            "Column 'a' value is null or empty",
+                            ["a"],
+                            versioning_rules_checks,
                         )
                     ],
                 ],
@@ -4959,12 +5615,18 @@ def test_apply_checks_by_metadata_with_custom_column_naming(ws, spark):
                     None,
                     [
                         build_quality_violation(
-                            "b_is_null_or_empty", "Column 'b' value is null or empty", ["b"], versioning_rules_checks
+                            "b_is_null_or_empty",
+                            "Column 'b' value is null or empty",
+                            ["b"],
+                            versioning_rules_checks,
                         )
                     ],
                     [
                         build_quality_violation(
-                            "a_is_null_or_empty", "Column 'a' value is null or empty", ["a"], versioning_rules_checks
+                            "a_is_null_or_empty",
+                            "Column 'a' value is null or empty",
+                            ["a"],
+                            versioning_rules_checks,
                         )
                     ],
                 ],
@@ -7160,7 +7822,8 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ],
         schema,
     )
-
+    print(checks[0])
+    print(asdict(checks[0]))
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
@@ -7602,7 +8265,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
             filter="b = 1",
         ),
     ]
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     result_errors = checked.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
@@ -7618,8 +8281,18 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 "is_not_null_and_not_empty",
                 RUN_TIME,
                 RUN_ID,
-                '5da5ad15720c24b73da4d5f64c6cf2dd',
-                'df2240c1fa0cce19d5c403ced8fe879f',
+                get_rule_fingerprint_from_checks(
+                    versioning_rules_checks,
+                    "a_is_null_or_empty",
+                    function="is_not_null_and_not_empty",
+                    criticality="error",
+                ),
+                get_rule_set_fingerprint_from_checks(
+                    versioning_rules_checks,
+                    "a_is_null_or_empty",
+                    function="is_not_null_and_not_empty",
+                    criticality="error",
+                ),
                 user_metadata,
             ],
             [
@@ -7630,8 +8303,12 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 "is_not_null",
                 RUN_TIME,
                 RUN_ID,
-                '79f97e4c9e7ec658fdd920554475daeb',
-                'df2240c1fa0cce19d5c403ced8fe879f',
+                get_rule_fingerprint_from_checks(
+                    versioning_rules_checks, "a_is_null", function="is_not_null", criticality="error"
+                ),
+                get_rule_set_fingerprint_from_checks(
+                    versioning_rules_checks, "a_is_null", function="is_not_null", criticality="error"
+                ),
                 user_metadata,
             ],
         ],
@@ -7648,8 +8325,18 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 "is_not_null_and_not_empty",
                 RUN_TIME,
                 RUN_ID,
-                'aac28e7f45f1e6bc213fc0cab21886dd',
-                'df2240c1fa0cce19d5c403ced8fe879f',
+                get_rule_fingerprint_from_checks(
+                    versioning_rules_checks,
+                    "a_is_null_or_empty",
+                    function="is_not_null_and_not_empty",
+                    criticality="warn",
+                ),
+                get_rule_set_fingerprint_from_checks(
+                    versioning_rules_checks,
+                    "a_is_null_or_empty",
+                    function="is_not_null_and_not_empty",
+                    criticality="warn",
+                ),
                 user_metadata,
             ],
             [
@@ -7660,8 +8347,12 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 "is_not_null",
                 RUN_TIME,
                 RUN_ID,
-                '1b661a9663cb5e7dc3c74e0f0f86fb40',
-                'df2240c1fa0cce19d5c403ced8fe879f',
+                get_rule_fingerprint_from_checks(
+                    versioning_rules_checks, "a_is_null", function="is_not_null", criticality="warn"
+                ),
+                get_rule_set_fingerprint_from_checks(
+                    versioning_rules_checks, "a_is_null", function="is_not_null", criticality="warn"
+                ),
                 user_metadata,
             ],
         ],
@@ -7899,7 +8590,7 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
             check_func_kwargs={"limit": 5},
         ),
     ]
-    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     checked = dq_engine.apply_checks(test_df, checks)
 
@@ -7918,16 +8609,6 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks,
-                            "map_element_at_col1_key1_is_not_greater_than_5",
-                            function="is_not_greater_than",
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks,
-                            "map_element_at_col1_key1_is_not_greater_than_5",
-                            function="is_not_greater_than",
-                        ),
                         "user_metadata": {},
                     },
                     {
@@ -7938,16 +8619,6 @@ def test_apply_checks_complex_types_using_classes(ws, spark):
                         "function": "is_not_greater_than",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks,
-                            "array_element_at_position_2_key1_is_not_greater_than_5",
-                            function="is_not_greater_than",
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks,
-                            "array_element_at_position_2_key1_is_not_greater_than_5",
-                            function="is_not_greater_than",
-                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -9690,7 +10361,6 @@ def test_compare_datasets_check_missing_records(ws, spark, set_utc_timezone):
         ),
     ]
     versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
-    print(versioning_rules_checks)
     refs_df = {"ref_df": ref_df}
 
     checked = dq_engine.apply_checks(src_df, checks, refs_df)
@@ -10195,7 +10865,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
             },
         ),
     ]
-    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected = spark.createDataFrame(
@@ -10216,12 +10886,6 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "b_is_null_or_empty", "is_not_null_and_not_empty"
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "b_is_null_or_empty", "is_not_null_and_not_empty"
-                        ),
                         "user_metadata": {},
                     },
                     {
@@ -10232,12 +10896,6 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "missing_col_is_null", "is_not_null"
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "missing_col_is_null", "is_not_null"
-                        ),
                         "user_metadata": {},
                     },
                     {
@@ -10249,12 +10907,6 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "missing_col_sql_expression", "sql_expression"
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "missing_col_sql_expression", "sql_expression"
-                        ),
                         "user_metadata": {},
                     },
                     {
@@ -10266,12 +10918,6 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "missing_col_is_unique", "is_unique"
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "missing_col_is_unique", "is_unique"
-                        ),
                         "user_metadata": {},
                     },
                     {
@@ -10282,12 +10928,6 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "invalid_col_sql_expression", "sql_expression"
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "invalid_col_sql_expression", "sql_expression"
-                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -10300,12 +10940,6 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "function": "is_not_null_and_not_empty",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "missing_col_is_null_or_empty", "is_not_null_and_not_empty"
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "missing_col_is_null_or_empty", "is_not_null_and_not_empty"
-                        ),
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
                     },
                 ],
