@@ -1,37 +1,36 @@
-from pathlib import Path
-
 import numpy as np
 import pytest
 from pyspark.sql import functions as F
 
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
+from databricks.labs.dqx.errors import InvalidParameterError
 from tests.constants import TEST_CATALOG
 
 _TRAINED_MODEL: dict[str, str] = {}
 
 
-def _load_arrhythmia_dataset(dataset_path: Path) -> tuple[np.ndarray, np.ndarray]:
-    try:
-        from scipy.io import loadmat  # type: ignore[import-untyped]
-    except Exception as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError("scipy is required to load .mat benchmark dataset") from exc
+def _prepare_synthetic_data(
+    spark,
+    *,
+    seed: int = 42,
+    n_samples: int = 2000,
+    n_features: int = 20,
+    anomaly_frac: float = 0.02,
+):
+    rng = np.random.default_rng(seed)
+    n_anomalies = max(1, int(n_samples * anomaly_frac))
+    n_normals = n_samples - n_anomalies
 
-    mat = loadmat(dataset_path)
-    if "X" not in mat or "y" not in mat:
-        raise ValueError("Expected keys 'X' and 'y' in arrhythmia .mat file")
-    X = mat["X"]
-    y = mat["y"].ravel()
-    return X, y
+    normal = rng.normal(loc=0.0, scale=1.0, size=(n_normals, n_features))
+    anomalies = rng.normal(loc=6.0, scale=1.5, size=(n_anomalies, n_features))
+    X = np.vstack([normal, anomalies])
+    y = np.concatenate([np.zeros(n_normals, dtype=float), np.ones(n_anomalies, dtype=float)])
 
+    order = rng.permutation(len(X))
+    X = X[order]
+    y = y[order]
 
-def _arrhythmia_path() -> Path | None:
-    repo_root = Path(__file__).resolve().parents[2]
-    candidate = repo_root / "tests" / "resources" / "arrhythmia.mat"
-    return candidate if candidate.exists() else None
-
-
-def _prepare_arrhythmia_data(spark, dataset_path: Path):
-    X, y = _load_arrhythmia_dataset(dataset_path)
     n_train = int(0.6 * len(X))
     X_train, X_test = X[:n_train], X[n_train:]
     y_train, y_test = y[:n_train], y[n_train:]
@@ -44,16 +43,9 @@ def _prepare_arrhythmia_data(spark, dataset_path: Path):
     return feature_cols, train_df, test_df
 
 
-@pytest.mark.benchmark(group="anomaly_arrhythmia")
+@pytest.mark.benchmark(group="anomaly_synthetic")
 def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, make_random):
-    dataset_path = _arrhythmia_path()
-    if dataset_path is None:
-        pytest.skip("arrhythmia.mat not available in tests/resources")
-
-    try:
-        feature_cols, train_df, _ = _prepare_arrhythmia_data(spark, dataset_path)
-    except RuntimeError:
-        pytest.skip("scipy not installed (required to load arrhythmia.mat)")
+    feature_cols, train_df, _ = _prepare_synthetic_data(spark)
 
     schema = make_schema(catalog_name=TEST_CATALOG).name
     model_name = f"{TEST_CATALOG}.{schema}.bench_model_{make_random(6).lower()}"
@@ -74,21 +66,20 @@ def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, m
     _TRAINED_MODEL["registry_table"] = registry_table
 
 
-@pytest.mark.benchmark(group="anomaly_arrhythmia")
+@pytest.mark.benchmark(group="anomaly_synthetic")
 def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, make_random):
-    dataset_path = _arrhythmia_path()
-    if dataset_path is None:
-        pytest.skip("arrhythmia.mat not available in tests/resources")
-
-    try:
-        feature_cols, train_df, test_df = _prepare_arrhythmia_data(spark, dataset_path)
-    except RuntimeError:
-        pytest.skip("scipy not installed (required to load arrhythmia.mat)")
+    feature_cols, train_df, test_df = _prepare_synthetic_data(spark)
 
     engine = AnomalyEngine(workspace_client=ws, spark=spark)
     model_name = _TRAINED_MODEL.get("model_name")
     registry_table = _TRAINED_MODEL.get("registry_table")
-    if not model_name or not registry_table:
+    needs_training = not model_name or not registry_table
+    if not needs_training:
+        registry_client = AnomalyModelRegistry(spark)
+        record = registry_client.get_active_model(registry_table, model_name)
+        needs_training = record is None
+
+    if needs_training:
         schema = make_schema(catalog_name=TEST_CATALOG).name
         model_name = f"{TEST_CATALOG}.{schema}.bench_model_{make_random(6).lower()}"
         registry_table = f"{TEST_CATALOG}.{schema}.bench_registry_{make_random(6).lower()}"
@@ -101,11 +92,29 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, m
         _TRAINED_MODEL["model_name"] = model_name
         _TRAINED_MODEL["registry_table"] = registry_table
 
-    _, apply_fn = has_no_anomalies(
-        model=model_name,
-        registry_table=registry_table,
-        include_contributions=False,
-    )
+    try:
+        _, apply_fn = has_no_anomalies(
+            model=model_name,
+            registry_table=registry_table,
+            include_contributions=False,
+        )
+    except InvalidParameterError:
+        schema = make_schema(catalog_name=TEST_CATALOG).name
+        model_name = f"{TEST_CATALOG}.{schema}.bench_model_{make_random(6).lower()}"
+        registry_table = f"{TEST_CATALOG}.{schema}.bench_registry_{make_random(6).lower()}"
+        engine.train(
+            df=train_df,
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=feature_cols,
+        )
+        _TRAINED_MODEL["model_name"] = model_name
+        _TRAINED_MODEL["registry_table"] = registry_table
+        _, apply_fn = has_no_anomalies(
+            model=model_name,
+            registry_table=registry_table,
+            include_contributions=False,
+        )
 
     def run_score():
         scored_df = apply_fn(test_df)
