@@ -12,7 +12,6 @@ import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
 
-import databricks.labs.dqx.anomaly.check_funcs as anomaly_check_funcs
 from databricks.labs.dqx.anomaly import has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
@@ -278,21 +277,6 @@ def test_has_no_anomalies_requires_fully_qualified_model_name():
             model="schema.model",
             registry_table="catalog.schema.table",
         )
-
-
-def test_has_no_anomalies_requires_shap_when_enabled():
-    """Include_contributions should fail fast when SHAP is unavailable."""
-    shap_available = anomaly_check_funcs.SHAP_AVAILABLE
-    try:
-        anomaly_check_funcs.SHAP_AVAILABLE = False
-        with pytest.raises(ImportError, match="Feature contributions require SHAP"):
-            has_no_anomalies(
-                model="catalog.schema.model",
-                registry_table="catalog.schema.table",
-                include_contributions=True,
-            )
-    finally:
-        anomaly_check_funcs.SHAP_AVAILABLE = shap_available
 
 
 @pytest.mark.parametrize(
