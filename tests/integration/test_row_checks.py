@@ -3181,6 +3181,77 @@ def test_col_is_not_equal_to(spark, set_utc_timezone):
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
+def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
+    """
+    Test is_not_equal_to function with absolute and relative tolerance parameters.
+
+    Tolerance Logic (from is_not_equal_to function):
+    - abs_tolerance: abs(a - b) <= abs_tolerance
+    - rel_tolerance: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+    - If BOTH tolerances are provided, values are equal if EITHER condition is met (OR logic)
+
+    **IMPORTANT LIMITATION**: Tolerance is only applied when comparing against int/float values.
+    When value is Decimal, tolerance parameters are silently ignored and exact equality is used.
+
+    Returns error message when values ARE equal (within tolerance if provided), otherwise returns None.
+    Note: This is the inverse of is_equal_to - it fails when values match.
+    """
+    schema = "a: int, b: int, c: float"
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, 100.0],
+            [2, 1, 101.0],
+            [3, 2, 99.5],
+            [None, None, None],
+        ],
+        schema,
+    )
+    actual = test_df.select(
+        is_not_equal_to("a", 1, abs_tolerance=0.5).alias("a_not_equal_to_value_with_abs_tol"),
+        is_not_equal_to("a", 1, rel_tolerance=0.5).alias("a_not_equal_to_value_with_rel_tol"),
+        is_not_equal_to("c", 100.0, abs_tolerance=1).alias("c_not_equal_to_value_with_abs_tol"),
+        is_not_equal_to("c", 100.0, rel_tolerance=0.01).alias("c_not_equal_to_value_with_rel_tol"),
+    )
+    expected_schema = (
+        "a_not_equal_to_value_with_abs_tol: string, a_not_equal_to_value_with_rel_tol: string, "
+        "c_not_equal_to_value_with_abs_tol: string, c_not_equal_to_value_with_rel_tol: string"
+    )
+    expected = spark.createDataFrame(
+        [
+            # Row 1: a=1, c=100.0, d=1.00 (all exactly equal to target values - should fail is_not_equal_to)
+            [
+                "Value '1' in Column 'a' is equal to value: 1",  # abs(1-1)=0 <= 0.5 ✓ equal, so fails is_not_equal
+                "Value '1' in Column 'a' is equal to value: 1",  # abs(1-1)=0 <= 0.5*max(1,1)=0.5 ✓ equal, so fails is_not_equal
+                "Value '100.0' in Column 'c' is equal to value: 100.0",  # abs(100.0-100.0)=0 <= 1.0 ✓ equal, so fails is_not_equal
+                "Value '100.0' in Column 'c' is equal to value: 100.0",  # abs(100.0-100.0)=0 <= 0.01*max(100.0,100.0)=1.0 ✓ equal, so fails is_not_equal
+            ],
+            # Row 2: a=2, c=101.0, d=1.01
+            [
+                None,  # abs(2-1)=1 > 0.5 ✗ not equal, so passes is_not_equal
+                "Value '2' in Column 'a' is equal to value: 1",  # abs(2-1)=1 <= 0.5*max(2,1)=1.0 ✓ equal, so fails is_not_equal
+                "Value '101.0' in Column 'c' is equal to value: 100.0",  # abs(101.0-100.0)=1.0 <= 1.0 ✓ equal, so fails is_not_equal
+                "Value '101.0' in Column 'c' is equal to value: 100.0",  # abs(101.0-100.0)=1.0 <= 0.01*max(101.0,100.0)=1.01 ✓ equal, so fails is_not_equal
+            ],
+            # Row 3: a=3, c=99.5, d=0.99
+            [
+                None,  # abs(3-1)=2 > 0.5 ✗ not equal, so passes is_not_equal
+                None,  # abs(3-1)=2 > 0.5*max(3,1)=1.5 ✗ not equal, so passes is_not_equal
+                "Value '99.5' in Column 'c' is equal to value: 100.0",  # abs(99.5-100.0)=0.5 <= 1.0 ✓ equal, so fails is_not_equal
+                "Value '99.5' in Column 'c' is equal to value: 100.0",  # abs(99.5-100.0)=0.5 <= 0.01*max(99.5,100.0)=1.0 ✓ equal, so fails is_not_equal
+            ],
+            # Row 4: All null values
+            [
+                None,  # Nulls are not compared
+                None,
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
 def test_col_is_equal_to(spark, set_utc_timezone):
     schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
     test_df = spark.createDataFrame(
@@ -3242,6 +3313,77 @@ def test_col_is_equal_to(spark, set_utc_timezone):
         expected_schema,
     )
 
+    assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_col_is_equal_to_with_tolerance(spark, set_utc_timezone):
+    """
+    Test is_equal_to function with absolute and relative tolerance parameters.
+
+    Tolerance Logic (from is_equal_to function):
+    - abs_tolerance: abs(a - b) <= abs_tolerance
+    - rel_tolerance: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+    - If BOTH tolerances are provided, values are equal if EITHER condition is met (OR logic)
+
+    **IMPORTANT LIMITATION**: Tolerance is only applied when comparing against int/float values.
+    When value is Decimal, tolerance parameters are silently ignored and exact equality is used.
+
+    Returns None when values are equal (within tolerance if provided), otherwise returns error message.
+    Note: Error messages do NOT include tolerance information, only the actual value and expected value.
+    """
+    schema = "a: int, b: int, c: float"
+    test_df = spark.createDataFrame(
+        [
+            [1, 1, 100.0],
+            [2, 1, 101.0],
+            [3, 2, 99.5],
+            [None, None, None],
+        ],
+        schema,
+    )
+    actual = test_df.select(
+        is_equal_to("a", 1, abs_tolerance=0.5).alias("a_equal_to_value_with_abs_tol"),
+        is_equal_to("a", 1, rel_tolerance=0.5).alias("a_equal_to_value_with_rel_tol"),
+        is_equal_to("c", 100.0, abs_tolerance=1).alias("c_equal_to_value_with_abs_tol"),
+        is_equal_to("c", 100.0, rel_tolerance=0.01).alias("c_equal_to_value_with_rel_tol"),
+    )
+    expected_schema = (
+        "a_equal_to_value_with_abs_tol: string, a_equal_to_value_with_rel_tol: string, "
+        "c_equal_to_value_with_abs_tol: string, c_equal_to_value_with_rel_tol: string"
+    )
+    expected = spark.createDataFrame(
+        [
+            # Row 1: a=1, c=100.0, d=1.00 (all exactly equal to target values)
+            [
+                None,  # abs(1-1)=0 <= 0.5 ✓
+                None,  # abs(1-1)=0 <= 0.5*max(1,1)=0.5 ✓
+                None,  # abs(100.0-100.0)=0 <= 1.0 ✓
+                None,  # abs(100.0-100.0)=0 <= 0.01*max(100.0,100.0)=1.0 ✓
+            ],
+            # Row 2: a=2, c=101.0, d=1.01
+            [
+                "Value '2' in Column 'a' is not equal to value: 1",  # abs(2-1)=1 > 0.5 ✗
+                None,  # abs(2-1)=1 <= 0.5*max(2,1)=1.0 ✓
+                None,  # abs(101.0-100.0)=1.0 <= 1.0 ✓
+                None,  # abs(101.0-100.0)=1.0 <= 0.01*max(101.0,100.0)=1.01 ✓
+            ],
+            # Row 3: a=3, c=99.5, d=0.99
+            [
+                "Value '3' in Column 'a' is not equal to value: 1",  # abs(3-1)=2 > 0.5 ✗
+                "Value '3' in Column 'a' is not equal to value: 1",  # abs(3-1)=2 > 0.5*max(3,1)=1.5 ✗
+                None,  # abs(99.5-100.0)=0.5 <= 1.0 ✓
+                None,  # abs(99.5-100.0)=0.5 <= 0.01*max(99.5,100.0)=1.0 ✓
+            ],
+            # Row 4: All null values
+            [
+                None,  # Nulls are not compared
+                None,
+                None,
+                None,
+            ],
+        ],
+        expected_schema,
+    )
     assert_df_equality(actual, expected, ignore_nullable=True)
 
 
