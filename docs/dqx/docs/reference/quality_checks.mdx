@@ -28,8 +28,11 @@ You can also define your own custom checks in Python (see [Creating custom check
 | Check                              | Description                                                                                                                                                                                                                                                                                                                                                                                                                       | Arguments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `is_not_null`                      | Checks whether the values in the input column are not null.                                                                                                                                                                                                                                                                                                                                                                       | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `is_null`                          | Checks whether the values in the input column are null.                                                                                                                                                                                                                                                                                                                                                                           | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `is_not_empty`                     | Checks whether the values in the input column are not empty (but may be null).                                                                                                                                                                                                                                                                                                                                                    | `column`: column to check (can be a string column name or a column expression)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `is_empty`                         | Checks whether the values in the input column are empty (but may be null).                                                                                                                                                                                                                                                                                                                                                        | `column`: column to check (can be a string column name or a column expression); `trim_strings`: optional boolean flag to trim spaces from strings                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `is_not_null_and_not_empty`        | Checks whether the values in the input column are not null and not empty.                                                                                                                                                                                                                                                                                                                                                         | `column`: column to check (can be a string column name or a column expression); `trim_strings`: optional boolean flag to trim spaces from strings                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `is_null_or_empty`                 | Checks whether the values in the input column are null or empty.                                                                                                                                                                                                                                                                                                                                                                  | `column`: column to check (can be a string column name or a column expression); `trim_strings`: optional boolean flag to trim spaces from strings                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `is_in_list`                       | Checks whether the values in the input column are present in the list of allowed values (null values are allowed). Can optionally perform a case-insensitive comparison. This check is not suited for `MapType` or `StructType` columns. For best performance with large lists of allowed values, use the `foreign_key` dataset-level check instead.                                                                              | `column`: column to check (can be a string column name or a column expression); `allowed`: list of allowed values; `case_sensitive`: optional boolean flag for case-sensitive comparison (default: True)                                                                                                                                                                                                                                                                                                                                             |
 | `is_not_in_list`                   | Checks whether the values in the input column are NOT present in the list of forbidden values (null values are allowed). Can optionally perform a case-insensitive comparison. This check is not suited for `MapType` or `StructType` columns. For best performance with large lists of forbidden values, use the `foreign_key` dataset-level check with `negate` argument set to `True`.                                         | `column`: column to check (can be a string column name or a column expression); `forbidden`: list of forbidden values; `case_sensitive`: optional boolean flag for case-sensitive comparison (default: True)                                                                                                                                                                                                                                                                                                                                         |
 | `is_not_null_and_is_in_list`       | Checks whether the values in the input column are not null and present in the list of allowed values. This check is not suited for large lists of allowed values. In such cases, it’s recommended to use the `foreign_key` dataset-level check instead. This check is not suited for `MapType` or `StructType` columns.                                                                                                           | `column`: column to check (can be a string column name or a column expression); `allowed`: list of allowed values; `case_sensitive`: optional boolean flag for case-sensitive comparison (default: True)                                                                                                                                                                                                                                                                                                                                             |
@@ -107,6 +110,13 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col1
 
+# is_null check
+- criticality: error
+  check:
+    function: is_null
+    arguments:
+      column: col1
+
 # is_not_empty check
 - criticality: error
   check:
@@ -114,10 +124,57 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col1
 
+# is_not_empty check with trimmed string values
+- criticality: error
+  check:
+    function: is_not_empty
+    arguments:
+      column: col1
+      trim_strings: true
+
+# is_empty check
+- criticality: error
+  check:
+    function: is_empty
+    arguments:
+      column: col1
+      trim_strings: true
+
+# is_empty check with trimmed string values
+- criticality: error
+  check:
+    function: is_empty
+    arguments:
+      column: col1
+      trim_strings: true
+
 # is_not_null_and_not_empty check
 - criticality: error
   check:
     function: is_not_null_and_not_empty
+    arguments:
+      column: col1
+
+# is_not_null_and_not_empty check with trimmed string values
+- criticality: error
+  check:
+    function: is_not_null_and_not_empty
+    arguments:
+      column: col1
+      trim_strings: true
+
+# is_null_or_empty check
+- criticality: error
+  check:
+    function: is_null_or_empty
+    arguments:
+      column: col1
+      trim_strings: true
+
+# is_null_or_empty check with trimmed string values
+- criticality: error
+  check:
+    function: is_null_or_empty
     arguments:
       column: col1
       trim_strings: true
@@ -769,6 +826,13 @@ checks = [
       column="col1"  # or as expr: F.col("col1")
     ),
 
+    # is_null check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_null,
+      column="col1"  # or as expr: F.col("col1")
+    ),
+
     # is_not_empty check
     DQRowRule(
       criticality="error",
@@ -776,11 +840,58 @@ checks = [
       column="col1" # or as expr: F.col("col1")
     ),
 
+    # is_not_empty check with trimmed string values
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_empty,
+      column="col1" # or as expr: F.col("col1"),
+      check_func_kwargs={"trim_strings": True}
+    ),
+
+    # is_empty check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_empty,
+      column="col1", # or as expr: F.col("col1")
+      check_func_kwargs={"trim_strings": True}
+    ),
+
+    # is_empty check with trimmed string values
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_empty,
+      column="col1" # or as expr: F.col("col1"),
+      check_func_kwargs={"trim_strings": True}
+    ),
+
     # is_not_null_and_not_empty check
     DQRowRule(
       criticality="error",
       check_func=check_funcs.is_not_null_and_not_empty,
       column="col1", # or as expr: F.col("col1")
+    ),
+
+    # is_not_null_and_not_empty check with trimmed string values
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_not_null_and_not_empty,
+      column="col1", # or as expr: F.col("col1")
+      check_func_kwargs={"trim_strings": True}
+    ),
+
+    # is_null_or_empty check
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_null_or_empty,
+      column="col1", # or as expr: F.col("col1")
+      check_func_kwargs={"trim_strings": True}
+    ),
+
+    # is_null_or_empty check with trimmed string values
+    DQRowRule(
+      criticality="error",
+      check_func=check_funcs.is_null_or_empty,
+      column="col1" # or as expr: F.col("col1"),
       check_func_kwargs={"trim_strings": True}
     ),
 
@@ -1654,7 +1765,7 @@ You can also define your own custom dataset-level checks (see [Creating custom c
 | `sql_query`                        | Checks whether the condition column produced by a SQL query is satisfied. The check supports two modes: **Row-level validation** (when `merge_columns` is provided) - query results are joined back to the input DataFrame to mark specific rows; **Dataset-level validation** (when `merge_columns` is None or empty) - the check result applies to all rows (or filtered rows if `row_filter` is used), making it ideal for aggregate validations with custom metrics. The query must return a boolean condition column (True = fail, False = pass). For row-level checks: if merge columns aren't unique, multiple query rows can attach to a single input row, potentially causing false positives. Performance tip: for complex queries, writing a custom dataset-level rule is usually more performant than `sql_query` check.  | `query`: query string, must return condition column (and merge columns if provided); `input_placeholder`: name to be used in the sql query as `{{ input_placeholder }}` to refer to the input DataFrame, optional reference DataFrames are referred by the name provided in the dictionary of reference DataFrames (e.g. `{{ ref_df_key }}`, dictionary of DataFrames can be passed when applying checks); `merge_columns`: (optional) list of columns used for merging with the input DataFrame which must exist in the input DataFrame and be present in output of the sql query; when not provided (None or empty list), the check result applies to all rows in the dataset (dataset-level validation); `condition_column`: name of the column indicating a violation (False = pass, True = fail); `msg`: (optional) message to output; `name`: (optional) name of the resulting check (it can be overwritten by `name` specified at the check level); `negate`: if the condition should be negated                                                     |
 | `compare_datasets`                 | Compares two DataFrames at both row and column levels, providing detailed information about differences, including new or missing rows and column-level changes. Only columns present in both the source and reference DataFrames are compared. Use with caution if `check_missing_records` is enabled, as this may increase the number of rows in the output beyond the original input DataFrame. The comparison does not support Map types (any column comparison on map type is skipped automatically). Comparing datasets is valuable for validating data during migrations, detecting drift, performing regression testing, or verifying synchronization between source and target systems.    | `columns`: columns to use for row matching with the reference DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'df.columns'; `ref_columns`: list of columns in the reference DataFrame or Table to row match against the source DataFrame (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'), if not having primary keys or wanting to match against all columns you can pass 'ref_df.columns'; note that `columns` are matched with `ref_columns` by position, so the order of the provided columns in both lists must be exactly aligned; `exclude_columns`: (optional) list of columns to exclude from the value comparison but not from row matching (can be a list of string column names or column expressions, but only simple column expressions are allowed such as 'F.col("col1")'); the `exclude_columns` field does not alter the list of columns used to determine row matches (columns), it only controls which columns are skipped during the value comparison; `ref_df_name`: (optional) name of the reference DataFrame (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name; either `ref_df_name` or `ref_table` must be provided but never both; the number of passed `columns` and `ref_columns` must match and keys are checks in the given order; `check_missing_records`: perform a FULL OUTER JOIN to identify records that are missing from source or reference DataFrames, default is False; use with caution as this may increase the number of rows in the output, as unmatched rows from both sides are included; `null_safe_row_matching`: (optional) treat NULLs as equal when matching rows using `columns` and `ref_columns` (default: True); `null_safe_column_value_matching`: (optional) treat NULLs as equal when comparing column values (default: True) |
 | `is_data_fresh_per_time_window`    | Freshness check that validates whether at least X records arrive within every Y-minute time window.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `column`: timestamp column (can be a string column name or a column expression); `window_minutes`: time window in minutes to check for data arrival; `min_records_per_window`: minimum number of records expected per time window; `lookback_windows`: (optional) number of time windows to look back from `curr_timestamp`, it filters records to include only those within the specified number of time windows from `curr_timestamp` (if no lookback is provided, the check is applied to the entire dataset); `curr_timestamp`: (optional) current timestamp column (if not provided, current_timestamp() function is used)                                                                                                                                                                                                                                                                              |
-| `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected.                                                                                                                                                                                              | `expected_schema`: (optional) expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `ref_df_name`: (optional) name of the reference DataFrame to load the schema from (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name to load the schema from (e.g. "catalog.schema.table"); exactly one of `expected_schema`, `ref_df_name`, or `ref_table` must be provided; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match                                                                                                                                                                                                       |
+| `has_valid_schema`                 | Schema check that validates whether the DataFrame schema matches an expected schema. In non-strict mode, validates that all expected columns exist with compatible types (allows extra columns). In strict mode, validates exact schema match (same columns, same order, same types) for all columns by default or for all columns specified in `columns`. This check is applied at the dataset level and reports schema violations for all rows in the DataFrame when incompatibilities are detected. All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.                                                                                | `expected_schema`: (optional) expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object; `ref_df_name`: (optional) name of the reference DataFrame to load the schema from (dictionary of DataFrames can be passed when applying checks); `ref_table`: (optional) fully qualified reference table name to load the schema from (e.g. "catalog.schema.table"); exactly one of `expected_schema`, `ref_df_name`, or `ref_table` must be provided; `columns`: (optional) list of columns to validate (if not provided, all columns are considered); `strict`: (optional) whether to perform strict schema validation (default: False) - False: validates that all expected columns exist with compatible types, True: validates exact schema match; `exclude_columns`: (optional) list of columns to ignore during validation (if not provided, all columns are considered);                                                                                                                                                                                                       |
 | `has_no_outliers`                  | Checks whether the values in the input column contain any outliers. This function implements a median absolute deviation (MAD) algorithm to find outliers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `column`: column of type numeric to check (can be a string column name or a column expression);                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 
 **Compare datasets check**
@@ -2000,6 +2111,16 @@ Complex data types are supported as well.
       columns:
         - id
         - name
+
+# has_valid_schema check with specific ignored columns
+- criticality: warn
+  check:
+    function: has_valid_schema
+    arguments:
+      expected_schema: "id INT, name STRING, age INT, contact_info STRUCT<email: STRING, phone: STRING, address: STRING>"
+      exclude_columns:
+        - last_update_date
+        - last_updated_by
 
 # has_valid_schema check using reference table
 - criticality: error
@@ -2453,6 +2574,25 @@ checks = [
           ]), True)
         ]),
         "columns": ["id", "name"],
+      },
+    ),
+
+    # has_valid_schema check with specific ignored columns, expected schema defined using StructType
+    DQDatasetRule(
+      criticality="warn",
+      check_func=check_funcs.has_valid_schema,
+      check_func_kwargs={
+        "expected_schema": StructType([
+          StructField("id", IntegerType(), True),
+          StructField("name", StringType(), True),
+          StructField("age", IntegerType(), True),
+          StructField("contact_info", StructType([
+            StructField("email", StringType(), True),
+            StructField("phone", StringType(), True),
+            StructField("address", StringType(), True),
+          ]), True)
+        ]),
+        "exclude_columns": ["last_update_date", "last_updated_by"],
       },
     ),
 

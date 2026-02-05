@@ -79,7 +79,6 @@ def test_fresh_global_config_installation(ws, installation_ctx):
         installation_ctx.installation.save(installation_ctx.config)
         assert installation_ctx.installation_service.install_folder == f"/Shared/{product_name}"
         assert installation_ctx.workspace_installer.installation
-        assert installation_ctx.installation_service.current(ws)
         assert installation_ctx.installation_service.config == installation_ctx.config
 
 

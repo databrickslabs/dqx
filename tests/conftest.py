@@ -55,6 +55,15 @@ def set_utc_timezone():
 
 
 @pytest.fixture
+def skip_if_classic_compute(debug_env):
+    """
+    Skips the test if the cluster is a classic compute cluster.
+    """
+    if not debug_env.get("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip("This test requires a serverless compute cluster")
+
+
+@pytest.fixture
 def skip_if_runtime_not_geo_compatible(ws, debug_env):
     """
     Skip the test if the cluster runtime does not support the required geo functions, i.e.

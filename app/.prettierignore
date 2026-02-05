@@ -1,0 +1,3 @@
+src/databricks_labs_dqx_app/__dist__
+src/databricks_labs_dqx_app/ui/types/routeTree.gen.ts
+.build

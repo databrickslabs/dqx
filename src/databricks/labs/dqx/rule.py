@@ -18,11 +18,20 @@ logger = logging.getLogger(__name__)
 
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
+CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
 
 
 def register_rule(rule_type: str) -> Callable:
     def wrapper(func: Callable) -> Callable:
         CHECK_FUNC_REGISTRY[func.__name__] = rule_type
+        return func
+
+    return wrapper
+
+
+def register_for_original_columns_preselection() -> Callable:
+    def wrapper(func: Callable) -> Callable:
+        CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION.add(func.__name__)
         return func
 
     return wrapper
