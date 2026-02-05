@@ -24,8 +24,9 @@ from tests.integration.conftest import (
 from tests.constants import TEST_CATALOG
 
 
-def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
+def test_quality_checker_workflow(ws, spark_keep_alive, setup_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
@@ -33,9 +34,10 @@ def test_quality_checker_workflow(ws, spark, setup_workflows, expected_quality_c
 
 
 def test_quality_checker_workflow_for_multiple_run_configs(
-    ws, spark, setup_workflows, expected_quality_checking_output
+    ws, spark_keep_alive, setup_workflows, expected_quality_checking_output
 ):
     installation_ctx, run_config = setup_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     second_run_config = copy.deepcopy(run_config)
     second_run_config.name = "second"
@@ -55,9 +57,10 @@ def test_quality_checker_workflow_for_multiple_run_configs(
 
 
 def test_quality_checker_workflow_for_multiple_run_configs_table_checks_storage(
-    ws, spark, setup_workflows, expected_quality_checking_output
+    ws, spark_keep_alive, setup_workflows, expected_quality_checking_output
 ):
     installation_ctx, run_config = setup_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     input_table = run_config.input_config.location
     catalog_name, schema_name, _ = input_table.split('.')
@@ -97,8 +100,11 @@ def test_quality_checker_workflow_for_multiple_run_configs_table_checks_storage(
     assert_output_df(spark, expected_quality_checking_output, second_run_config.output_config)
 
 
-def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
+def test_quality_checker_workflow_serverless(
+    ws, spark_keep_alive, setup_serverless_workflows, expected_quality_checking_output
+):
     installation_ctx, run_config = setup_serverless_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
@@ -106,9 +112,10 @@ def test_quality_checker_workflow_serverless(ws, spark, setup_serverless_workflo
 
 
 def test_quality_checker_workflow_table_checks_storage(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     input_table = run_config.input_config.location
     catalog_name, schema_name, _ = input_table.split('.')
@@ -135,17 +142,21 @@ def test_quality_checker_workflow_table_checks_storage(
 
 
 def test_quality_checker_workflow_with_custom_install_folder(
-    ws, spark, setup_workflows_with_custom_folder, expected_quality_checking_output
+    ws, spark_keep_alive, setup_workflows_with_custom_folder, expected_quality_checking_output
 ):
     installation_ctx, run_config = setup_workflows_with_custom_folder(checks=True)
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
     assert_output_df(spark, expected_quality_checking_output, run_config.output_config)
 
 
-def test_quality_checker_workflow_streaming(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
+def test_quality_checker_workflow_streaming(
+    ws, spark_keep_alive, setup_serverless_workflows, expected_quality_checking_output
+):
     installation_ctx, run_config = setup_serverless_workflows(checks=True, is_streaming=True)
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
@@ -153,9 +164,10 @@ def test_quality_checker_workflow_streaming(ws, spark, setup_serverless_workflow
 
 
 def test_quality_checker_workflow_with_quarantine(
-    ws, spark, setup_serverless_workflows, expected_quality_checking_output
+    ws, spark_keep_alive, setup_serverless_workflows, expected_quality_checking_output
 ):
     installation_ctx, run_config = setup_serverless_workflows(quarantine=True, checks=True)
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("quality-checker", run_config.name)
 
@@ -174,8 +186,9 @@ def test_quality_checker_workflow_when_missing_checks_file(ws, setup_serverless_
     assert f"Checks file {checks_location} missing" in str(failure.value)
 
 
-def test_quality_checker_workflow_with_custom_check_func(ws, spark, setup_serverless_workflows):
+def test_quality_checker_workflow_with_custom_check_func(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     installation_dir = installation_ctx.installation.install_folder()
     custom_checks_funcs_location = f"/Workspace{installation_dir}/custom_check_funcs.py"
@@ -184,9 +197,10 @@ def test_quality_checker_workflow_with_custom_check_func(ws, spark, setup_server
 
 
 def test_quality_checker_workflow_with_custom_check_func_in_volume(
-    ws, spark, setup_serverless_workflows, make_schema, make_volume
+    ws, spark_keep_alive, setup_serverless_workflows, make_schema, make_volume
 ):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
@@ -196,8 +210,9 @@ def test_quality_checker_workflow_with_custom_check_func_in_volume(
     _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
 
 
-def test_quality_checker_workflow_with_custom_check_func_rel_path(ws, spark, setup_serverless_workflows):
+def test_quality_checker_workflow_with_custom_check_func_rel_path(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
     custom_checks_funcs_location = "custom_check_funcs.py"  # path relative to the installation folder
     _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, run_config, custom_checks_funcs_location)
 
@@ -276,9 +291,10 @@ def _test_quality_checker_with_custom_check_func(ws, spark, installation_ctx, ru
 
 
 def test_quality_checker_workflow_with_ref(
-    ws, spark, setup_serverless_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, setup_serverless_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     checks_location = f"{installation_ctx.installation.install_folder()}/{run_config.checks_location}"
     _setup_checks_with_ref(ws, spark, checks_location, installation_ctx.product_info.product_name())
@@ -339,9 +355,10 @@ def test_quality_checker_workflow_with_ref(
 
 
 def test_quality_checker_workflow_for_patterns(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -380,9 +397,10 @@ def test_quality_checker_workflow_for_patterns(
 
 
 def test_quality_checker_workflow_for_patterns_exclude_patterns(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -417,9 +435,10 @@ def test_quality_checker_workflow_for_patterns_exclude_patterns(
 
 
 def test_quality_checker_workflow_for_patterns_exclude_output(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(quarantine=True, checks=True)
+    spark = spark_keep_alive.spark
 
     # update run config to overwrite output and quarantine tables
     config = installation_ctx.config
@@ -483,9 +502,10 @@ def test_quality_checker_workflow_for_patterns_exclude_output(
 
 
 def test_quality_checker_workflow_for_patterns_table_checks_storage(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(checks=True)
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')

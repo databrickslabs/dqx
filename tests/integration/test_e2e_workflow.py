@@ -11,8 +11,9 @@ from databricks.labs.dqx.config import (
 from databricks.labs.dqx.engine import DQEngine
 
 
-def test_e2e_workflow(ws, spark, setup_workflows, expected_quality_checking_output):
+def test_e2e_workflow(ws, spark_keep_alive, setup_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("e2e", run_config.name)
 
@@ -32,9 +33,9 @@ def test_e2e_workflow(ws, spark, setup_workflows, expected_quality_checking_outp
     assert checked_df.count() == input_df.count(), "Output table is empty"
 
 
-def test_e2e_workflow_for_multiple_run_configs(ws, spark, setup_workflows, expected_quality_checking_output):
+def test_e2e_workflow_for_multiple_run_configs(ws, spark_keep_alive, setup_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_workflows()
-
+    spark = spark_keep_alive.spark
     second_run_config = copy.deepcopy(run_config)
     second_run_config.name = "second"
     second_run_config.checks_location = "second_checks.yml"
@@ -80,8 +81,9 @@ def test_e2e_workflow_for_multiple_run_configs(ws, spark, setup_workflows, expec
     assert checked_df.count() == input_df.count(), f"Output table from the {second_run_config.name} run config is empty"
 
 
-def test_e2e_workflow_serverless(ws, spark, setup_serverless_workflows, expected_quality_checking_output):
+def test_e2e_workflow_serverless(ws, spark_keep_alive, setup_serverless_workflows, expected_quality_checking_output):
     installation_ctx, run_config = setup_serverless_workflows(quarantine=True)
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("e2e", run_config.name)
 
@@ -101,9 +103,10 @@ def test_e2e_workflow_serverless(ws, spark, setup_serverless_workflows, expected
 
 
 def test_e2e_workflow_with_custom_install_folder(
-    ws, spark, setup_workflows_with_custom_folder, expected_quality_checking_output
+    ws, spark_keep_alive, setup_workflows_with_custom_folder, expected_quality_checking_output
 ):
     installation_ctx, run_config = setup_workflows_with_custom_folder()
+    spark = spark_keep_alive.spark
 
     installation_ctx.deployed_workflows.run_workflow("e2e", run_config.name)
 
@@ -125,9 +128,10 @@ def test_e2e_workflow_with_custom_install_folder(
 
 
 def test_e2e_workflow_for_patterns(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -168,9 +172,10 @@ def test_e2e_workflow_for_patterns(
 
 
 def test_e2e_workflow_for_patterns_exclude_patterns(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -211,9 +216,10 @@ def test_e2e_workflow_for_patterns_exclude_patterns(
 
 
 def test_e2e_workflow_for_patterns_exclude_output(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows(quarantine=True)
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
@@ -271,9 +277,10 @@ def test_e2e_workflow_for_patterns_exclude_output(
 
 
 def test_e2e_workflow_for_patterns_table_checks_storage(
-    ws, spark, make_table, setup_workflows, expected_quality_checking_output, make_random
+    ws, spark_keep_alive, make_table, setup_workflows, expected_quality_checking_output, make_random
 ):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     first_table = run_config.input_config.location
     catalog_name, schema_name, _ = first_table.split('.')
