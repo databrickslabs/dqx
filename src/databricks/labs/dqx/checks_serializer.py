@@ -183,8 +183,8 @@ def deserialize_checks_to_dataframe(
 
 
 def generate_rule_set_fingerprint(checks: list[DQRule]) -> str:
-    rule_dicts = [check.rule_fingerprint for check in checks]
-    return generate_hash(rule_dicts)
+    rule_fingerprints = [check.rule_fingerprint for check in checks]
+    return generate_hash(rule_fingerprints)
 
 
 def generate_hash(hash_object: Any) -> str:

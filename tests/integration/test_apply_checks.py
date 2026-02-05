@@ -7822,8 +7822,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ],
         schema,
     )
-    print(checks[0])
-    print(asdict(checks[0]))
+    
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
