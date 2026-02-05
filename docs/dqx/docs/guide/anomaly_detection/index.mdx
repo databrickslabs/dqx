@@ -8,16 +8,17 @@ import TabItem from '@theme/TabItem';
 
 # Anomaly Detection (ML-based)
 
-Detect unusual rows by learning what "normal" looks like across multiple columns, then flag rows that deviate.
+Detect unusual rows by learning what "normal" looks like in your data, then flagging rows that don't fit. No ML expertise required: you provide recent good data, and DQX handles the rest. Results are explainable: each flagged row shows which columns contributed most to its anomaly score, so you can quickly understand why it was flagged.
 
 ## What it is (and why it helps)
 
-Anomaly detection learns typical patterns from recent "good" data, then highlights rows that look unusual when you consider multiple columns together.
-This complements rule-based checks:
-- Rules catch the issues you can anticipate and describe.
-- Anomaly detection surfaces unusual patterns you did not think to write rules for.
+Anomaly detection learns typical patterns from recent "good" data, then highlights rows that look unusual when you consider multiple columns together. You don't need to define thresholds or write rules; the model learns from your data and surfaces what stands out.
 
-Example: amount, quantity, and discount are all valid individually, but the combination is rare for your data. Anomaly detection can flag that row.
+It works alongside your existing rule-based checks:
+- **Rules** catch the issues you can anticipate and describe (e.g., "amount must be positive").
+- **Anomaly detection** surfaces unusual patterns you didn't think to write rules for, especially combinations across columns.
+
+Example: amount, quantity, and discount might all pass your rules individually, but a row where all three are at the extreme end for your business could be rare. Anomaly detection can flag that row so you can review it.
 
 ## Why teams use it
 
@@ -26,7 +27,9 @@ It finds issues that look "valid" to rules but are still suspicious when you loo
 - unusual combinations across columns
 - silent pipeline changes that shift behavior without breaking schemas
 
-In practice, it helps reduce blind spots and speeds up triage because you can focus on the top‑ranked unusual rows first.
+In practice, it helps reduce blind spots and speeds up triage because you can focus on the top-ranked unusual rows first. It also helps you find the issues you didn't plan for. Manual rules can only catch what you anticipate; anomaly detection surfaces what stands out as unusual in your data so you can catch problems before they affect downstream dashboards, reports, or models.
+
+Because results are **explainable**, you don't just get a list of flagged rows. You see *why* each one was flagged, which makes investigation faster and builds trust in the output.
 
 ## When to use anomaly detection
 
@@ -79,8 +82,10 @@ Use Databricks data quality monitoring for table health without looking inside t
 
 Each row is scored and enriched with:
 - **Severity percentile (0–100)**: how unusual the row is compared to training data.
-- **Anomaly flag**: whether it crosses your chosen threshold.
-- **Top contributors**: which fields most influenced the anomaly score.
+- **Anomaly flag**: whether it crosses your chosen threshold (default 95). You can tune this to control how many alerts you get.
+- **Top contributors (explainability)**: which fields most influenced the anomaly score, so you can see *why* a row was flagged. Powered by SHAP, this turns a black-box score into an actionable insight.
+
+You can tune the threshold and other options later if you need to reduce alert noise or catch more edge cases; the defaults work well for most use cases.
 
 ## Prerequisites
 
@@ -92,7 +97,7 @@ pip install 'databricks-labs-dqx[anomaly]'
 
 ## Quick start
 
-Train a model on recent "good" data, then use it in checks:
+Getting started is two steps: train once on recent "good" data, then run the same model as a check on new or incoming data. No configuration files or tuning required to begin. The example below uses defaults that work for most tables.
 
 <Admonition type="warning" title="Exclude identifier columns">
 Avoid ID‑like columns (e.g., `order_id`, `user_id`) in anomaly training. IDs often look unique and can drown out real
@@ -172,10 +177,10 @@ Scores are normalized into `severity_percentile` (0–100). The anomaly threshol
 ## How to choose a threshold
 
 Think of the threshold as an alert volume control:
-- **Lower** = more alerts (more sensitive).
-- **Higher** = fewer alerts (more strict).
+- **Lower** (e.g. 90) = more alerts, more sensitive. Good when you don't want to miss anything.
+- **Higher** (e.g. 98) = fewer alerts, stricter. Good when you want to reduce noise and focus on the most unusual rows.
 
-Start with the default (95), then tune based on how many rows you can reasonably review and how costly misses are.
+Start with the default (95). If you get too many alerts, raise the threshold; if you're missing issues you care about, lower it. Many teams never need to change it.
 
 ## How it works (under the hood)
 

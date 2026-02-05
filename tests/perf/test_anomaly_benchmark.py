@@ -61,7 +61,7 @@ def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, m
             columns=feature_cols,
         )
 
-    benchmark.pedantic(run_train, rounds=1, iterations=1)
+    benchmark(run_train)
     _TRAINED_MODEL["model_name"] = model_name
     _TRAINED_MODEL["registry_table"] = registry_table
 
@@ -124,7 +124,7 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, m
             F.col("_dq_info.anomaly.is_anomaly").cast("double").alias("pred"),
         )
 
-    scored = benchmark.pedantic(run_score, rounds=1, iterations=1)
+    scored = benchmark(run_score)
     metrics = scored.select("label", "score", "pred").toPandas()
     if metrics["label"].nunique() > 1:
         from sklearn.metrics import roc_auc_score  # type: ignore[import-untyped]
