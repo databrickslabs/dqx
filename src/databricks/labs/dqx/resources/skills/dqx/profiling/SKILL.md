@@ -108,3 +108,10 @@ ORDER BY cnt DESC
 -- Schema inspection
 DESCRIBE TABLE EXTENDED catalog.schema.my_table
 ```
+
+## Runnable Examples
+
+| Example | File |
+|---------|------|
+| Profile a DataFrame | `../checks/examples/20_profiling_dataframe.py` |
+| Profile specific columns | `../checks/examples/21_profiling_specific_columns.py` |

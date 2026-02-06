@@ -5,6 +5,13 @@ description: Create custom DQX quality checks using SQL expressions, Python row-
 
 # Custom DQX Quality Checks
 
+## Parameter Reference
+
+| Function | Required | Optional |
+|----------|----------|----------|
+| `sql_expression` | **`expression`** | `msg`, `name`, `negate` (default: false), `columns` |
+| `sql_query` | **`query`** | `merge_columns`, `msg`, `name`, `negate` (default: false), `condition_column` (default: "condition"), `input_placeholder` (default: "input_view"), `row_filter` |
+
 ## SQL Expression (Simplest)
 
 Use `sql_expression` for any row-level logic without writing Python:
@@ -174,5 +181,13 @@ Use in YAML:
 - Use `uuid.uuid4().hex` for unique temp column names to avoid collisions
 - The closure can accept `df`, optionally `spark: SparkSession`, and optionally `ref_dfs: dict[str, DataFrame]`
 - Custom functions must be registered with `@register_rule("row")` or `@register_rule("dataset")`
+
+## Runnable Examples
+
+| Example | File |
+|---------|------|
+| SQL expression with window functions | `examples/17_custom_sql_window.py` |
+| Custom Python row-level check | `examples/18_custom_python_row.py` |
+| Custom Python dataset-level check | `examples/19_custom_python_dataset.py` |
 
 Full reference: https://databrickslabs.github.io/dqx/docs/reference/quality_checks/#creating-custom-row-level-checks

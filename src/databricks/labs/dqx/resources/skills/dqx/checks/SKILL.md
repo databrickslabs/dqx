@@ -130,3 +130,14 @@ valid_df = dq_engine.get_valid(result_df)
 - **Custom**: SQL expressions or Python functions -- see `custom/SKILL.md`
 
 You can mix row-level and dataset-level checks in the same list.
+
+## Runnable Examples
+
+The `examples/` directory contains runnable scripts for every check category:
+
+| Examples | Files |
+|----------|-------|
+| Row-level (null, list, comparison, range, regex, datetime, network, SQL, complex) | `examples/01_row_null_empty.py` .. `examples/09_row_complex.py` |
+| Dataset-level (unique, aggregation, FK, compare, freshness, schema, SQL query) | `examples/10_dataset_unique.py` .. `examples/16_dataset_sql_query.py` |
+| Custom checks (SQL window, Python row, Python dataset) | `examples/17_custom_sql_window.py` .. `examples/19_custom_python_dataset.py` |
+| Profiling | `examples/20_profiling_dataframe.py` .. `examples/21_profiling_specific_columns.py` |
