@@ -5714,6 +5714,7 @@ def test_apply_checks_with_sql_expression(ws, spark):
         },
         {
             "criticality": "error",
+            "name": "not_col2_not_like_val_newline",
             "check": {
                 "function": "sql_expression",
                 "arguments": {
@@ -5726,6 +5727,7 @@ not
         },
         {
             "criticality": "error",
+            "name": "not_col2_not_like_val",
             "check": {
                 "function": "sql_expression",
                 "column": "col1",  # should be skipped
@@ -5742,7 +5744,7 @@ not
         },
     ]
     versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
-
+    print(versioning_rules_checks)
     checked = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
@@ -5770,13 +5772,19 @@ not
                         "user_metadata": {},
                     },
                     {
-                        "name": "not_col2_not_like_val",
+                        "name": "not_col2_not_like_val_newline",
                         "message": "Value is not matching expression: col2 \nnot \n  like \"val%\"",
                         "columns": None,
                         "filter": None,
                         "function": "sql_expression",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, 'not_col2_not_like_val_newline', function='sql_expression'
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, 'not_col2_not_like_val_newline', function='sql_expression'
+                        ),
                         "user_metadata": {},
                     },
                     {
@@ -10814,7 +10822,7 @@ def test_apply_checks_with_has_valid_schema_ignores_result_columns(ws, spark):
             },
         ),
     ]
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
@@ -10840,6 +10848,12 @@ def test_apply_checks_with_has_valid_schema_ignores_result_columns(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "v1_is_not_null", function="is_not_null"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "v1_is_not_null", function="is_not_null"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -10892,7 +10906,8 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
             check_func_kwargs={"expected_schema": "id int, col1 timestamp", "strict": True},
         ),
     ]
-
+    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+    print(versioning_rules_checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
@@ -10910,6 +10925,12 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
                         "function": "is_aggr_equal",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -10927,6 +10948,12 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
                         "function": "is_aggr_equal",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"  
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -10944,6 +10971,12 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
                         "function": "is_aggr_equal",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
+                        ),
                         "user_metadata": {},
                     },
                 ],
@@ -10961,6 +10994,12 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
                         "function": "is_aggr_equal",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
+                        ),
                         "user_metadata": {},
                     },
                 ],
