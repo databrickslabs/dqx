@@ -2023,8 +2023,9 @@ def test_streaming_observer_metrics_output_with_empty_checks(
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
 def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
-    apply_checks_method, spark, ws, make_schema, make_volume, make_random
+    apply_checks_method, spark_keep_alive, ws, make_schema, make_volume, make_random
 ):
+    spark = spark_keep_alive.spark
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
