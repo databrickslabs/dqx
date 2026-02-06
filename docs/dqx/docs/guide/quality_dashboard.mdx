@@ -16,6 +16,10 @@ The dashboard makes it easy to monitor and track data quality issues across all 
 
 The dashboard is not scheduled to refresh automatically by default, minimizing concerns regarding associated cluster costs. When you open a dashboard, refresh it manually to view the latest data. However, as needed, you can configure the dashboard to [refresh periodically](https://docs.databricks.com/en/dashboards/index.html#schedules-and-subscriptions).
 
+<div>
+ <img src={useBaseUrl('/img/dashboard.png')} alt="DQX Dashboard" />
+</div>
+
 ## Dashboard Tabs
 
 The dashboard consists of three tabs, each designed for different monitoring scenarios:
@@ -38,9 +42,9 @@ The **Invalid Data Table Name** parameter is automatically filtered to display o
 
 If your tables use different column names for error and warning reporting, you can configure the reporting column names in the dashboard parameters. The default reporting column names are `_errors` and `_warnings`, but these can be customized if your tables use different naming conventions.
 
-<div>
- <img src={useBaseUrl('/img/dashboard.png')} alt="DQX Dashboard" />
-</div>
+<Admonition type="info" title="Configuration without quarantining">
+If quarantining was not used during data quality checking (i.e., there is only a single output table with warnings and errors, and no split between valid and invalid data), you need to provide the same table for both the **Curated Data Table Name** (good data) and **Invalid Data Table Name** (bad data) parameters in the dashboard.
+</Admonition>
 
 How to locate the dashboard:
 
