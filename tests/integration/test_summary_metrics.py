@@ -2181,12 +2181,12 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
         },
     ]
 
-    expected_metrics_df = (
-        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
+    assert_df_equality(
+        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA)
+        .drop("run_time")
+        .orderBy("metric_name"),
+        spark.table(metrics_table_name).drop("run_time").orderBy("metric_name"),
     )
-    actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
-
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 4
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
