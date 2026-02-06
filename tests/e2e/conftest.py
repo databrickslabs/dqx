@@ -31,9 +31,13 @@ def library_ref() -> str:
     """
     Returns a git reference to DQX library for testing.
 
-    In GitHub Actions: uses REF_NAME env var (branch name from github.head_ref for PRs, github.ref_name for push)
-    Locally: automatically detects and uses current git branch
-    Default: main branch
+    In GitHub Actions: uses REF_NAME env var set from github.ref_name.
+        - For pull_request events this is a PR merge ref like "123/merge",
+          which becomes "refs/pull/123/merge".
+        - For push events this is a branch name like "main",
+          which is used directly as the git ref.
+    Locally: automatically detects and uses current git branch.
+    Default: falls back to the main branch (no ref suffix).
 
     Note: For local testing, the code must be pushed to GitHub (branch or PR).
     """
@@ -43,7 +47,10 @@ def library_ref() -> str:
     if is_github_actions:
         ref_name = os.getenv("REF_NAME")
         if ref_name:
-            return f"{base_ref}.git@refs/pull/{ref_name}"
+            # PR merge refs look like "123/merge"; branch names don't contain "/"
+            if "/" in ref_name:
+                return f"{base_ref}.git@refs/pull/{ref_name}"
+            return f"{base_ref}.git@{ref_name}"
     else:
         # Local behavior: use current git branch
         ref_name = _get_local_git_branch()

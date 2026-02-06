@@ -92,9 +92,12 @@ class AnomalyEngine(DQEngineBase):
                             Useful with auto-discovery to filter out unwanted columns without
                             specifying all desired columns manually.
             expected_anomaly_rate: Expected fraction of anomalies in your data (default: 0.02 = 2%).
-                                   This helps the model calibrate what's "normal" vs "unusual".
+                                   Used as the default contamination parameter for the Isolation Forest
+                                   algorithm, which controls the proportion of training data that the model
+                                   treats as outliers when learning the decision boundary. A higher value
+                                   makes the model flag more rows as anomalous.
                                    Common values: 0.01-0.02 (fraud), 0.03-0.05 (quality issues), 0.10 (exploration).
-                                   This sets the model contamination default.
+                                   Overridden if params.algorithm_config.contamination is set explicitly.
         Important Notes:
             - Avoid ID columns (user_id, order_id, etc.) - use exclude_columns to filter them out.
             - Choose behavioral columns, not identifiers. Good: amount, quantity. Bad: user_id.

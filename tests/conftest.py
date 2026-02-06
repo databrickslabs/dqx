@@ -10,7 +10,7 @@ from typing import Any
 
 # Apply numba/coverage patches before any other imports that might trigger numba
 # This must be imported early (before third-party imports) to patch coverage types
-# See pyproject.toml per-file-ignores for pylint exceptions
+# See pyproject.toml per-file-ignores for ignored checks (wrong-import-order, unused-import)
 import tests.compat  # noqa: F401
 
 import pytest

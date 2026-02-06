@@ -20,7 +20,6 @@ try:
 
     ANOMALY_AVAILABLE = True
 except ImportError:
-    AnomalyTrainerWorkflow = None  # type: ignore[misc, assignment]
     ANOMALY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -62,7 +61,7 @@ class WorkflowsRunner:
         )
         workflows: list[Workflow] = [profiler, quality_checker, e2e]
 
-        if ANOMALY_AVAILABLE and AnomalyTrainerWorkflow is not None:
+        if ANOMALY_AVAILABLE:
             anomaly_trainer = AnomalyTrainerWorkflow(
                 spark_conf=config.quality_checker_spark_conf,
                 override_clusters=config.quality_checker_override_clusters,

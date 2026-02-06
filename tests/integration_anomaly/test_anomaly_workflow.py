@@ -1,13 +1,17 @@
-from types import SimpleNamespace
-
 import pyspark.sql.functions as F
 import pytest
 
 from databricks.labs.dqx.anomaly.anomaly_workflow import AnomalyTrainerWorkflow
 from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig
+from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.errors import InvalidConfigError
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_utils import get_standard_2d_training_data
+
+
+def _make_workflow_ctx(run_config, spark, ws):
+    """Create a WorkflowContext with overridden properties for testing."""
+    return WorkflowContext().replace(run_config=run_config, spark=spark, workspace_client=ws)
 
 
 def test_anomaly_workflow_trains_with_explicit_model_name(ws, spark, make_schema, make_random):
@@ -30,7 +34,7 @@ def test_anomaly_workflow_trains_with_explicit_model_name(ws, spark, make_schema
             model_name=model_name,
         ),
     )
-    ctx = SimpleNamespace(run_config=run_config, spark=spark, workspace_client=ws)
+    ctx = _make_workflow_ctx(run_config, spark, ws)
 
     AnomalyTrainerWorkflow().train_model(ctx)
 
@@ -45,7 +49,7 @@ def test_anomaly_workflow_missing_anomaly_config_raises(ws, spark):
         input_config=InputConfig(location="catalog.schema.table"),
         anomaly_config=None,
     )
-    ctx = SimpleNamespace(run_config=run_config, spark=spark, workspace_client=ws)
+    ctx = _make_workflow_ctx(run_config, spark, ws)
 
     with pytest.raises(InvalidConfigError, match="anomaly_config is required"):
         AnomalyTrainerWorkflow().train_model(ctx)
@@ -57,7 +61,7 @@ def test_anomaly_workflow_missing_input_config_raises(ws, spark):
         input_config=None,
         anomaly_config=AnomalyConfig(columns=["amount"], registry_table="catalog.schema.registry"),
     )
-    ctx = SimpleNamespace(run_config=run_config, spark=spark, workspace_client=ws)
+    ctx = _make_workflow_ctx(run_config, spark, ws)
 
     with pytest.raises(InvalidConfigError, match="input_config is required"):
         AnomalyTrainerWorkflow().train_model(ctx)
@@ -69,7 +73,7 @@ def test_anomaly_workflow_missing_model_name_raises(ws, spark):
         input_config=InputConfig(location="catalog.schema.table"),
         anomaly_config=AnomalyConfig(columns=["amount"], registry_table="catalog.schema.registry"),
     )
-    ctx = SimpleNamespace(run_config=run_config, spark=spark, workspace_client=ws)
+    ctx = _make_workflow_ctx(run_config, spark, ws)
 
     with pytest.raises(InvalidConfigError, match="model_name is required"):
         AnomalyTrainerWorkflow().train_model(ctx)

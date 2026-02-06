@@ -1,5 +1,4 @@
 import numpy as np
-import pytest
 from pyspark.sql import functions as F
 
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
@@ -43,7 +42,6 @@ def _prepare_synthetic_data(
     return feature_cols, train_df, test_df
 
 
-@pytest.mark.benchmark(group="anomaly_synthetic")
 def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, make_random):
     feature_cols, train_df, _ = _prepare_synthetic_data(spark)
 
@@ -66,7 +64,6 @@ def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, m
     _TRAINED_MODEL["registry_table"] = registry_table
 
 
-@pytest.mark.benchmark(group="anomaly_synthetic")
 def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, make_random):
     feature_cols, train_df, test_df = _prepare_synthetic_data(spark)
 

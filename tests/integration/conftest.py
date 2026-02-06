@@ -62,14 +62,16 @@ class SparkKeepAlive:
     Runs lightweight queries periodically to prevent INACTIVITY_TIMEOUT.
     """
 
-    def __init__(self, spark, interval_seconds=60):
+    def __init__(self, spark, interval_seconds=60, join_timeout=5):
         """
         Args:
             spark: SparkSession to keep alive
             interval_seconds: How often to run keep-alive query (default 60s)
+            join_timeout: Seconds to wait for the background thread to stop (default 5s)
         """
         self.spark = spark
         self.interval = interval_seconds
+        self._join_timeout = join_timeout
         self._stop_flag = threading.Event()
         self._thread = None
 
@@ -104,7 +106,9 @@ class SparkKeepAlive:
         """Stop the keep-alive background thread."""
         if self._thread and self._thread.is_alive():
             self._stop_flag.set()
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=self._join_timeout)
+            if self._thread.is_alive():
+                logger.warning(f"SparkKeepAlive thread did not stop within {self._join_timeout}s")
 
 
 @pytest.fixture
