@@ -160,7 +160,7 @@ def test_benchmark_is_null(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
-    benchmark.group += f" {column}"
+    benchmark.group += f"_{column}"
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
@@ -240,7 +240,7 @@ def test_benchmark_is_null_or_empty(benchmark, ws, generated_df, column):
             column=column,
         ),
     ]
-    benchmark.group += f" {column}"
+    benchmark.group += f"_{column}"
     checked = dq_engine.apply_checks(generated_df, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
