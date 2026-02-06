@@ -37,3 +37,7 @@ ua.with_extra("dqx", __version__)
 
 # Add dqx/<version> for re-packaging of dqx, where product name is omitted
 ua.with_product("dqx", __version__)
+
+from databricks.labs.dqx.skills import install_skills
+
+__all__ = ["install_skills"]
