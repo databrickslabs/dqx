@@ -4,6 +4,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.workspace import ImportFormat
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def install_skills(folder: str | None = None):
         target_dir = "/".join(target_path.split("/")[:-1])
 
         ws.workspace.mkdirs(target_dir)
-        ws.workspace.upload(target_path, io.BytesIO(skill_file.read_bytes()), overwrite=True)
+        ws.workspace.upload(target_path, io.BytesIO(skill_file.read_bytes()), format=ImportFormat.AUTO, overwrite=True)
         logger.info(f"  Uploaded: {relative}")
 
     logger.info(f"Done! {len(skill_files)} skill files deployed to {folder}")
