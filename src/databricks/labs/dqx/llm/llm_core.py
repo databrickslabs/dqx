@@ -28,21 +28,32 @@ class LLMModelConfigurator:
         self._model_config = model_config
 
     def configure(self) -> None:
-        """Configure the DSPy language model with the provided settings."""
-        # Check if DSPy is already configured to avoid reconfiguration errors
+        """Configure the DSPy language model once with base settings."""
         if dspy.settings.lm is not None:
             logger.debug("DSPy is already configured, skipping reconfiguration")
             return
 
-        language_model = dspy.LM(
+        try:
+            dspy.configure(lm=self.create_lm())
+            logger.info(f"Configured DSPy model: {self._model_config.model_name}")
+        except RuntimeError as e:
+            # Race condition: another thread configured DSPy concurrently
+            logger.debug(f"DSPy already configured by another thread: {e}")
+
+    def create_lm(self) -> dspy.LM:
+        """
+        Create an LM instance with current config for per-request override.
+
+        Returns:
+            A new LM instance configured with the current model config.
+        """
+        return dspy.LM(
             model=self._model_config.model_name,
             model_type="chat",
             api_key=self._model_config.api_key or "",
             api_base=self._model_config.api_base or "",
             max_retries=3,
         )
-        dspy.configure(lm=language_model)
-        logger.info(f"Configured DSPy model: {self._model_config.model_name}")
 
 
 class DspySchemaGuesserSignature(dspy.Signature):
