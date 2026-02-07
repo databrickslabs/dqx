@@ -12,11 +12,12 @@ DQX provides the capability to generate data quality rule candidates using AI/LL
 
 ## Overview
 
-The AI-assisted quality checks generation is available via the `DQGenerator` class and supports:
+The AI-assisted quality checks generation is available via the `DQGenerator` and `DQDltGenerator` classes and supports:
 - Analyzing natural language descriptions of data quality requirements.
 - Optionally inspecting input data schemas to understand data structure.
 - Generating appropriate data quality rules that match the requirements using built-in and custom check functions.
 - Validating the generated rules to ensure they are syntactically correct.
+- Generating Lakeflow Pipelines (DLT) rules directly from natural language or summary statistics.
 
 This approach is particularly useful when you have clear business requirements, but need help translating them into technical data quality rules.
 It's also useful for generating technical rules without requiring knowledge of DQX-specific syntax.
@@ -354,6 +355,95 @@ You can combine AI-assisted rules with profiler-generated rules for comprehensiv
     ```
   </TabItem>
 </Tabs>
+
+### Generating Lakeflow Pipelines (DLT) Rules with AI-Assisted Generation
+
+You can also generate Lakeflow Pipelines (formerly Delta Live Tables) rules directly using AI-assisted generation. This is particularly useful when you want to create DLT expectations from natural language requirements or summary statistics:
+
+<Tabs>
+  <TabItem value="Python" label="Python" default>
+    ```python
+    from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.sdk import WorkspaceClient
+
+    ws = WorkspaceClient()
+
+    # Step 1: Profile the data to generate summary statistics
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
+    input_df = spark.read.table("catalog1.schema1.sales_data")
+    summary_stats, profiles = profiler.profile(input_df)
+
+    # Step 2: Use summary statistics to generate AI-assisted DLT rules
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+
+    # Option A: With business context (user input + summary stats)
+    dlt_rules = generator.generate_dlt_rules_ai_assisted(
+        user_input="Validate sales data for anomalies and business rules",
+        summary_stats=summary_stats
+    )
+
+    # Option B: Without business context (LLM infers rules from statistics alone)
+    dlt_rules = generator.generate_dlt_rules_ai_assisted(
+        summary_stats=summary_stats
+    )
+
+    # Generate SQL format (default)
+    sql_rules = generator.generate_dlt_rules_ai_assisted(
+        user_input="User ID must not be null (error). Status should be in allowed list (warn).",
+        summary_stats=summary_stats,
+        language="SQL"
+    )
+    print("SQL DLT Rules:")
+    for rule in sql_rules:
+        print(rule)
+    # Output example:
+    # CONSTRAINT user_id_is_not_null EXPECT (user_id is not null) ON VIOLATION FAIL UPDATE
+    # CONSTRAINT status_is_in EXPECT (status in ('active', 'inactive')) 
+
+    # Generate Python format with per-rule criticality
+    python_rules = generator.generate_dlt_rules_ai_assisted(
+        user_input="User ID must not be null (error). Username should not be null (warn).",
+        summary_stats=summary_stats,
+        language="Python"
+    )
+    print("Python DLT Rules:")
+    print(python_rules)
+    # Output example:
+    # @dlt.expect_all_or_fail(
+    # {"user_id_is_not_null": "user_id is not null"}
+    # )
+    # 
+    # @dlt.expect_all(
+    # {"username_is_not_null": "username is not null"}
+    # )
+
+    # Generate Python dictionary format with criticality metadata
+    dict_rules = generator.generate_dlt_rules_ai_assisted(
+        user_input="User ID must not be null.",
+        summary_stats=summary_stats,
+        language="Python_Dict"
+    )
+    print("Python Dictionary DLT Rules:")
+    print(dict_rules)
+    # Output example:
+    # {
+    #   "user_id_is_not_null": {
+    #     "expression": "user_id is not null",
+    #     "criticality": "error"
+    #   }
+    # }
+    ```
+  </TabItem>
+</Tabs>
+
+<Admonition type="info" title="Per-Rule Criticality in DLT Rules">
+Unlike the regular `generate_dlt_rules` method which uses a global `action` parameter, `generate_dlt_rules_ai_assisted` uses criticality from each generated rule:
+- **error** criticality → `expect_or_fail` (SQL: `ON VIOLATION FAIL UPDATE`, Python: `@dlt.expect_all_or_fail`)
+- **warn** criticality → `expect` (SQL: no ON VIOLATION clause, Python: `@dlt.expect_all`)
+
+This allows you to have different violation behaviors for different rules within the same DLT pipeline.
+</Admonition>
 
 ### Example Use Cases
 

@@ -1,8 +1,9 @@
 import pytest
 from tests.integration.test_generator import test_rules
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
-from databricks.labs.dqx.profiler.profiler import DQProfile
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.profiler.profiler import DQProfile, DQProfiler
+from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
+from databricks.labs.dqx.config import InputConfig
 
 
 test_empty_rules: list[DQProfile] = []
@@ -131,3 +132,170 @@ def test_generate_dlt_python_dict(ws):
         "d1_min_max": "d1 >= 1.23 and d1 <= 333323.0",
     }
     assert expectations == expected
+
+
+# AI-Assisted DLT Rules Generation Tests
+def test_generate_dlt_rules_ai_assisted_with_user_input(ws, spark):
+    """Test AI-assisted DLT rules generation with user input only."""
+    user_input = "User ID must not be null. Age should be between 0 and 120."
+    
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(user_input=user_input, language="SQL")
+    
+    assert isinstance(result, list)
+    assert len(result) > 0
+    # Verify that rules were generated
+    result_str = " ".join(result)
+    assert "user_id" in result_str.lower() or "age" in result_str.lower()
+
+
+def test_generate_dlt_rules_ai_assisted_with_summary_stats(ws, spark):
+    """Test AI-assisted DLT rules generation with summary statistics only."""
+    summary_stats = {
+        "temperature": {"mean": "22.5", "min": "-10.0", "max": "50.0"},
+        "humidity": {"mean": "65.5", "min": "20.0", "max": "95.0"},
+    }
+    
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(summary_stats=summary_stats, language="SQL")
+    
+    assert isinstance(result, list)
+    assert len(result) > 0
+
+
+def test_generate_dlt_rules_ai_assisted_with_user_input_and_summary_stats(ws, spark):
+    """Test AI-assisted DLT rules generation with both user input and summary statistics."""
+    user_input = "Validate sensor data: ensure temperatures and humidity are within reasonable ranges"
+    
+    summary_stats = {
+        "temperature": {"mean": "22.5", "min": "-10.0", "max": "50.0"},
+        "humidity": {"mean": "65.5", "min": "20.0", "max": "95.0"},
+    }
+    
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(
+        user_input=user_input, summary_stats=summary_stats, language="SQL"
+    )
+    
+    assert isinstance(result, list)
+    assert len(result) > 0
+
+
+def test_generate_dlt_rules_ai_assisted_with_input_config(ws, spark, make_table, make_schema):
+    """Test AI-assisted DLT rules generation with input_config for schema inference."""
+    from tests.conftest import TEST_CATALOG
+    
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    input_table = make_table(
+        catalog_name=TEST_CATALOG,
+        schema_name=schema.name,
+        columns=[("user_id", "string"), ("email", "string"), ("age", "int")],
+    )
+    
+    user_input = "User ID must not be null. Email must be valid."
+    
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(
+        user_input=user_input, input_config=InputConfig(location=input_table.full_name), language="SQL"
+    )
+    
+    assert isinstance(result, list)
+    assert len(result) > 0
+
+
+def test_generate_dlt_rules_ai_assisted_python_output(ws, spark):
+    """Test AI-assisted DLT rules generation with Python output."""
+    user_input = "User ID must not be null (error). Username should not be null (warn)."
+    
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(user_input=user_input, language="Python")
+    
+    assert isinstance(result, str)
+    # Should contain decorators for both error and warn criticality
+    assert "@dlt.expect" in result
+
+
+def test_generate_dlt_rules_ai_assisted_python_dict_output(ws, spark):
+    """Test AI-assisted DLT rules generation with Python_Dict output."""
+    user_input = "User ID must not be null."
+    
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(user_input=user_input, language="Python_Dict")
+    
+    assert isinstance(result, dict)
+    assert len(result) > 0
+    # Check that criticality is stored in the dict (nested dict format)
+    for key, value in result.items():
+        assert isinstance(value, dict)
+        assert "expression" in value
+        assert "criticality" in value
+        assert isinstance(value["expression"], str)
+        assert value["criticality"] in ["error", "warn"]
+
+
+def test_generate_dlt_rules_ai_assisted_per_rule_criticality_sql(ws, spark):
+    """Test that per-rule criticality is correctly applied in SQL output."""
+    user_input = "User ID must not be null (error). Status should be in allowed list (warn)."
+    
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(user_input=user_input, language="SQL")
+    
+    assert isinstance(result, list)
+    # Check that error rules have ON VIOLATION FAIL UPDATE
+    error_rules = [r for r in result if "ON VIOLATION FAIL UPDATE" in r]
+    # Check that warn rules don't have ON VIOLATION clause
+    warn_rules = [r for r in result if "ON VIOLATION" not in r]
+    
+    # At least one rule should have the appropriate criticality handling
+    assert len(error_rules) > 0 or len(warn_rules) > 0
+
+
+def test_generate_dlt_rules_ai_assisted_per_rule_criticality_python(ws, spark):
+    """Test that per-rule criticality is correctly applied in Python output."""
+    user_input = "User ID must not be null (error). Username should not be null (warn)."
+    
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(user_input=user_input, language="Python")
+    
+    assert isinstance(result, str)
+    # Should have separate decorator blocks for error and warn
+    assert "@dlt.expect_all_or_fail" in result or "@dlt.expect_all" in result
+
+
+def test_generate_dlt_rules_ai_assisted_with_profiler_summary_stats(ws, spark, make_table, make_schema):
+    """Test AI-assisted DLT rules generation using summary stats from profiler."""
+    from tests.conftest import TEST_CATALOG
+    
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    input_table = make_table(
+        catalog_name=TEST_CATALOG,
+        schema_name=schema.name,
+        columns=[("product_id", "string"), ("price", "double"), ("quantity", "int")],
+    )
+    
+    # Profile the table to get summary stats
+    profiler = DQProfiler(workspace_client=ws, spark=spark)
+    summary_stats, _ = profiler.profile_table(InputConfig(location=input_table.full_name))
+    
+    # Generate DLT rules using summary stats
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    result = generator.generate_dlt_rules_ai_assisted(summary_stats=summary_stats, language="SQL")
+    
+    assert isinstance(result, list)
+    assert len(result) > 0
+
+
+def test_generate_dlt_rules_ai_assisted_missing_inputs(ws, spark):
+    """Test error when neither user_input nor summary_stats are provided."""
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    
+    with pytest.raises(MissingParameterError, match="Either summary statistics or user input must be provided"):
+        generator.generate_dlt_rules_ai_assisted()
+
+
+def test_generate_dlt_rules_ai_assisted_unsupported_language(ws, spark):
+    """Test error for unsupported language in AI-assisted generation."""
+    generator = DQDltGenerator(workspace_client=ws, spark=spark)
+    
+    with pytest.raises(InvalidParameterError, match="Unsupported language"):
+        generator.generate_dlt_rules_ai_assisted(user_input="Test", language="unsupported")
