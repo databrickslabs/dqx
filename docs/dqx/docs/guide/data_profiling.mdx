@@ -10,12 +10,15 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 # Profiling and Quality Checks Generation
 
 Data profiling can be run to profile input data and generate quality rule candidates with summary statistics.
+
 The generated data quality rules (checks) candidates can be used as input for the quality checking as described [here](/docs/guide/quality_checks_apply).
 In addition, the Lakeflow (DLT) generator can generate native Lakeflow Pipelines expectations.
 
 You can run profiling and quality checks generation using the following approaches:
 * [Programmatic approach](#programmatic-approach): you can use DQX classes to run the profiler and quality checks generator on DataFrames or tables, and [save the generated checks to a storage](/docs/guide/quality_checks_storage).
 * [No-code approach (Profiler Workflow)](#no-code-approach-profiler-workflow): you can run the profiler and quality checks generator on tables as a workflow if DQX is installed in the workspace as a tool. The workflow will save the generated checks to a file or table automatically.
+
+See [DQProfile Types](/docs/reference/profiler#dqprofile-types) for a complete list of profile types and associated DQX rules.
 
 <Admonition type="tip" title="Data profiling usage">
 Data profiling is typically performed as a one-time action for the input dataset to discover the initial set of quality rule candidates.
@@ -84,7 +87,7 @@ Data loaded as a DataFrame can be profiled using DQX classes to generate summary
   </TabItem>
 </Tabs>
 
-### Profiling a Table
+### Profiling a table
 
 Profiling and quality checks generation can be run on individual tables.
 
@@ -109,7 +112,7 @@ Profiling and quality checks generation can be run on individual tables.
   </TabItem>
 </Tabs>
 
-### Profiling multiple Tables
+### Profiling multiple tables
 
 The profiler can discover and profile multiple tables accessible via Unity Catalog. Tables can be passed explicitly as a list or be included/excluded using wildcard patterns (e.g. `"catalog.schema.*"`).
 
@@ -431,7 +434,7 @@ The profiler supports extensive configuration options to customize the profiling
   </TabItem>
 </Tabs>
 
-#### Profiling options for multiple table
+#### Profiling options for multiple tables
 
 When profiling multiple tables, you can pass a list of dictionaries to apply different options to each one.
 Wildcard patterns are supported, allowing you to match table names and apply specific options based on those patterns.
@@ -483,7 +486,7 @@ Wildcard patterns are supported, allowing you to match table names and apply spe
   </TabItem>
 </Tabs>
 
-## Understanding summary statistics
+## Understanding summary statistics and profiles
 
 <Admonition type="info" title="How the data is profiled">
 To ensure efficiency, summary statistics are computed on a **sampled subset** of your data, not the entire dataset. By default, the profiler proceeds as follows:
