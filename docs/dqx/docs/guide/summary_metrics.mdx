@@ -1,5 +1,5 @@
 ---
-sidebar_position: 8
+sidebar_position: 308
 ---
 
 import Admonition from '@theme/Admonition';
@@ -18,12 +18,12 @@ Summary metrics in DQX capture both **built-in metrics** (automatically calculat
 
 DQX automatically captures the following built-in metrics for every data quality check execution:
 
-| Metric Name              | Data Type                                       | Description                                        |
-|--------------------------|-------------------------------------------------|----------------------------------------------------|
-| `input_row_count`        | `int`                                           | Total number of input rows processed               |
-| `error_row_count`        | `int`                                           | Number of rows that failed error-level checks      |
-| `warning_row_count`      | `int`                                           | Number of rows that triggered warning-level checks |
-| `valid_row_count`        | `int`                                           | Number of rows that passed all checks              |
+| Metric Name              | Data Type                                       | Description                                                         |
+|--------------------------|-------------------------------------------------|---------------------------------------------------------------------|
+| `input_row_count`        | `int`                                           | Total number of input rows processed                                |
+| `error_row_count`        | `int`                                           | Number of rows that failed error-level checks                       |
+| `warning_row_count`      | `int`                                           | Number of rows that triggered warning-level checks                  |
+| `valid_row_count`        | `int`                                           | Number of rows that passed all checks (have no errors and warnings) |
 
 ### Custom Metrics
 
@@ -94,8 +94,7 @@ Metrics can be written to a table in batch or streaming. You can write metrics f
 The `name` specified in the `DQMetricsObserver` is recorded as the `run_name` column in the metrics table. It is recommended to assign a unique `name` to the observer for each job or table to enable efficient filtering when centralizing metrics in a single table.
 
 <Admonition type="warning" title="Compute requirements">
-To write metrics directly to a table, users must use a classic compute cluster with [Dedicated access mode](https://docs.databricks.com/aws/en/compute/configure#access-modes).
-This is due to a Spark Connect issue, which will be resolved in future versions.
+Writing metrics directly to a results table is not supported for classic compute clusters in [Standard access mode](https://docs.databricks.com/aws/en/compute/standard-overview) with Databricks runtime versions earlier than 17.3LTS.
 </Admonition>
 
 #### Writing Metrics to a Table in Batch

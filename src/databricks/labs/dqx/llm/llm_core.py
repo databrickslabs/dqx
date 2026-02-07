@@ -28,16 +28,32 @@ class LLMModelConfigurator:
         self._model_config = model_config
 
     def configure(self) -> None:
-        """Configure the DSPy language model with the provided settings."""
-        language_model = dspy.LM(
+        """Configure the DSPy language model once with base settings."""
+        if dspy.settings.lm is not None:
+            logger.debug("DSPy is already configured, skipping reconfiguration")
+            return
+
+        try:
+            dspy.configure(lm=self.create_lm())
+            logger.info(f"Configured DSPy model: {self._model_config.model_name}")
+        except RuntimeError as e:
+            # Race condition: another thread configured DSPy concurrently
+            logger.debug(f"DSPy already configured by another thread: {e}")
+
+    def create_lm(self) -> dspy.LM:
+        """
+        Create an LM instance with current config for per-request override.
+
+        Returns:
+            A new LM instance configured with the current model config.
+        """
+        return dspy.LM(
             model=self._model_config.model_name,
             model_type="chat",
             api_key=self._model_config.api_key or "",
             api_base=self._model_config.api_base or "",
             max_retries=3,
         )
-        dspy.configure(lm=language_model)
-        logger.info(f"Configured DSPy model: {self._model_config.model_name}")
 
 
 class DspySchemaGuesserSignature(dspy.Signature):
@@ -179,7 +195,7 @@ class DspyRuleGenerationWithSchemaInference(dspy.Module):
         # Infer schema if not provided
         if not schema_info or not schema_info.strip():
             logger.info("Inferring schema from business description...")
-            schema_result = self.schema_inferrer.forward(business_description)
+            schema_result = self.schema_inferrer(business_description)
             schema_info = schema_result.guessed_schema_json
             guessed_schema_json = schema_result.guessed_schema_json
             assumptions_bullets = schema_result.assumptions_bullets

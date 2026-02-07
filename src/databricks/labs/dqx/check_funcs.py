@@ -13,7 +13,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -136,16 +136,19 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
 
 
 @register_rule("row")
-def is_not_empty(column: str | Column) -> Column:
+def is_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not empty (but may be null).
 
     Args:
         column: column to check; can be a string column name or a column expression
+        trim_strings: boolean flag to trim spaces from strings
 
     Returns:
         Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if trim_strings:
+        col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.cast("string") == F.lit("")
     return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
 
@@ -162,6 +165,62 @@ def is_not_null(column: str | Column) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
+
+
+@register_rule("row")
+def is_null(column: str | Column) -> Column:
+    """Checks whether the values in the input column are null.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    return make_condition(
+        col_expr.isNotNull(), f"Column '{col_expr_str}' value is not null", f"{col_str_norm}_is_not_null"
+    )
+
+
+@register_rule("row")
+def is_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+    """Checks whether the values in the input column are empty (but may be null).
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        trim_strings: boolean flag to trim spaces from strings
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if trim_strings:
+        col_expr = F.trim(col_expr).alias(col_str_norm)
+    condition = col_expr.cast("string") != F.lit("")
+    return make_condition(condition, f"Column '{col_expr_str}' value is not empty", f"{col_str_norm}_is_not_empty")
+
+
+@register_rule("row")
+def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+    """Checks whether the values in the input column are either null or empty.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        trim_strings: boolean flag to trim spaces from strings
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if trim_strings:
+        col_expr = F.trim(col_expr).alias(col_str_norm)
+    condition = col_expr.isNotNull() & (col_expr.cast("string").isNotNull() & (col_expr.cast("string") != F.lit("")))
+    return make_condition(
+        condition,
+        f"Column '{col_expr_str}' value is not null and not empty",
+        f"{col_str_norm}_is_not_null_and_not_empty",
+    )
 
 
 @register_rule("row")
@@ -549,7 +608,10 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
 
 @register_rule("row")
 def is_equal_to(
-    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+    column: str | Column,
+    value: int | float | str | datetime.date | datetime.datetime | Column | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> Column:
     """Check whether the values in the input column are equal to the given value.
 
@@ -557,13 +619,41 @@ def is_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
             The value to compare with. Can be a literal or a Spark Column. Defaults to None.
-
+        abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
+                Example: abs(a - b) <= tolerance
+                With tolerance=0.01:
+                    2.001 and 2.0099 → equal (diff = 0.0089)
+                    2.001 and 2.02 → not equal (diff = 0.019)
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
+                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+                With tolerance=0.01 (1%):
+                    100 vs 101 → equal (diff = 1, tolerance = 1)
+                    100 vs 102 → not equal (diff = 2, tolerance = 1)
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
+
+    Raises:
+        InvalidParameterError: If absolute or relative tolerances are negative.
+
+    Note:
+        If both tolerances are provided, the value is considered equal if it meets either tolerance condition.
     """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
-    condition = col_expr != value_expr
+
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float)):
+        # Use tolerance-based comparison for numeric columns
+        tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
+        condition = ~tolerance_match
+    else:
+        # Exact equality comparison
+        condition = col_expr != value_expr
 
     return make_condition(
         condition,
@@ -580,7 +670,10 @@ def is_equal_to(
 
 @register_rule("row")
 def is_not_equal_to(
-    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+    column: str | Column,
+    value: int | float | str | datetime.date | datetime.datetime | Column | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> Column:
     """Check whether the values in the input column are not equal to the given value.
 
@@ -588,13 +681,42 @@ def is_not_equal_to(
         column (str | Column): Column to check. Can be a string column name or a column expression.
         value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
             The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+        abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
+                Example: abs(a - b) <= tolerance
+                With tolerance=0.01:
+                    2.001 and 2.0099 → equal (diff = 0.0089)
+                    2.001 and 2.02 → not equal (diff = 0.019)
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
+                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+                With tolerance=0.01 (1%):
+                    100 vs 101 → equal (diff = 1, tolerance = 1)
+                    100 vs 102 → not equal (diff = 2, tolerance = 1)
 
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
+
+    Raises:
+        InvalidParameterError: If absolute or relative tolerances are negative.
+
+    Note:
+        If both tolerances are provided, the value is considered equal if it meets either tolerance condition.
     """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
-    condition = col_expr == value_expr
+
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float)):
+        # Use tolerance-based comparison for numeric columns
+        tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
+        condition = tolerance_match
+    else:
+        # Exact equality comparison (backwards compatible)
+        condition = col_expr == value_expr
 
     return make_condition(
         condition,
@@ -1558,6 +1680,8 @@ def is_aggr_equal(
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     aggr_params: dict[str, Any] | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1576,6 +1700,8 @@ def is_aggr_equal(
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
+        abs_tolerance: Optional absolute tolerance for equality comparison of numeric aggregations.
+        rel_tolerance: Optional relative tolerance for equality comparison of numeric aggregations.
 
     Returns:
         A tuple of:
@@ -1592,6 +1718,8 @@ def is_aggr_equal(
         compare_op=py_operator.ne,
         compare_op_label="not equal to",
         compare_op_name="not_equal_to",
+        abs_tolerance=abs_tolerance,
+        rel_tolerance=rel_tolerance,
     )
 
 
@@ -1603,6 +1731,8 @@ def is_aggr_not_equal(
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     aggr_params: dict[str, Any] | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1621,6 +1751,8 @@ def is_aggr_not_equal(
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
+        abs_tolerance: Optional absolute tolerance for equality comparison of numeric aggregations.
+        rel_tolerance: Optional relative tolerance for equality comparison of numeric aggregations.
 
     Returns:
         A tuple of:
@@ -1637,6 +1769,8 @@ def is_aggr_not_equal(
         compare_op=py_operator.eq,
         compare_op_label="equal to",
         compare_op_name="equal_to",
+        abs_tolerance=abs_tolerance,
+        rel_tolerance=rel_tolerance,
     )
 
 
@@ -1925,12 +2059,14 @@ def is_data_fresh_per_time_window(
 
 
 @register_rule("dataset")
+@register_for_original_columns_preselection()
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
     ref_df_name: str | None = None,
     ref_table: str | None = None,
     columns: list[str | Column] | None = None,
     strict: bool = False,
+    exclude_columns: list[str | Column] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a schema compatibility check condition and closure for dataset-level validation.
@@ -1940,6 +2076,8 @@ def has_valid_schema(
     In strict mode, validates that the schema matches exactly (same columns, same order, same types)
     for the columns specified in columns or for all columns if columns is not specified.
 
+    All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.
+
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
@@ -1948,6 +2086,8 @@ def has_valid_schema(
         strict: Whether to perform strict schema validation (default: False).
             - False: Validates that all expected columns exist with compatible types (allows extra columns)
             - True: Validates exact schema match (same columns, same order, same types)
+        exclude_columns: Optional list of columns in the checked DataFrame schema to
+            ignore for validation.
 
     Returns:
         A tuple of:
@@ -1976,6 +2116,12 @@ def has_valid_schema(
     if columns:
         column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
+    exclude_column_names: list[str] | None = None
+    if exclude_columns:
+        exclude_column_names = [
+            get_column_name_or_alias(col) if not isinstance(col, str) else col for col in exclude_columns
+        ]
+
     expected_schema = _get_schema(expected_schema or types.StructType(), column_names)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -2003,7 +2149,11 @@ def has_valid_schema(
         else:
             _expected_schema = expected_schema
 
-        actual_schema = df.select(*columns).schema if columns else df.schema
+        selected_column_names = column_names if column_names else df.columns
+        if exclude_column_names:
+            ignore_set = set(exclude_column_names)
+            selected_column_names = [col for col in selected_column_names if col not in ignore_set]
+        actual_schema = df.select(*selected_column_names).schema
 
         if strict:
             errors = _get_strict_schema_comparison(actual_schema, _expected_schema)
@@ -2547,6 +2697,53 @@ def _add_numeric_tolerance_condition(
 
 
 def _match_values_with_tolerance(df_col: Column, ref_col: Column, abs_tolerance: float, rel_tolerance: float) -> Column:
+    """
+    Check if two numeric column values match within specified absolute and/or relative tolerance.
+
+    This function implements a flexible tolerance-based comparison that supports both absolute
+    and relative tolerance thresholds. When both tolerances are provided, values are considered
+    matching if EITHER tolerance condition is satisfied (OR logic), making the comparison more
+    permissive and accommodating different scales of values.
+
+    Args:
+        df_col: First column to compare (typically the data column).
+        ref_col: Second column to compare (typically the reference/limit column).
+        abs_tolerance: Absolute tolerance threshold. Values match if abs(a - b) <= abs_tolerance.
+            Use 0.0 to disable absolute tolerance checking.
+        rel_tolerance: Relative tolerance threshold. Values match if
+            abs(a - b) <= rel_tolerance * max(abs(a), abs(b)).
+            Use 0.0 to disable relative tolerance checking.
+
+    Returns:
+        A Spark Column expression that evaluates to True if the values match within tolerance,
+        False otherwise.
+
+    Tolerance Logic:
+        - **Absolute tolerance**: Checks if the absolute difference is within a fixed threshold
+        - **Relative tolerance**: Checks if the difference is within a percentage of the larger
+        - **Combined (OR logic)**: When both are specified, values match if EITHER condition passes
+
+    Examples:
+        With abs_tolerance=0.01, rel_tolerance=0.0:
+            - 100 vs 100.005 -> True (diff=0.005 <= 0.01)
+            - 100.02 vs 100.0 -> False (diff=0.02 > 0.01)
+
+        With abs_tolerance=0.0, rel_tolerance=0.01 (1%):
+            - 100 vs 101 -> True (diff=1, rel_tolerance=1.01, 1 <= 1.01)
+            - 100 vs 105 -> False (diff=5, rel_tolerance=1.05, 5 > 1.05)
+
+        With abs_tolerance=0.5, rel_tolerance=0.01 (both specified -- OR logic):
+            - 100 vs 100.3 -> True (abs: 0.3 <= 0.5 ✓, rel: 0.3 <= 1.0 ✓)
+            - 100 vs 101 -> True (abs: 1 > 0.5 ✗, rel: 1 <= 1.01 ✓) -- passes via relative
+            - 1 vs 1.4 -> True (abs: 0.4 <= 0.5 ✓, rel: 0.4 > 0.014 ✗) -- passes via absolute
+            - 100 vs 105 -> False (abs: 5 > 0.5 ✗, rel: 5 > 1.05 ✗) -- fails both
+
+    Note:
+        The OR logic means that when both tolerances are specified, the comparison is more
+        lenient than if only one tolerance were used.
+        - Relative tolerance is scaled by the maximum absolute value of the two numbers,
+        making it suitable for comparing values of different magnitudes
+    """
     abs_diff = F.abs(df_col - ref_col)
     tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
     return (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
@@ -2752,6 +2949,46 @@ def _validate_aggregate_return_type(
         )
 
 
+def _build_aggregate_check_metadata(
+    aggr_col_str_norm: str,
+    aggr_type: str,
+    group_by: list[str | Column] | None,
+    compare_op_name: str,
+) -> tuple[str, str | None]:
+    """
+    Build metadata for aggregation comparison checks.
+
+    Args:
+        aggr_col_str_norm: Normalized string representation of the aggregation column.
+        aggr_type: Type of aggregation (e.g., 'sum', 'avg').
+        group_by: Optional list of columns or Column expressions to group by.
+        compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+
+    Returns:
+        A tuple of:
+            - A unique name for the aggregation comparison check.
+            - A string representation of the group by columns, or None if not applicable.
+    """
+    group_by_list_str = (
+        ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
+        if group_by
+        else None
+    )
+    group_by_str = (
+        "_".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
+        if group_by
+        else None
+    )
+
+    name = (
+        f"{aggr_col_str_norm}_{aggr_type.lower()}_group_by_{group_by_str}_{compare_op_name}_limit".lstrip("_")
+        if group_by_str
+        else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
+    )
+
+    return name, group_by_list_str
+
+
 def _is_aggr_compare(
     column: str | Column,
     limit: int | float | str | Column,
@@ -2762,6 +2999,8 @@ def _is_aggr_compare(
     compare_op: Callable[[Column, Column], Column],
     compare_op_label: str,
     compare_op_name: str,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Helper to build aggregation comparison checks with a given operator.
@@ -2782,6 +3021,8 @@ def _is_aggr_compare(
         compare_op: Comparison operator (e.g., operator.gt, operator.lt).
         compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+        abs_tolerance: Optional absolute tolerance for numeric comparisons.
+        rel_tolerance: Optional relative tolerance for numeric comparisons.
 
     Returns:
         A tuple of:
@@ -2789,9 +3030,15 @@ def _is_aggr_compare(
             - A closure that applies the aggregation check logic.
 
     Raises:
-        InvalidParameterError: If an aggregate returns non-numeric types or is not found.
+        InvalidParameterError: If an aggregate returns non-numeric types or is not found, or if tolerances are negative.
         MissingParameterError: If required parameters for specific aggregates are not provided.
     """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
     # Warn if using non-curated aggregate function
     is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
     if not is_curated:
@@ -2804,24 +3051,7 @@ def _is_aggr_compare(
         )
 
     aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
-
-    group_by_list_str = (
-        ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
-        if group_by
-        else None
-    )
-    group_by_str = (
-        "_".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
-        if group_by
-        else None
-    )
-
-    name = (
-        f"{aggr_col_str_norm}_{aggr_type.lower()}_group_by_{group_by_str}_{compare_op_name}_limit".lstrip("_")
-        if group_by_str
-        else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
-    )
-
+    name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
     limit_expr = get_limit_expr(limit)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -2885,7 +3115,22 @@ def _is_aggr_compare(
 
             df = df.crossJoin(agg_df)  # bring the metric across all rows
 
-        df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
+        # Apply tolerance-based comparison for equality checks
+        if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and compare_op in (py_operator.ne, py_operator.eq):
+            tolerance_match = _match_values_with_tolerance(F.col(metric_col), limit_expr, abs_tolerance, rel_tolerance)
+
+            # Adjust based on compare_op:
+            if compare_op == py_operator.ne:
+                # is_aggr_equal case: fail when values don't match within tolerance
+                condition_result = ~tolerance_match
+            else:  # compare_op == py_operator.eq
+                # is_aggr_not_equal case: fail when values match within tolerance
+                condition_result = tolerance_match
+
+            df = df.withColumn(condition_col, condition_result)
+        else:
+            # Exact comparison or non-equality operators
+            df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 
         return df
 
@@ -2995,6 +3240,22 @@ def get_limit_expr(
         raise MissingParameterError("Limit is not provided.")
 
     if isinstance(limit, str):
+        if limit.isdigit():
+            return F.expr(limit)
+
+        try:
+            parsed_dt = datetime.datetime.fromisoformat(limit)
+
+            # Check if the string contains time component
+            has_time = ':' in limit
+
+            if has_time:
+                return F.to_timestamp(F.lit(parsed_dt))
+            return F.to_date(F.lit(parsed_dt.date()))
+        except ValueError:
+            # If parsing fails, treat as an expression
+            pass
+
         return F.expr(limit)
     if isinstance(limit, Column):
         return limit
