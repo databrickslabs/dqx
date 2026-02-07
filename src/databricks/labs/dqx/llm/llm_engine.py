@@ -34,8 +34,7 @@ class DQLLMEngine:
         """
         Initialize the LLM engine.
 
-        This class configures the DSPy model once and then creates components
-        that rely on this global configuration.
+        This class configures the DSPy model once per worker process with base settings.
 
         Args:
             model_config: Configuration for the LLM model.
@@ -46,9 +45,9 @@ class DQLLMEngine:
 
         self._available_check_functions = json.dumps(get_required_check_functions_definitions(custom_check_functions))
 
-        # Configure DSPy model once for all LLM components
-        configurator = LLMModelConfigurator(model_config)
-        configurator.configure()
+        # Configure DSPy model once per worker process
+        self._configurator = LLMModelConfigurator(model_config)
+        self._configurator.configure()
 
         self._llm_rule_compiler = LLMRuleCompiler(custom_check_functions=custom_check_functions)
         self._llm_pk_detector = LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
@@ -76,17 +75,18 @@ class DQLLMEngine:
                 - assumptions_bullets: Assumptions made (if schema was inferred)
                 - schema_info: The final schema used (if schema was inferred)
         """
-        if summary_stats is not None:
-            return self._llm_rule_compiler.model_using_data_stats(
-                business_description=user_input or None,
-                data_summary_stats=json.dumps(get_required_summary_stats(summary_stats=summary_stats)),
+        with dspy.settings.context(lm=self._configurator.create_lm()):
+            if summary_stats is not None:
+                return self._llm_rule_compiler.model_using_data_stats(
+                    business_description=user_input or None,
+                    data_summary_stats=json.dumps(get_required_summary_stats(summary_stats=summary_stats)),
+                    available_functions=self._available_check_functions,
+                )
+            return self._llm_rule_compiler.model(
+                schema_info=schema_info,
+                business_description=user_input,
                 available_functions=self._available_check_functions,
             )
-        return self._llm_rule_compiler.model(
-            schema_info=schema_info,
-            business_description=user_input,
-            available_functions=self._available_check_functions,
-        )
 
     def detect_primary_keys_with_llm(self, table: str) -> dict[str, Any]:
         """
@@ -108,4 +108,5 @@ class DQLLMEngine:
             - duplicate_count: Number of duplicate combinations (if validation performed)
             - error: Error message (if failed)
         """
-        return self._llm_pk_detector.detect_primary_keys_with_llm(table=table)
+        with dspy.settings.context(lm=self._configurator.create_lm()):
+            return self._llm_pk_detector.detect_primary_keys_with_llm(table=table)

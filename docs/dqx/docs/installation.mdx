@@ -327,21 +327,6 @@ List all installed workflows in the workspace and their latest run state:
 databricks labs dqx workflows
 ```
 
-#### Dashboard
-
-DQX data quality dashboard is deployed to the installation directory.
-The dashboard is not scheduled to refresh by default, ensuring no costs are incurred.
-
-Open dashboard:
-```commandline
-databricks labs dqx open-dashboards
-```
-
-<Admonition type="warning" title="Dashboard configuration">
-DQX dashboard(s) only use the quarantined table for queries as defined in `config.yml` during installation.
-If you change the quarantine table in the run config after the deployment (`quarantine_table` field), you must update the dashboard queries accordingly.
-</Admonition>
-
 ### Install DQX on Databricks cluster
 
 You need to install the DQX package on a Databricks cluster to use it.
@@ -428,3 +413,31 @@ databricks labs uninstall dqx
 
 Databricks CLI will confirm a few options:
 - Whether you want to remove all DQX artifacts from the workspace or not. Defaults to 'no'.
+
+## Installing Dashboard
+
+DQX data quality dashboard can be used to monitor data quality across all tables monitored by DQX.
+The dashboard is not scheduled to refresh by default, ensuring no costs are incurred.
+
+You have two options to set up the dashboard:
+
+### Option 1: Import directly in the workspace
+
+You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.12.0/src/databricks/labs/dqx/dashboards/). To import it:
+1. Navigate to **Dashboards** in the Databricks UI
+2. Click **Import dashboard from file**
+3. Select the `.lvdash.json` file
+4. Provide parameters and refresh the dashboard
+
+### Option 2: Use Databricks CLI
+
+When you install DQX as a tool using the Databricks CLI (see [Install DQX using Databricks CLI](#install-dqx-using-databricks-cli)), the dashboard is automatically deployed to the installation directory.
+
+You can then open it using:
+```commandline
+databricks labs dqx open-dashboards
+```
+
+After executing the command:
+1. Locate and click on the dashboard file in the workspace UI
+2. Provide parameters and refresh the dashboard
