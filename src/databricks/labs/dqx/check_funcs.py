@@ -1480,7 +1480,7 @@ def sql_query(
         negate: If True, the condition is negated (i.e., the check fails when the condition is False).
         input_placeholder: Name to be used in the sql query as `{{ input_placeholder }}` to refer to the
             input DataFrame on which the checks are applied.
-        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
+        row_filter: Optional SQL expression used to filter input rows before running the SQL validation. Auto-injected from the check filter.
 
     Returns:
         Tuple (condition column, apply function).
