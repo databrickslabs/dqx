@@ -3,7 +3,7 @@ from databricks.labs.dqx.checks_serializer import deserialize_checks_to_datafram
 SCHEMA = "a: int, b: int, c: int"
 
 
-def test_build_quality_rules_from_dataframe(spark):
+def test_build_quality_rules_from_dataframe_round_trip(spark):
     test_checks = [
         {
             "name": "column_is_not_null",
@@ -40,12 +40,39 @@ def test_build_quality_rules_from_dataframe(spark):
             "user_metadata": {"check_type": "uniqueness", "check_owner": "someone_else@email.com"},
         },
         {
-            "name": "column_unique",
+            "name": "column_unique_filter",
             "criticality": "warn",
             "filter": "test_col > 0",
             "check": {
                 "function": "is_unique",
                 "arguments": {"columns": ["test_col", "test_col2"], "nulls_distinct": True},
+            },
+            "user_metadata": {"check_type": "uniqueness", "check_owner": "someone_else@email.com"},
+        },
+        {
+            "name": "column_unique_filter_and_row_filter",
+            "criticality": "warn",
+            "filter": "test_col > 0",
+            "check": {
+                "function": "is_unique",
+                "arguments": {
+                    "columns": ["test_col", "test_col2"],
+                    "nulls_distinct": True,
+                    "row_filter": "test_col2 < 5",
+                },
+            },
+            "user_metadata": {"check_type": "uniqueness", "check_owner": "someone_else@email.com"},
+        },
+        {
+            "name": "column_unique_row_filter",
+            "criticality": "warn",
+            "check": {
+                "function": "is_unique",
+                "arguments": {
+                    "columns": ["test_col", "test_col2"],
+                    "nulls_distinct": True,
+                    "row_filter": "test_col2 < 5",
+                },
             },
             "user_metadata": {"check_type": "uniqueness", "check_owner": "someone_else@email.com"},
         },

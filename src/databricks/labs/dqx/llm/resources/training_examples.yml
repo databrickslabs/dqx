@@ -42,8 +42,8 @@
       - name: "email"
         type: "string"
   business_description: "Customer email must be unique across all records"
-  quality_rules: '[{"criticality":"error","check":{"function":"is_unique","arguments":{"columns":["email"]}}}]'
-  reasoning: "Emails uniquely identify customers and duplicates must not exist"
+  quality_rules: '[{"criticality":"error", "filter": "email != 'test@gmail.com'", "check":{"function":"is_unique","arguments":{"columns":["email"]}}}]'
+  reasoning: "Emails uniquely identify customers and duplicates must not exist, filter out test email used for testing purposes"
 
 - name: "unique_customer_order"
   schema_info:
