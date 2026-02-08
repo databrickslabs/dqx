@@ -279,7 +279,7 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
         port: The Lakebase port (default is '5432').
         run_config_name: Name of the run configuration to use for checks (default is 'default').
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
-              only replaces checks for the specific run config and not all checks in the table (default is 'overwrite').
+              only replaces checks for the specific run config and not all checks in the table (default is 'append').
         rule_set_fingerprint: Optional fingerprint to identify the rule set version.
     """
 

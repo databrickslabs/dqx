@@ -72,18 +72,23 @@ def serialize_checks_from_dataframe(
     """
 
     df_checks = df.where(f"run_config_name = '{run_config_name}'")
+    df_checks.show()
     if 'rule_set_fingerprint' in df.columns:
-
         if rule_set_fingerprint is None:
             # select the most recent rule_set_fingerprint for the run_config_name
-            rule_set_fingerprint = (
+            latest_fingerprint_rows = (
                 df.where(f"run_config_name = '{run_config_name}'")
                 .select("rule_set_fingerprint")
                 .orderBy(F.col("created_at").desc())
-                .take(1)[0]["rule_set_fingerprint"]
+                .take(1)
             )
+            print("latest_fingerprint_rows:", latest_fingerprint_rows)
+            if not latest_fingerprint_rows:
+                # No rows for the given run_config_name; return an empty checks list
+                return []
+            rule_set_fingerprint = latest_fingerprint_rows[0]["rule_set_fingerprint"]
         df_checks = df_checks.where(f"rule_set_fingerprint = '{rule_set_fingerprint}'")
-
+    df_checks.show()
     check_rows = df_checks.collect()
     collect_limit = 500
     if len(check_rows) > collect_limit:
@@ -94,7 +99,7 @@ def serialize_checks_from_dataframe(
         )
 
     checks = []
-    print(check_rows)
+
     for row in check_rows:
         check_dict = {
             "name": row.name,
@@ -150,7 +155,7 @@ def deserialize_checks_to_dataframe(
     """
     dq_rule_checks: list[DQRule] = deserialize_checks(checks)
     created_at = datetime.now()
-    rule_set_fingerprint = generate_rule_set_fingerprint(dq_rule_checks)
+    rule_set_fingerprint = generate_rule_set_fingerprint_from_check_rules(dq_rule_checks)
     dq_rule_rows = []
 
     for dq_rule_check in dq_rule_checks:
@@ -178,26 +183,31 @@ def deserialize_checks_to_dataframe(
                 created_at,
             ]
         )
-    print(dq_rule_rows)
+
     return spark.createDataFrame(dq_rule_rows, EXTENDED_CHECKS_TABLE_SCHEMA)
 
 
-def generate_rule_set_fingerprint(checks: list[DQRule]) -> str:
+def generate_rule_set_fingerprint_from_check_rules(checks: list[DQRule]) -> str:
     rule_fingerprints = [check.rule_fingerprint for check in checks]
-    return generate_hash(rule_fingerprints)
+    return generate_hash_rule_set_fingerprint(rule_fingerprints)
 
 
-def generate_hash(hash_object: Any) -> str:
-    return hashlib.sha256(json.dumps(hash_object, sort_keys=True).encode("utf-8")).hexdigest()
+def generate_hash_rule_set_fingerprint(rule_fingerprints: list) -> str:
+    payload = "".join(sorted(rule_fingerprints))  # sort to ensure consistent hash regardless of order
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def generate_hash_rule_fingerprint(rule_fingerprint: dict) -> str:
+    return hashlib.sha256(json.dumps(rule_fingerprint, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def generate_rule_set_fingerprint_from_dict(checks: list[dict]) -> list[dict]:
     rule_set = []
     for check in checks:
-        rule_fingerprint = generate_hash(check)
+        rule_fingerprint = generate_hash_rule_fingerprint(check)
         check['rule_fingerprint'] = rule_fingerprint
         rule_set.append(rule_fingerprint)
-    rule_set_fingerprint = generate_hash(rule_set)
+    rule_set_fingerprint = generate_hash_rule_set_fingerprint(rule_set)
     created_at = datetime.now()
     for check in checks:
         check['rule_set_fingerprint'] = rule_set_fingerprint

@@ -40,7 +40,7 @@ from databricks.labs.dqx.rule import (
     DQRule,
     CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
-from databricks.labs.dqx.checks_serializer import generate_rule_set_fingerprint
+from databricks.labs.dqx.checks_serializer import generate_rule_set_fingerprint_from_check_rules
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx.metrics_observer import DQMetricsObservation, DQMetricsObserver
@@ -139,7 +139,7 @@ class DQEngineCore(DQEngineCoreBase):
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
-        rule_set_fingerprint = generate_rule_set_fingerprint(checks)
+        rule_set_fingerprint = generate_rule_set_fingerprint_from_check_rules(checks)
         result_df = self._create_results_array(
             df, error_checks, self._result_column_names[ColumnArguments.ERRORS], rule_set_fingerprint, ref_dfs
         )
@@ -421,7 +421,7 @@ class DQEngineCore(DQEngineCoreBase):
             checks: List of DQRule instances representing the checks to apply.
             dest_col: Name of the output column where the check results map will be stored.
             ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
-            rule_set_fingerprint: Fingerprint of the rule set to exibit in the results.
+            rule_set_fingerprint: Fingerprint of the rule set to exhibit in the results.
 
         Returns:
             DataFrame with an added array column (*dest_col*) containing the results of the applied checks.
@@ -440,7 +440,7 @@ class DQEngineCore(DQEngineCoreBase):
             manager = DQRuleManager(
                 check=normalized_check,
                 rule_fingerprint=check.rule_fingerprint,
-                rule_set_fingerprint=rule_set_fingerprint,                
+                rule_set_fingerprint=rule_set_fingerprint,
                 df=current_df,
                 spark=self.spark,
                 run_id=self.run_id,

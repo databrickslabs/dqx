@@ -7,6 +7,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar, NoReturn
 from sqlalchemy import (
+    Connection,
     DateTime,
     Engine,
     create_engine,
@@ -139,19 +140,28 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
         if self.spark.catalog.tableExists(config.location):
             df = self.spark.read.table(config.location)
-            if (
+            existing_rules = (
                 df.where(
                     f"run_config_name = '{config.run_config_name}' AND rule_set_fingerprint = '{rule_set_fingerprint}'"
-                ).count()
-                > 0
-            ):
+                )
+                .limit(1)
+                .take(1)
+            )
+            if existing_rules:
                 logger.info(
                     f"Checks with rule_set_fingerprint '{rule_set_fingerprint}' already exist in table '{config.location}'. Skipping save."
                 )
                 return
-        rules_df.write.option("mergeSchema", "true").option(
-            "replaceWhere", f"run_config_name = '{config.run_config_name}'"
-        ).saveAsTable(config.location, mode=config.mode)
+        if config.mode == "overwrite":
+
+            (
+                rules_df.write.option("mergeSchema", "true")
+                .option("replaceWhere", f"run_config_name = '{config.run_config_name}'")
+                .saveAsTable(config.location, mode=config.mode)
+            )
+
+        else:
+            rules_df.write.saveAsTable(config.location, mode=config.mode)
 
 
 class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):
@@ -280,7 +290,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         des_checks = deserialize_checks(checks)
         ser_checks = serialize_checks(des_checks)
         enriched_checks = generate_rule_set_fingerprint_from_dict(ser_checks)
-        print(enriched_checks)
+
         normalized_checks = []
         for check in enriched_checks:
             user_metadata = check.get("user_metadata")
@@ -362,7 +372,15 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             )
 
     @staticmethod
-    def _ensure_rule_version_columns_exist(conn, config):
+    def _ensure_rule_version_columns_exist(conn: Connection, config: LakebaseChecksStorageConfig) -> None:
+        """
+        Evolve the Lakebase schema to ensure older verions have the rule_fingerprint and rule_set_fingerprint columns added.
+
+        Args:
+            conn: SQLAlchemy connection to the Lakebase instance.
+            config: Configuration for saving and loading checks to Lakebase.
+
+        """
         tbl = f'"{config.schema_name}"."{config.table_name}"'
         conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS rule_fingerprint VARCHAR(255) NULL"))
         conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS rule_set_fingerprint VARCHAR(255) NULL"))
@@ -379,35 +397,33 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             List of dq rules.
         """
-        stmt = text(
-            f"""SELECT  *
-                        FROM {config.schema_name}.{config.table_name} 
-                        WHERE run_config_name = '{config.run_config_name}'"""
-        )
+        logger.info(f"Loading quality rules (checks) from lakebase table '{config.location}'")
+        inspector = inspect(engine)
+        if not inspector.has_table(config.table_name, schema=config.schema_name):
+            raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance")
+
+        table = Table(config.table_name, MetaData(schema=config.schema_name), autoload_with=engine)
+        stmt = select(table).where(table.c.run_config_name == config.run_config_name)
 
         if self._rule_set_columns_exists(engine, config.schema_name, config.table_name):
             logger.info("Rule version columns exist in the table.")
             if config.rule_set_fingerprint:
                 logger.info(f"Filtering checks by rule_set_fingerprint='{config.rule_set_fingerprint}'")
-                stmt = text(
-                    f"""SELECT *                      
-                        FROM {config.schema_name}.{config.table_name} 
-                        WHERE rule_set_fingerprint = '{config.rule_set_fingerprint}' 
-                        AND run_config_name = '{config.run_config_name}'
-                """
+                stmt = select(table).where(
+                    table.c.rule_set_fingerprint == config.rule_set_fingerprint,
+                    table.c.run_config_name == config.run_config_name,
                 )
+
             else:
                 logger.info("No rule_set_fingerprint provided, loading the most recent version.")
-                stmt = text(
-                    f"""SELECT *                                        
-                        FROM {config.schema_name}.{config.table_name} 
-                        WHERE rule_set_fingerprint = (
-                        SELECT rule_set_fingerprint FROM {config.schema_name}.{config.table_name} 
-                        WHERE run_config_name = '{config.run_config_name}' 
-                        ORDER BY created_at DESC 
-                        LIMIT 1)
-                """
+                latest_rule_set_fingerprint = (
+                    select(table.c.rule_set_fingerprint)
+                    .where(table.c.run_config_name == config.run_config_name)
+                    .order_by(table.c.created_at.desc())
+                    .limit(1)
+                    .scalar_subquery()
                 )
+                stmt = select(table).where(table.c.rule_set_fingerprint == latest_rule_set_fingerprint)
 
         with engine.connect() as conn:
 
@@ -444,7 +460,19 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         return checks_list
 
     @staticmethod
-    def _rule_set_columns_exists(engine, schema, table) -> bool:
+    def _rule_set_columns_exists(engine: Engine, schema: str, table: str) -> bool:
+        """
+        Check if the rule_fingerprint, rule_set_fingerprint, and created_at columns exist in the Lakebase table.
+
+        Args:
+            engine: SQLAlchemy engine for the Lakebase instance.
+            schema: Schema name of the Lakebase table.
+            table: Table name of the Lakebase table.
+
+        Returns:
+            True if the columns exist, False otherwise.
+        """
+
         inspector = inspect(engine)
         if not inspector.has_table(table, schema=schema):
             return False

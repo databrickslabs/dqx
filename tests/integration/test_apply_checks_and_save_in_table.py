@@ -2197,7 +2197,6 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_custom_functions(
         },
     ]
 
-    
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     workspace_folder = str(make_directory().absolute())
     checks_location = f"{workspace_folder}/{input_table}.yml"
@@ -2219,7 +2218,7 @@ def custom_string_check(column: str) -> Column:
         custom_check_function_location = temp_file.name
 
     custom_checks = resolve_custom_check_functions_from_path({"custom_string_check": custom_check_function_location})
-    print(f"custom_checks: {custom_checks}")
+
     versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks, custom_checks)
 
     engine.apply_checks_and_save_in_tables_for_patterns(

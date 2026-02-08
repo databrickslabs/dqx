@@ -3,7 +3,6 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from collections.abc import Callable
-from dataclasses import asdict
 import yaml
 import pyspark.sql.functions as F
 import pytest
@@ -692,7 +691,7 @@ def test_foreign_key_check_on_composite_keys_negate(ws, spark):
     refs_df = {"ref_df": ref_df, "ref_df2": ref_df2}
 
     versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
-    versioning_rules_checks = generate_rule_and_set_fingerprint_from_rules(checks)
+
     checked = dq_engine.apply_checks(src_df, checks, ref_dfs=refs_df)
     checked_yaml = dq_engine.apply_checks_by_metadata(src_df, checks_yaml, ref_dfs=refs_df)
 
@@ -3004,7 +3003,9 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_not_null",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'bf02f31f30687fc55693c08eb710b199a8674841a5c7bcf4f94ccb7e1cdad8af',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name", function="is_not_null", columns=["a"]
+                        ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks, "common_name", function="is_not_null"
                         ),
@@ -3018,7 +3019,9 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'a91d356aefca33a4b81de3c82c7772c0dad12add41c3b27d9568cecc4216cc3b',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name2", function="is_unique", columns=["c"]
+                        ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks, "common_name2", function="is_unique"
                         ),
@@ -3032,7 +3035,9 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "function": "is_unique",
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
-                        "rule_fingerprint": 'a91d356aefca33a4b81de3c82c7772c0dad12add41c3b27d9568cecc4216cc3b',
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "common_name2", function="is_unique", columns=["c"]
+                        ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks, "common_name2", function="is_unique"
                         ),
@@ -3055,7 +3060,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "common_name", function="is_not_null"
+                            versioning_rules_checks, "common_name", function="is_not_null", columns=["b"]
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks, "common_name", function="is_not_null"
@@ -3071,7 +3076,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "common_name2", function="is_unique"
+                            versioning_rules_checks, "common_name2", function="is_unique", columns=["c"]
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks, "common_name2", function="is_unique"
@@ -3087,7 +3092,7 @@ def test_apply_checks_with_multiple_cols_and_common_name(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "common_name2", function="is_unique"
+                            versioning_rules_checks, "common_name2", function="is_unique", columns=["c"]
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
                             versioning_rules_checks, "common_name2", function="is_unique"
@@ -7852,7 +7857,7 @@ def test_apply_checks_all_checks_using_classes(ws, spark):
         ],
         schema,
     )
-    
+
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
@@ -10952,7 +10957,7 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
                             versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
                         ),
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(
-                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"  
+                            versioning_rules_checks, "aggr_count_not_equal_to_limit", function="is_aggr_equal"
                         ),
                         "user_metadata": {},
                     },

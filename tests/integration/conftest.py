@@ -503,9 +503,9 @@ def make_schema_seed(
 
 
 def generate_random_name_seed(length: int, seed: int) -> str:
-    random.seed(seed)
+    rng = random.Random(seed)
     charset = string.ascii_uppercase + string.ascii_lowercase + string.digits
-    return ''.join(random.choice(charset) for _ in range(length))
+    return ''.join(rng.choice(charset) for _ in range(length))
 
 
 def generate_rule_and_set_fingerprint_from_rules(rules: list, custom_checks: dict | None = None) -> list[dict]:
@@ -524,7 +524,17 @@ def get_rule_fingerprint_from_checks(
     check_name: str,
     function: str,
     criticality: str | None = None,
+    columns: str | None = None,
 ) -> str | None:
+    """
+    Helper function to extract the rule_fingerprint from the versioning rules checks
+    based on the check name, function, criticality and column (if applicable).
+    versioning_rules_checks: list of versioning rules checks
+    check_name: name of the check
+    function: function of the check
+    criticality: criticality of the check
+    columns: column of the foreach check (Needed only for foreach checks with same name and function but different columns)
+    """
     rule_dict = {}
     if not versioning_rules_checks:
         return None
@@ -533,6 +543,13 @@ def get_rule_fingerprint_from_checks(
             check.get("name") == check_name
             and check["check"]["function"] == function
             and (criticality is None or check["criticality"] == criticality)
+            and (
+                columns is None
+                or (
+                    ("column" in check["check"]["arguments"] and check["check"]["arguments"]["column"] == columns[0])
+                    or ("columns" in check["check"]["arguments"] and check["check"]["arguments"]["columns"] == columns)
+                )
+            )
         ):
             rule_dict = check
 
