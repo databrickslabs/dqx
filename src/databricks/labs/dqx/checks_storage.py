@@ -161,7 +161,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             )
 
         else:
-            rules_df.write.saveAsTable(config.location, mode=config.mode)
+            rules_df.write.option("mergeSchema", "true").saveAsTable(config.location, mode=config.mode)
 
 
 class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):
