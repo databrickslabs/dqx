@@ -3,8 +3,6 @@ import pprint
 import logging
 import datetime
 import json
-from pathlib import Path
-from unittest.mock import Mock
 import yaml
 import pytest
 import pyspark.sql.functions as F
@@ -44,9 +42,9 @@ from databricks.labs.dqx.rule import (
     DQDatasetRule,
 )
 from databricks.labs.dqx.checks_serializer import (
-    deserialize_checks,
+    ChecksSerializer,
     serialize_checks,
-    serialize_checks_to_bytes,
+    deserialize_checks,
 )
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
@@ -1933,7 +1931,5 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
     ],
 )
 def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
-    mock_path = Mock(spec=Path)
-    mock_path.suffix = file_path_suffix
-    result = serialize_checks_to_bytes(checks, mock_path)
+    result = ChecksSerializer.serialize_to_bytes(checks, file_path_suffix)
     assert result == expected_output

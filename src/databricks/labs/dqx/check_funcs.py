@@ -3,6 +3,7 @@ import re
 import warnings
 import ipaddress
 import uuid
+from decimal import Decimal
 from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
@@ -609,7 +610,7 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
 @register_rule("row")
 def is_equal_to(
     column: str | Column,
-    value: int | float | str | datetime.date | datetime.datetime | Column | None = None,
+    value: int | float | Decimal | str | datetime.date | datetime.datetime | Column | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
 ) -> Column:
@@ -617,8 +618,7 @@ def is_equal_to(
 
     Args:
         column (str | Column): Column to check. Can be a string column name or a column expression.
-        value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
-            The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+        value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
                 Example: abs(a - b) <= tolerance
                 With tolerance=0.01:
@@ -647,7 +647,7 @@ def is_equal_to(
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
 
-    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float)):
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float, Decimal)):
         # Use tolerance-based comparison for numeric columns
         tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
         condition = ~tolerance_match
@@ -671,7 +671,7 @@ def is_equal_to(
 @register_rule("row")
 def is_not_equal_to(
     column: str | Column,
-    value: int | float | str | datetime.date | datetime.datetime | Column | None = None,
+    value: int | float | Decimal | str | datetime.date | datetime.datetime | Column | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
 ) -> Column:
@@ -679,8 +679,7 @@ def is_not_equal_to(
 
     Args:
         column (str | Column): Column to check. Can be a string column name or a column expression.
-        value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
-            The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+        value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
                 Example: abs(a - b) <= tolerance
                 With tolerance=0.01:
@@ -710,7 +709,7 @@ def is_not_equal_to(
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
 
-    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float)):
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float, Decimal)):
         # Use tolerance-based comparison for numeric columns
         tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
         condition = tolerance_match
@@ -733,7 +732,7 @@ def is_not_equal_to(
 
 @register_rule("row")
 def is_not_less_than(
-    column: str | Column, limit: int | float | datetime.date | datetime.datetime | str | Column | None = None
+    column: str | Column, limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
 
@@ -763,7 +762,7 @@ def is_not_less_than(
 
 @register_rule("row")
 def is_not_greater_than(
-    column: str | Column, limit: int | float | datetime.date | datetime.datetime | str | Column | None = None
+    column: str | Column, limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
     """Checks whether the values in the input column are not greater than the provided limit.
 
@@ -794,8 +793,8 @@ def is_not_greater_than(
 @register_rule("row")
 def is_in_range(
     column: str | Column,
-    min_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
-    max_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are in the provided limits (inclusive of both boundaries).
 
@@ -832,8 +831,8 @@ def is_in_range(
 @register_rule("row")
 def is_not_in_range(
     column: str | Column,
-    min_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
-    max_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are outside the provided limits (inclusive of both boundaries).
 
@@ -1582,7 +1581,7 @@ def sql_query(
 @register_rule("dataset")
 def is_aggr_not_greater_than(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -1627,7 +1626,7 @@ def is_aggr_not_greater_than(
 @register_rule("dataset")
 def is_aggr_not_less_than(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -1672,7 +1671,7 @@ def is_aggr_not_less_than(
 @register_rule("dataset")
 def is_aggr_equal(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -1723,7 +1722,7 @@ def is_aggr_equal(
 @register_rule("dataset")
 def is_aggr_not_equal(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -2776,7 +2775,6 @@ def _add_column_diffs(
     """
     columns_changed = []
     if compare_columns:
-
         for col_name in compare_columns:
             is_numeric = isinstance(df.schema[col_name].dataType, types.NumericType)
 
@@ -2987,7 +2985,7 @@ def _build_aggregate_check_metadata(
 
 def _is_aggr_compare(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str,
     aggr_params: dict[str, Any] | None,
     group_by: list[str | Column] | None,
@@ -3214,7 +3212,7 @@ def _cleanup_alias_name(column: str) -> str:
 
 
 def get_limit_expr(
-    limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """
     Generate a Spark Column expression for a limit value.
@@ -3243,7 +3241,7 @@ def get_limit_expr(
             parsed_dt = datetime.datetime.fromisoformat(limit)
 
             # Check if the string contains time component
-            has_time = ':' in limit
+            has_time = ":" in limit
 
             if has_time:
                 return F.to_timestamp(F.lit(parsed_dt))

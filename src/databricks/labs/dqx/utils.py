@@ -3,9 +3,11 @@ import json
 import datetime
 import logging
 import re
+from decimal import Decimal
 from importlib.util import find_spec
 from typing import Any
 from fnmatch import fnmatch
+from pathlib import Path
 
 from pyspark.sql import Column
 
@@ -125,8 +127,11 @@ def normalize_bound_args(val: Any) -> Any:
     """
     Normalize a value or collection of values for consistent processing.
 
-    Handles primitives, dates, and column-like objects. Lists, tuples, and sets are
+    Handles primitives, dates, Decimal, and column-like objects. Lists, tuples, and sets are
     recursively normalized with type preserved.
+
+    For Decimal values, uses a special JSON-serializable format to preserve type information
+    for round-trip deserialization.
 
     Args:
         val: Value or collection of values to normalize.
@@ -137,6 +142,9 @@ def normalize_bound_args(val: Any) -> Any:
     Raises:
         TypeError: If a column type is unsupported.
     """
+    if val is None:
+        return None
+
     if isinstance(val, (list, tuple, set)):
         normalized = [normalize_bound_args(v) for v in val]
         return normalized
@@ -146,6 +154,10 @@ def normalize_bound_args(val: Any) -> Any:
 
     if isinstance(val, (datetime.date, datetime.datetime)):
         return str(val)
+
+    if isinstance(val, Decimal):
+        # Use a special format to preserve Decimal type information for round-trip
+        return {"__decimal__": str(val)}
 
     if ConnectColumn is not None:
         column_types: tuple[type[Any], ...] = (Column, ConnectColumn)
@@ -210,7 +222,7 @@ def safe_json_load(value: str):
         value: The value to parse as JSON.
     """
     try:
-        return json.loads(value)  # load as json if possible
+        return json.loads(value)
     except json.JSONDecodeError:
         return value
 
@@ -462,3 +474,16 @@ def missing_required_packages(packages: list[str]) -> bool:
         True if any package is missing, False otherwise.
     """
     return not all(find_spec(spec) for spec in packages)
+
+
+def get_file_extension(file_path: str | os.PathLike) -> str:
+    """
+    Extract file extension from a file path.
+
+    Args:
+        file_path: File path as string or path-like object.
+
+    Returns:
+        File extension (e.g., ".json", ".yaml", ".yml") or empty string if no extension.
+    """
+    return Path(file_path).suffix

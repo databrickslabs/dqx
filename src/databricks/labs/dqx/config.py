@@ -2,7 +2,7 @@ import abc
 from functools import cached_property
 from dataclasses import dataclass, field, asdict
 
-from databricks.labs.dqx.checks_serializer import FILE_SERIALIZERS
+from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
 
 __all__ = [
@@ -351,7 +351,7 @@ class VolumeFileChecksStorageConfig(BaseChecksStorageConfig):
             raise InvalidParameterError("Invalid path: Path is missing a schema name")
         if len(parts) < 5 or not parts[4]:
             raise InvalidParameterError("Invalid path: Path is missing a volume name")
-        if len(parts) < 6 or not parts[-1].lower().endswith(tuple(FILE_SERIALIZERS.keys())):
+        if len(parts) < 6 or not parts[-1].lower().endswith(SerializerFactory.get_supported_extensions()):
             raise InvalidParameterError("Invalid path: Path must include a file name after the volume")
 
 
