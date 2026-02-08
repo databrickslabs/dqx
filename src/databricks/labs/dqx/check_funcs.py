@@ -648,7 +648,7 @@ def is_equal_to(
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
 
-    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float)):
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float, Decimal)):
         # Use tolerance-based comparison for numeric columns
         tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
         condition = ~tolerance_match
@@ -711,7 +711,7 @@ def is_not_equal_to(
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
 
-    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float)):
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float, Decimal)):
         # Use tolerance-based comparison for numeric columns
         tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
         condition = tolerance_match
