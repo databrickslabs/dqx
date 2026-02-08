@@ -123,7 +123,7 @@ def deserialize_checks_to_dataframe(
 
     dq_rule_rows = []
     for dq_rule_check in dq_rule_checks:
-        arguments = dq_rule_check.check_func_kwargs
+        arguments = dict(dq_rule_check.check_func_kwargs)
 
         if dq_rule_check.column is not None:
             arguments["column"] = dq_rule_check.column
