@@ -3457,7 +3457,7 @@ def test_apply_checks_filter_takes_precedence_over_row_filter(ws, spark):
         ],
         EXPECTED_SCHEMA,
     )
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked.sort("a", "b"), expected.sort("a", "b"), ignore_nullable=True)
 
 
 def test_apply_checks_by_metadata_filter_takes_precedence_over_row_filter(ws, spark):
@@ -3491,7 +3491,7 @@ def test_apply_checks_by_metadata_filter_takes_precedence_over_row_filter(ws, sp
         ],
         EXPECTED_SCHEMA,
     )
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assert_df_equality(checked.sort("a", "b"), expected.sort("a", "b"), ignore_nullable=True)
 
 
 def test_apply_checks_with_sql_query_without_merge_columns_empty_result(ws, spark):
