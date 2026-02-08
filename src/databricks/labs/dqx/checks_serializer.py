@@ -159,7 +159,7 @@ def deserialize_checks_to_dataframe(
     dq_rule_rows = []
 
     for dq_rule_check in dq_rule_checks:
-        arguments = dq_rule_check.check_func_kwargs
+        arguments = dict(dq_rule_check.check_func_kwargs)
 
         if dq_rule_check.column is not None:
             arguments["column"] = dq_rule_check.column
@@ -167,9 +167,13 @@ def deserialize_checks_to_dataframe(
         if dq_rule_check.columns is not None:
             arguments["columns"] = dq_rule_check.columns
 
+<<<<<<< HEAD
         # row_filter is resolved from the check filter so not need to include
         json_arguments = {k: json.dumps(v) for k, v in arguments.items() if k not in {"row_filter"}}
 
+=======
+        json_arguments = {k: json.dumps(v) for k, v in arguments.items()}
+>>>>>>> upstream/main
         dq_rule_rows.append(
             [
                 dq_rule_check.name,
