@@ -1266,8 +1266,8 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 "Value '1.00' in Column 'e' in range: [1.00, 3.00]",
                 "Value '1' in Column 'try_element_at(f, 1)' in range: [1, 3]",
                 "Value '0.3' in Column 'g' in range: [0.2, 0.5]",
-                "Value '1' in Column 'a' in range: [1.5, 3.5]",
-                "Value '1.00' in Column 'e' in range: [1.5, 3.5]",
+                None,
+                None,
             ],
             [
                 "Value '3' in Column 'a' in range: [1, 3]",
