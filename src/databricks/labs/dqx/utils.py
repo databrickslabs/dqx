@@ -7,6 +7,7 @@ from decimal import Decimal
 from importlib.util import find_spec
 from typing import Any
 from fnmatch import fnmatch
+from pathlib import Path
 
 from pyspark.sql import Column
 
@@ -141,6 +142,9 @@ def normalize_bound_args(val: Any) -> Any:
     Raises:
         TypeError: If a column type is unsupported.
     """
+    if val is None:
+        return None
+
     if isinstance(val, (list, tuple, set)):
         normalized = [normalize_bound_args(v) for v in val]
         return normalized
@@ -214,24 +218,12 @@ def safe_json_load(value: str):
     Safely load a JSON string, returning the original value if it fails to parse.
     This allows to specify string value without a need to escape the quotes.
 
-    Also handles special Decimal format: {"__decimal__": "0.01"} is converted back to Decimal.
-
     Args:
         value: The value to parse as JSON.
-
-    Returns:
-        Parsed JSON value, or original value if parsing fails. Decimal markers are converted to Decimal objects.
     """
     try:
-        parsed = json.loads(value)  # load as json if possible
-        # Check if this is a Decimal marker and convert back to Decimal
-        if isinstance(parsed, dict) and "__decimal__" in parsed and len(parsed) == 1:
-            return Decimal(parsed["__decimal__"])
-        return parsed
+        return json.loads(value)
     except json.JSONDecodeError:
-        return value
-    except (ValueError, TypeError):
-        # If Decimal conversion fails, return the parsed value as-is
         return value
 
 
@@ -482,3 +474,16 @@ def missing_required_packages(packages: list[str]) -> bool:
         True if any package is missing, False otherwise.
     """
     return not all(find_spec(spec) for spec in packages)
+
+
+def get_file_extension(file_path: str | os.PathLike) -> str:
+    """
+    Extract file extension from a file path.
+
+    Args:
+        file_path: File path as string or path-like object.
+
+    Returns:
+        File extension (e.g., ".json", ".yaml", ".yml") or empty string if no extension.
+    """
+    return Path(file_path).suffix

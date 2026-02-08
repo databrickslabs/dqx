@@ -3,8 +3,6 @@ import pprint
 import logging
 import datetime
 import json
-from pathlib import Path
-from unittest.mock import Mock
 import yaml
 import pytest
 import pyspark.sql.functions as F
@@ -43,11 +41,7 @@ from databricks.labs.dqx.rule import (
     register_rule,
     DQDatasetRule,
 )
-from databricks.labs.dqx.checks_serializer import (
-    deserialize_checks,
-    serialize_checks,
-    serialize_checks_to_bytes,
-)
+from databricks.labs.dqx.checks_serializer import ChecksDeserializer, ChecksSerializer
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
 SCHEMA = "a: int, b: int, c: int"
@@ -761,7 +755,7 @@ def test_build_rules_by_metadata():
         },
     ]
 
-    actual_rules = deserialize_checks(checks)
+    actual_rules = ChecksDeserializer().deserialize(checks)
 
     expected_rules = [
         DQRowRule(
@@ -1034,14 +1028,14 @@ def test_build_checks_by_metadata_when_check_spec_is_missing() -> None:
     checks: list[dict] = [{}]  # missing check spec
 
     with pytest.raises(InvalidCheckError, match="'check' field is missing"):
-        deserialize_checks(checks)
+        ChecksDeserializer().deserialize(checks)
 
 
 def test_build_checks_by_metadata_when_function_spec_is_missing() -> None:
     checks: list[dict] = [{"check": {}}]  # missing func spec
 
     with pytest.raises(InvalidCheckError, match="'function' field is missing in the 'check' block"):
-        deserialize_checks(checks)
+        ChecksDeserializer().deserialize(checks)
 
 
 def test_build_checks_by_metadata_when_arguments_are_missing():
@@ -1058,14 +1052,14 @@ def test_build_checks_by_metadata_when_arguments_are_missing():
         InvalidCheckError,
         match="No arguments provided for function 'is_not_null_and_not_empty' in the 'arguments' block",
     ):
-        deserialize_checks(checks)
+        ChecksDeserializer().deserialize(checks)
 
 
 def test_build_checks_by_metadata_when_function_does_not_exist():
     checks = [{"check": {"function": "function_does_not_exists", "arguments": {"column": "a"}}}]
 
     with pytest.raises(InvalidCheckError, match="function 'function_does_not_exists' is not defined"):
-        deserialize_checks(checks)
+        ChecksDeserializer().deserialize(checks)
 
 
 def test_build_checks_by_metadata_logging_debug_calls(caplog):
@@ -1078,7 +1072,7 @@ def test_build_checks_by_metadata_logging_debug_calls(caplog):
     logger = logging.getLogger("databricks.labs.dqx.checks_resolver")
     logger.setLevel(logging.DEBUG)
     with caplog.at_level("DEBUG"):
-        deserialize_checks(checks)
+        ChecksDeserializer().deserialize(checks)
         assert "Resolving function: is_not_null_and_not_empty" in caplog.text
 
 
@@ -1434,7 +1428,7 @@ def test_convert_dq_rules_to_metadata():
             check_func_kwargs={"window_minutes": 60, "min_records_per_window": 1},
         ),
     ]
-    actual_metadata = serialize_checks(checks)
+    actual_metadata = ChecksSerializer.serialize(checks)
 
     expected_metadata = [
         {
@@ -1729,7 +1723,7 @@ def test_convert_dq_rules_to_metadata():
 
 def test_convert_dq_rules_to_metadata_when_empty() -> None:
     checks: list = []
-    actual_metadata = serialize_checks(checks)
+    actual_metadata = ChecksSerializer.serialize(checks)
     expected_metadata: list[dict] = []
     assert actual_metadata == expected_metadata
 
@@ -1737,7 +1731,7 @@ def test_convert_dq_rules_to_metadata_when_empty() -> None:
 def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
     checks: list = [1]
     with pytest.raises(InvalidCheckError, match="Expected DQRule instance, got int"):
-        serialize_checks(checks)
+        ChecksSerializer.serialize(checks)
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
@@ -1776,7 +1770,7 @@ def test_deserialize_checks_filter_takes_precedence_over_row_filter_in_arguments
         },
     ]
 
-    actual_rules = deserialize_checks(checks)
+    actual_rules = ChecksDeserializer().deserialize(checks)
 
     # Verify that filter attribute is set and row_filter in arguments is overridden
     assert len(actual_rules) == 1
@@ -1804,7 +1798,7 @@ def test_deserialize_checks_row_filter_in_arguments_when_no_filter():
         },
     ]
 
-    actual_rules = deserialize_checks(checks)
+    actual_rules = ChecksDeserializer().deserialize(checks)
 
     # Verify that rule is created without filter attribute
     assert len(actual_rules) == 1
@@ -1917,10 +1911,10 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
         ),
     ]
 
-    checks_dict = serialize_checks(checks)
-    converted_checks = deserialize_checks(checks_dict)
+    checks_dict = ChecksSerializer.serialize(checks)
+    converted_checks = ChecksDeserializer().deserialize(checks_dict)
 
-    assert serialize_checks(converted_checks) == serialize_checks(checks)
+    assert ChecksSerializer.serialize(converted_checks) == ChecksSerializer.serialize(checks)
 
 
 @pytest.mark.parametrize(
@@ -1933,7 +1927,5 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
     ],
 )
 def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
-    mock_path = Mock(spec=Path)
-    mock_path.suffix = file_path_suffix
-    result = serialize_checks_to_bytes(checks, mock_path)
+    result = ChecksSerializer.serialize_to_bytes(checks, file_path_suffix)
     assert result == expected_output

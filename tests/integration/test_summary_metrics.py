@@ -6,7 +6,7 @@ import pytest
 
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
-from databricks.labs.dqx.checks_serializer import deserialize_checks
+from databricks.labs.dqx.checks_serializer import ChecksDeserializer
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.io import save_dataframe_as_table
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
@@ -77,7 +77,7 @@ def test_observer_metrics_before_action(ws, spark, apply_checks_method):
     )
 
     if apply_checks_method == DQEngine.apply_checks:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         _, observation = dq_engine.apply_checks(test_df, checks)
     elif apply_checks_method == DQEngine.apply_checks_by_metadata:
         _, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
@@ -105,7 +105,7 @@ def test_observer_metrics(ws, spark, apply_checks_method):
     )
 
     if apply_checks_method == DQEngine.apply_checks:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         checked_df, observation = dq_engine.apply_checks(test_df, checks)
     elif apply_checks_method == DQEngine.apply_checks_by_metadata:
         checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
@@ -178,7 +178,7 @@ def test_observer_custom_metrics(ws, spark, apply_checks_method):
     )
 
     if apply_checks_method == DQEngine.apply_checks:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         checked_df, observation = dq_engine.apply_checks(test_df, checks)
     elif apply_checks_method == DQEngine.apply_checks_by_metadata:
         checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
@@ -227,7 +227,7 @@ def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_r
     metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         dq_engine.apply_checks_and_save_in_table(
             checks=checks, input_config=input_config, output_config=output_config, metrics_config=metrics_config
         )
@@ -999,7 +999,7 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
     checks_location = "fake.yml"
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         dq_engine.apply_checks_and_save_in_table(
             checks=checks,
             input_config=input_config,
@@ -1155,7 +1155,7 @@ def test_observer_metrics_output_with_quarantine(
     checks_location = "fake.yml"
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         dq_engine.apply_checks_and_save_in_table(
             checks=checks,
             input_config=input_config,
@@ -1304,7 +1304,7 @@ def test_save_results_in_table_batch_with_metrics(
     )
 
     if apply_checks_method == DQEngine.apply_checks_and_split:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         output_df, quarantine_df, observation = dq_engine.apply_checks_and_split(test_df, checks)
     elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_split:
         output_df, quarantine_df, observation = dq_engine.apply_checks_by_metadata_and_split(test_df, TEST_CHECKS)
@@ -1425,7 +1425,7 @@ def test_save_results_in_table_streaming_with_metrics(
     test_df = spark.readStream.table(input_table_name)
 
     if apply_checks_method == DQEngine.apply_checks_and_split:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         output_df, quarantine_df, _ = dq_engine.apply_checks_and_split(test_df, checks)
     elif apply_checks_method == DQEngine.apply_checks_by_metadata_and_split:
         output_df, quarantine_df, _ = dq_engine.apply_checks_by_metadata_and_split(test_df, TEST_CHECKS)
@@ -1576,7 +1576,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
     test_df.write.mode("overwrite").saveAsTable(input_config.location)
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         dq_engine.apply_checks_and_save_in_table(
             checks=checks,
             input_config=input_config,
@@ -1745,7 +1745,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
     checks_location = "fake.yml"
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
-        checks = deserialize_checks(TEST_CHECKS)
+        checks = ChecksDeserializer().deserialize(TEST_CHECKS)
         dq_engine.apply_checks_and_save_in_table(
             checks=checks,
             input_config=input_config,
