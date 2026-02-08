@@ -74,7 +74,7 @@ class ChecksNormalizer:
     def denormalize(checks: list[dict]) -> list[dict]:
         """
         Recursively convert special markers back to objects after deserialization.
-        Converts {"__decimal__": "0.01"} back to Decimal("0.01").
+        Converts special markers (e.g., __decimal__ format) back to Decimal objects.
 
         Args:
             checks: List of check dictionaries that may contain special markers.
