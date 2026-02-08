@@ -137,7 +137,7 @@ def normalize_bound_args(val: Any) -> Any:
         val: Value or collection of values to normalize.
 
     Returns:
-        Normalized value or collection. Decimal values are converted to a special dict format.
+        Normalized value or collection.
 
     Raises:
         TypeError: If a column type is unsupported.
