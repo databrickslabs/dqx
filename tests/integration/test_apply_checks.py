@@ -3291,6 +3291,209 @@ def test_apply_checks_with_sql_query_without_merge_columns_passes(ws, spark):
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_with_is_aggr_equal_with_filter(ws, spark):
+    """Test is_aggr_equal check with filter parameter - should only apply to filtered rows."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, 10, 3], [1, 20, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check: COUNT(a) = 1, but only for rows where b >= 10
+    # Only 2 rows match the filter: [2, 10, 3] and [1, 20, 4], COUNT(a) = 2, so condition is True (not equal)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_aggr_equal,
+            filter="b >= 10",  # Only apply to rows where b >= 10
+            check_func_kwargs={
+                "column": "a",
+                "limit": 1,
+                "aggr_type": "count",
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # Only rows matching the filter (b >= 10) should have the error
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],  # b=3 doesn't match filter, so no error
+            [
+                2,
+                10,
+                3,
+                [
+                    {
+                        "name": "a_count_not_equal_to_limit",
+                        "message": "Count value 2 in column 'a' is not equal to limit: 1",
+                        "columns": ["a"],
+                        "filter": "b >= 10",
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                20,
+                4,
+                [
+                    {
+                        "name": "a_count_not_equal_to_limit",
+                        "message": "Count value 2 in column 'a' is not equal to limit: 1",
+                        "columns": ["a"],
+                        "filter": "b >= 10",
+                        "function": "is_aggr_equal",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [None, None, None, None, None],  # b=None doesn't match filter, so no error
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_with_row_filter_in_kwargs(ws, spark):
+    """
+    Test that row_filter passed in kwargs works when filter attribute is not provided.
+    This is not recommended and not documented way of passing row filter, but we want to ensure correctness.
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    # Create data where a=1 appears twice when filtered by b >= 10
+    test_df = spark.createDataFrame([[1, 10, 3], [1, 20, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check with row_filter in kwargs (no filter attribute)
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_unique,
+            columns=["a"],
+            check_func_kwargs={"row_filter": "b >= 10"},  # row_filter in kwargs
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # Only rows matching row_filter (b >= 10) should have the error
+    # Rows [1, 10, 3] and [1, 20, 4] have duplicate a=1 when filtered
+    expected = spark.createDataFrame(
+        [
+            [
+                1,
+                10,
+                3,
+                [
+                    {
+                        "name": "a_is_not_unique",
+                        "message": "Value '1' in column 'a' is not unique, found 2 duplicates",
+                        "columns": ["a"],
+                        "filter": None,  # No filter attribute, so None
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                1,
+                20,
+                4,
+                [
+                    {
+                        "name": "a_is_not_unique",
+                        "message": "Value '1' in column 'a' is not unique, found 2 duplicates",
+                        "columns": ["a"],
+                        "filter": None,  # No filter attribute, so None
+                        "function": "is_unique",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [None, None, None, None, None],  # b=None doesn't match filter, so no error
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked.sort("a", "b"), expected.sort("a", "b"), ignore_nullable=True)
+
+
+def test_apply_checks_filter_takes_precedence_over_row_filter(ws, spark):
+    """Test that filter attribute takes precedence over row_filter in kwargs when both are provided."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[2, 10, 3], [1, 20, 4], [None, None, None]], SCHEMA)
+
+    # Dataset-level check with both filter attribute and row_filter in kwargs
+    # filter="b >= 20" should take precedence over row_filter="b >= 10" in kwargs
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.is_unique,
+            columns=["a"],
+            filter="b >= 20",  # filter attribute (should take precedence)
+            check_func_kwargs={"row_filter": "b >= 10"},  # row_filter in kwargs (should be ignored)
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    # Only rows matching filter attribute (b >= 20) should have the error
+    # Only row [1, 20, 4] matches, so no duplicates, no error
+    expected = spark.createDataFrame(
+        [
+            [2, 10, 3, None, None],  # b=10 doesn't match filter (needs >= 20), so no error
+            [1, 20, 4, None, None],  # b=20 matches filter, but only one row, so no error
+            [None, None, None, None, None],  # b=None doesn't match filter, so no error
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked.sort("a", "b"), expected.sort("a", "b"), ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_filter_takes_precedence_over_row_filter(ws, spark):
+    """Test that filter in metadata takes precedence over row_filter in arguments."""
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[2, 10, 3], [1, 20, 4], [None, None, None]], SCHEMA)
+
+    # Metadata with both filter and row_filter in arguments
+    checks = [
+        {
+            "criticality": "error",
+            "filter": "b >= 20",  # filter attribute (should take precedence)
+            "check": {
+                "function": "is_unique",
+                "arguments": {
+                    "columns": ["a"],
+                    "row_filter": "b >= 10",  # row_filter in arguments (should be ignored)
+                },
+            },
+        },
+    ]
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    # Only rows matching filter attribute (b >= 20) should have the error
+    expected = spark.createDataFrame(
+        [
+            [2, 10, 3, None, None],  # b=10 doesn't match filter (needs >= 20), so no error
+            [1, 20, 4, None, None],  # b=20 matches filter, but only one row, so no error
+            [None, None, None, None, None],  # b=None doesn't match filter, so no error
+        ],
+        EXPECTED_SCHEMA,
+    )
+    assert_df_equality(checked.sort("a", "b"), expected.sort("a", "b"), ignore_nullable=True)
+
+
 def test_apply_checks_with_sql_query_without_merge_columns_empty_result(ws, spark):
     """Test sql_query without merge_columns where query returns no rows (treated as False)."""
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)

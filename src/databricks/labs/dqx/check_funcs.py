@@ -1169,7 +1169,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
 
     Args:
         column: column to check; can be a string column name or a column expression
-        row_filter: Optional SQL expression for filtering rows before checking for outliers.
+        row_filter: Optional SQL expression for filtering rows before checking for outliers. Auto-injected from the check filter.
 
 
     Returns:
@@ -1255,8 +1255,7 @@ def is_unique(
     Args:
         columns: List of column names (str) or Spark Column expressions to validate for uniqueness.
         nulls_distinct: Whether NULLs are treated as distinct (default: True).
-        row_filter: Optional SQL expression for filtering rows before checking uniqueness.
-            Auto-injected from the check filter.
+        row_filter: Optional SQL expression for filtering rows before checking uniqueness. Auto-injected from the check filter.
 
     Returns:
         A tuple of:
@@ -1357,8 +1356,7 @@ def foreign_key(
         ref_columns: List of column names (str) or Column expressions in the reference dataset.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table (used when reading from catalog).
-        row_filter: Optional SQL expression for filtering rows before checking the foreign key.
-            Auto-injected from the check filter.
+        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
         negate: If True, the condition is negated (i.e., the check fails when the foreign key values exist in the
             reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
 
@@ -1483,8 +1481,7 @@ def sql_query(
         negate: If True, the condition is negated (i.e., the check fails when the condition is False).
         input_placeholder: Name to be used in the sql query as `{{ input_placeholder }}` to refer to the
             input DataFrame on which the checks are applied.
-        row_filter: Optional SQL expression for filtering rows before checking the foreign key.
-            Auto-injected from the check filter.
+        row_filter: Optional SQL expression used to filter input rows before running the SQL validation. Auto-injected from the check filter.
 
     Returns:
         Tuple (condition column, apply function).
@@ -1834,8 +1831,7 @@ def compare_datasets(
       null_safe_row_matching: If True, treats nulls as equal when matching rows.
       null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
         If enabled, (NULL, NULL) column values are equal and matching.
-      row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected
-        from the check filter.
+      row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected from the check filter.
       abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
             Example: abs(a - b) <= tolerance
             With tolerance=0.01:
@@ -1968,7 +1964,7 @@ def is_data_fresh_per_time_window(
         lookback_windows: Optional number of time windows to look back from *curr_timestamp*.
             This filters records to include only those within the specified number of time windows from *curr_timestamp*.
             If no lookback is provided, the check is applied to the entire dataset.
-        row_filter: Optional SQL expression to filter rows before checking.
+        row_filter: Optional SQL expression to filter rows before checking. Auto-injected from the check filter.
         curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
 
     Returns:
@@ -3017,7 +3013,7 @@ def _is_aggr_compare(
         aggr_params: Optional dictionary of parameters for aggregate functions that require them
             (e.g., percentile functions need {"percentile": 0.95}).
         group_by: Optional list of columns or Column expressions to group by.
-        row_filter: Optional SQL expression to filter rows before aggregation.
+        row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
         compare_op: Comparison operator (e.g., operator.gt, operator.lt).
         compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
@@ -3561,7 +3557,7 @@ def _apply_dataset_level_sql_check(
         query_resolved: The resolved SQL query (with placeholders replaced).
         condition_column: Name of the condition column in the query result.
         unique_condition_column: Unique name for the condition column in the output.
-        row_filter: Optional SQL expression for filtering which rows receive the check result.
+        row_filter: Optional SQL expression for filtering which rows receive the check result. Auto-injected from the check filter.
 
     Returns:
         DataFrame with the condition column added.
