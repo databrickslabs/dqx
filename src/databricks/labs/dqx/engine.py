@@ -16,7 +16,7 @@ from pyspark.sql.streaming import StreamingQuery
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
-from databricks.labs.dqx.checks_serializer import ChecksDeserializer
+from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
@@ -211,7 +211,7 @@ class DQEngineCore(DQEngineCoreBase):
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        dq_rule_checks = ChecksDeserializer(custom_check_functions).deserialize(checks)
+        dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
         return self.apply_checks(df, dq_rule_checks, ref_dfs)
 
@@ -243,7 +243,7 @@ class DQEngineCore(DQEngineCoreBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
-        dq_rule_checks = ChecksDeserializer(custom_check_functions).deserialize(checks)
+        dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
         good_df, bad_df, *observations = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
 
