@@ -1,6 +1,7 @@
 import logging
 import json
 import warnings
+from decimal import Decimal
 from typing import Any
 from collections.abc import Callable
 from pathlib import Path
@@ -17,7 +18,7 @@ from databricks.labs.dqx.rule import (
     DQForEachColRule,
     CHECK_FUNC_REGISTRY,
 )
-from databricks.labs.dqx.utils import safe_json_load
+from databricks.labs.dqx.utils import safe_json_load, normalize_bound_args
 from databricks.labs.dqx.errors import InvalidCheckError
 
 CHECKS_TABLE_SCHEMA = (
@@ -131,7 +132,7 @@ def deserialize_checks_to_dataframe(
         if dq_rule_check.columns is not None:
             arguments["columns"] = dq_rule_check.columns
 
-        json_arguments = {k: json.dumps(v) for k, v in arguments.items()}
+        json_arguments = {k: json.dumps(normalize_bound_args(v)) for k, v in arguments.items()}
         dq_rule_rows.append(
             [
                 dq_rule_check.name,
@@ -260,6 +261,58 @@ def serialize_checks(checks: list[DQRule]) -> list[dict]:
     return dq_rules
 
 
+def normalize_checks(checks: list[dict]) -> list[dict]:
+    """
+    Recursively normalize checks dictionary to make it JSON/YAML serializable.
+    Converts Decimal values to the special format for round-trip preservation.
+
+    Args:
+        checks: List of check dictionaries that may contain non-serializable values.
+
+    Returns:
+        List of normalized check dictionaries.
+    """
+
+    def normalize_value(val: Any) -> Any:
+        """Recursively normalize a value."""
+        if isinstance(val, dict):
+            return {k: normalize_value(v) for k, v in val.items()}
+        # Handle None explicitly since normalize_bound_args doesn't handle it
+        if val is None:
+            return None
+        # For everything else, use normalize_bound_args which handles lists, tuples, Decimal, etc.
+        return normalize_bound_args(val)
+
+    return [normalize_value(check) for check in checks]
+
+
+def denormalize_checks(checks: list[dict]) -> list[dict]:
+    """
+    Recursively convert Decimal markers back to Decimal objects after deserialization.
+    Converts {"__decimal__": "0.01"} back to Decimal("0.01").
+
+    Args:
+        checks: List of check dictionaries that may contain Decimal markers.
+
+    Returns:
+        List of check dictionaries with Decimal markers converted to Decimal objects.
+    """
+
+    def denormalize_value(val: Any) -> Any:
+        """Recursively convert Decimal markers back to Decimal objects."""
+        if isinstance(val, dict):
+            # Check if this is a Decimal marker
+            if "__decimal__" in val and len(val) == 1:
+                return Decimal(val["__decimal__"])
+            # Otherwise, recursively process the dict
+            return {k: denormalize_value(v) for k, v in val.items()}
+        if isinstance(val, (list, tuple)):
+            return type(val)(denormalize_value(v) for v in val)
+        return val
+
+    return [denormalize_value(check) for check in checks]
+
+
 def serialize_checks_to_bytes(checks: list[dict], file_path: Path) -> bytes:
     """
     Serializes a list of checks to bytes in json or yaml (default) format.
@@ -271,17 +324,27 @@ def serialize_checks_to_bytes(checks: list[dict], file_path: Path) -> bytes:
         Serialized checks as bytes.
     """
     serializer = FILE_SERIALIZERS.get(file_path.suffix.lower(), yaml.safe_dump)  # default to yaml
-    return serializer(checks).encode("utf-8")
+    # Normalize checks to ensure all values are JSON/YAML serializable
+    normalized_checks = normalize_checks(checks)
+    return serializer(normalized_checks).encode("utf-8")
 
 
 def get_file_deserializer(filepath: str) -> Callable:
     """
     Get the deserializer function based on file.
+    The returned function automatically denormalizes Decimal markers back to Decimal objects.
 
     Args:
         filepath: Path to the file.
     Returns:
-        Deserializer function.
+        Deserializer function that also handles Decimal denormalization.
     """
     ext = Path(filepath).suffix.lower()
-    return FILE_DESERIALIZERS.get(ext.lower(), yaml.safe_load)  # default to yaml
+    base_deserializer = FILE_DESERIALIZERS.get(ext.lower(), yaml.safe_load)  # default to yaml
+    
+    def deserializer_with_denormalization(file_like) -> list[dict]:
+        """Wrapper that deserializes and then denormalizes special markers (e.g. __decimal__)."""
+        checks = base_deserializer(file_like) or []
+        return denormalize_checks(checks)
+    
+    return deserializer_with_denormalization

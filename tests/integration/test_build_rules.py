@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from databricks.labs.dqx.checks_serializer import deserialize_checks_to_dataframe, serialize_checks_from_dataframe
 
 SCHEMA = "a: int, b: int, c: int"
@@ -23,7 +25,7 @@ def test_build_quality_rules_from_dataframe_round_trip(spark):
         {
             "name": "column_col2_not_less_than",
             "criticality": "warn",
-            "check": {"function": "is_not_greater_than", "arguments": {"column": "test_col2", "limit": 1}},
+            "check": {"function": "is_not_greater_than", "arguments": {"column": "test_col2", "limit": 1.01}},
         },
         {
             "name": "column_in_list",
@@ -113,6 +115,18 @@ def test_build_quality_rules_from_dataframe_round_trip(spark):
             "check": {
                 "function": "has_no_outliers",
                 "arguments": {"column": "c"},
+            },
+        },
+        {
+            "name": "price_isnt_in_range",
+            "criticality": "error",
+            "check": {
+                "function": "is_in_range",
+                "arguments": {
+                    "column": "price",
+                    "min_limit": Decimal("0.01"),
+                    "max_limit": Decimal("999.99"),
+                },
             },
         },
     ]

@@ -3,6 +3,7 @@ import json
 import datetime
 import logging
 import re
+from decimal import Decimal
 from importlib.util import find_spec
 from typing import Any
 from fnmatch import fnmatch
@@ -125,14 +126,17 @@ def normalize_bound_args(val: Any) -> Any:
     """
     Normalize a value or collection of values for consistent processing.
 
-    Handles primitives, dates, and column-like objects. Lists, tuples, and sets are
+    Handles primitives, dates, Decimal, and column-like objects. Lists, tuples, and sets are
     recursively normalized with type preserved.
+
+    For Decimal values, uses a special JSON-serializable format to preserve type information
+    for round-trip deserialization.
 
     Args:
         val: Value or collection of values to normalize.
 
     Returns:
-        Normalized value or collection.
+        Normalized value or collection. Decimal values are converted to a special dict format.
 
     Raises:
         TypeError: If a column type is unsupported.
@@ -146,6 +150,10 @@ def normalize_bound_args(val: Any) -> Any:
 
     if isinstance(val, (datetime.date, datetime.datetime)):
         return str(val)
+
+    if isinstance(val, Decimal):
+        # Use a special format to preserve Decimal type information for round-trip
+        return {"__decimal__": str(val)}
 
     if ConnectColumn is not None:
         column_types: tuple[type[Any], ...] = (Column, ConnectColumn)
@@ -206,12 +214,24 @@ def safe_json_load(value: str):
     Safely load a JSON string, returning the original value if it fails to parse.
     This allows to specify string value without a need to escape the quotes.
 
+    Also handles special Decimal format: {"__decimal__": "0.01"} is converted back to Decimal.
+
     Args:
         value: The value to parse as JSON.
+
+    Returns:
+        Parsed JSON value, or original value if parsing fails. Decimal markers are converted to Decimal objects.
     """
     try:
-        return json.loads(value)  # load as json if possible
+        parsed = json.loads(value)  # load as json if possible
+        # Check if this is a Decimal marker and convert back to Decimal
+        if isinstance(parsed, dict) and "__decimal__" in parsed and len(parsed) == 1:
+            return Decimal(parsed["__decimal__"])
+        return parsed
     except json.JSONDecodeError:
+        return value
+    except (ValueError, TypeError):
+        # If Decimal conversion fails, return the parsed value as-is
         return value
 
 

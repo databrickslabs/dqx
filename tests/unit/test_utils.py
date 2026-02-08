@@ -284,8 +284,8 @@ def test_safe_json_load_empty_string():
 
 
 def test_safe_json_load_non_string_arg():
-    with pytest.raises(TypeError):
-        safe_json_load(123)
+    result = safe_json_load(123)
+    assert result == 123
 
 
 @pytest.mark.parametrize(

@@ -43,6 +43,8 @@ from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, Ch
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.checks_serializer import (
+    normalize_checks,
+    denormalize_checks,
     serialize_checks_from_dataframe,
     deserialize_checks_to_dataframe,
     serialize_checks_to_bytes,
@@ -242,6 +244,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
     def _normalize_checks(checks: list[dict], config: LakebaseChecksStorageConfig) -> list[dict]:
         """
         Normalize the checks to be compatible with the Lakebase table.
+        This includes normalizing Decimal values for JSON serialization and structuring
+        the checks for the Lakebase table schema.
 
         Args:
             checks: List of dq rules (checks) to normalize.
@@ -250,8 +254,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Returns:
             List of normalized dq rules (checks).
         """
+        # First normalize Decimal values for JSON serialization
+        normalized_for_serialization = normalize_checks(checks)
+        
+        # Then normalize the structure for Lakebase table
         normalized_checks = []
-        for check in checks:
+        for check in normalized_for_serialization:
             user_metadata = check.get("user_metadata")
             normalized_check = {
                 "name": check.get("name"),
@@ -347,7 +355,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                     f"for run_config_name='{config.run_config_name}'. "
                     f"Make sure the profiler has run successfully and saved checks to this location."
                 )
-            return [dict(check) for check in checks]
+            checks_dict = [dict(check) for check in checks]
+            # Denormalize Decimal markers back to Decimal objects
+            return denormalize_checks(checks_dict)
 
     def _check_for_undefined_table_error(self, e: ProgrammingError, config: LakebaseChecksStorageConfig) -> NoReturn:
         """

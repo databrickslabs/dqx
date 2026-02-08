@@ -618,7 +618,7 @@ def is_equal_to(
 
     Args:
         column (str | Column): Column to check. Can be a string column name or a column expression.
-        value value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
+        value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
         abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
                 Example: abs(a - b) <= tolerance
                 With tolerance=0.01:

@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from decimal import Decimal
 
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
@@ -27,7 +28,7 @@ INPUT_CHECKS = [
     {
         "name": "column_not_less_than",
         "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1.01}},
         "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
@@ -35,6 +36,14 @@ INPUT_CHECKS = [
         "criticality": "warn",
         "name": "column_in_list",
         "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
+    },
+    {
+        "criticality": "warn",
+        "name": "col_3_is_in_range",
+        "check": {
+            "function": "is_in_range",
+            "arguments": {"column": "col_3", "min_limit": Decimal("0.01"), "max_limit": Decimal("999.99")},
+        },
     },
 ]
 
@@ -54,7 +63,7 @@ EXPECTED_CHECKS = [
     {
         "name": "column_not_less_than",
         "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1.01}},
         "filter": "Col_3 >1",
         "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
     },
@@ -62,6 +71,18 @@ EXPECTED_CHECKS = [
         "name": "column_in_list",
         "criticality": "warn",
         "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
+    },
+    {
+        "name": "col_3_is_in_range",
+        "criticality": "warn",
+        "check": {
+            "function": "is_in_range",
+            "arguments": {
+                "column": "col_3",
+                "min_limit": Decimal("0.01"),
+                "max_limit": Decimal("999.99"),
+            },
+        },
     },
 ]
 
@@ -141,7 +162,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
         {
             "name": "column_not_less_than",
             "criticality": "warn",
-            "check": {"function": "is_not_less_than", "arguments": {"limit": "1", "column": "\"col_2\""}},
+            "check": {"function": "is_not_less_than", "arguments": {"limit": "1.01", "column": "\"col_2\""}},
             "filter": "Col_3 >1",
             "run_config_name": "default",
             "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
@@ -150,6 +171,21 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             "name": "column_in_list",
             "criticality": "warn",
             "check": {"function": "is_in_list", "arguments": {"column": '"col_2"', "allowed": '[1, 2]'}},
+            "filter": None,
+            "run_config_name": "default",
+            "user_metadata": None,
+        },
+        {
+            "name": "col_3_is_in_range",
+            "criticality": "warn",
+            "check": {
+                "function": "is_in_range",
+                "arguments": {
+                    "column": '"col_3"',
+                    "min_limit": '{"__decimal__": "0.01"}',
+                    "max_limit": '{"__decimal__": "999.99"}',
+                },
+            },
             "filter": None,
             "run_config_name": "default",
             "user_metadata": None,
