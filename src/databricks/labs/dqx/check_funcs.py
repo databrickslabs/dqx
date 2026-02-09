@@ -2349,7 +2349,8 @@ def _get_schema(input_schema: str | types.StructType, columns: list[str] | None 
         expected_schema = input_schema
     elif isinstance(input_schema, str):
         try:
-            parsed_schema = types.StructType.fromDDL(input_schema)
+            parsed_schema = types._parse_datatype_string(input_schema)  # pylint: disable=protected-access
+            # NOTE: Using the internal `_parse_datatype_string` for compatibility with earlier versions of PySpark
         except Exception as e:  # Catch schema parsing errors from Spark
             raise InvalidParameterError(f"Invalid schema string '{input_schema}'. Error: {e}") from e
 
