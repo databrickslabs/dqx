@@ -141,3 +141,4 @@ The `examples/` directory contains runnable scripts for every check category:
 | Dataset-level (unique, aggregation, FK, compare, freshness, schema, SQL query) | `examples/10_dataset_unique.py` .. `examples/16_dataset_sql_query.py` |
 | Custom checks (SQL window, Python row, Python dataset) | `examples/17_custom_sql_window.py` .. `examples/19_custom_python_dataset.py` |
 | Profiling | `examples/20_profiling_dataframe.py` .. `examples/21_profiling_specific_columns.py` |
+| Geospatial (coordinates, geometry type/validation, measurements) | `examples/22_geo_coordinates.py` .. `examples/25_geo_measurements.py` |

@@ -26,7 +26,8 @@ Run that setup in every terminal session before executing any examples.
 | `src/databricks/labs/dqx/resources/skills/dqx/checks/dataset-level/SKILL.md` | Dataset-level check functions reference |
 | `src/databricks/labs/dqx/resources/skills/dqx/checks/custom/SKILL.md` | Custom checks (SQL expressions, Python) |
 | `src/databricks/labs/dqx/resources/skills/dqx/profiling/SKILL.md` | Data profiling skill |
-| `src/databricks/labs/dqx/resources/skills/dqx/checks/examples/` | Runnable example scripts (01-21) |
+| `src/databricks/labs/dqx/resources/skills/dqx/checks/geospatial/SKILL.md` | Geospatial check functions reference |
+| `src/databricks/labs/dqx/resources/skills/dqx/checks/examples/` | Runnable example scripts (01-25) |
 
 ---
 
@@ -389,5 +390,8 @@ rg "profiling/SKILL.md" src/databricks/labs/dqx/resources/skills/dqx/checks/exam
 - [ ] **Profiler:** Run examples 20-21, fix any failures, update SKILL.md back if needed
 - [ ] **Top-level:** Reconcile `dqx/SKILL.md` and `checks/SKILL.md` sub-skill refs
 - [ ] **Top-level:** Update if needed
+- [ ] **Geospatial:** Reconcile `geo/check_funcs.py` vs `checks/geospatial/SKILL.md`
+- [ ] **Geospatial:** Update SKILL.md if needed
+- [ ] **Geospatial:** Run examples 22-25, fix any failures, update SKILL.md back if needed
 - [ ] **Undocumented rules:** Scan for functions not covered by any SKILL.md, present to user, create new skills if requested
 - [ ] **Line numbers:** Verify all example comment line numbers match their SKILL.md sections

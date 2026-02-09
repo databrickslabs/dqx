@@ -116,6 +116,7 @@ if status.has_errors:
 | Row-level check functions and examples | `checks/row-level/SKILL.md` |
 | Dataset-level check functions and examples | `checks/dataset-level/SKILL.md` |
 | Custom checks (SQL expressions, Python) | `checks/custom/SKILL.md` |
+| Geospatial check functions and examples | `checks/geospatial/SKILL.md` |
 | Runnable examples for all check types | `checks/examples/` |
 
 ## Python API Alternative
