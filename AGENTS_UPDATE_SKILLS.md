@@ -41,6 +41,24 @@ For each skill area below, perform **three passes**:
 3. **Validate examples** -- run every example script that the SKILL.md references. If an
    example fails, fix the example *and* re-check the SKILL.md for consistency.
 
+### Discovering Undocumented Rule Types
+
+During reconciliation you may find **public check functions that have no corresponding
+SKILL.md at all** (e.g. functions in a new module like `geo/check_funcs.py`, or a new
+category of row/dataset rules added to `check_funcs.py` that falls outside every existing
+skill). When this happens:
+
+1. **Do not silently skip them.** Collect the full list of undocumented functions (name,
+   source file, line number, parameters, and whether they are row-level or dataset-level).
+2. **Ask the user** before proceeding: present the list and ask whether a new SKILL.md
+   (and corresponding examples) should be created, or whether the functions should be folded
+   into an existing skill.
+3. If the user says to create a new skill, follow the same reconcile/update/validate pattern
+   used for the existing skills: create the SKILL.md with parameter tables + YAML examples +
+   runnable example scripts, add the new skill to the Sub-Skills Reference table in
+   `dqx/SKILL.md`, and add its examples to the Runnable Examples table in `checks/SKILL.md`.
+4. Add a corresponding entry to the **Summary Checklist** at the bottom of this document.
+
 ---
 
 ## 1. Row-Level Check Functions
@@ -312,46 +330,22 @@ validated transitively by the sub-skill examples.
 
 ---
 
-## 6. Geospatial Check Functions (if applicable)
+## 6. Scan for Undocumented Rule Types
 
-### 6a. Reconcile
+After completing steps 1-5, scan the codebase for public check functions that are **not
+covered by any existing SKILL.md**. Known places to look:
 
-Compare the public functions in `src/databricks/labs/dqx/geo/check_funcs.py` against any
-geospatial skill documentation. At the time of writing, there are 25 geo check functions
-(starting at line 21) but **no dedicated geospatial SKILL.md** exists yet.
+- `src/databricks/labs/dqx/geo/check_funcs.py` -- geospatial checks (25 functions at the
+  time of writing, starting at line 21). No dedicated SKILL.md exists yet.
+- Any new `**/check_funcs.py` modules that may have been added since this document was
+  last updated.
+- New functions in `src/databricks/labs/dqx/check_funcs.py` that don't fit into the
+  existing row-level, dataset-level, or custom skill categories.
 
-At the time of writing, the geo functions are:
-
-| Function | Line |
-|----------|------|
-| `is_latitude` | 21 |
-| `is_longitude` | 44 |
-| `is_geometry` | 67 |
-| `is_geography` | 94 |
-| `is_point` | 121 |
-| `is_linestring` | 148 |
-| `is_polygon` | 175 |
-| `is_multipoint` | 202 |
-| `is_multilinestring` | 229 |
-| `is_multipolygon` | 256 |
-| `is_geometrycollection` | 283 |
-| `is_ogc_valid` | 310 |
-| `is_non_empty_geometry` | 338 |
-| `is_not_null_island` | 366 |
-| `has_dimension` | 402 |
-| `has_x_coordinate_between` | 431 |
-| `has_y_coordinate_between` | 463 |
-| `is_area_equal_to` | 495 |
-| `is_area_not_equal_to` | 532 |
-| `is_area_not_greater_than` | 569 |
-| `is_area_not_less_than` | 606 |
-| `is_num_points_equal_to` | 643 |
-| `is_num_points_not_equal_to` | 671 |
-| `is_num_points_not_greater_than` | 699 |
-| `is_num_points_not_less_than` | 727 |
-
-If a geospatial SKILL.md is created in the future, follow the same reconcile/update/validate
-pattern. If it already exists, reconcile it against `geo/check_funcs.py`.
+For every group of undocumented functions found, follow the **Discovering Undocumented Rule
+Types** procedure in the Procedure Overview above: collect the list, present it to the user,
+and ask whether to create a new SKILL.md or fold them into an existing skill. **Do not skip
+undocumented functions silently.**
 
 ---
 
@@ -395,5 +389,5 @@ rg "profiling/SKILL.md" src/databricks/labs/dqx/resources/skills/dqx/checks/exam
 - [ ] **Profiler:** Run examples 20-21, fix any failures, update SKILL.md back if needed
 - [ ] **Top-level:** Reconcile `dqx/SKILL.md` and `checks/SKILL.md` sub-skill refs
 - [ ] **Top-level:** Update if needed
-- [ ] **Geo (if applicable):** Reconcile `geo/check_funcs.py` vs geo SKILL.md (if exists)
+- [ ] **Undocumented rules:** Scan for functions not covered by any SKILL.md, present to user, create new skills if requested
 - [ ] **Line numbers:** Verify all example comment line numbers match their SKILL.md sections

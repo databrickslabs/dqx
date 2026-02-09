@@ -1,4 +1,4 @@
-# based on checks from dqx/checks/dataset-level/SKILL.md:171-186
+# based on checks from dqx/checks/dataset-level/SKILL.md:51-55
 # On Databricks notebooks, `spark` is already available — skip the next 2 lines.
 from databricks.connect import DatabricksSession
 spark = DatabricksSession.builder.getOrCreate()

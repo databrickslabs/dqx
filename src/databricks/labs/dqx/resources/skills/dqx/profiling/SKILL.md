@@ -24,7 +24,9 @@ summary_stats, profiles = profiler.profile(df)
 ### Profile a Table Directly
 
 ```python
-summary_stats, profiles = profiler.profile_table("catalog.schema.my_table")
+from databricks.labs.dqx.config import InputConfig
+
+summary_stats, profiles = profiler.profile_table(InputConfig(location="catalog.schema.my_table"))
 ```
 
 ### Profile Multiple Tables by Pattern
@@ -77,6 +79,18 @@ summary_stats, profiles = profiler.profile(df, options={
 ```python
 summary_stats, profiles = profiler.profile(df, columns=["id", "price", "status"])
 ```
+
+### Detect Primary Keys with LLM
+
+```python
+from databricks.labs.dqx.config import InputConfig
+
+result = profiler.detect_primary_keys_with_llm(InputConfig(location="catalog.schema.my_table"))
+# result is a dict with keys: table, success, primary_key_columns, confidence, reasoning,
+#                              has_duplicates, duplicate_count, error
+```
+
+Requires the LLM extra: `pip install 'databricks-labs-dqx[llm]'`
 
 ## Manual SQL Profiling
 
