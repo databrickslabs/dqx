@@ -2024,7 +2024,7 @@ Complex data types are supported as well.
       aggr_type: sum # other types: count, avg, min, max
       group_by:
       - col3
-      limit: 200  # numeric, can be int, float or Decimal (see below)
+      limit: 200  # numeric, can be int or float; use __decimal__ format for Decimal (see below)
 
 # if wanting to use Decimal values must use __decimal__ format
 - criticality: error
