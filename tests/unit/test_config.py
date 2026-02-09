@@ -183,6 +183,8 @@ def test_output_config_defaults():
     assert config.mode == "append"
     assert not config.options
     assert not config.trigger
+    assert not config.partition_by
+    assert not config.cluster_by
 
 
 def test_output_config_trigger_string_to_bool_conversion():
@@ -200,6 +202,11 @@ def test_output_config_trigger_with_actual_booleans():
     config = OutputConfig(location="output_table", trigger={"once": True, "continuous": False})
     assert config.trigger["once"] is True
     assert config.trigger["continuous"] is False
+
+
+def test_output_config_partition_by_and_cluster_by_are_mutually_exclusive():
+    with pytest.raises(InvalidParameterError, match="Only one of partition_by or cluster_by is allowed"):
+        OutputConfig(location="output_table", partition_by=["a"], cluster_by=["b"])
 
 
 # Test ProfilerConfig
