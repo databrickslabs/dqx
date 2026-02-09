@@ -837,6 +837,11 @@ limit:
   __decimal__: "0.01"
 ```
 
+Standard numeric types such as int and float can be defined directly:
+```yaml
+limit: 0.01
+```
+
 When checks are loaded, the `__decimal__` format is automatically converted back to Decimal objects. This format is required because YAML/JSON cannot natively represent Python Decimal objects.
 </Admonition>
 </details>
@@ -2290,6 +2295,11 @@ For example, to specify a Decimal value of `0.01` for `limit`:
 ```yaml
 limit:
   __decimal__: "0.01"
+```
+
+Standard numeric types such as int and float can be defined directly:
+```yaml
+limit: 0.01
 ```
 
 When checks are loaded, the `__decimal__` format is automatically converted back to Decimal objects. This format is required because YAML/JSON cannot natively represent Python Decimal objects.
