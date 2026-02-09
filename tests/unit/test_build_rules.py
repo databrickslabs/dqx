@@ -3,8 +3,6 @@ import pprint
 import logging
 import datetime
 import json
-from pathlib import Path
-from unittest.mock import Mock
 import yaml
 import pytest
 import pyspark.sql.functions as F
@@ -20,6 +18,8 @@ from databricks.labs.dqx.check_funcs import (
     is_unique,
     is_aggr_not_greater_than,
     is_aggr_not_less_than,
+    is_aggr_equal,
+    is_aggr_not_equal,
     foreign_key,
     is_valid_ipv4_address,
     is_ipv4_address_in_cidr,
@@ -30,6 +30,8 @@ from databricks.labs.dqx.check_funcs import (
     has_json_keys,
     regex_match,
     compare_datasets,
+    sql_query,
+    is_data_fresh_per_time_window,
 )
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
@@ -40,9 +42,9 @@ from databricks.labs.dqx.rule import (
     DQDatasetRule,
 )
 from databricks.labs.dqx.checks_serializer import (
-    deserialize_checks,
+    ChecksSerializer,
     serialize_checks,
-    serialize_checks_to_bytes,
+    deserialize_checks,
 )
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
@@ -244,6 +246,45 @@ def test_build_rules():
         DQRowRule(criticality="warn", check_func=is_valid_ipv4_address, column="g"),
         DQRowRule(
             criticality="warn", check_func=is_ipv4_address_in_cidr, column="g", check_func_args=["192.168.1.0/24"]
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            filter="a > b",
+            check_func_kwargs={
+                "query": "SELECT COUNT(*) > 0 AS condition FROM {{input_view}}",
+                "condition_column": "condition",
+            },
+        ),
+        DQDatasetRule(
+            name="count_aggr_equal",
+            criticality="error",
+            check_func=is_aggr_equal,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+        ),
+        DQDatasetRule(
+            name="count_aggr_not_equal",
+            criticality="error",
+            check_func=is_aggr_not_equal,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            check_func=compare_datasets,
+            columns=["a"],
+            filter="a > b",
+            check_func_kwargs={"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_data_fresh_per_time_window,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"window_minutes": 60, "min_records_per_window": 1},
         ),
     ]
 
@@ -464,6 +505,45 @@ def test_build_rules():
             column="g",
             check_func_args=["192.168.1.0/24"],
         ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            filter="a > b",
+            check_func_kwargs={
+                "query": "SELECT COUNT(*) > 0 AS condition FROM {{input_view}}",
+                "condition_column": "condition",
+            },
+        ),
+        DQDatasetRule(
+            name="count_aggr_equal",
+            criticality="error",
+            check_func=is_aggr_equal,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+        ),
+        DQDatasetRule(
+            name="count_aggr_not_equal",
+            criticality="error",
+            check_func=is_aggr_not_equal,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            check_func=compare_datasets,
+            columns=["a"],
+            filter="a > b",
+            check_func_kwargs={"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_data_fresh_per_time_window,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"window_minutes": 60, "min_records_per_window": 1},
+        ),
     ]
 
     assert pprint.pformat(actual_rules) == pprint.pformat(expected_rules)
@@ -614,6 +694,54 @@ def test_build_rules_by_metadata():
                 "function": "foreign_key",
                 "for_each_column": [["a"], ["c"]],
                 "arguments": {"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
+            },
+        },
+        {
+            "name": "sql_query_with_filter",
+            "criticality": "error",
+            "filter": "a > b",
+            "check": {
+                "function": "sql_query",
+                "arguments": {
+                    "query": "SELECT COUNT(*) > 0 AS condition FROM {{input_view}}",
+                    "condition_column": "condition",
+                },
+            },
+        },
+        {
+            "name": "count_aggr_equal_with_filter",
+            "criticality": "error",
+            "filter": "a > b",
+            "check": {
+                "function": "is_aggr_equal",
+                "arguments": {"column": "a", "limit": 1, "group_by": ["c"], "aggr_type": "count"},
+            },
+        },
+        {
+            "name": "count_aggr_not_equal_with_filter",
+            "criticality": "error",
+            "filter": "a > b",
+            "check": {
+                "function": "is_aggr_not_equal",
+                "arguments": {"column": "a", "limit": 1, "group_by": ["c"], "aggr_type": "count"},
+            },
+        },
+        {
+            "name": "compare_datasets_with_filter",
+            "criticality": "warn",
+            "filter": "a > b",
+            "check": {
+                "function": "compare_datasets",
+                "arguments": {"columns": ["a"], "ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
+            },
+        },
+        {
+            "name": "is_data_fresh_with_filter",
+            "criticality": "error",
+            "filter": "a > b",
+            "check": {
+                "function": "is_data_fresh_per_time_window",
+                "arguments": {"column": "a", "window_minutes": 60, "min_records_per_window": 1},
             },
         },
         {
@@ -840,6 +968,48 @@ def test_build_rules_by_metadata():
                 "ref_df_name": "ref_df_key",
             },
         ),
+        DQDatasetRule(
+            name="sql_query_with_filter",
+            criticality="error",
+            check_func=sql_query,
+            filter="a > b",
+            check_func_kwargs={
+                "query": "SELECT COUNT(*) > 0 AS condition FROM {{input_view}}",
+                "condition_column": "condition",
+            },
+        ),
+        DQDatasetRule(
+            name="count_aggr_equal_with_filter",
+            criticality="error",
+            check_func=is_aggr_equal,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+        ),
+        DQDatasetRule(
+            name="count_aggr_not_equal_with_filter",
+            criticality="error",
+            check_func=is_aggr_not_equal,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"limit": 1, "group_by": ["c"], "aggr_type": "count"},
+        ),
+        DQDatasetRule(
+            name="compare_datasets_with_filter",
+            criticality="warn",
+            check_func=compare_datasets,
+            columns=["a"],
+            filter="a > b",
+            check_func_kwargs={"ref_columns": ["ref_a"], "ref_df_name": "ref_df_key"},
+        ),
+        DQDatasetRule(
+            name="is_data_fresh_with_filter",
+            criticality="error",
+            check_func=is_data_fresh_per_time_window,
+            column="a",
+            filter="a > b",
+            check_func_kwargs={"window_minutes": 60, "min_records_per_window": 1},
+        ),
         DQRowRule(
             name="a_does_not_match_pattern_ipv4_address",
             criticality="error",
@@ -960,6 +1130,48 @@ def test_register_rule():
     # Assert that the function is registered correctly
     assert "mock_check_func" in CHECK_FUNC_REGISTRY
     assert CHECK_FUNC_REGISTRY["mock_check_func"] == "single_column"
+
+
+def test_dataset_rule_row_filter_in_kwargs():
+    """Test that row_filter passed in kwargs works when filter attribute is not provided."""
+    rule = DQDatasetRule(
+        criticality="error",
+        check_func=is_unique,
+        columns=["a"],
+        check_func_kwargs={"row_filter": "a > 0"},
+    )
+
+    # Verify that row_filter from kwargs is passed through
+    _, kwargs = rule.prepare_check_func_args_and_kwargs()
+    assert "row_filter" in kwargs
+    assert kwargs["row_filter"] == "a > 0"
+
+    # Verify serialization includes row_filter in arguments but not in top-level filter
+    metadata = rule.to_dict()
+    assert "filter" not in metadata  # filter attribute not set, so no top-level filter
+    assert metadata["check"]["arguments"]["row_filter"] == "a > 0"  # row_filter should be in arguments
+
+
+def test_dataset_rule_filter_takes_precedence_over_row_filter_in_kwargs():
+    """Test that filter attribute takes precedence over row_filter in kwargs when both are provided."""
+    rule = DQDatasetRule(
+        criticality="error",
+        check_func=is_unique,
+        columns=["a"],
+        filter="a > 10",  # filter attribute
+        check_func_kwargs={"row_filter": "a > 0"},  # row_filter in kwargs
+    )
+
+    # Verify that filter attribute takes precedence
+    _, kwargs = rule.prepare_check_func_args_and_kwargs()
+    assert "row_filter" in kwargs
+    assert kwargs["row_filter"] == "a > 10"  # Should be from filter attribute, not kwargs
+    assert kwargs["row_filter"] != "a > 0"  # Should not be from kwargs
+
+    # Verify serialization shows filter attribute, not row_filter in arguments
+    metadata = rule.to_dict()
+    assert metadata["filter"] == "a > 10"  # filter attribute should be in metadata
+    assert metadata["check"]["arguments"]["row_filter"] == "a > 10"  # Should be pushed down from filter
 
 
 def test_row_rule_null_column():
@@ -1180,10 +1392,45 @@ def test_convert_dq_rules_to_metadata():
             columns=[["a", "b"], ["c"], ["d"]],
             check_func_kwargs={"nulls_distinct": False},
         ).get_rules(),
-        DQDatasetRule(
-            criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
-        ),
+        DQDatasetRule(criticality="error", check_func=is_unique, columns=["col1"], filter="col2 > 0"),
         DQDatasetRule(criticality="error", check_func=has_no_outliers, column="col2"),
+        DQDatasetRule(
+            criticality="error",
+            check_func=sql_query,
+            filter="col2 > 0",
+            check_func_kwargs={
+                "query": "SELECT COUNT(*) > 0 AS condition FROM {{input_view}}",
+                "condition_column": "condition",
+            },
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_equal,
+            column="col1",
+            filter="col2 > 0",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_aggr_not_equal,
+            column="col1",
+            filter="col2 > 0",
+            check_func_kwargs={"aggr_type": "count", "limit": 10},
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            check_func=compare_datasets,
+            columns=["col1"],
+            filter="col2 > 0",
+            check_func_kwargs={"ref_columns": ["ref_col1"], "ref_df_name": "ref_df_key"},
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_data_fresh_per_time_window,
+            column="col1",
+            filter="col2 > 0",
+            check_func_kwargs={"window_minutes": 60, "min_records_per_window": 1},
+        ),
     ]
     actual_metadata = serialize_checks(checks)
 
@@ -1404,14 +1651,74 @@ def test_convert_dq_rules_to_metadata():
             },
         },
         {
-            'name': 'col1_is_not_unique',
-            'criticality': 'error',
-            'check': {'function': 'is_unique', 'arguments': {'columns': ['col1'], 'row_filter': 'col2 > 0'}},
+            "name": "col1_is_not_unique",
+            "criticality": "error",
+            "filter": "col2 > 0",
+            "check": {"function": "is_unique", "arguments": {"columns": ["col1"], "row_filter": "col2 > 0"}},
         },
         {
             "name": "col2_has_outliers",
             "criticality": "error",
             "check": {"function": "has_no_outliers", "arguments": {"column": "col2"}},
+        },
+        {
+            "name": "query_condition_violation",
+            "criticality": "error",
+            "filter": "col2 > 0",
+            "check": {
+                "function": "sql_query",
+                "arguments": {
+                    "query": "SELECT COUNT(*) > 0 AS condition FROM {{input_view}}",
+                    "condition_column": "condition",
+                    "row_filter": "col2 > 0",
+                },
+            },
+        },
+        {
+            "name": "col1_count_not_equal_to_limit",
+            "criticality": "error",
+            "filter": "col2 > 0",
+            "check": {
+                "function": "is_aggr_equal",
+                "arguments": {"column": "col1", "aggr_type": "count", "limit": 10, "row_filter": "col2 > 0"},
+            },
+        },
+        {
+            "name": "col1_count_equal_to_limit",
+            "criticality": "error",
+            "filter": "col2 > 0",
+            "check": {
+                "function": "is_aggr_not_equal",
+                "arguments": {"column": "col1", "aggr_type": "count", "limit": 10, "row_filter": "col2 > 0"},
+            },
+        },
+        {
+            "name": "datasets_diff_pk_col1_ref_ref_col1",
+            "criticality": "warn",
+            "filter": "col2 > 0",
+            "check": {
+                "function": "compare_datasets",
+                "arguments": {
+                    "columns": ["col1"],
+                    "ref_columns": ["ref_col1"],
+                    "ref_df_name": "ref_df_key",
+                    "row_filter": "col2 > 0",
+                },
+            },
+        },
+        {
+            "name": "col1_is_data_fresh_per_time_window",
+            "criticality": "error",
+            "filter": "col2 > 0",
+            "check": {
+                "function": "is_data_fresh_per_time_window",
+                "arguments": {
+                    "column": "col1",
+                    "window_minutes": 60,
+                    "min_records_per_window": 1,
+                    "row_filter": "col2 > 0",
+                },
+            },
         },
     ]
 
@@ -1451,6 +1758,62 @@ def test_dq_rules_to_dict_when_invalid_arg_type() -> None:
         ).to_dict()
 
 
+def test_deserialize_checks_filter_takes_precedence_over_row_filter_in_arguments():
+    """Test that when metadata has both filter and row_filter in arguments, filter takes precedence."""
+    checks = [
+        {
+            "criticality": "error",
+            "filter": "a > 10",  # filter attribute
+            "check": {
+                "function": "is_unique",
+                "arguments": {
+                    "columns": ["a"],
+                    "row_filter": "a > 0",  # row_filter in arguments (should be ignored)
+                },
+            },
+        },
+    ]
+
+    actual_rules = deserialize_checks(checks)
+
+    # Verify that filter attribute is set and row_filter in arguments is overridden
+    assert len(actual_rules) == 1
+    rule = actual_rules[0]
+    assert rule.filter == "a > 10"
+
+    # Verify that when preparing args/kwargs, filter takes precedence
+    _, kwargs = rule.prepare_check_func_args_and_kwargs()
+    assert kwargs["row_filter"] == "a > 10"  # Should be from filter attribute
+    assert kwargs["row_filter"] != "a > 0"  # Should not be from arguments
+
+
+def test_deserialize_checks_row_filter_in_arguments_when_no_filter():
+    """Test that row_filter in arguments works when filter attribute is not provided."""
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_unique",
+                "arguments": {
+                    "columns": ["a"],
+                    "row_filter": "a > 0",  # row_filter in arguments
+                },
+            },
+        },
+    ]
+
+    actual_rules = deserialize_checks(checks)
+
+    # Verify that rule is created without filter attribute
+    assert len(actual_rules) == 1
+    rule = actual_rules[0]
+    assert rule.filter is None
+
+    # Verify that row_filter from arguments is passed through
+    _, kwargs = rule.prepare_check_func_args_and_kwargs()
+    assert kwargs["row_filter"] == "a > 0"
+
+
 def test_metadata_round_trip_conversion_preserves_rules() -> None:
     checks = [
         DQRowRule(
@@ -1481,7 +1844,7 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
             column=F.col("col3"),
             user_metadata={"check_type": "completeness", "responsible_data_steward": "someone@email.com"},
         ),
-        DQRowRule(criticality="warn", check_func=regex_match, column=F.col('col3'), check_func_kwargs={"regex": "dqx"}),
+        DQRowRule(criticality="warn", check_func=regex_match, column=F.col("col3"), check_func_kwargs={"regex": "dqx"}),
         DQRowRule(criticality="warn", check_func=is_in_list, column="col1", check_func_args=[[1, 2]]),
         DQRowRule(criticality="warn", check_func=is_in_list, column="col2", check_func_kwargs={"allowed": [1, 2]}),
         DQRowRule(check_func=is_not_null, column="col7.field1"),
@@ -1539,7 +1902,16 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
             check_func_kwargs={"nulls_distinct": False},
         ).get_rules(),
         DQDatasetRule(
-            criticality="error", check_func=is_unique, columns=["col1"], check_func_kwargs={"row_filter": "col2 > 0"}
+            criticality="error",
+            check_func=is_unique,
+            columns=["col1"],
+            filter="col2 > 0",
+        ),
+        DQDatasetRule(
+            criticality="error",
+            check_func=is_unique,
+            columns=["col2"],
+            check_func_kwargs={"row_filter": "col3 > 0"},
         ),
     ]
 
@@ -1559,7 +1931,5 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
     ],
 )
 def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
-    mock_path = Mock(spec=Path)
-    mock_path.suffix = file_path_suffix
-    result = serialize_checks_to_bytes(checks, mock_path)
+    result = ChecksSerializer.serialize_to_bytes(checks, file_path_suffix)
     assert result == expected_output
