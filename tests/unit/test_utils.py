@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from typing import Any
+from pathlib import Path
 from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
@@ -13,10 +14,11 @@ from databricks.labs.dqx.utils import (
     safe_json_load,
     get_columns_as_strings,
     is_simple_column_expression,
-    normalize_bound_args,
     safe_strip_file_from_path,
     missing_required_packages,
+    get_file_extension,
 )
+from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
 
@@ -336,6 +338,10 @@ def test_normalize_bound_args_unsupported_type():
         normalize_bound_args({"a": 1})
 
 
+def test_normalize_bound_args_handle_none():
+    assert normalize_bound_args(None) is None
+
+
 def test_get_reference_dataframes_with_missing_ref_tables(mock_spark) -> None:
     assert get_reference_dataframes(mock_spark, reference_tables={}) is None
     assert get_reference_dataframes(mock_spark, reference_tables=None) is None
@@ -380,3 +386,31 @@ def test_safe_strip_file_from_path(path: str, expected: str):
 )
 def test_missing_required_packages(packages, expected):
     assert missing_required_packages(packages) == expected
+
+
+@pytest.mark.parametrize(
+    "file_path, expected_extension",
+    [
+        ("/path/to/file.json", ".json"),
+        ("/path/to/file.yaml", ".yaml"),
+        ("/path/to/file.yml", ".yml"),
+        ("file.json", ".json"),
+        ("file.yaml", ".yaml"),
+        ("file.yml", ".yml"),
+        ("/path/to/file", ""),
+        ("file", ""),
+        ("/path/to/file.JSON", ".JSON"),  # Case preserved, will be lowercased by serializer
+        ("/path/to/file.YAML", ".YAML"),
+        ("/path/to/file.with.multiple.dots.json", ".json"),
+        ("", ""),
+    ],
+)
+def test_get_file_extension(file_path: str, expected_extension: str):
+    """Test get_file_extension function with various file paths."""
+    assert get_file_extension(file_path) == expected_extension
+
+
+def test_get_file_extension_with_path_object():
+    """Test get_file_extension function with Path object."""
+    file_path = Path("/path/to/file.json")
+    assert get_file_extension(file_path) == ".json"
