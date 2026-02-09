@@ -32,6 +32,7 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.profiler.dlt_generator import DQDltGenerator
 from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig, TableChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.checks_serializer import ChecksNormalizer
 from databricks.sdk import WorkspaceClient
 import os
 import yaml
@@ -64,7 +65,7 @@ print(profiles)
 # they should be manually reviewed before being applied to the data
 generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
-print(yaml.safe_dump(checks))
+print(yaml.safe_dump(ChecksNormalizer.normalize(checks)))
 
 # generate Lakeflow Pipeline (formerly Delta Live Table (DLT)) expectations
 dlt_generator = DQDltGenerator(ws)

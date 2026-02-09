@@ -16,7 +16,7 @@ DQX provides a collection of predefined built-in quality rules (checks). Additio
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 All rule types, including row-level and dataset-level rules, can be defined and applied simultaneously in a single execution.
 
-You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.12.0/src/databricks/labs/dqx/check_funcs.py).
+You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/check_funcs.py).
 
 ## Row-level checks reference
 
@@ -365,6 +365,22 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col3
       limit: col2 - 10
+
+- criticality: error
+  check:
+    function: is_not_less_than
+    arguments:
+      column: col4
+      limit: 100.5  # numeric: parsed as int or float; use __decimal__ (see below) for Decimal
+
+# if wanting to use Decimal values must use __decimal__ format
+- criticality: error
+  check:
+    function: is_not_less_than
+    arguments:
+      column: col4
+      limit:
+        __decimal__: "100.50"
 
 # is_not_greater_than check
 - criticality: error
@@ -811,6 +827,23 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
       column: polygon_geom
       value: 1
 ```
+
+<Admonition type="info" title="Decimal Values in Metadata Format">
+When creating checks with Decimal values (e.g., for `limit`, `min_limit`, `max_limit`, `value` parameters) in metadata format (YAML, JSON, or dictionary), Decimal values must be provided using the `__decimal__` format. This is only applicable for checks defined as metadata (dict, YAML, JSON), not for programmatic checks using DQX classes where Decimal objects can be used directly.
+
+For example, to specify a Decimal value of `0.01` for `limit`:
+```yaml
+limit:
+  __decimal__: "0.01"
+```
+
+Standard numeric types such as int and float can be defined directly:
+```yaml
+limit: 0.01
+```
+
+When checks are loaded, the `__decimal__` format is automatically converted back to Decimal objects. This format is required because YAML/JSON cannot natively represent Python Decimal objects.
+</Admonition>
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
@@ -1991,7 +2024,19 @@ Complex data types are supported as well.
       aggr_type: sum # other types: count, avg, min, max
       group_by:
       - col3
-      limit: 200
+      limit: 200  # numeric, can be int or float; use __decimal__ format for Decimal (see below)
+
+# if wanting to use Decimal values must use __decimal__ format
+- criticality: error
+  check:
+    function: is_aggr_not_equal
+    arguments:
+      column: col4
+      aggr_type: sum # other types: count, avg, min, max
+      group_by:
+      - col3
+      limit:
+        __decimal__: "200.30"
 
 # foreign_key check using reference DataFrame
 - criticality: error
@@ -2242,6 +2287,23 @@ reference_tables:
       location: catalog1.schema1.ref_table
   # multiple references can be provided ...
 ```
+
+<Admonition type="info" title="Decimal Values in Metadata Format">
+When creating checks with Decimal values (e.g., for `limit` parameters) in metadata format (YAML, JSON, or dictionary), Decimal values must be provided using the `__decimal__` format. This is only applicable for checks defined as metadata (dict, YAML, JSON), not for programmatic checks using DQX classes where Decimal objects can be used directly.
+
+For example, to specify a Decimal value of `0.01` for `limit`:
+```yaml
+limit:
+  __decimal__: "0.01"
+```
+
+Standard numeric types such as int and float can be defined directly:
+```yaml
+limit: 0.01
+```
+
+When checks are loaded, the `__decimal__` format is automatically converted back to Decimal objects. This format is required because YAML/JSON cannot natively represent Python Decimal objects.
+</Admonition>
 </details>
 
 <details style={{ backgroundColor: 'transparent', color: 'neutral' }}>
@@ -3734,7 +3796,7 @@ The built-in check supports several configurable parameters:
 DQX automatically installs the built-in entity recognition models at runtime if they are not already available.
 However, for better performance and to avoid potential out-of-memory issues, it is recommended to pre-install models using pip install.
 Any additional models used in a custom configuration must also be installed on your Databricks cluster.
-See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.12.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
+See the [Using DQX for PII Detection](https://github.com/databrickslabs/dqx/blob/v0.13.0/demos/dqx_demo_pii_detection.py) notebook for examples of custom model installation.
 </Admonition>
 
 #### Using Built-in NLP Engine Configurations
