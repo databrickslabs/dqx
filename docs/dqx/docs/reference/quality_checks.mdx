@@ -371,7 +371,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_not_less_than
     arguments:
       column: col4
-      limit: 100.5  # numeric: can be int, float or Decimal (see below)
+      limit: 100.5  # numeric: parsed as int or float; use __decimal__ (see below) for Decimal
 
 # if wanting to use Decimal values must use __decimal__ format
 - criticality: error
