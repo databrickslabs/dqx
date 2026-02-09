@@ -371,7 +371,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     function: is_not_less_than
     arguments:
       column: col4
-      limit: 100.5  # numeric, can be int, float or Decimal (see below)
+      limit: 100.5  # numeric: can be int, float or Decimal (see below)
 
 # if wanting to use Decimal values must use __decimal__ format
 - criticality: error
@@ -380,7 +380,7 @@ For brevity, the `name` field in the examples is omitted and it will be auto-gen
     arguments:
       column: col4
       limit:
-        __decimal__: "100.50"  # double 
+        __decimal__: "100.50"
 
 # is_not_greater_than check
 - criticality: error
@@ -2031,7 +2031,7 @@ Complex data types are supported as well.
       group_by:
       - col3
       limit:
-        __decimal__: "200.30"  # double
+        __decimal__: "200.30"
 
 # foreign_key check using reference DataFrame
 - criticality: error
