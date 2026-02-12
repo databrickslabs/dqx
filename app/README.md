@@ -296,13 +296,16 @@ databricks bundle deploy -p <your-profile>
 ```
 
 This command:
-- Creates/updates the app resource in Databricks
+- Build the project using `uv run apx build` (compiles frontend, generates OpenAPI schema, creates wheel)
 - Uploads the `.build/` directory to workspace (at `.bundle/<app-name>/dev/files/.build`)
+- Creates/updates the app resource in Databricks workspace
 - Configures app settings from `databricks.yml` (name, scopes, permissions)
 
 This does not:
 - Start the app
 - Deploy the actual source code to the app runtime
+- Configures the OAuth scopes (you need to do this manually after the initial deployment)
+- Grant users access to the app (you need to do this manually after deployment)
 
 ### Step 2: Configure OAuth Scopes (⚠️ Critical)
 
