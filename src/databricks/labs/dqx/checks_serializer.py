@@ -21,7 +21,6 @@ from databricks.labs.dqx.rule import (
 )
 from databricks.labs.dqx.utils import safe_json_load
 from databricks.labs.dqx.errors import InvalidCheckError
-from databricks.labs.dqx.checks_formats import FILE_SERIALIZERS, FILE_DESERIALIZERS
 
 CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"

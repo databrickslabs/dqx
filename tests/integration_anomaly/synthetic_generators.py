@@ -9,22 +9,22 @@ import pyspark.sql.functions as F
 
 def _to_train_test_frames(
     spark,
-    x: np.ndarray,
-    y: np.ndarray,
+    features: np.ndarray,
+    labels: np.ndarray,
     *,
     train_ratio: float = 0.6,
 ) -> tuple[list[str], DataFrame, DataFrame]:
-    order = np.random.default_rng(42).permutation(len(x))
-    x = x[order]
-    y = y[order]
+    order = np.random.default_rng(42).permutation(len(features))
+    features = features[order]
+    labels = labels[order]
 
-    n_train = int(train_ratio * len(x))
-    x_train, x_test = x[:n_train], x[n_train:]
-    y_train, y_test = y[:n_train], y[n_train:]
+    n_train = int(train_ratio * len(features))
+    features_train, features_test = features[:n_train], features[n_train:]
+    labels_train, labels_test = labels[:n_train], labels[n_train:]
 
-    feature_cols = [f"feature_{i}" for i in range(x.shape[1])]
-    train_rows = np.hstack([x_train, y_train.reshape(-1, 1)]).tolist()
-    test_rows = np.hstack([x_test, y_test.reshape(-1, 1)]).tolist()
+    feature_cols = [f"feature_{i}" for i in range(features.shape[1])]
+    train_rows = np.hstack([features_train, labels_train.reshape(-1, 1)]).tolist()
+    test_rows = np.hstack([features_test, labels_test.reshape(-1, 1)]).tolist()
 
     train_df = spark.createDataFrame(train_rows, feature_cols + ["is_anomaly"])
     test_df = spark.createDataFrame(test_rows, feature_cols + ["is_anomaly"])
@@ -48,9 +48,9 @@ def generate_overlapping_gaussian_data(
     normal = rng.normal(loc=0.0, scale=1.0, size=(n_normals, n_features))
     anomalies = rng.normal(loc=anomaly_shift, scale=1.25, size=(n_anomalies, n_features))
 
-    x = np.vstack([normal, anomalies])
-    y = np.concatenate([np.zeros(n_normals, dtype=float), np.ones(n_anomalies, dtype=float)])
-    return _to_train_test_frames(spark, x, y)
+    features = np.vstack([normal, anomalies])
+    labels = np.concatenate([np.zeros(n_normals, dtype=float), np.ones(n_anomalies, dtype=float)])
+    return _to_train_test_frames(spark, features, labels)
 
 
 def generate_heavy_tail_data(
@@ -69,9 +69,9 @@ def generate_heavy_tail_data(
     normal = rng.standard_t(df=3, size=(n_normals, n_features))
     anomalies = rng.standard_t(df=2, size=(n_anomalies, n_features)) * 4.0
 
-    x = np.vstack([normal, anomalies])
-    y = np.concatenate([np.zeros(n_normals, dtype=float), np.ones(n_anomalies, dtype=float)])
-    return _to_train_test_frames(spark, x, y)
+    features = np.vstack([normal, anomalies])
+    labels = np.concatenate([np.zeros(n_normals, dtype=float), np.ones(n_anomalies, dtype=float)])
+    return _to_train_test_frames(spark, features, labels)
 
 
 def generate_segment_conditional_data(
@@ -84,7 +84,7 @@ def generate_segment_conditional_data(
     rng = np.random.default_rng(seed)
     rows: list[tuple[float, float, str, float]] = []
 
-    for region, mean_a, mean_b in [("US", 100.0, 20.0), ("EU", 80.0, 15.0), ("APAC", 120.0, 25.0)]:
+    for region, mean_a, mean_b in (("US", 100.0, 20.0), ("EU", 80.0, 15.0), ("APAC", 120.0, 25.0)):
         normal_count = int(n_per_segment * 0.96)
         anomaly_count = n_per_segment - normal_count
 
@@ -115,7 +115,9 @@ def inject_missingness_spike(
     result = df
     for idx, col_name in enumerate(columns):
         rand_col = F.rand(seed + idx)
-        result = result.withColumn(col_name, F.when(rand_col < missing_fraction, F.lit(None)).otherwise(F.col(col_name)))
+        result = result.withColumn(
+            col_name, F.when(rand_col < missing_fraction, F.lit(None)).otherwise(F.col(col_name))
+        )
     return result
 
 

@@ -1,6 +1,7 @@
 """Segment utilities for anomaly detection."""
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from pyspark.sql import Column
 import pyspark.sql.functions as F

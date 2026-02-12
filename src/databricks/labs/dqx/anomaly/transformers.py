@@ -559,7 +559,7 @@ def _apply_frequency_encoding(
         engineered_features.append(feature_name)
         return transformed_df
 
-    freq_rows = [(value, frequency) for value, frequency in freq_map.items()]
+    freq_rows = list(freq_map.items())
     freq_schema = T.StructType(
         [
             T.StructField(lookup_key_col, T.StringType(), False),

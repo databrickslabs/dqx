@@ -232,7 +232,9 @@ def apply_expected_anomaly_rate_if_default_contamination(
     return params
 
 
-def get_and_validate_segments(df: DataFrame, segment_by: list[str]) -> tuple[int, collections.abc.Iterator[dict[str, Any]]]:
+def get_and_validate_segments(
+    df: DataFrame, segment_by: list[str]
+) -> tuple[int, collections.abc.Iterator[dict[str, Any]]]:
     """Get distinct segments and validate count."""
     segments_df = df.select(*segment_by).distinct()
     segment_count = segments_df.count()
