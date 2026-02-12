@@ -62,6 +62,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+          DATABRICKS_CLUSTER_ID: ${{ env.DATABRICKS_DQX_CLUSTER_ID }}
 
       - name: Merge coverage reports and convert them to XML
         run: |

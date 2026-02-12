@@ -54,7 +54,7 @@ Here are the example steps to submit your first contribution:
 8. `make fmt` (Note: If you have an issue with `make fmt`, ensure your IDE folder is ignored in .gitignore. Already added for .idea/ and .cursor/)
 9. `make lint`
 10. .. fix if any issues are reported
-11. `make test` and `make integration`, and optionally `make coverage` (generate coverage report)
+11. `make test` (run unit tests), `make integration` (run integration tests), `make e2e` (run end-to-end tests) and optionally `make coverage` (generate coverage report). See below on how to setup the testing environment for integration tests.
 12. .. fix if any issues reported
 13. `git commit -S -a -m "message"`
 
@@ -84,6 +84,7 @@ Please make sure the following items are set up correctly in your local git conf
     Use a meaningful pull request title because it'll appear in the release notes. Use `Resolves #NUMBER` in pull
     request description to [automatically link it](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests#linking-a-pull-request-to-an-issue)
     to an existing issue.
+15. Reviewers will be automatically assigned. Project maintainers will also add `Copilot` AI assistant as one of the reviewers to evaluate the code automatically.
 
 ## Definition of Done
 
@@ -103,13 +104,12 @@ Please ensure the following DoDs are met before submitting your pull request:
 Alternatively, you may open a [Draft PR](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) if your work is not yet ready for submission.
 This is a good way to gather early feedback without needing to meet all Definition of Done (DoD) requirements.
 
-<Admonition type="warning" title="Integration and e2e tests">
+<Admonition type="warning" title="Special cases">
 * Draft PRs — Integration and end-to-end (e2e) tests are not run automatically on Draft PRs. These tests will only execute once the PR is marked as "Ready for Review".
-* Forked PRs — No checks are run automatically for PRs opened from forks.
-    Project maintainers must approve it.
-    Integration and end-to-end (e2e) tests cannot be run for PRs opened from forks.
-    In these cases, project maintainers will run the tests manually before merging the code.
-    The contributor should ensure that the tests are passing in their local environment before submitting the PR.
+* Forked PRs — The following applies for PRs opened from forks (external contributors scenario):
+    * Project maintainers must approve Github workflows. This includes running unit tests, builds, and other automated checks.
+    * Integration, end-to-end (e2e) and performance tests are not run. You can run the tests using [Databricks Free Edition](https://www.databricks.com/learn/free-edition) with the exception of Lakebase tests, which require a standard workspace. When using Databricks Free you can ignore the Lakebase tests.
+    * Project maintainers will run the tests manually before merging the code.
 
 In all cases, the full test suite is executed on code merged into `main` branch as part of the nightly CI/CD pipeline.
 </Admonition>
@@ -150,8 +150,9 @@ make test
 
 ### Running integration tests and code coverage
 
-Integration tests and code coverage are run automatically when you create a Pull Request in Github.
+Integration tests and code coverage are run automatically when you create a Pull Request in Github (except forks).
 You can also trigger the tests from a local machine by configuring authentication to a Databricks workspace.
+We recommend to use [Databricks Free Edition](https://www.databricks.com/learn/free-edition) for testing, as it provides a free cluster. You can skip Lakebase tests as Lakebase is not available on Databricks Free.
 
 #### Using terminal
 
@@ -180,7 +181,12 @@ Run integration tests with the following command:
 make integration
 ```
 
-Calculate test coverage and display report in HTML:
+Run end-to-end tests with the following command:
+```shell
+make e2e
+```
+
+(Optional) Calculate test coverage and display report in HTML:
 ```shell
 make coverage
 ```

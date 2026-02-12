@@ -34,8 +34,6 @@ class DQLLMEngine:
         """
         Initialize the LLM engine.
 
-        This class configures the DSPy model once per worker process with base settings.
-
         Args:
             model_config: Configuration for the LLM model.
             spark: Optional Spark session. If None, a new session is created.
@@ -45,10 +43,9 @@ class DQLLMEngine:
 
         self._available_check_functions = json.dumps(get_required_check_functions_definitions(custom_check_functions))
 
-        # Configure DSPy model once per worker process
+        # Store configurator for creating per-request LM instances with current token
+        # We do NOT call configure() - each request uses context() with the current token
         self._configurator = LLMModelConfigurator(model_config)
-        self._configurator.configure()
-
         self._llm_rule_compiler = LLMRuleCompiler(custom_check_functions=custom_check_functions)
         self._llm_pk_detector = LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
 

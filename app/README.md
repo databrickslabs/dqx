@@ -362,7 +362,12 @@ databricks apps deploy databricks-labs-dqx-app \
 4. Enter the source code path: `/Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build`
 5. Click **Deploy**
 
-### Step 5: Access and Configure the App
+### Step 5: Configure Permissions in the app
+
+After deployment, you need to grant users permissions to access the app.
+This is done through the Databricks UI or API by assigning users/groups to the app with `Can Use` permission.
+
+### Step 6: Access and Configure the App
 
 Once the app is deployed and started, you can access it at:
 ```
