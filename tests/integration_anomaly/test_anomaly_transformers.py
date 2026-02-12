@@ -159,6 +159,7 @@ def test_column_type_classifier_warnings_for_limits_and_unsupported(spark):
     assert "Skipping unsupported columns" in warnings_text
     assert "Feature engineering will create" in warnings_text
     assert "appears to be an ID field" in warnings_text
+    assert "datetime → 7 features" in warnings_text
 
 
 def test_id_field_detection_with_high_cardinality_integers(spark):
@@ -273,6 +274,35 @@ def test_categorical_onehot_vs_frequency_encoding(spark):
     # Verify metadata stores encoding info
     assert "low_card" in metadata.onehot_categories
     assert "high_card" in metadata.categorical_frequency_maps
+
+
+def test_frequency_encoding_unseen_category_maps_to_zero(spark):
+    """Frequency encoding should map unseen categories to 0.0 during scoring."""
+    train_df = spark.createDataFrame(
+        [("u1", 10.0), ("u1", 11.0), ("u2", 12.0), ("u3", 13.0)],
+        "high_card string, amount double",
+    )
+    score_df = spark.createDataFrame(
+        [("u1", 20.0), ("u999", 21.0), (None, 22.0)],
+        "high_card string, amount double",
+    )
+
+    classifier = ColumnTypeClassifier(categorical_cardinality_threshold=1)
+    infos, _warnings = classifier.analyze_columns(train_df, ["high_card", "amount"])
+
+    _engineered_train_df, metadata = apply_feature_engineering(train_df, infos, categorical_cardinality_threshold=1)
+    engineered_score_df, _ = apply_feature_engineering(
+        score_df,
+        infos,
+        categorical_cardinality_threshold=1,
+        frequency_maps=metadata.categorical_frequency_maps,
+        onehot_categories=metadata.onehot_categories,
+    )
+
+    rows = engineered_score_df.select("high_card_freq").collect()
+    assert rows[0]["high_card_freq"] > 0.0  # seen category
+    assert rows[1]["high_card_freq"] == 0.0  # unseen category
+    assert rows[2]["high_card_freq"] == 0.0  # null -> MISSING unseen
 
 
 def test_datetime_cyclical_encoding(spark):

@@ -7,7 +7,11 @@ from databricks.labs.dqx.anomaly.utils.scoring_utils import (
     create_null_scored_dataframe,
     create_udf_schema,
 )
-from databricks.labs.dqx.anomaly.utils.segment_utils import build_segment_filter
+from databricks.labs.dqx.anomaly.utils.segment_utils import (
+    build_segment_filter,
+    build_segment_name,
+    canonicalize_segment_values,
+)
 from databricks.labs.dqx.anomaly.utils.validation import validate_sklearn_compatibility
 
 __all__ = [
@@ -17,5 +21,7 @@ __all__ = [
     "add_info_column",
     "create_udf_schema",
     "build_segment_filter",
+    "build_segment_name",
+    "canonicalize_segment_values",
     "validate_sklearn_compatibility",
 ]

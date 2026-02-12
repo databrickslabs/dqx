@@ -39,6 +39,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering,
     reconstruct_column_infos,
 )
+from databricks.labs.dqx.anomaly.utils.segment_utils import build_segment_name
 from databricks.labs.dqx.anomaly.types import AnomalyTrainingContext, TrainingArtifacts
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -81,6 +82,78 @@ def validate_columns(
 
     _column_infos, warnings_list = classifier.analyze_columns(df, list(columns))
     return warnings_list
+
+
+def _validate_float_range(
+    value: float,
+    *,
+    label: str,
+    min_exclusive: float | None = None,
+    max_inclusive: float | None = None,
+) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidParameterError(f"{label} must be a numeric value.")
+    numeric_value = float(value)
+    if min_exclusive is not None and numeric_value <= min_exclusive:
+        raise InvalidParameterError(f"{label} must be > {min_exclusive}. Got {value}.")
+    if max_inclusive is not None and numeric_value > max_inclusive:
+        raise InvalidParameterError(f"{label} must be <= {max_inclusive}. Got {value}.")
+
+
+def _validate_int_min(value: int, *, label: str, min_value: int) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise InvalidParameterError(f"{label} must be an integer.")
+    if value < min_value:
+        raise InvalidParameterError(f"{label} must be >= {min_value}. Got {value}.")
+
+
+def validate_training_params(params: AnomalyParams, expected_anomaly_rate: float) -> None:
+    """Validate training parameters with strict fail-fast checks."""
+    _validate_float_range(params.sample_fraction, label="params.sample_fraction", min_exclusive=0.0, max_inclusive=1.0)
+    _validate_float_range(params.train_ratio, label="params.train_ratio", min_exclusive=0.0, max_inclusive=1.0)
+
+    _validate_int_min(params.max_rows, label="params.max_rows", min_value=1)
+
+    if params.ensemble_size is not None:
+        _validate_int_min(params.ensemble_size, label="params.ensemble_size", min_value=1)
+
+    _validate_float_range(
+        expected_anomaly_rate,
+        label="expected_anomaly_rate",
+        min_exclusive=0.0,
+        max_inclusive=0.5,
+    )
+
+    algo_cfg = params.algorithm_config
+    if algo_cfg.contamination is not None:
+        _validate_float_range(
+            algo_cfg.contamination,
+            label="params.algorithm_config.contamination",
+            min_exclusive=0.0,
+            max_inclusive=0.5,
+        )
+
+    _validate_int_min(algo_cfg.num_trees, label="params.algorithm_config.num_trees", min_value=1)
+    if algo_cfg.subsampling_rate is not None:
+        _validate_float_range(
+            algo_cfg.subsampling_rate,
+            label="params.algorithm_config.subsampling_rate",
+            min_exclusive=0.0,
+            max_inclusive=1.0,
+        )
+
+    fe_cfg = params.feature_engineering
+    _validate_int_min(
+        fe_cfg.categorical_cardinality_threshold,
+        label="params.feature_engineering.categorical_cardinality_threshold",
+        min_value=1,
+    )
+    _validate_int_min(fe_cfg.max_input_columns, label="params.feature_engineering.max_input_columns", min_value=1)
+    _validate_int_min(
+        fe_cfg.max_engineered_features,
+        label="params.feature_engineering.max_engineered_features",
+        min_value=1,
+    )
 
 
 # =============================================================================
@@ -159,17 +232,17 @@ def apply_expected_anomaly_rate_if_default_contamination(
     return params
 
 
-def get_and_validate_segments(df: DataFrame, segment_by: list[str]) -> list[dict[str, Any]]:
+def get_and_validate_segments(df: DataFrame, segment_by: list[str]) -> tuple[int, collections.abc.Iterator[dict[str, Any]]]:
     """Get distinct segments and validate count."""
     segments_df = df.select(*segment_by).distinct()
-    segments = [row.asDict() for row in segments_df.collect()]
+    segment_count = segments_df.count()
 
-    if len(segments) > 100:
+    if segment_count > 100:
         logger.warning(
-            f"Training {len(segments)} segments may be slow. Consider coarser segmentation or explicit segment_by."
+            f"Training {segment_count} segments may be slow. Consider coarser segmentation or explicit segment_by."
         )
 
-    return segments
+    return segment_count, (row.asDict() for row in segments_df.toLocalIterator())
 
 
 # =============================================================================
@@ -196,7 +269,7 @@ def compute_post_training_metadata(
     engineered_train_df, _ = apply_feature_engineering(
         train_df,
         column_infos_for_stats,
-        categorical_cardinality_threshold=20,
+        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
         frequency_maps=feature_metadata.categorical_frequency_maps,
         onehot_categories=feature_metadata.onehot_categories,
     )
@@ -243,7 +316,7 @@ def report_training_summary(
 
 def stringify_dict(data: dict[str, Any]) -> dict[str, str]:
     """Convert dict values to strings."""
-    return {k: str(v) for k, v in data.items() if v is not None}
+    return {str(k): str(v) for k, v in sorted(data.items(), key=lambda item: str(item[0])) if v is not None}
 
 
 # =============================================================================
@@ -302,6 +375,7 @@ class AnomalyTrainingService:
             raise InvalidParameterError("No columns provided or auto-discovered. Provide columns explicitly.")
 
         params = AnomalyParams() if params is None else params
+        validate_training_params(params, expected_anomaly_rate)
         validation_warnings = validate_columns(df, columns, params)
         for warning in validation_warnings:
             logger.warning(warning)
@@ -414,13 +488,13 @@ class AnomalyTrainingService:
     def _train_segmented(self, context: AnomalyTrainingContext) -> str:
         """Train separate models for each segment."""
         assert context.segment_by is not None
-        segments = get_and_validate_segments(context.df_filtered, context.segment_by)
+        segment_count, segment_iterator = get_and_validate_segments(context.df_filtered, context.segment_by)
         model_uris = []
         skipped_segments = []
         failed_segments: list[tuple[str, str]] = []
 
-        for seg_values in segments:
-            segment_name = "_".join(f"{k}={v}" for k, v in seg_values.items())
+        for seg_values in segment_iterator:
+            segment_name = build_segment_name(seg_values)
             model_name = f"{context.model_name}__seg_{segment_name}"
 
             segment_df = context.df_filtered
@@ -472,7 +546,7 @@ class AnomalyTrainingService:
             model_uris,
             skipped_segments,
             failed_segments,
-            len(segments),
+            segment_count,
             context.model_name,
             context.registry_table,
             context.params,

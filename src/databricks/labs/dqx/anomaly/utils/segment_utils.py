@@ -1,7 +1,22 @@
 """Segment utilities for anomaly detection."""
 
+from typing import Any, Mapping
+
 from pyspark.sql import Column
 import pyspark.sql.functions as F
+
+
+def canonicalize_segment_values(segment_values: Mapping[str, Any] | None) -> dict[str, str]:
+    """Canonicalize segment values for deterministic naming and filtering."""
+    if not segment_values:
+        return {}
+    return {str(key): str(value) for key, value in sorted(segment_values.items(), key=lambda item: str(item[0]))}
+
+
+def build_segment_name(segment_values: Mapping[str, Any] | None) -> str:
+    """Build deterministic segment name from segment values."""
+    canonical_values = canonicalize_segment_values(segment_values)
+    return "_".join(f"{key}={value}" for key, value in canonical_values.items())
 
 
 def build_segment_filter(segment_values: dict[str, str] | None) -> Column | None:
@@ -23,7 +38,7 @@ def build_segment_filter(segment_values: dict[str, str] | None) -> Column | None
     if not segment_values:
         return None
 
-    filter_exprs = [F.col(key) == F.lit(value) for key, value in segment_values.items()]
+    filter_exprs = [F.col(key) == F.lit(value) for key, value in canonicalize_segment_values(segment_values).items()]
 
     segment_filter = filter_exprs[0]
     for expr in filter_exprs[1:]:

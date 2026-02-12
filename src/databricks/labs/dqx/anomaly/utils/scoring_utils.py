@@ -11,6 +11,8 @@ from pyspark.sql.types import (
 )
 import pyspark.sql.functions as F
 
+from databricks.labs.dqx.anomaly.utils.segment_utils import canonicalize_segment_values
+
 
 def create_null_scored_dataframe(
     df: DataFrame,
@@ -110,8 +112,9 @@ def add_info_column(
 
     # Add segment as map (null for global models)
     if segment_values:
+        canonical_values = canonicalize_segment_values(segment_values)
         anomaly_info_fields["segment"] = F.create_map(
-            *[F.lit(item) for pair in segment_values.items() for item in pair]
+            *[F.lit(item) for pair in canonical_values.items() for item in pair]
         )
     else:
         anomaly_info_fields["segment"] = F.lit(None).cast(MapType(StringType(), StringType()))

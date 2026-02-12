@@ -47,6 +47,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering,
     reconstruct_column_infos,
 )
+from databricks.labs.dqx.anomaly.utils.segment_utils import build_segment_name
 from databricks.labs.dqx.anomaly.utils import (
     add_info_column,
     add_severity_percentile_column,
@@ -356,11 +357,7 @@ def _check_segment_drift(
 
         if drift_result.drift_detected:
             drifted_cols_str = ", ".join(drift_result.drifted_columns)
-            segment_name = (
-                "_".join(f"{k}={v}" for k, v in segment_model.segmentation.segment_values.items())
-                if segment_model.segmentation.segment_values
-                else "unknown"
-            )
+            segment_name = build_segment_name(segment_model.segmentation.segment_values) or "unknown"
             warnings.warn(
                 f"Data drift detected in segment '{segment_name}', columns: {drifted_cols_str} "
                 f"(drift score: {drift_result.drift_score:.2f}). "

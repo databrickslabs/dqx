@@ -53,6 +53,37 @@ def test_expected_anomaly_rate_does_not_override_explicit_contamination():
     assert params.algorithm_config.contamination == 0.15
 
 
+@pytest.mark.parametrize(
+    ("params", "expected_rate", "error_match"),
+    [
+        (AnomalyParams(sample_fraction=0.0), 0.02, "params.sample_fraction must be > 0.0"),
+        (AnomalyParams(train_ratio=1.1), 0.02, "params.train_ratio must be <= 1.0"),
+        (AnomalyParams(max_rows=0), 0.02, "params.max_rows must be >= 1"),
+        (AnomalyParams(ensemble_size=0), 0.02, "params.ensemble_size must be >= 1"),
+        (
+            AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.9)),
+            0.02,
+            "params.algorithm_config.contamination must be <= 0.5",
+        ),
+        (
+            AnomalyParams(algorithm_config=IsolationForestConfig(num_trees=0)),
+            0.02,
+            "params.algorithm_config.num_trees must be >= 1",
+        ),
+        (
+            AnomalyParams(algorithm_config=IsolationForestConfig(subsampling_rate=0.0)),
+            0.02,
+            "params.algorithm_config.subsampling_rate must be > 0.0",
+        ),
+        (AnomalyParams(), 0.0, "expected_anomaly_rate must be > 0.0"),
+        (AnomalyParams(), 0.8, "expected_anomaly_rate must be <= 0.5"),
+    ],
+)
+def test_validate_training_params_rejects_invalid_ranges(params: AnomalyParams, expected_rate: float, error_match: str):
+    with pytest.raises(InvalidParameterError, match=error_match):
+        service.validate_training_params(params, expected_rate)
+
+
 # ============================================================================
 # Column Type Info Reconstruction Tests
 # ============================================================================

@@ -16,7 +16,7 @@ from typing import Any
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from pyspark.sql.functions import coalesce, col, cos, count, dayofweek, hour, lit, month, pi, sin, to_timestamp, when
+from pyspark.sql.functions import coalesce, col, cos, dayofweek, hour, lit, month, pi, sin, to_timestamp, when
 from pyspark.sql.types import DoubleType, TimestampType
 
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -266,7 +266,7 @@ class ColumnTypeClassifier:
             if info.category in {"numeric", "boolean"}:
                 total += 1
             elif info.category == 'datetime':
-                total += 5  # hour_sin, hour_cos, dow_sin, dow_cos, is_weekend
+                total += 7  # hour_sin, hour_cos, dow_sin, dow_cos, month_sin, month_cos, is_weekend
             elif info.category == 'categorical':
                 if info.encoding_strategy == 'onehot':
                     total += (info.cardinality or 0) + 1  # +1 for MISSING category
@@ -300,7 +300,7 @@ class ColumnTypeClassifier:
         # Build breakdown lines
         breakdown = []
         if counts['datetime'] > 0:
-            breakdown.append(f"  - {counts['datetime']} datetime → {counts['datetime'] * 5} features")
+            breakdown.append(f"  - {counts['datetime']} datetime → {counts['datetime'] * 7} features")
         if counts['categorical'] > 0:
             breakdown.append(f"  - {counts['categorical']} categorical → {cat_features} features")
         if counts['numeric'] > 0:
@@ -530,7 +530,6 @@ def _apply_onehot_encoding(
 
 
 def _apply_frequency_encoding(
-    df: DataFrame,
     transformed_df: DataFrame,
     col_name: str,
     is_training: bool,
@@ -538,29 +537,43 @@ def _apply_frequency_encoding(
     engineered_features: list[str],
 ) -> DataFrame:
     """Apply Frequency encoding to a categorical column."""
+    feature_name = f"{col_name}_freq"
+    lookup_key_col = f"__dqx_{col_name}_category"
+    lookup_val_col = f"__dqx_{col_name}_frequency"
+
     if is_training:
-        total_count = df.count()
-        freq_map = {}
-        for row in df.groupBy(col_name).agg(count("*").alias("cnt")).collect():
-            value = row[col_name]
-            cnt = row["cnt"]
-            freq_map[value] = float(cnt) / total_count
+        total_count = transformed_df.count()
+        if total_count == 0:
+            frequency_maps[col_name] = {}
+            transformed_df = transformed_df.withColumn(feature_name, lit(0.0))
+            engineered_features.append(feature_name)
+            return transformed_df
+
+        freq_counts = transformed_df.groupBy(col_name).agg((F.count("*") / F.lit(total_count)).alias(lookup_val_col))
+        freq_map = {row[col_name]: float(row[lookup_val_col]) for row in freq_counts.collect()}
         frequency_maps[col_name] = freq_map
 
     freq_map = frequency_maps[col_name]
-    feature_name = f"{col_name}_freq"
+    if not freq_map:
+        transformed_df = transformed_df.withColumn(feature_name, lit(0.0))
+        engineered_features.append(feature_name)
+        return transformed_df
 
-    expr = None
-    for value, frequency in freq_map.items():
-        condition = col(col_name) == lit(value)
-        if expr is None:
-            expr = when(condition, lit(frequency))
-        else:
-            expr = expr.when(condition, lit(frequency))
-
-    expr = expr.otherwise(lit(0.0)) if expr is not None else lit(0.0)
-
-    transformed_df = transformed_df.withColumn(feature_name, expr)
+    freq_rows = [(value, frequency) for value, frequency in freq_map.items()]
+    freq_schema = T.StructType(
+        [
+            T.StructField(lookup_key_col, T.StringType(), False),
+            T.StructField(lookup_val_col, T.DoubleType(), False),
+        ]
+    )
+    freq_lookup_df = transformed_df.sparkSession.createDataFrame(freq_rows, schema=freq_schema)
+    transformed_df = transformed_df.join(
+        freq_lookup_df,
+        transformed_df[col_name] == freq_lookup_df[lookup_key_col],
+        "left",
+    )
+    transformed_df = transformed_df.withColumn(feature_name, coalesce(col(lookup_val_col), lit(0.0)))
+    transformed_df = transformed_df.drop(lookup_key_col, lookup_val_col)
     engineered_features.append(feature_name)
 
     return transformed_df
@@ -592,7 +605,7 @@ def _process_categorical_columns(
             )
         else:
             transformed_df = _apply_frequency_encoding(
-                df, transformed_df, col_name, is_training, frequency_maps, engineered_features
+                transformed_df, col_name, is_training, frequency_maps, engineered_features
             )
 
     return transformed_df

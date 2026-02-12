@@ -14,6 +14,7 @@ from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.window import Window
 
+from databricks.labs.dqx.anomaly.utils.segment_utils import build_segment_name
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.io import save_dataframe_as_table
 
@@ -226,7 +227,7 @@ class AnomalyModelRegistry:
             return None
 
         # Build segment name matching the training logic
-        segment_name = "_".join(f"{k}={v}" for k, v in segment_values.items())
+        segment_name = build_segment_name(segment_values)
         segment_model_name = f"{base_model_name}__seg_{segment_name}"
 
         return self.get_active_model(table, segment_model_name)

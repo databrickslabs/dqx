@@ -205,6 +205,7 @@ Understanding the internals helps you tune models, debug issues, and build trust
 3. **Model Registry** (Unity Catalog)
    - Models stored in MLflow Model Registry
    - Metadata stored in Delta table (training columns, segments, statistics, model URIs, training time, status)
+   - Segmented model names use deterministic sorted segment keys (for example `__seg_region=US_tier=gold`)
    - Supports versioning and rollback
 
 4. **Scoring & Explanation**

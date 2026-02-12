@@ -105,9 +105,9 @@ class FeatureEngineeringConfig:
     max_input_columns: int = 25  # Soft limit - warns but proceeds if exceeded
     max_engineered_features: int = 50  # Soft limit on total engineered features
     categorical_cardinality_threshold: int = 20  # OneHot if <=20, Frequency if >20
-    # Datetime features (always 5 per column: hour_sin, hour_cos, dow_sin, dow_cos, is_weekend)
+    # Datetime features (always 7 per column: hour_sin, hour_cos, dow_sin, dow_cos, month_sin, month_cos, is_weekend)
     datetime_features: list[str] = field(
-        default_factory=lambda: ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_weekend"]
+        default_factory=lambda: ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend"]
     )
     enable_categorical: bool = True
     enable_datetime: bool = True

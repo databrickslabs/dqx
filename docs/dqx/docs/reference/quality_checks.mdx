@@ -2882,6 +2882,8 @@ The `anomaly_engine.train()` method accepts several parameters to tune model beh
 | `expected_anomaly_rate` | float | 0.02 | Expected fraction of anomalies in your data (0.02 = 2%). Sets model contamination parameter. |
 | `params` | AnomalyParams | None | Optional. Advanced tuning parameters. See sections below for details. |
 
+**Validation**: Training parameters are validated before model fitting. Invalid values (for example `sample_fraction <= 0`, `train_ratio > 1`, or `expected_anomaly_rate > 0.5`) fail fast with `InvalidParameterError`.
+
 #### AnomalyParams (Advanced Tuning)
 
 Pass an `AnomalyParams` object to the `params` argument to customize training behavior:
@@ -2914,7 +2916,7 @@ Pass a `FeatureEngineeringConfig` object to `params.feature_engineering` to cont
 | `max_input_columns` | int | 25 | Soft limit on input columns. Warns but proceeds if exceeded. |
 | `max_engineered_features` | int | 50 | Soft limit on total engineered features after transformation. |
 | `categorical_cardinality_threshold` | int | 20 | OneHot encoding if cardinality ≤ 20, else Frequency encoding. |
-| `datetime_features` | list[str] | ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "is_weekend"] | Temporal features to extract from datetime columns. |
+| `datetime_features` | list[str] | ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend"] | Temporal features to extract from datetime columns. |
 | `enable_categorical` | bool | True | Enable categorical feature engineering (OneHot/Frequency encoding). |
 | `enable_datetime` | bool | True | Enable datetime feature engineering (cyclical time features). |
 | `enable_boolean` | bool | True | Enable boolean feature engineering. |

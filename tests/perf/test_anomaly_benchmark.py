@@ -1,10 +1,13 @@
-import numpy as np
 from pyspark.sql import functions as F
 
 from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.errors import InvalidParameterError
 from tests.constants import TEST_CATALOG
+from tests.integration_anomaly.synthetic_generators import (
+    generate_heavy_tail_data,
+    generate_overlapping_gaussian_data,
+)
 
 _TRAINED_MODEL: dict[str, str] = {}
 
@@ -13,33 +16,30 @@ def _prepare_synthetic_data(
     spark,
     *,
     seed: int = 42,
-    n_samples: int = 2000,
-    n_features: int = 20,
-    anomaly_frac: float = 0.02,
+    n_samples: int = 3000,
+    n_features: int = 16,
+    anomaly_frac: float = 0.03,
 ):
-    rng = np.random.default_rng(seed)
-    n_anomalies = max(1, int(n_samples * anomaly_frac))
-    n_normals = n_samples - n_anomalies
+    # Blend overlapping and heavy-tail scenarios for less optimistic quality estimates.
+    overlap_cols, overlap_train, overlap_test = generate_overlapping_gaussian_data(
+        spark,
+        seed=seed,
+        n_samples=n_samples,
+        n_features=n_features,
+        anomaly_frac=anomaly_frac,
+        anomaly_shift=2.0,
+    )
+    _heavy_cols, heavy_train, heavy_test = generate_heavy_tail_data(
+        spark,
+        seed=seed + 7,
+        n_samples=n_samples,
+        n_features=n_features,
+        anomaly_frac=anomaly_frac,
+    )
 
-    normal = rng.normal(loc=0.0, scale=1.0, size=(n_normals, n_features))
-    anomalies = rng.normal(loc=6.0, scale=1.5, size=(n_anomalies, n_features))
-    X = np.vstack([normal, anomalies])
-    y = np.concatenate([np.zeros(n_normals, dtype=float), np.ones(n_anomalies, dtype=float)])
-
-    order = rng.permutation(len(X))
-    X = X[order]
-    y = y[order]
-
-    n_train = int(0.6 * len(X))
-    X_train, X_test = X[:n_train], X[n_train:]
-    y_train, y_test = y[:n_train], y[n_train:]
-
-    feature_cols = [f"feature_{i}" for i in range(X.shape[1])]
-    train_pdf = np.hstack([X_train, y_train.reshape(-1, 1)])
-    test_pdf = np.hstack([X_test, y_test.reshape(-1, 1)])
-    train_df = spark.createDataFrame(train_pdf.tolist(), feature_cols + ["is_anomaly"])
-    test_df = spark.createDataFrame(test_pdf.tolist(), feature_cols + ["is_anomaly"])
-    return feature_cols, train_df, test_df
+    train_df = overlap_train.unionByName(heavy_train)
+    test_df = overlap_test.unionByName(heavy_test)
+    return overlap_cols, train_df, test_df
 
 
 def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, make_random):

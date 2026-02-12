@@ -540,3 +540,43 @@ def test_registry_segment_lookup(spark: SparkSession, make_random: Callable[[int
 
     all_segments = registry.get_all_segment_models(registry_table, base_name)
     assert len(all_segments) == 1
+
+
+def test_registry_segment_lookup_uses_canonical_order(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix
+):
+    """Segment lookup should be deterministic regardless of input dictionary order."""
+    unique_id = make_random(8).lower()
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+
+    registry = AnomalyModelRegistry(spark)
+    base_name = f"{anomaly_registry_prefix}.seg_model_{make_random(4).lower()}"
+    segment_name = f"{base_name}__seg_region=US_tier=gold"
+
+    record = AnomalyModelRecord(
+        identity=ModelIdentity(
+            model_name=segment_name,
+            model_uri="models:/seg_model/1",
+            algorithm="isolation_forest",
+            mlflow_run_id="run_seg",
+        ),
+        training=TrainingMetadata(
+            columns=["amount"],
+            hyperparameters={},
+            training_rows=50,
+            training_time=datetime.utcnow(),
+        ),
+        features=FeatureEngineering(mode="spark"),
+        segmentation=SegmentationConfig(
+            segment_by=["region", "tier"],
+            segment_values={"region": "US", "tier": "gold"},
+            is_global_model=False,
+            config_hash="hash_seg",
+        ),
+    )
+
+    registry.save_model(record, registry_table)
+
+    fetched = registry.get_segment_model(registry_table, base_name, {"tier": "gold", "region": "US"})
+    assert fetched is not None
+    assert fetched.identity.model_name == segment_name

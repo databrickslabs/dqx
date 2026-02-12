@@ -12,6 +12,7 @@ from databricks.labs.dqx.anomaly.check_funcs import (
 )
 from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name
 from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo
+from databricks.labs.dqx.anomaly.utils.segment_utils import build_segment_name
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -30,11 +31,11 @@ class TestSegmentNamingConvention:
         seg_values = {"region": "US"}
 
         # Training logic (service.py)
-        segment_name_training = "_".join(f"{k}={v}" for k, v in seg_values.items())
+        segment_name_training = build_segment_name(seg_values)
         model_name_training = f"{base_model_name}__seg_{segment_name_training}"
 
         # Registry query logic (model_registry.py)
-        segment_name_registry = "_".join(f"{k}={v}" for k, v in seg_values.items())
+        segment_name_registry = build_segment_name(seg_values)
         model_name_registry = f"{base_model_name}__seg_{segment_name_registry}"
 
         # These MUST match for segment lookup to work
@@ -47,7 +48,7 @@ class TestSegmentNamingConvention:
         seg_values = {"region": "US", "product": "A"}
 
         # Training creates this name
-        segment_name = "_".join(f"{k}={v}" for k, v in sorted(seg_values.items()))
+        segment_name = build_segment_name(seg_values)
         model_name = f"{base_model_name}__seg_{segment_name}"
 
         # Should contain all segment info
@@ -73,7 +74,7 @@ class TestSegmentNamingConvention:
         """Verify segment values use = not _ between key and value."""
         seg_values = {"region": "US", "tier": "premium"}
 
-        segment_name = "_".join(f"{k}={v}" for k, v in seg_values.items())
+        segment_name = build_segment_name(seg_values)
 
         # Must use = to separate key from value
         assert "region=US" in segment_name or "tier=premium" in segment_name
@@ -86,7 +87,7 @@ class TestSegmentNamingConvention:
         seg_values = {"region": "APAC"}
 
         # Training output
-        segment_name = "_".join(f"{k}={v}" for k, v in seg_values.items())
+        segment_name = build_segment_name(seg_values)
         trained_model_name = f"{base_model_name}__seg_{segment_name}"
 
         # Registry query pattern
@@ -103,7 +104,7 @@ class TestSegmentNameEdgeCases:
         """Test segment values containing underscores or other chars."""
         seg_values = {"region": "US_EAST", "product_line": "premium"}
 
-        segment_name = "_".join(f"{k}={v}" for k, v in seg_values.items())
+        segment_name = build_segment_name(seg_values)
         model_name = f"base__seg_{segment_name}"
 
         # Should handle underscores in values
@@ -114,8 +115,8 @@ class TestSegmentNameEdgeCases:
         seg_values_upper = {"region": "US"}
         seg_values_lower = {"region": "us"}
 
-        name_upper = "_".join(f"{k}={v}" for k, v in seg_values_upper.items())
-        name_lower = "_".join(f"{k}={v}" for k, v in seg_values_lower.items())
+        name_upper = build_segment_name(seg_values_upper)
+        name_lower = build_segment_name(seg_values_lower)
 
         # Different cases should produce different names
         assert name_upper != name_lower
@@ -126,7 +127,7 @@ class TestSegmentNameEdgeCases:
         """Empty segment dict would result in malformed name."""
         seg_values: dict[str, str] = {}
 
-        segment_name = "_".join(f"{k}={v}" for k, v in seg_values.items())
+        segment_name = build_segment_name(seg_values)
 
         # Empty segment produces empty string
         assert segment_name == ""
@@ -137,11 +138,11 @@ class TestSegmentNameEdgeCases:
         seg_values_1 = {"region": "US", "tier": "gold"}
         seg_values_2 = {"tier": "gold", "region": "US"}
 
-        # Sort to ensure consistent ordering
-        name_1 = "_".join(f"{k}={v}" for k, v in sorted(seg_values_1.items()))
-        name_2 = "_".join(f"{k}={v}" for k, v in sorted(seg_values_2.items()))
+        name_1 = build_segment_name(seg_values_1)
+        name_2 = build_segment_name(seg_values_2)
 
         assert name_1 == name_2
+        assert name_1 == "region=US_tier=gold"
 
 
 class TestValidateFullyQualifiedNameConsistency:
@@ -230,7 +231,7 @@ class TestModelRegistryQueryPatterns:
         segment_values = {"region": "US"}
 
         # Build expected segment model name
-        segment_name = "_".join(f"{k}={v}" for k, v in segment_values.items())
+        segment_name = build_segment_name(segment_values)
         expected_model_name = f"{base_name}__seg_{segment_name}"
 
         assert expected_model_name == "catalog.schema.my_model__seg_region=US"
