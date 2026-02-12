@@ -656,7 +656,9 @@ disable = [
     # dbx pylint is not up-to-date, e.g. spark.catalog.tableExists is compatible with UC since DBR 14+
     "incompatible-with-uc",
     # Test fixtures may use closure to capture spark from outer scope
-    "no-spark-argument-in-function"
+    "no-spark-argument-in-function",
+    # PySpark Column objects support ~ operator but pylint type inference doesn't recognize it
+    "invalid-unary-operand-type"
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can

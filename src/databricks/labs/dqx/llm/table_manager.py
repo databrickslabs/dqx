@@ -133,7 +133,7 @@ class SparkTableDataProvider:
         try:
             pk_query = f"SHOW TBLPROPERTIES {table}"
             pk_result = self.spark.sql(pk_query)
-            pk_df = pk_result.toPandas()
+            pk_df: DataFrame = pk_result.toPandas()
 
             for _, row in pk_df.iterrows():
                 if 'primary' in str(row.get('key', '')).lower():
