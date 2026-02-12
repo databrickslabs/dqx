@@ -19,6 +19,7 @@
     "@docusaurus/preset-classic": "^3.8.1",
     "@mdx-js/react": "^3.0.0",
     "@radix-ui/react-slot": "^1.1.1",
+    "@signalwire/docusaurus-plugin-llms-txt": "2.0.0-alpha.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "docusaurus-lunr-search": "3.6.1",

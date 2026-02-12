@@ -47,7 +47,99 @@ const config: Config = {
       }
     },
     'docusaurus-plugin-image-zoom',
-    'docusaurus-lunr-search'
+    'docusaurus-lunr-search',
+    [
+      '@signalwire/docusaurus-plugin-llms-txt',
+      {
+        // Markdown file generation with hierarchical structure
+        markdown: {
+          enableFiles: true,
+          relativePaths: true,
+          includeBlog: false,
+          includePages: true,
+          includeDocs: true,
+          includeVersionedDocs: false,
+          excludeRoutes: [],
+        },
+
+        // llms.txt index file configuration
+        llmsTxt: {
+          enableLlmsFullTxt: true,
+          includeBlog: false,
+          includePages: true,
+          includeDocs: true,
+          excludeRoutes: [],
+
+          // Site metadata
+          siteTitle: 'DQX',
+          siteDescription: 'Simplified Data Quality checking at Scale for PySpark Workloads on streaming and standard DataFrames.',
+
+          // Auto-section organization (set to 1 to minimize auto-sections)
+          autoSectionDepth: 1, // Group by first path segment only
+          autoSectionPosition: 100, // Auto-sections appear after manual sections
+
+          // Manual section organization
+          sections: [
+            {
+              id: 'getting-started',
+              name: 'Getting Started',
+              description: 'Installation and motivation for using DQX',
+              position: 1,
+              routes: [
+                { route: '/dqx/docs/installation' },
+                { route: '/dqx/docs/motivation' }
+              ],
+            },
+            {
+              id: 'user-guide',
+              name: 'User Guide',
+              description: 'Complete guide for using DQX features',
+              position: 2,
+              routes: [
+                { route: '/dqx/docs/guide/**' }
+              ],
+            },
+            {
+              id: 'reference',
+              name: 'Reference',
+              description: 'API reference, CLI commands, and technical documentation',
+              position: 3,
+              routes: [
+                { route: '/dqx/docs/reference/**' }
+              ],
+            },
+            {
+              id: 'development',
+              name: 'Development',
+              description: 'Contributing and development documentation',
+              position: 4,
+              routes: [
+                { route: '/dqx/docs/dev/**' }
+              ],
+            },
+            {
+              id: 'demos',
+              name: 'Demos',
+              description: 'Example implementations and demos',
+              position: 5,
+              routes: [
+                { route: '/dqx/docs/demos' }
+              ],
+            },
+            {
+              id: 'home',
+              name: 'Home',
+              description: 'DQX homepage',
+              position: 0,
+              routes: [
+                { route: '/dqx/' },
+                { route: '/dqx/index' }
+              ],
+            },
+          ],
+        },
+      }
+    ]
   ],
 
   presets: [
