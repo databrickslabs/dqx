@@ -21,6 +21,7 @@ import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
@@ -461,6 +462,100 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     if is_array:
         return F.transform(col_expr, F.lower)
     return F.lower(col_expr)
+
+
+def _query_table_properties(table: str, spark: Any) -> list[Any]:
+    """Query Unity Catalog table properties using the shared table data provider."""
+    provider = SparkTableDataProvider(spark)
+    properties_df = provider.get_table_properties(table)
+    if hasattr(properties_df, "to_dict"):
+        return properties_df.to_dict("records")
+    if hasattr(properties_df, "collect"):
+        return properties_df.collect()
+    return list(properties_df)
+
+
+def _get_property_kv(row: Any) -> tuple[Any, Any]:
+    """Return (key, value) from a table properties row."""
+    if hasattr(row, "key") or hasattr(row, "value"):
+        return getattr(row, "key", None), getattr(row, "value", None)
+    if isinstance(row, dict):
+        return row.get("key"), row.get("value")
+    if hasattr(row, "get"):
+        return row.get("key"), row.get("value")
+    return None, None
+
+
+def _extract_primary_key_from_properties(pk_rows: list[Any]) -> set[str]:
+    """Extract primary key columns from table property rows."""
+    for row in pk_rows:
+        key, value = _get_property_kv(row)
+
+        if key and 'primary' in str(key).lower() and value:
+            # Primary key value is typically a comma-separated list of columns
+            pk_cols = [col.strip() for col in str(value).split(',')]
+            return set(pk_cols)
+
+    return set()
+
+
+def get_table_primary_keys(table: str, spark: Any) -> set[str]:
+    """
+    Retrieve primary key columns from Unity Catalog table metadata.
+
+    Queries Unity Catalog table properties to detect primary key constraints.
+    This is a shared utility used by both the LLM and anomaly modules.
+
+    Args:
+        table: Fully qualified table name (e.g., "catalog.schema.table")
+        spark: SparkSession instance
+
+    Returns:
+        Set of column names that are primary keys. Returns empty set if:
+        - Table doesn't exist
+        - No primary key is defined
+        - Metadata is not accessible
+
+    Examples:
+        >>> pk_cols = get_table_primary_keys("main.default.users", spark)
+        >>> if "user_id" in pk_cols:
+        ...     print("user_id is a primary key")
+    """
+    try:
+        pk_rows = _query_table_properties(table, spark)
+        return _extract_primary_key_from_properties(pk_rows)
+    except Exception:
+        # Silently handle errors (table not found, permissions, etc.)
+        return set()
+
+
+def get_table_foreign_keys(table: str, spark: Any) -> dict[str, dict[str, Any]]:
+    """
+    Retrieve foreign key constraints from Unity Catalog table metadata.
+
+    Queries Unity Catalog table properties to detect foreign key relationships.
+    This is a shared utility for identifying referential integrity constraints.
+
+    Args:
+        table: Fully qualified table name (e.g., "catalog.schema.table")
+        spark: SparkSession instance
+
+    Returns:
+        Dictionary mapping foreign key names to their metadata.
+        Each entry contains: columns (list), referenced_table (str),
+        and referenced_columns (list).
+        Returns empty dict if no foreign keys are defined or metadata unavailable.
+
+    Example:
+        fks = get_table_foreign_keys("main.default.orders", spark)
+        # Returns dict with FK name as key, containing columns, referenced_table, referenced_columns
+    """
+    try:
+        provider = SparkTableDataProvider(spark)
+        return provider.get_table_foreign_keys(table)
+    except Exception:
+        # Silently handle errors (table not found, permissions, etc.)
+        return {}
 
 
 def missing_required_packages(packages: list[str]) -> bool:

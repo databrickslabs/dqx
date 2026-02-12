@@ -71,6 +71,12 @@ llm = [
 datacontract = [
     "datacontract-cli>=0.11.1"
 ]
+anomaly = [
+    "mlflow[databricks]>=2.19.1",  # Unity Catalog support + azure-cli auth type support (PR #14158)
+    "scikit-learn>=1.0",
+    "cloudpickle>=2.0",  # For serializing sklearn models in pandas UDFs
+    "shap>=0.42.0,<0.50",  # For TreeSHAP-based feature contributions
+]
 
 [project.entry-points.databricks]
 runtime = "databricks.labs.dqx.workflows_runner:main"
@@ -93,7 +99,7 @@ include = ["src"]
 path = "src/databricks/labs/dqx/__about__.py"
 
 [tool.hatch.envs.default]
-features = ["pii", "llm", "datacontract"]
+features = ["pii", "llm", "datacontract", "anomaly"]
 dependencies = [
     "black~=24.8.0",
     "chispa~=0.10.1",
@@ -103,12 +109,13 @@ dependencies = [
     "mypy~=1.9.0",
     "pylint~=3.3.1",
     "pylint-per-file-ignores~=1.3",
-    "pylint-pytest==2.0.0a0",
+    "pylint-pytest==2.0.0a1",
     "pytest~=8.3.3",
     "pytest-cov~=4.1.0",
     "pytest-mock~=3.14.0",
     "pytest-timeout~=2.3.1",
     "pytest-xdist~=3.5.0",
+    "pytest-rerunfailures~=14.0",
     "pytest-benchmark~=5.1.0",
     "ruff~=0.3.4",
     "types-PyYAML~=6.0.3",
@@ -136,6 +143,7 @@ test_coverage   = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --d
 integration     = "pytest tests/integration/ -n 10 --cov --cov-report=xml --timeout 1200 --durations 20"
 e2e             = "pytest tests/e2e/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
 perf            = "pytest tests/perf/ -n 10 --cov --cov-report=xml --timeout 600 --durations 20"
+anomaly         = "pytest tests/integration_anomaly/ -v -n 10 --timeout 1200 --durations 20 --reruns 2 --reruns-delay 5"
 fmt             = ["black .",
                     "ruff check . --fix",
                     "mypy .",
@@ -189,14 +197,20 @@ profile = "black"
 exclude = ['venv', '.venv', 'demos/*', 'tests/e2e/*']
 
 [[tool.mypy.overrides]]
-module = ["google", "google.*"]  # Google libraries are not type annotated
+# External packages without PEP 561 type stubs (unavoidable - these are third-party optional dependencies)
+module = ["google", "google.*", "pandas", "sklearn.*", "shap", "cloudpickle", "mlflow", "mlflow.*", "urllib3.*", "aiohttp.*"]
 ignore_missing_imports = true
+
 
 [tool.pytest.ini_options]
 addopts = "--no-header"
 cache_dir = ".venv/pytest-cache"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+    "anomaly: marks tests as anomaly detection tests",
+]
 pythonpath = ["src", "app/src"]
+
 
 [tool.black]
 target-version = ["py310"]
@@ -319,6 +333,10 @@ load-plugins = [
     "pylint.extensions.typing",
     "pylint_per_file_ignores",
 ]
+# Per-file pylint ignores for tests/conftest.py
+# - wrong-import-order: tests.compat must be imported before third-party imports to apply numba/coverage patches
+# - unused-import: tests.compat is imported for side effects (applying patches), not for direct use
+per-file-ignores = "tests/conftest.py:wrong-import-order,unused-import"
 
 # Pickle collected data for later comparisons.
 persistent = true
@@ -575,7 +593,7 @@ max-module-lines = 10000
 
 [tool.pylint.imports]
 # List of modules that can be imported at any level, not just the top level one.
-# allow-any-import-level =
+# allow-any-import-level = 
 
 # Allow explicit reexports by alias from a package __init__.
 # allow-reexport-from-package =
@@ -779,6 +797,10 @@ contextmanager-decorators = ["contextlib.contextmanager"]
 # system, and so shouldn't trigger E1101 when accessed. Python regular
 # expressions are accepted.
 generated-members = "REQUEST,acl_users,aq_parent,argparse.Namespace"
+
+# List of module names for which member attributes should not be checked
+# (useful for optional dependencies in extras_require)
+ignored-modules = ["mlflow", "mlflow.sklearn", "shap", "sklearn.pipeline"]
 
 # Tells whether missing members accessed in mixin class should be ignored. A
 # class is considered mixin if its name matches the mixin-class-rgx option.

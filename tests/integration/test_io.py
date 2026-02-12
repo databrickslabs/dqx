@@ -5,7 +5,7 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_read_input_data_no_input_format(spark, make_schema, make_volume):

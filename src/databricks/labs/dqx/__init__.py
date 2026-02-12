@@ -7,9 +7,18 @@ from databricks.labs.dqx.__about__ import __version__
 
 install_logger()
 
+# Route Python warnings through logging for consistent formatting
+# (Some modules like check_funcs still use warnings.warn for backward compatibility)
+logging.captureWarnings(True)
+warnings_logger = logging.getLogger("py.warnings")
+warnings_logger.setLevel(logging.INFO)
+
+# Configure logger levels
 logging.getLogger("databricks").setLevel(logging.INFO)
 logging.getLogger("pyspark.sql.connect.logging").setLevel(logging.CRITICAL)
+logging.getLogger("pyspark.sql.connect.client.logging").setLevel(logging.CRITICAL)
 logging.getLogger("mlflow").setLevel(logging.ERROR)
+
 
 # Disable MLflow Trace UI in notebooks
 # databricks-langchain automatically enables MLflow tracing when it's imported
@@ -20,8 +29,9 @@ try:
     mlflow.tracing.disable_notebook_display()
     # Disable automatic tracing for LangChain (source of the trace data)
     mlflow.langchain.autolog(disable=True)
-except (ImportError, AttributeError):
-    # MLflow not installed or tracing not available
+except Exception:
+    # MLflow not installed, tracing not available, or configuration failed
+    # (e.g., Databricks auth not available in CI)
     pass
 
 ua.semver_pattern = re.compile(

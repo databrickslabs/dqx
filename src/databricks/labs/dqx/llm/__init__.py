@@ -1,4 +1,4 @@
-from databricks.labs.dqx.utils import missing_required_packages
+from databricks.labs.dqx.package_utils import missing_required_packages
 
 required_specs = ["dspy", "databricks_langchain", "langchain_core"]
 

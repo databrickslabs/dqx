@@ -70,6 +70,7 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+          PYTEST_ADDOPTS: "--ignore=tests/integration_anomaly/"  # Exclude anomaly tests (run separately in anomaly workflow)
 
       - name: Merge coverage reports and convert them to XML
         run: |
@@ -129,6 +130,7 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
+          PYTEST_ADDOPTS: "--ignore=tests/integration_anomaly/"  # Exclude anomaly tests (run separately in anomaly workflow)
 
       - name: Merge coverage reports and convert them to XML
         run: |

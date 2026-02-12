@@ -10,7 +10,7 @@ from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.e2e.conftest import new_classic_job_cluster, validate_run_status
 
 logger = logging.getLogger(__name__)
@@ -339,7 +339,7 @@ def test_run_dqx_ai_assisted_quality_checks_generation(ws, make_notebook, make_j
         timeout=timedelta(minutes=30),
         callback=lambda r: validate_run_status(r, ws),
     )
-    logging.info(f"Job run {run.run_id} completed successfully for dqx_quick_start_demo_library")
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_ai_assisted_checks_generation")
 
 
 def test_run_dqx_demo_datacontract_odcs(ws, make_notebook, make_job, library_ref):
@@ -379,8 +379,35 @@ def test_run_dqx_demo_llm_pk_detection(ws, make_notebook, make_job, library_ref)
     logging.info(f"Job run {run.run_id} completed successfully for dqx_demo_llm_pk_detection")
 
 
+def test_run_dqx_anomaly_detection_demo(ws, make_notebook, make_schema, make_job, library_ref):
+    catalog = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog).name
+    path = Path(__file__).parent.parent.parent / "demos" / "dqx_anomaly_detection_demo.py"
+    with open(path, "rb") as f:
+        notebook = make_notebook(content=f, format=ImportFormat.SOURCE)
+
+    notebook_path = notebook.as_fuse().as_posix()
+    notebook_task = NotebookTask(
+        notebook_path=notebook_path,
+        base_parameters={
+            "demo_catalog": catalog,
+            "demo_schema": schema,
+            "test_library_ref": library_ref,
+        },
+    )
+    job = make_job(tasks=[Task(task_key="dqx_anomaly_detection_demo", notebook_task=notebook_task)])
+
+    waiter = ws.jobs.run_now_and_wait(job.job_id)
+    run = ws.jobs.wait_get_run_job_terminated_or_skipped(
+        run_id=waiter.run_id,
+        timeout=timedelta(minutes=30),
+        callback=lambda r: validate_run_status(r, ws),
+    )
+    logging.info(f"Job run {run.run_id} completed successfully for dqx_anomaly_detection_demo")
+
+
 def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
-    catalog = "main"
+    catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     project_dir = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_dbt"
 

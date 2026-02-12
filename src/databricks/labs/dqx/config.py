@@ -1,6 +1,6 @@
 import abc
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
-from dataclasses import dataclass, field, asdict
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
@@ -14,6 +14,11 @@ __all__ = [
     "ProfilerConfig",
     "LLMModelConfig",
     "LLMConfig",
+    "AnomalyConfig",
+    "AnomalyParams",
+    "IsolationForestConfig",
+    "FeatureEngineeringConfig",
+    "TemporalAnomalyConfig",
     "BaseChecksStorageConfig",
     "FileChecksStorageConfig",
     "WorkspaceFileChecksStorageConfig",
@@ -75,6 +80,77 @@ class ProfilerConfig:
 
 
 @dataclass
+class IsolationForestConfig:
+    """Algorithm parameters for Spark ML IsolationForest."""
+
+    contamination: float | None = None
+    num_trees: int = 200
+    max_depth: int | None = None
+    subsampling_rate: float | None = None
+    random_seed: int = 42
+
+
+@dataclass
+class TemporalAnomalyConfig:
+    """Configuration for temporal feature extraction."""
+
+    timestamp_column: str
+    temporal_features: list[str] = field(default_factory=lambda: ["hour", "day_of_week", "month"])
+
+
+@dataclass
+class FeatureEngineeringConfig:
+    """Configuration for multi-type feature engineering in anomaly detection."""
+
+    max_input_columns: int = 25  # Soft limit - warns but proceeds if exceeded
+    max_engineered_features: int = 50  # Soft limit on total engineered features
+    categorical_cardinality_threshold: int = 20  # OneHot if <=20, Frequency if >20
+    # Datetime features (always 7 per column: hour_sin, hour_cos, dow_sin, dow_cos, month_sin, month_cos, is_weekend)
+    datetime_features: list[str] = field(
+        default_factory=lambda: ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend"]
+    )
+    enable_categorical: bool = True
+    enable_datetime: bool = True
+    enable_boolean: bool = True
+
+
+@dataclass
+class AnomalyParams:
+    """Optional tuning parameters for anomaly detection.
+
+    Attributes:
+        sample_fraction: Fraction of data to sample for training (default 0.3).
+        max_rows: Maximum rows to use for training (default 1,000,000).
+        train_ratio: Train/validation split ratio (default 0.8).
+        ensemble_size: Number of models in ensemble (default 3). Set to None for single model.
+            Ensemble models provide:
+            - More robust anomaly scores (averaged across models)
+            - Confidence scores via standard deviation
+            - Better generalization
+            Performance: Optimized ensemble scoring makes this negligible overhead.
+        algorithm_config: Isolation Forest parameters (contamination, num_trees, seed).
+        feature_engineering: Feature engineering parameters (temporal features, scaling, etc.).
+    """
+
+    sample_fraction: float = 0.3
+    max_rows: int = 1_000_000
+    train_ratio: float = 0.8
+    ensemble_size: int | None = 3  # Default 3-model ensemble for robustness, tie-breaking, and confidence scores
+    algorithm_config: IsolationForestConfig = field(default_factory=IsolationForestConfig)
+    feature_engineering: FeatureEngineeringConfig = field(default_factory=FeatureEngineeringConfig)
+
+
+@dataclass
+class AnomalyConfig:
+    """Configuration for anomaly detection."""
+
+    columns: list[str] | None = None  # Auto-discovered if omitted
+    segment_by: list[str] | None = None  # Auto-discovered if omitted (when columns also omitted)
+    model_name: str | None = None  # Optional in workflows; defaults to dqx_anomaly_<run_config.name>
+    registry_table: str | None = None
+
+
+@dataclass
 class RunConfig:
     """Configuration class for the data quality checks"""
 
@@ -96,6 +172,8 @@ class RunConfig:
     # mapping of fully qualified custom check function (e.g. my_func) to the module location in the workspace
     # (e.g. {"my_func": "/Workspace/my_repo/my_module.py"})
     custom_check_functions: dict[str, str] = field(default_factory=dict)
+
+    anomaly_config: AnomalyConfig | None = None  # optional anomaly detection configuration
 
     # Lakebase connection parameters, if wanting to store checks in lakebase database
     lakebase_instance_name: str | None = None

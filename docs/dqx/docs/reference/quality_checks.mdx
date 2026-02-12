@@ -2891,6 +2891,256 @@ Using non-curated aggregate functions is supported with the following limitation
 - Some aggregate functions are only available in newer versions of the Databricks Runtime. If a function is unavailable in your environment, DQX will raise an error indicating the minimum required runtime version. Use the latest Databricks Runtime version for best compatibility.
 </Admonition>
 
+## Anomaly Detection
+
+Detects unusual rows by learning what "normal" looks like across multiple columns, then flags rows that deviate. Train on recent "good" data so the check learns typical ranges and combinations (e.g., amount and quantity together), not just single-column thresholds.
+
+**Current algorithm**: IsolationForest (scikit-learn with Spark scoring, requires Spark >= 3.4). Future releases may add additional algorithms behind the same interface.
+
+For a conceptual overview (including how this complements Databricks data quality monitoring), see [Anomaly Detection](/docs/guide/anomaly_detection).
+
+### Model training
+
+Before you can flag unusual rows, the system needs to learn what "normal" looks like in your data. You do this by **training** a model on a batch of recent, good-quality data. The model learns typical values, patterns, and how columns tend to go together (for example, how order amounts and quantities usually relate). Once trained, you use that model to **score** new or incoming data: each row gets a score indicating how unusual it is compared to what the model learned. So in short: train once on representative data, then use the same model to check new data for anomalies.
+
+**Python**
+```python
+from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.sdk import WorkspaceClient
+
+anomaly_engine = AnomalyEngine(WorkspaceClient())
+
+model_name = anomaly_engine.train(
+    df=spark.table("catalog.schema.orders"),
+    model_name="catalog.schema.orders_monitor",
+    columns=["amount", "quantity", "shipping_cost"],  # optional; omit to use all supported columns
+    registry_table="catalog.schema.dqx_anomaly_models",
+)
+```
+
+<Admonition type="warning" title="Exclude identifier columns">
+Avoid ID‑like columns (order IDs, user IDs). They are often unique and can dominate the model, reducing anomaly quality.
+If you must keep IDs in the dataset, use `exclude_columns` or pass a curated `columns` list of behavioral fields.
+</Admonition>
+
+**Workflow (configuration file)**
+```yaml
+run_configs:
+  - name: orders
+    input_config:
+      location: catalog.schema.orders
+    anomaly_config:
+      columns: [amount, quantity, shipping_cost]   # optional; omit to use all supported columns
+      model_name: catalog.schema.orders_monitor
+      registry_table: catalog.schema.dqx_anomaly_models
+```
+
+### Training Parameters
+
+The `anomaly_engine.train()` method accepts several parameters to tune model behavior, performance, and accuracy.
+
+#### Basic Training Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `columns` | list[str] | None | Columns to use for anomaly detection (auto-discovered if omitted) |
+| `segment_by` | list[str] | None | Train separate models per segment (auto-discovered if both columns and segment_by omitted) |
+| `exclude_columns` | list[str] | None | Columns to exclude from training (e.g., IDs, labels, ground truth) |
+| `expected_anomaly_rate` | float | 0.02 | Expected fraction of anomalies in your data (0.02 = 2%). Sets model contamination parameter. |
+| `params` | AnomalyParams | None | Optional. Advanced tuning parameters. See sections below for details. |
+
+**Validation**: Training parameters are validated before model fitting. Invalid values (for example `sample_fraction <= 0`, `train_ratio > 1`, or `expected_anomaly_rate > 0.5`) fail fast with `InvalidParameterError`.
+
+#### AnomalyParams (Advanced Tuning)
+
+Pass an `AnomalyParams` object to the `params` argument to customize training behavior:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `sample_fraction` | float | 0.3 | Fraction of data to sample for training (30%). Reduce for faster training on large datasets. |
+| `max_rows` | int | 1,000,000 | Maximum rows to use for training. Caps memory usage for very large datasets. |
+| `train_ratio` | float | 0.8 | Train/validation split ratio (80% train, 20% validation). |
+| `ensemble_size` | int | 3 | Number of models in ensemble. Set to None for single model. More models = more robust but slower training. |
+
+#### IsolationForestConfig (Algorithm Parameters)
+
+Pass an `IsolationForestConfig` object to `params.algorithm_config` to tune the Isolation Forest algorithm:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `contamination` | float | auto | Expected outlier proportion. Auto-set from `expected_anomaly_rate` if not specified. |
+| `num_trees` | int | 200 | Number of trees in the forest. More trees = better accuracy but slower training. |
+| `max_depth` | int | None | Maximum tree depth. Auto-calculated as log2(sample_size) if None. |
+| `subsampling_rate` | float | None | Per-tree subsampling rate. None uses sklearn defaults. |
+| `random_seed` | int | 42 | Random seed for reproducibility. Each ensemble model gets seed + model_index. |
+
+#### FeatureEngineeringConfig (Feature Engineering)
+
+Pass a `FeatureEngineeringConfig` object to `params.feature_engineering` to control automatic feature engineering:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_input_columns` | int | 25 | Soft limit on input columns. Warns but proceeds if exceeded. |
+| `max_engineered_features` | int | 50 | Soft limit on total engineered features after transformation. |
+| `categorical_cardinality_threshold` | int | 20 | OneHot encoding if cardinality ≤ 20, else Frequency encoding. |
+| `datetime_features` | list[str] | ["hour_sin", "hour_cos", "dow_sin", "dow_cos", "month_sin", "month_cos", "is_weekend"] | Temporal features to extract from datetime columns. |
+| `enable_categorical` | bool | True | Enable categorical feature engineering (OneHot/Frequency encoding). |
+| `enable_datetime` | bool | True | Enable datetime feature engineering (cyclical time features). |
+| `enable_boolean` | bool | True | Enable boolean feature engineering. |
+
+#### Example: Custom Training Parameters
+
+```python
+from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig, FeatureEngineeringConfig
+from databricks.sdk import WorkspaceClient
+
+anomaly_engine = AnomalyEngine(WorkspaceClient())
+
+# Configure advanced parameters
+params = AnomalyParams(
+    sample_fraction=0.5,           # Use 50% of data for faster training
+    max_rows=500_000,              # Cap at 500K rows
+    ensemble_size=5,               # 5-model ensemble for higher accuracy
+    algorithm_config=IsolationForestConfig(
+        num_trees=300,             # More trees for complex data
+        random_seed=42,            # Reproducibility
+    ),
+    feature_engineering=FeatureEngineeringConfig(
+        categorical_cardinality_threshold=50,  # OneHot up to 50 categories
+    ),
+)
+
+model_name = anomaly_engine.train(
+    df=spark.table("catalog.schema.orders"),
+    model_name="catalog.schema.orders_monitor",
+    registry_table="catalog.schema.dqx_anomaly_models",
+    expected_anomaly_rate=0.05,    # Expect 5% anomalies
+    params=params,
+)
+```
+
+<Admonition type="tip" title="Quick Tuning Tips">
+- **Too many false positives?** Increase `threshold` (95 → 98) in scoring, or increase `ensemble_size` (3 → 5)
+- **Training too slow?** Decrease `sample_fraction`, `max_rows`, or `num_trees`
+- **Missing real anomalies?** Decrease `threshold` (95 → 90) in scoring, or increase `expected_anomaly_rate`
+- **Reproducible results needed?** Set `random_seed` in `IsolationForestConfig`
+- **High-cardinality categoricals slow?** Increase `categorical_cardinality_threshold` to use Frequency encoding
+</Admonition>
+
+### Define checks
+
+Use the model name returned by training.
+
+**Python**
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        model="catalog.schema.orders_monitor",
+        registry_table="catalog.schema.dqx_anomaly_models",
+        threshold=95.0,  # percentile cutoff (0-100); higher = fewer anomalies
+    )
+]
+```
+
+**Define anomaly check declaratively in YAML**
+```yaml
+# checks.yml
+- criticality: warn
+  check:
+    function: has_no_anomalies
+    arguments:
+      model: catalog.schema.dqx_anomaly_orders
+      registry_table: catalog.schema.dqx_anomaly_models
+      threshold: 95.0  # optional
+```
+
+**Score thresholds**
+- 90 sensitive (more alerts), 95 balanced (default), 98 strict (fewer anomalies).
+
+**Parameters**
+- `registry_table`: Registry table (required, fully qualified `catalog.schema.table`).
+- `threshold`: Severity percentile threshold (0–100, default 95).
+- `row_filter`: Optional SQL expression to filter rows before scoring.
+- `drift_threshold`: Drift detection threshold (default 3.0, `None` to disable). See the section below for more details.
+- `include_contributions`: Include per-feature contributions in `_dq_info.anomaly.contributions` (default `True`). See the section below for more details.
+- `include_confidence`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
+
+**Notes**
+- For workflow training, `model_name` and `registry_table` are required and must be fully qualified.
+- Scoring uses the columns the model was trained on.
+- Rows with nulls in anomaly columns are skipped (not flagged).
+- When `row_filter` is used, all original rows are preserved; non-filtered rows have `null` scores.
+- Row alignment is handled internally; no row-id parameters are required.
+- Fails fast if Spark < 3.4.
+
+### Advanced Features
+
+**Model Performance Metrics**
+
+After training, the model registry stores comprehensive validation metrics:
+- Distribution statistics (mean, std, skewness, percentiles)
+
+Query the registry table to view metrics:
+```sql
+SELECT model_name, metrics, training_time
+FROM catalog.schema.dqx_anomaly_models
+WHERE status = 'active'
+ORDER BY training_time DESC
+```
+
+**Feature Contributions (Explainability)**
+
+Contributions are enabled by default. For performance reasons, you may want to disable them:
+
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        model="catalog.schema.orders_monitor",
+        registry_table="catalog.schema.dqx_anomaly_models",
+        threshold=95.0,
+        include_contributions=False,
+    )
+]
+```
+
+When contributions are enabled (default), the `_dq_info` column includes `contributions` showing per-feature contribution percentages.
+
+Example: triage top anomalies and inspect contributions:
+```python
+import pyspark.sql.functions as F
+
+top = scored_df.orderBy(F.col("_dq_info.anomaly.severity_percentile").desc()).limit(20)
+top.select("order_id", "_dq_info.anomaly.severity_percentile", "_dq_info.anomaly.contributions").show(truncate=False)
+```
+
+**Drift Detection**
+
+Automatically detects when current data distribution differs significantly from training data:
+
+```python
+from databricks.labs.dqx.anomaly import has_no_anomalies
+
+checks = [
+    has_no_anomalies(
+        model="catalog.schema.orders_monitor",
+        registry_table="catalog.schema.dqx_anomaly_models",
+        drift_threshold=3.0,  # Z-score threshold (default 3.0)
+    )
+]
+```
+
+The default `3.0` corresponds to a roughly 3-sigma deviation from training statistics (about 99.7% of values fall within ±3σ under a normal assumption), which is a common starting point to avoid noisy drift alerts.
+
+When drift detected, issues warning with:
+- Specific columns experiencing drift
+- Drift score magnitude
+- Explicit retrain command
+
 ## Creating Custom Row-level Checks
 
 ### Using SQL Expressions

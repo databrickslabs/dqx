@@ -1,15 +1,19 @@
 from datetime import datetime, timezone
 from unittest.mock import create_autospec, Mock
+
 import pytest
+import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
-from databricks.sdk.errors import DatabricksError
+
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import DatabricksError
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.config import ExtraParams
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
-from databricks.labs.dqx.metrics_observer import DQMetricsObserver
 from databricks.labs.dqx.engine import InvalidParameterError, OutputConfig
+from databricks.labs.dqx.metrics_observer import DQMetricsObserver
+from databricks.labs.dqx.rule import DQDatasetRule
 
 
 def test_engine_creation():
@@ -95,3 +99,33 @@ def test_verify_workspace_client_with_non_dqx_product_info(mock_spark):
     DQEngine(spark=mock_spark, workspace_client=ws)
 
     assert getattr(mock_config, "_product_info") == ('dqx', __version__)
+
+
+def _dummy_dataset_check(column: str):
+    def apply(df):
+        return df
+
+    return F.lit(True).alias(f"{column}_dummy"), apply
+
+
+def test_validate_result_column_collisions_errors_warns():
+    spark_mock = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    engine = DQEngineCore(spark=spark_mock, workspace_client=ws)
+    df = Mock()
+    df.columns = ["_errors", "a"]
+
+    with pytest.raises(InvalidParameterError, match="reserved DQX result columns"):
+        engine.apply_checks(df, [])
+
+
+def test_validate_result_column_collisions_info_for_dataset_rule():
+    spark_mock = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    engine = DQEngineCore(spark=spark_mock, workspace_client=ws)
+    df = Mock()
+    df.columns = ["_dq_info", "a"]
+    checks = [DQDatasetRule(check_func=_dummy_dataset_check, column="a")]
+
+    with pytest.raises(InvalidParameterError, match="reserved DQX result columns"):
+        engine.apply_checks(df, checks)

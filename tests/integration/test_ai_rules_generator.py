@@ -1,6 +1,6 @@
 import pyspark.sql.functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from databricks.labs.dqx.engine import DQEngineCore
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig

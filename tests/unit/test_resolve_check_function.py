@@ -1,6 +1,4 @@
 import textwrap
-import sys
-import importlib
 
 import pytest
 from databricks.labs import dqx
@@ -106,29 +104,20 @@ def test_resolve_custom_check_functions_from_path_with_dependency(tmp_path):
     assert func() == "dependency ok"
 
 
-def test_pii_module_import_failure(monkeypatch):
-    """Test that the code handles gracefully when PII module is not available."""
-    # Save the original module state
-    original_pii_module = sys.modules.get('databricks.labs.dqx.pii')
+def test_optional_module_import_failure():
+    """Test that optional check modules can be unavailable without breaking core resolution."""
+    resolver = dqx.checks_resolver
+    optional_modules = getattr(resolver, "_OPTIONAL_CHECK_MODULES")
+    original_cache = dict(getattr(resolver, "_optional_modules_cache"))
 
-    # Remove the PII module from sys.modules to simulate ImportError
-    monkeypatch.setitem(sys.modules, 'databricks.labs.dqx.pii', None)
+    try:
+        for module_path in optional_modules:
+            getattr(resolver, "_optional_modules_cache")[module_path] = None
 
-    # Force module reload to trigger the import logic
-    importlib.reload(dqx.checks_resolver)
+        func = resolver.resolve_check_function("is_not_null")
+        assert func is not None
 
-    # Verify that PII_ENABLED is False when import fails
-    assert dqx.checks_resolver.PII_ENABLED is False
-
-    # Verify that standard check functions still work
-    func = dqx.checks_resolver.resolve_check_function('is_not_null')
-    assert func is not None
-
-    # Verify that a non-existent function (like PII) cannot be resolved when PII is disabled
-    func = dqx.checks_resolver.resolve_check_function('some_missing_func', fail_on_missing=False)
-    assert func is None
-
-    # Restore the module to its original state
-    if original_pii_module is not None:
-        sys.modules['databricks.labs.dqx.pii'] = original_pii_module
-    importlib.reload(dqx.checks_resolver)
+        func = resolver.resolve_check_function("some_missing_func", fail_on_missing=False)
+        assert func is None
+    finally:
+        setattr(resolver, "_optional_modules_cache", original_cache)

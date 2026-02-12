@@ -29,7 +29,7 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.utils import missing_required_packages
+from databricks.labs.dqx.package_utils import missing_required_packages
 
 # Type checking imports (for type hints only, not evaluated at runtime)
 if TYPE_CHECKING:

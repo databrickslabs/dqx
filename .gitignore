@@ -59,6 +59,15 @@ coverage-integration.xml
 .pytest_cache/
 cover/
 
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-*
+
+# Test output logs
+test_*.log
+
 # Translations
 *.mo
 *.pot
