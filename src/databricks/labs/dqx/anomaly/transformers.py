@@ -16,7 +16,20 @@ from typing import Any
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from pyspark.sql.functions import coalesce, col, cos, dayofweek, hour, lit, month, pi, sin, to_timestamp, when
+from pyspark.sql.functions import (
+    broadcast,
+    coalesce,
+    col,
+    cos,
+    dayofweek,
+    hour,
+    lit,
+    month,
+    pi,
+    sin,
+    to_timestamp,
+    when,
+)
 from pyspark.sql.types import DoubleType, TimestampType
 
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -568,7 +581,7 @@ def _apply_frequency_encoding(
     )
     freq_lookup_df = transformed_df.sparkSession.createDataFrame(freq_rows, schema=freq_schema)
     transformed_df = transformed_df.join(
-        freq_lookup_df,
+        broadcast(freq_lookup_df),
         transformed_df[col_name] == freq_lookup_df[lookup_key_col],
         "left",
     )

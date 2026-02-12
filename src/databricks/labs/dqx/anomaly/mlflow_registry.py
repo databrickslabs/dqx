@@ -8,6 +8,7 @@ as the default implementation. This abstraction enables:
 """
 
 import os
+import inspect
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -109,10 +110,9 @@ class MLflowModelRegistry(ModelRegistryBase):
         and metrics, then registers it to Unity Catalog.
         """
         with mlflow.start_run(run_name=model_name):
-            model_info = mlflow.sklearn.log_model(
-                sk_model=model,
-                name="model",
-                registered_model_name=model_name,
+            model_info = log_sklearn_model_compatible(
+                model=model,
+                model_name=model_name,
                 signature=signature,
             )
             mlflow.log_params(_flatten_hyperparams(hyperparams))
@@ -139,10 +139,9 @@ class MLflowModelRegistry(ModelRegistryBase):
             predictions = model.predict(train_pandas)
             signature = infer_signature(train_pandas, predictions)
 
-            model_info = mlflow.sklearn.log_model(
-                sk_model=model,
-                name="model",
-                registered_model_name=model_name,
+            model_info = log_sklearn_model_compatible(
+                model=model,
+                model_name=model_name,
                 signature=signature,
             )
 
@@ -156,6 +155,32 @@ class MLflowModelRegistry(ModelRegistryBase):
 def _flatten_hyperparams(hyperparams: dict[str, Any]) -> dict[str, Any]:
     """Flatten hyperparams dict for MLflow logging with prefix."""
     return {f"hyperparam_{k}": v for k, v in hyperparams.items() if v is not None}
+
+
+def log_sklearn_model_compatible(
+    *,
+    model: TrainedModel,
+    model_name: str,
+    signature: MLflowSignature,
+):
+    """Log sklearn model with compatibility across MLflow API variants.
+
+    Some runtimes accept `name=...` while others require `artifact_path=...`.
+    """
+    log_model_params = inspect.signature(mlflow.sklearn.log_model).parameters
+    if "name" in log_model_params:
+        return mlflow.sklearn.log_model(
+            sk_model=model,
+            name="model",
+            registered_model_name=model_name,
+            signature=signature,
+        )
+    return mlflow.sklearn.log_model(
+        sk_model=model,
+        artifact_path="model",
+        registered_model_name=model_name,
+        signature=signature,
+    )
 
 
 class _RegistryHolder:

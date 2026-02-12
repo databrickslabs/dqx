@@ -1,9 +1,14 @@
 """Validation utilities for anomaly detection."""
 
+from __future__ import annotations
+
 import warnings
+from typing import TYPE_CHECKING
+
 import sklearn
 
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
+if TYPE_CHECKING:
+    from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 
 
 def _parse_version_tuple(version_str: str) -> tuple[int, int]:
