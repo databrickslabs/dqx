@@ -472,9 +472,10 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
         is_aggr_not_greater_than("a", limit=F.lit(0), aggr_type="count", row_filter="b is not null", group_by=["a"]),
         is_aggr_not_greater_than(F.col("b"), limit=F.lit(0), aggr_type="count", group_by=[F.col("b")]),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="avg"),
-        is_aggr_not_greater_than("b", limit=0.0, aggr_type="sum"),
+        is_aggr_not_greater_than("b", limit=Decimal("0.0"), aggr_type="sum"),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="min"),
-        is_aggr_not_greater_than("b", limit=0.0, aggr_type="max"),
+        is_aggr_not_greater_than("b", limit=Decimal("0.0"), aggr_type="max"),
+        is_aggr_not_greater_than("b", limit="2.0", aggr_type="avg"),
     ]
 
     actual = _apply_checks(test_df, checks)
@@ -487,7 +488,8 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
         "b_avg_greater_than_limit STRING, "
         "b_sum_greater_than_limit STRING, "
         "b_min_greater_than_limit STRING, "
-        "b_max_greater_than_limit STRING"
+        "b_max_greater_than_limit STRING, "
+        "b_avg_greater_than_limit STRING"
     )
 
     expected = spark.createDataFrame(
@@ -504,6 +506,7 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
+                None,
             ],
             [
                 "a",
@@ -516,6 +519,7 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
+                None,
             ],
             [
                 "b",
@@ -528,6 +532,7 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
+                None,
             ],
         ],
         expected_schema,
@@ -554,9 +559,10 @@ def test_is_aggr_not_less_than(spark: SparkSession):
         ),
         is_aggr_not_less_than(F.col("b"), limit=F.lit(2), aggr_type="count", group_by=["b"]),
         is_aggr_not_less_than("b", limit=3.0, aggr_type="avg"),
-        is_aggr_not_less_than("b", limit=5.0, aggr_type="sum"),
+        is_aggr_not_less_than("b", limit=Decimal("5.0"), aggr_type="sum"),
         is_aggr_not_less_than("b", limit=2.0, aggr_type="min"),
-        is_aggr_not_less_than("b", limit=4.0, aggr_type="max"),
+        is_aggr_not_less_than("b", limit=Decimal("4.0"), aggr_type="max"),
+        is_aggr_not_less_than("b", limit="1.0", aggr_type="avg"),
     ]
     actual = _apply_checks(test_df, checks)
 
@@ -568,7 +574,8 @@ def test_is_aggr_not_less_than(spark: SparkSession):
         "b_avg_less_than_limit STRING, "
         "b_sum_less_than_limit STRING, "
         "b_min_less_than_limit STRING, "
-        "b_max_less_than_limit STRING"
+        "b_max_less_than_limit STRING, "
+        "b_avg_less_than_limit STRING"
     )
 
     expected = spark.createDataFrame(
@@ -584,6 +591,7 @@ def test_is_aggr_not_less_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
+                None,
             ],
             [
                 "a",
@@ -596,6 +604,7 @@ def test_is_aggr_not_less_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
+                None,
             ],
             [
                 "b",
@@ -608,6 +617,7 @@ def test_is_aggr_not_less_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
+                None,
             ],
         ],
         expected_schema,
@@ -655,9 +665,10 @@ def test_is_aggr_equal(spark: SparkSession):
         is_aggr_equal("a", limit=F.lit(1), aggr_type="count", row_filter="b is not null", group_by=["a"]),
         is_aggr_equal(F.col("b"), limit=F.lit(2), aggr_type="count", group_by=[F.col("b")]),
         is_aggr_equal("b", limit=2.0, aggr_type="avg"),
-        is_aggr_equal("b", limit=10.0, aggr_type="sum"),
+        is_aggr_equal("b", limit=Decimal("10.0"), aggr_type="sum"),
         is_aggr_equal("b", limit=1.0, aggr_type="min"),
-        is_aggr_equal("b", limit=5.0, aggr_type="max"),
+        is_aggr_equal("b", limit=Decimal("5.0"), aggr_type="max"),
+        is_aggr_equal("b", limit="2.0", aggr_type="avg"),
     ]
 
     actual = _apply_checks(test_df, checks)
@@ -670,7 +681,8 @@ def test_is_aggr_equal(spark: SparkSession):
         "b_avg_not_equal_to_limit STRING, "
         "b_sum_not_equal_to_limit STRING, "
         "b_min_not_equal_to_limit STRING, "
-        "b_max_not_equal_to_limit STRING"
+        "b_max_not_equal_to_limit STRING, "
+        "b_avg_not_equal_to_limit STRING"
     )
 
     expected = spark.createDataFrame(
@@ -686,6 +698,7 @@ def test_is_aggr_equal(spark: SparkSession):
                 "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
+                None,
             ],
             [
                 "a",
@@ -698,6 +711,7 @@ def test_is_aggr_equal(spark: SparkSession):
                 "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
+                None,
             ],
             [
                 "b",
@@ -710,6 +724,7 @@ def test_is_aggr_equal(spark: SparkSession):
                 "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
+                None,
             ],
         ],
         expected_schema,
@@ -904,9 +919,10 @@ def test_is_aggr_not_equal(spark: SparkSession):
         is_aggr_not_equal("a", limit=F.lit(1), aggr_type="count", row_filter="b is not null", group_by=["a"]),
         is_aggr_not_equal(F.col("b"), limit=F.lit(2), aggr_type="count", group_by=[F.col("b")]),
         is_aggr_not_equal("b", limit=2.0, aggr_type="avg"),
-        is_aggr_not_equal("b", limit=10.0, aggr_type="sum"),
+        is_aggr_not_equal("b", limit=Decimal("10.0"), aggr_type="sum"),
         is_aggr_not_equal("b", limit=1.0, aggr_type="min"),
-        is_aggr_not_equal("b", limit=5.0, aggr_type="max"),
+        is_aggr_not_equal("b", limit=Decimal("5.0"), aggr_type="max"),
+        is_aggr_not_equal("b", limit="2.0", aggr_type="avg"),
     ]
 
     actual = _apply_checks(test_df, checks)
@@ -919,7 +935,8 @@ def test_is_aggr_not_equal(spark: SparkSession):
         "b_avg_equal_to_limit STRING, "
         "b_sum_equal_to_limit STRING, "
         "b_min_equal_to_limit STRING, "
-        "b_max_equal_to_limit STRING"
+        "b_max_equal_to_limit STRING, "
+        "b_avg_equal_to_limit STRING"
     )
 
     expected = spark.createDataFrame(
@@ -935,6 +952,7 @@ def test_is_aggr_not_equal(spark: SparkSession):
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
             ],
             [
                 "a",
@@ -947,6 +965,7 @@ def test_is_aggr_not_equal(spark: SparkSession):
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
             ],
             [
                 "b",
@@ -959,6 +978,7 @@ def test_is_aggr_not_equal(spark: SparkSession):
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
             ],
         ],
         expected_schema,

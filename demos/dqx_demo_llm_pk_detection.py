@@ -70,6 +70,7 @@ from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx import check_funcs
+from databricks.labs.dqx.checks_serializer import ChecksNormalizer
 import pyspark.sql.functions as F
 
 # COMMAND ----------
@@ -157,4 +158,4 @@ print(profiles)
 # COMMAND ----------
 
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
-print(yaml.safe_dump(checks))
+print(yaml.safe_dump(ChecksNormalizer.normalize(checks)))

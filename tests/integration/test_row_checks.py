@@ -1237,18 +1237,22 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
         is_not_in_range("c", "2025-01-01 00:00:00", "2025-01-03 00:00:00"),
         is_not_in_range("d", "c", F.expr("cast(b as timestamp) + INTERVAL 2 DAY")),
         is_not_in_range("e", 1, 3),
+        is_not_in_range("e", Decimal("1.00"), Decimal("3.00")),
         is_not_in_range(F.try_element_at("f", F.lit(1)), 1, 3),
         is_not_in_range("g", 0.2, 0.5),
+        is_not_in_range("a", 1.5, 3.5),
+        is_not_in_range("e", 1.5, 3.5),
     )
 
     checked_schema = (
         "a_in_range: string, a_in_range: string, b_in_range: string, b_in_range: string, "
         "c_in_range: string, c_in_range: string, c_in_range: string, d_in_range: string, e_in_range: string, "
-        "try_element_at_f_1_in_range: string, g_in_range: string"
+        "e_in_range: string, try_element_at_f_1_in_range: string, g_in_range: string, "
+        "a_in_range: string, e_in_range: string"
     )
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None, None, None, None],
             [
                 "Value '1' in Column 'a' in range: [1, 3]",
                 "Value '1' in Column 'a' in range: [1, 3]",
@@ -1259,8 +1263,11 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 "Value '2025-01-03 00:00:00' in Column 'c' in range: [2025-01-01 00:00:00, 2025-01-03 00:00:00]",
                 None,
                 "Value '1.00' in Column 'e' in range: [1, 3]",
+                "Value '1.00' in Column 'e' in range: [1.00, 3.00]",
                 "Value '1' in Column 'try_element_at(f, 1)' in range: [1, 3]",
                 "Value '0.3' in Column 'g' in range: [0.2, 0.5]",
+                None,
+                None,
             ],
             [
                 "Value '3' in Column 'a' in range: [1, 3]",
@@ -1272,10 +1279,13 @@ def test_col_is_not_in_range(spark, set_utc_timezone):
                 "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
                 "Value '2025-02-03 00:00:00' in Column 'd' in range: [2025-02-01 00:00:00, 2025-02-03 00:00:00]",
                 "Value '3.00' in Column 'e' in range: [1, 3]",
+                "Value '3.00' in Column 'e' in range: [1.00, 3.00]",
                 "Value '3' in Column 'try_element_at(f, 1)' in range: [1, 3]",
                 None,
+                "Value '3' in Column 'a' in range: [1.5, 3.5]",
+                "Value '3.00' in Column 'e' in range: [1.5, 3.5]",
             ],
-            [None, None, None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None, None, None, None, None],
         ],
         checked_schema,
     )
@@ -3119,13 +3129,13 @@ def test_is_data_fresh_cur(spark, set_utc_timezone):
 
 
 def test_col_is_not_equal_to(spark, set_utc_timezone):
-    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
+    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1]],
-            [2, 1, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2]],
-            [1, 2, None, None, Decimal("0.99"), [1]],
-            [None, None, None, None, None, [None]],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], 1.5],
+            [2, 1, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2], 2.5],
+            [1, 2, None, None, Decimal("0.99"), [1], 1.5],
+            [None, None, None, None, None, [None], None],
         ],
         schema,
     )
@@ -3140,12 +3150,13 @@ def test_col_is_not_equal_to(spark, set_utc_timezone):
         is_not_equal_to("d", "2025-01-01 00:00:00"),
         is_not_equal_to("e", Decimal("1.00")),
         is_not_equal_to(F.try_element_at("f", F.lit(1)), 1),
+        is_not_equal_to("g", 1.5).alias("g_equal_to_float_value"),
     )
 
     expected_schema = (
         "a_equal_to_literal: string, a_equal_to_str_literal: string, a_equal_to_column: string, "
         "c_equal_to_value: string, c_equal_to_value: string, d_equal_to_value: string, d_equal_to_value: string, "
-        "e_equal_to_value: string, try_element_at_f_1_equal_to_value: string"
+        "e_equal_to_value: string, try_element_at_f_1_equal_to_value: string, g_equal_to_float_value: string"
     )
 
     expected = spark.createDataFrame(
@@ -3160,8 +3171,9 @@ def test_col_is_not_equal_to(spark, set_utc_timezone):
                 "Value '2025-01-01 00:00:00' in Column 'd' is equal to value: 2025-01-01 00:00:00",
                 "Value '1.00' in Column 'e' is equal to value: 1.00",
                 "Value '1' in Column 'try_element_at(f, 1)' is equal to value: 1",
+                "Value '1.5' in Column 'g' is equal to value: 1.5",
             ],
-            [None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None],
             [
                 "Value '1' in Column 'a' is equal to value: 1",
                 "Value '1' in Column 'a' is equal to value: 1",
@@ -3172,8 +3184,9 @@ def test_col_is_not_equal_to(spark, set_utc_timezone):
                 None,
                 None,
                 "Value '1' in Column 'try_element_at(f, 1)' is equal to value: 1",
+                "Value '1.5' in Column 'g' is equal to value: 1.5",
             ],
-            [None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None],
         ],
         expected_schema,
     )
@@ -3190,19 +3203,18 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
     - rel_tolerance: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
     - If BOTH tolerances are provided, values are equal if EITHER condition is met (OR logic)
 
-    **IMPORTANT LIMITATION**: Tolerance is only applied when comparing against int/float values.
-    When value is Decimal, tolerance parameters are silently ignored and exact equality is used.
+    Tolerance is applied when comparing against int, float, or Decimal values.
 
     Returns error message when values ARE equal (within tolerance if provided), otherwise returns None.
     Note: This is the inverse of is_equal_to - it fails when values match.
     """
-    schema = "a: int, b: int, c: float"
+    schema = "a: int, b: int, c: float, d: decimal(10,2)"
     test_df = spark.createDataFrame(
         [
-            [1, 1, 100.0],
-            [2, 1, 101.0],
-            [3, 2, 99.5],
-            [None, None, None],
+            [1, 1, 100.0, Decimal("1.00")],
+            [2, 1, 101.0, Decimal("1.01")],
+            [3, 2, 99.5, Decimal("0.99")],
+            [None, None, None, None],
         ],
         schema,
     )
@@ -3211,10 +3223,13 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
         is_not_equal_to("a", 1, rel_tolerance=0.5).alias("a_not_equal_to_value_with_rel_tol"),
         is_not_equal_to("c", 100.0, abs_tolerance=1).alias("c_not_equal_to_value_with_abs_tol"),
         is_not_equal_to("c", 100.0, rel_tolerance=0.01).alias("c_not_equal_to_value_with_rel_tol"),
+        is_not_equal_to("d", Decimal("1.00"), abs_tolerance=0.01).alias("d_not_equal_to_value_with_abs_tol"),
+        is_not_equal_to("d", Decimal("1.00"), rel_tolerance=0.01).alias("d_not_equal_to_value_with_rel_tol"),
     )
     expected_schema = (
         "a_not_equal_to_value_with_abs_tol: string, a_not_equal_to_value_with_rel_tol: string, "
-        "c_not_equal_to_value_with_abs_tol: string, c_not_equal_to_value_with_rel_tol: string"
+        "c_not_equal_to_value_with_abs_tol: string, c_not_equal_to_value_with_rel_tol: string, "
+        "d_not_equal_to_value_with_abs_tol: string, d_not_equal_to_value_with_rel_tol: string"
     )
     expected = spark.createDataFrame(
         [
@@ -3224,6 +3239,8 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
                 "Value '1' in Column 'a' is equal to value: 1",  # abs(1-1)=0 <= 0.5*max(1,1)=0.5 ✓ equal, so fails is_not_equal
                 "Value '100.0' in Column 'c' is equal to value: 100.0",  # abs(100.0-100.0)=0 <= 1.0 ✓ equal, so fails is_not_equal
                 "Value '100.0' in Column 'c' is equal to value: 100.0",  # abs(100.0-100.0)=0 <= 0.01*max(100.0,100.0)=1.0 ✓ equal, so fails is_not_equal
+                "Value '1.00' in Column 'd' is equal to value: 1.00",  # abs(1.00-1.00)=0 <= 0.01 ✓ equal, so fails is_not_equal
+                "Value '1.00' in Column 'd' is equal to value: 1.00",  # abs(1.00-1.00)=0 <= 0.01*max(1.00,1.00)=0.01 ✓ equal, so fails is_not_equal
             ],
             # Row 2: a=2, c=101.0, d=1.01
             [
@@ -3231,6 +3248,8 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
                 "Value '2' in Column 'a' is equal to value: 1",  # abs(2-1)=1 <= 0.5*max(2,1)=1.0 ✓ equal, so fails is_not_equal
                 "Value '101.0' in Column 'c' is equal to value: 100.0",  # abs(101.0-100.0)=1.0 <= 1.0 ✓ equal, so fails is_not_equal
                 "Value '101.0' in Column 'c' is equal to value: 100.0",  # abs(101.0-100.0)=1.0 <= 0.01*max(101.0,100.0)=1.01 ✓ equal, so fails is_not_equal
+                "Value '1.01' in Column 'd' is equal to value: 1.00",  # abs(1.01-1.00)=0.01 <= 0.01 ✓ equal, so fails is_not_equal
+                "Value '1.01' in Column 'd' is equal to value: 1.00",  # abs(1.01-1.00)=0.01 <= 0.01*max(1.01,1.00)=0.0101 ✓ equal, so fails is_not_equal
             ],
             # Row 3: a=3, c=99.5, d=0.99
             [
@@ -3238,10 +3257,14 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
                 None,  # abs(3-1)=2 > 0.5*max(3,1)=1.5 ✗ not equal, so passes is_not_equal
                 "Value '99.5' in Column 'c' is equal to value: 100.0",  # abs(99.5-100.0)=0.5 <= 1.0 ✓ equal, so fails is_not_equal
                 "Value '99.5' in Column 'c' is equal to value: 100.0",  # abs(99.5-100.0)=0.5 <= 0.01*max(99.5,100.0)=1.0 ✓ equal, so fails is_not_equal
+                "Value '0.99' in Column 'd' is equal to value: 1.00",  # abs(0.99-1.00)=0.01 <= 0.01 ✓ equal, so fails is_not_equal
+                "Value '0.99' in Column 'd' is equal to value: 1.00",  # abs(0.99-1.00)=0.01 <= 0.01*max(0.99,1.00)=0.01 ✓ equal, so fails is_not_equal
             ],
             # Row 4: All null values
             [
                 None,  # Nulls are not compared
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -3253,13 +3276,13 @@ def test_col_is_not_equal_to_with_tolerance(spark, set_utc_timezone):
 
 
 def test_col_is_equal_to(spark, set_utc_timezone):
-    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>"
+    schema = "a: int, b: int, c: date, d: timestamp, e: decimal(10,2), f: array<int>, g: float"
     test_df = spark.createDataFrame(
         [
-            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1]],
-            [2, 1, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2]],
-            [1, 2, None, None, Decimal("0.99"), [1]],
-            [None, None, None, None, None, [None]],
+            [1, 1, datetime(2025, 1, 1).date(), datetime(2025, 1, 1), Decimal("1.00"), [1], 1.5],
+            [2, 1, datetime(2025, 2, 1).date(), datetime(2025, 2, 1), Decimal("1.01"), [2], 2.5],
+            [1, 2, None, None, Decimal("0.99"), [1], 1.5],
+            [None, None, None, None, None, [None], None],
         ],
         schema,
     )
@@ -3274,18 +3297,20 @@ def test_col_is_equal_to(spark, set_utc_timezone):
         is_equal_to("d", "2025-01-01 00:00:00"),
         is_equal_to("e", Decimal("1.00")),
         is_equal_to(F.try_element_at("f", F.lit(1)), 1),
+        is_equal_to("g", 1.5).alias("g_not_equal_to_float_value"),
     )
 
     expected_schema = (
         "a_not_equal_to_value: string, a_not_equal_to_str_value: string, a_not_equal_to_value_col: string, "
         "c_not_equal_to_value: string, c_not_equal_to_value: string, "
         "d_not_equal_to_value: string, d_not_equal_to_value: string, "
-        "e_not_equal_to_value: string, try_element_at_f_1_not_equal_to_value: string"
+        "e_not_equal_to_value: string, try_element_at_f_1_not_equal_to_value: string, "
+        "g_not_equal_to_float_value: string"
     )
 
     expected = spark.createDataFrame(
         [
-            [None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None],
             [
                 "Value '2' in Column 'a' is not equal to value: 1",
                 "Value '2' in Column 'a' is not equal to value: 1",
@@ -3296,6 +3321,7 @@ def test_col_is_equal_to(spark, set_utc_timezone):
                 "Value '2025-02-01 00:00:00' in Column 'd' is not equal to value: 2025-01-01 00:00:00",
                 "Value '1.01' in Column 'e' is not equal to value: 1.00",
                 "Value '2' in Column 'try_element_at(f, 1)' is not equal to value: 1",
+                "Value '2.5' in Column 'g' is not equal to value: 1.5",
             ],
             [
                 None,
@@ -3307,8 +3333,9 @@ def test_col_is_equal_to(spark, set_utc_timezone):
                 None,
                 "Value '0.99' in Column 'e' is not equal to value: 1.00",
                 None,
+                None,
             ],
-            [None, None, None, None, None, None, None, None, None],
+            [None, None, None, None, None, None, None, None, None, None],
         ],
         expected_schema,
     )
@@ -3325,19 +3352,18 @@ def test_col_is_equal_to_with_tolerance(spark, set_utc_timezone):
     - rel_tolerance: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
     - If BOTH tolerances are provided, values are equal if EITHER condition is met (OR logic)
 
-    **IMPORTANT LIMITATION**: Tolerance is only applied when comparing against int/float values.
-    When value is Decimal, tolerance parameters are silently ignored and exact equality is used.
+    Tolerance is applied when comparing against int, float, or Decimal values.
 
     Returns None when values are equal (within tolerance if provided), otherwise returns error message.
     Note: Error messages do NOT include tolerance information, only the actual value and expected value.
     """
-    schema = "a: int, b: int, c: float"
+    schema = "a: int, b: int, c: float, d: decimal(10,2)"
     test_df = spark.createDataFrame(
         [
-            [1, 1, 100.0],
-            [2, 1, 101.0],
-            [3, 2, 99.5],
-            [None, None, None],
+            [1, 1, 100.0, Decimal("1.00")],
+            [2, 1, 101.0, Decimal("1.01")],
+            [3, 2, 99.5, Decimal("0.99")],
+            [None, None, None, None],
         ],
         schema,
     )
@@ -3346,10 +3372,13 @@ def test_col_is_equal_to_with_tolerance(spark, set_utc_timezone):
         is_equal_to("a", 1, rel_tolerance=0.5).alias("a_equal_to_value_with_rel_tol"),
         is_equal_to("c", 100.0, abs_tolerance=1).alias("c_equal_to_value_with_abs_tol"),
         is_equal_to("c", 100.0, rel_tolerance=0.01).alias("c_equal_to_value_with_rel_tol"),
+        is_equal_to("d", Decimal("1.00"), abs_tolerance=0.01).alias("d_equal_to_value_with_abs_tol"),
+        is_equal_to("d", Decimal("1.00"), rel_tolerance=0.01).alias("d_equal_to_value_with_rel_tol"),
     )
     expected_schema = (
         "a_equal_to_value_with_abs_tol: string, a_equal_to_value_with_rel_tol: string, "
-        "c_equal_to_value_with_abs_tol: string, c_equal_to_value_with_rel_tol: string"
+        "c_equal_to_value_with_abs_tol: string, c_equal_to_value_with_rel_tol: string, "
+        "d_equal_to_value_with_abs_tol: string, d_equal_to_value_with_rel_tol: string"
     )
     expected = spark.createDataFrame(
         [
@@ -3359,6 +3388,8 @@ def test_col_is_equal_to_with_tolerance(spark, set_utc_timezone):
                 None,  # abs(1-1)=0 <= 0.5*max(1,1)=0.5 ✓
                 None,  # abs(100.0-100.0)=0 <= 1.0 ✓
                 None,  # abs(100.0-100.0)=0 <= 0.01*max(100.0,100.0)=1.0 ✓
+                None,  # abs(1.00-1.00)=0 <= 0.01 ✓
+                None,  # abs(1.00-1.00)=0 <= 0.01*max(1.00,1.00)=0.01 ✓
             ],
             # Row 2: a=2, c=101.0, d=1.01
             [
@@ -3366,6 +3397,8 @@ def test_col_is_equal_to_with_tolerance(spark, set_utc_timezone):
                 None,  # abs(2-1)=1 <= 0.5*max(2,1)=1.0 ✓
                 None,  # abs(101.0-100.0)=1.0 <= 1.0 ✓
                 None,  # abs(101.0-100.0)=1.0 <= 0.01*max(101.0,100.0)=1.01 ✓
+                None,  # abs(1.01-1.00)=0.01 <= 0.01 ✓ equal, so passes is_equal_to
+                None,  # abs(1.01-1.00)=0.01 <= 0.01*max(1.01,1.00)=0.0101 ✓ equal, so passes is_equal_to
             ],
             # Row 3: a=3, c=99.5, d=0.99
             [
@@ -3373,10 +3406,14 @@ def test_col_is_equal_to_with_tolerance(spark, set_utc_timezone):
                 "Value '3' in Column 'a' is not equal to value: 1",  # abs(3-1)=2 > 0.5*max(3,1)=1.5 ✗
                 None,  # abs(99.5-100.0)=0.5 <= 1.0 ✓
                 None,  # abs(99.5-100.0)=0.5 <= 0.01*max(99.5,100.0)=1.0 ✓
+                None,  # abs(0.99-1.00)=0.01 <= 0.01 ✓ equal, so passes is_equal_to
+                None,  # abs(0.99-1.00)=0.01 <= 0.01*max(0.99,1.00)=0.01 ✓ equal, so passes is_equal_to
             ],
             # Row 4: All null values
             [
                 None,  # Nulls are not compared
+                None,
+                None,
                 None,
                 None,
                 None,

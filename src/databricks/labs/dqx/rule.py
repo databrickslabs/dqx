@@ -308,7 +308,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         else:
             kwargs.pop("columns", None)  # Ensure required args aren't duplicated in kwargs
 
-        # Push down filter if supported
+        # Push down check filter as row_filter if supported by the check function
         if self.filter and "row_filter" in sig.parameters:
             kwargs["row_filter"] = self.filter
 
