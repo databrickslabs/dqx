@@ -19,8 +19,6 @@ jobs:
   integration:
     environment: tool
     runs-on: larger
-    env:
-      DATABRICKS_CLUSTER_ID: ${{ secrets.DATABRICKS_DQX_CLUSTER_ID }}  # temp only, until labs env is upgraded
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4

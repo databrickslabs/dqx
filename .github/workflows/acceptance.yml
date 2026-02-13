@@ -27,8 +27,6 @@ jobs:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
-    env:
-      DATABRICKS_CLUSTER_ID: ${{ secrets.DATABRICKS_DQX_CLUSTER_ID }}  # temp only, until labs env is upgrade
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
