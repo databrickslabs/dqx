@@ -27,6 +27,8 @@ jobs:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
+    env:
+      DATABRICKS_CLUSTER_ID: ${{ secrets.DATABRICKS_DQX_CLUSTER_ID }}  # temp only, until labs env is upgrade
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -70,7 +72,6 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           COVERAGE_FILE: ${{ github.workspace }}/.coverage  # make sure the coverage report is preserved
-          DATABRICKS_CLUSTER_ID: ${{ secrets.DATABRICKS_DQX_CLUSTER_ID }}  # temp only, until labs env is upgraded
 
       - name: Merge coverage reports and convert them to XML
         run: |
@@ -194,7 +195,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
-          DATABRICKS_CLUSTER_ID: ${{ secrets.DATABRICKS_DQX_CLUSTER_ID }}  # temp only, until labs env is upgraded
 
   e2e_serverless:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
