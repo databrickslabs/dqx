@@ -92,7 +92,7 @@ def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_rand
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
-    with pytest.raises(NotFound, match=f"Checks table {table_name} does not exist in the workspace"):
+    with pytest.raises(NotFound, match=f"Checks table '{table_name}' does not exist in the workspace"):
         engine = DQEngine(ws, spark)
         config = TableChecksStorageConfig(location=table_name)
         engine.load_checks(config=config)

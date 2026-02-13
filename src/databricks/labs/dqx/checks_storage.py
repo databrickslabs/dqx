@@ -107,7 +107,11 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             NotFound: if the table does not exist in the workspace
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
-        self.ws.tables.get(full_name=config.location)
+        try:
+            self.ws.tables.get(full_name=config.location.replace("`", ""))
+        except NotFound as e:
+            raise NotFound(f"Checks table '{config.location}' does not exist in the workspace") from e
+
         rules_df = self.spark.read.table(config.location)
         return DataFrameConverter.from_dataframe(rules_df, run_config_name=config.run_config_name) or []
 
