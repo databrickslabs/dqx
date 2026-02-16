@@ -1,7 +1,8 @@
 import json
 import logging
-import uuid
 import os
+import urllib
+import uuid
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -108,7 +109,8 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
         try:
-            self.ws.tables.get(full_name=config.location.replace("`", ""))
+            url_safe_table_name = urllib.parse.quote(config.location.replace("`", ""))
+            self.ws.tables.get(full_name=url_safe_table_name)
         except NotFound as e:
             raise NotFound(f"Checks table '{config.location}' does not exist in the workspace") from e
 
