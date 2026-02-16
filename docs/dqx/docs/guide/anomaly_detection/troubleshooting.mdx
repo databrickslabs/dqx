@@ -92,9 +92,9 @@ anomaly_engine.train(
 import pyspark.sql.functions as F
 
 # Verify model exists
-spark.table("catalog.schema.anomaly_registry").filter(
+display(spark.table("catalog.schema.anomaly_registry").filter(
     F.col("identity.model_name") == "your_model_name"
-).show()
+))
 
 # Check for typos in model_name (case-sensitive!)
 ```
@@ -259,13 +259,13 @@ import pyspark.sql.functions as F
 df_scored = dq_engine.apply_checks(df, checks)
 
 # View top 20 by severity (regardless of threshold)
-df_scored.orderBy(
+display(df_scored.orderBy(
     F.col("_dq_info.anomaly.severity_percentile").desc()
 ).select(
     "transaction_id",
     "_dq_info.anomaly.severity_percentile",
     "_dq_info.anomaly.score",
-).limit(20).show()
+).limit(20))
 ```
 
 ---
