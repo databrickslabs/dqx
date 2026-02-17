@@ -463,7 +463,8 @@ class DQProfiler(DQEngineBase):
             total_count: The total number of rows in the DataFrame.
             typ: The data type of the column.
         """
-        max_nulls = opts.get("max_null_ratio", 0)
+        max_empty_ratio = opts.get("max_empty_ratio", 0)
+        max_null_ratio = opts.get("max_null_ratio", 0)
         trim_strings = opts.get("trim_strings", True)
 
         dst = df.select(field_name).dropna()
@@ -475,26 +476,47 @@ class DQProfiler(DQEngineBase):
         count_non_null = dst.count()
         metrics["count_non_null"] = count_non_null
         metrics["count_null"] = total_count - count_non_null
-        if count_non_null >= (total_count * (1 - max_nulls)):
-            if count_non_null != total_count:
-                null_percentage = 1 - (1.0 * count_non_null) / total_count
-                dq_rules.append(
-                    DQProfile(
-                        name="is_not_null",
-                        column=field_name,
-                        description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
-                        f"(allowed {max_nulls * 100:.1f}%)",
-                        filter=opts.get("filter", None),
-                    )
+
+        count_non_empty = dst.filter(F.col(field_name) == "").count()
+        null_percentage = 1 - (1.0 * count_non_null) / total_count
+        empty_percentage = 1 - (1.0 * count_non_empty) / total_count
+
+        if typ == T.StringType() and count_non_empty >= (total_count *(1 - max_empty_ratio)) and count_non_null >= (total_count * (1 - max_null_ratio)):
+            dq_rules.append(
+                DQProfile(
+                    name="is_not_null_or_empty",
+                    column=field_name,
+                    description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values and has {empty_percentage*100:.1f}% of empty values "
+                    f"(allowed {max_null_ratio * 100:.1f}% of nulls and {max_empty_ratio*100:.1f}% of empty values)",
+                    filter=opts.get("filter", None),
                 )
-            else:
-                dq_rules.append(
-                    DQProfile(
-                        name="is_not_null",
-                        column=field_name,
-                        filter=opts.get("filter", None),
-                    )
+            )
+           
+
+        elif count_non_null >= (total_count * (1 - max_null_ratio)):    
+            dq_rules.append(
+                DQProfile(
+                    name="is_not_null",
+                    column=field_name,
+                    description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
+                    f"(allowed {max_null_ratio * 100:.1f}%)" if count_non_null != total_count else None,
+                    filter=opts.get("filter", None),
                 )
+            )
+      
+        elif typ == T.StringType() and count_non_empty <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
+            dq_rules.append(
+                DQProfile(
+                    name="is_not_empty",
+                    column=field_name,
+                    parameters={"trim_strings": trim_strings},
+                    description=f"Column {field_name} has {empty_percentage * 100:.1f}% of empty values "
+                    f"(allowed {max_empty_ratio * 100:.1f}%)" if count_non_empty != total_count else None,
+                    filter=opts.get("filter", None),
+                )
+            )
+           
+
         if self._type_supports_distinct(typ):
             dst2 = dst.dropDuplicates()
             cnt = dst2.count()
@@ -508,23 +530,7 @@ class DQProfiler(DQEngineBase):
                     )
                 )
 
-        if (
-            typ == T.StringType()
-            and not any(  # does not make sense to add is_not_null_or_empty if is_not_null already exists
-                rule.name == "is_not_null" and rule.column == field_name for rule in dq_rules
-            )
-        ):
-            dst2 = dst.filter(F.col(field_name) == "")
-            cnt = dst2.count()
-            if cnt <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
-                dq_rules.append(
-                    DQProfile(
-                        name="is_not_null_or_empty",
-                        column=field_name,
-                        parameters={"trim_strings": trim_strings},
-                        filter=opts.get("filter", None),
-                    )
-                )
+       
         if metrics["count_non_null"] > 0 and self._type_supports_min_max(typ):
             rule = self._extract_min_max(dst, field_name, typ, metrics, opts)
             if rule:
