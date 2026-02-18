@@ -67,7 +67,7 @@ def test_col_is_not_null_and_not_empty(spark):
     checked_schema = (
         "a_is_null_or_empty: string, "
         + "b_is_null_or_empty: string, "
-        + "unresolvedextractvalue_c_val_is_null_or_empty: string, "
+        + "c_val_is_null_or_empty: string, "
         + "try_element_at_d_1_is_null_or_empty: string, "
         + "e_is_null_or_empty: string"
     )
@@ -77,14 +77,14 @@ def test_col_is_not_null_and_not_empty(spark):
             [
                 "Column 'a' value is null or empty",
                 "Column 'b' value is null or empty",
-                "Column 'UnresolvedExtractValue(c, val)' value is null or empty",
+                "Column 'c['val']' value is null or empty",
                 "Column 'try_element_at(d, 1)' value is null or empty",
                 "Column 'e' value is null or empty",
             ],
             [
                 None,
                 None,
-                "Column 'UnresolvedExtractValue(c, val)' value is null or empty",
+                "Column 'c['val']' value is null or empty",
                 "Column 'try_element_at(d, 1)' value is null or empty",
                 "Column 'e' value is null or empty",
             ],
@@ -117,7 +117,7 @@ def test_col_is_not_empty(spark):
     checked_schema = (
         "a_is_empty: string, "
         + "b_is_empty: string, "
-        + "unresolvedextractvalue_c_val_is_empty: string, "
+        + "c_val_is_empty: string, "
         + "try_element_at_d_1_is_empty: string, "
         + "e_is_empty: string"
     )
@@ -133,7 +133,7 @@ def test_col_is_not_empty(spark):
             [
                 "Column 'a' value is empty",
                 None,
-                "Column 'UnresolvedExtractValue(c, val)' value is empty",
+                "Column 'c['val']' value is empty",
                 None,
                 "Column 'e' value is empty",
             ],
@@ -170,16 +170,13 @@ def test_col_is_not_null(spark):
     )
 
     checked_schema = (
-        "a_is_null: string, "
-        + "b_is_null: string, "
-        + "unresolvedextractvalue_c_val_is_null: string, "
-        + "try_element_at_d_1_is_null: string"
+        "a_is_null: string, " + "b_is_null: string, " + "c_val_is_null: string, " + "try_element_at_d_1_is_null: string"
     )
     expected = spark.createDataFrame(
         [
             [None, None, None, None],
             [None, "Column 'b' value is null", None, "Column 'try_element_at(d, 1)' value is null"],
-            [None, None, "Column 'UnresolvedExtractValue(c, val)' value is null", None],
+            [None, None, "Column 'c['val']' value is null", None],
         ],
         checked_schema,
     )
@@ -208,7 +205,7 @@ def test_col_is_null(spark):
     checked_schema = (
         "a_is_not_null: string, "
         + "b_is_not_null: string, "
-        + "unresolvedextractvalue_c_val_is_not_null: string, "
+        + "c_val_is_not_null: string, "
         + "try_element_at_d_1_is_not_null: string"
     )
     expected = spark.createDataFrame(
@@ -216,10 +213,10 @@ def test_col_is_null(spark):
             [
                 "Column 'a' value is not null",
                 "Column 'b' value is not null",
-                "Column 'UnresolvedExtractValue(c, val)' value is not null",
+                "Column 'c['val']' value is not null",
                 "Column 'try_element_at(d, 1)' value is not null",
             ],
-            ["Column 'a' value is not null", None, "Column 'UnresolvedExtractValue(c, val)' value is not null", None],
+            ["Column 'a' value is not null", None, "Column 'c['val']' value is not null", None],
             [
                 "Column 'a' value is not null",
                 "Column 'b' value is not null",
@@ -255,7 +252,7 @@ def test_col_is_empty(spark):
     checked_schema = (
         "a_is_not_empty: string, "
         + "b_is_not_empty: string, "
-        + "unresolvedextractvalue_c_val_is_not_empty: string, "
+        + "c_val_is_not_empty: string, "
         + "try_element_at_d_1_is_not_empty: string, "
         + "e_is_not_empty: string"
     )
@@ -264,7 +261,7 @@ def test_col_is_empty(spark):
             [
                 "Column 'a' value is not empty",
                 "Column 'b' value is not empty",
-                "Column 'UnresolvedExtractValue(c, val)' value is not empty",
+                "Column 'c['val']' value is not empty",
                 "Column 'try_element_at(d, 1)' value is not empty",
                 "Column 'e' value is not empty",
             ],
@@ -311,7 +308,7 @@ def test_col_is_null_or_empty(spark):
     checked_schema = (
         "a_is_not_null_and_not_empty: string, "
         + "b_is_not_null_and_not_empty: string, "
-        + "unresolvedextractvalue_c_val_is_not_null_and_not_empty: string, "
+        + "c_val_is_not_null_and_not_empty: string, "
         + "try_element_at_d_1_is_not_null_and_not_empty: string, "
         + "e_is_not_null_and_not_empty: string"
     )
@@ -320,7 +317,7 @@ def test_col_is_null_or_empty(spark):
             [
                 "Column 'a' value is not null and not empty",
                 "Column 'b' value is not null and not empty",
-                "Column 'UnresolvedExtractValue(c, val)' value is not null and not empty",
+                "Column 'c['val']' value is not null and not empty",
                 "Column 'try_element_at(d, 1)' value is not null and not empty",
                 "Column 'e' value is not null and not empty",
             ],
@@ -373,10 +370,10 @@ def test_col_is_not_null_and_is_in_list(spark):
     checked_schema = (
         "a_is_null_or_is_not_in_the_list: string, "
         + "b_is_null_or_is_not_in_the_list: string, "
-        + "unresolvedextractvalue_c_val_is_null_or_is_not_in_the_list: string, "
+        + "c_val_is_null_or_is_not_in_the_list: string, "
         + "try_element_at_d_2_is_null_or_is_not_in_the_list: string, "
         + "a_is_null_or_is_not_in_the_list: string, "
-        + "unresolvedextractvalue_c_val_is_null_or_is_not_in_the_list: string, "
+        + "c_val_is_null_or_is_not_in_the_list: string, "
         + "try_element_at_d_2_is_null_or_is_not_in_the_list: string, "
         + "d_is_null_or_is_not_in_the_list: string, "
         + "d_is_null_or_is_not_in_the_list: string"
@@ -398,10 +395,10 @@ def test_col_is_not_null_and_is_in_list(spark):
             [
                 "Value 'str2' in Column 'a' is null or not in the allowed list: [str1]",
                 "Value 'null' in Column 'b' is null or not in the allowed list: [3]",
-                "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'str2' in Column 'c['val']' is null or not in the allowed list: [a]",
                 "Value 'a' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
                 "Value 'str2' in Column 'a' is null or not in the allowed list: [str1]",
-                "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'str2' in Column 'c['val']' is null or not in the allowed list: [a]",
                 "Value 'a' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
                 "Value '[null, a]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
                 "Value '[null, a]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
@@ -409,10 +406,10 @@ def test_col_is_not_null_and_is_in_list(spark):
             [
                 "Value ' ' in Column 'a' is null or not in the allowed list: [str1]",
                 None,
-                "Value ' ' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value ' ' in Column 'c['val']' is null or not in the allowed list: [a]",
                 "Value ' ' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
                 "Value ' ' in Column 'a' is null or not in the allowed list: [str1]",
-                "Value ' ' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value ' ' in Column 'c['val']' is null or not in the allowed list: [a]",
                 "Value ' ' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
                 "Value '[null,  ]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
                 "Value '[null,  ]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
@@ -420,7 +417,7 @@ def test_col_is_not_null_and_is_in_list(spark):
             [
                 "Value 'STR1' in Column 'a' is null or not in the allowed list: [str1]",
                 "Value '4' in Column 'b' is null or not in the allowed list: [3]",
-                "Value 'A' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'A' in Column 'c['val']' is null or not in the allowed list: [a]",
                 "Value 'c' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
                 None,
                 None,
@@ -431,10 +428,10 @@ def test_col_is_not_null_and_is_in_list(spark):
             [
                 "Value 'str5' in Column 'a' is null or not in the allowed list: [str1]",
                 "Value '5' in Column 'b' is null or not in the allowed list: [3]",
-                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'e' in Column 'c['val']' is null or not in the allowed list: [a]",
                 "Value 'C' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
                 "Value 'str5' in Column 'a' is null or not in the allowed list: [str1]",
-                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is null or not in the allowed list: [a]",
+                "Value 'e' in Column 'c['val']' is null or not in the allowed list: [a]",
                 "Value 'C' in Column 'try_element_at(d, 2)' is null or not in the allowed list: [b]",
                 "Value '[b, C]' in Column 'd' is null or not in the allowed list: [[a, b], [B, c]]",
                 None,
@@ -472,10 +469,10 @@ def test_col_is_not_in_list(spark):
     checked_schema = (
         "a_is_not_in_the_list: string, "
         + "b_is_not_in_the_list: string, "
-        + "unresolvedextractvalue_c_val_is_not_in_the_list: string, "
+        + "c_val_is_not_in_the_list: string, "
         + "try_element_at_d_2_is_not_in_the_list: string, "
         + "a_is_not_in_the_list: string, "
-        + "unresolvedextractvalue_c_val_is_not_in_the_list: string, "
+        + "c_val_is_not_in_the_list: string, "
         + "try_element_at_d_2_is_not_in_the_list: string, "
         + "d_is_not_in_the_list: string, "
         + "d_is_not_in_the_list: string"
@@ -486,10 +483,10 @@ def test_col_is_not_in_list(spark):
             [
                 "Value 'str2' in Column 'a' is not in the allowed list: [str1]",
                 None,
-                "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'str2' in Column 'c['val']' is not in the allowed list: [a]",
                 "Value 'a' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
                 "Value 'str2' in Column 'a' is not in the allowed list: [str1]",
-                "Value 'str2' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'str2' in Column 'c['val']' is not in the allowed list: [a]",
                 "Value 'a' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
                 "Value '[null, a]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
                 "Value '[null, a]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
@@ -508,7 +505,7 @@ def test_col_is_not_in_list(spark):
             [
                 "Value 'STR1' in Column 'a' is not in the allowed list: [str1]",
                 "Value '4' in Column 'b' is not in the allowed list: [3]",
-                "Value 'A' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'A' in Column 'c['val']' is not in the allowed list: [a]",
                 "Value 'c' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
                 None,
                 None,
@@ -519,10 +516,10 @@ def test_col_is_not_in_list(spark):
             [
                 "Value 'str5' in Column 'a' is not in the allowed list: [str1]",
                 "Value '5' in Column 'b' is not in the allowed list: [3]",
-                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'e' in Column 'c['val']' is not in the allowed list: [a]",
                 "Value 'C' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
                 "Value 'str5' in Column 'a' is not in the allowed list: [str1]",
-                "Value 'e' in Column 'UnresolvedExtractValue(c, val)' is not in the allowed list: [a]",
+                "Value 'e' in Column 'c['val']' is not in the allowed list: [a]",
                 "Value 'C' in Column 'try_element_at(d, 2)' is not in the allowed list: [b]",
                 "Value '[b, C]' in Column 'd' is not in the allowed list: [[a, b], [B, c]]",
                 None,
@@ -594,10 +591,10 @@ def test_is_not_in_list(spark):
     checked_schema = (
         "a_is_in_the_forbidden_list: string, "
         + "b_is_in_the_forbidden_list: string, "
-        + "unresolvedextractvalue_c_status_is_in_the_forbidden_list: string, "
+        + "c_status_is_in_the_forbidden_list: string, "
         + "try_element_at_d_1_is_in_the_forbidden_list: string, "
         + "a_is_in_the_forbidden_list: string, "
-        + "unresolvedextractvalue_c_status_is_in_the_forbidden_list: string, "
+        + "c_status_is_in_the_forbidden_list: string, "
         + "try_element_at_d_1_is_in_the_forbidden_list: string, "
         + "d_is_in_the_forbidden_list: string, "
         + "d_is_in_the_forbidden_list: string"
@@ -613,7 +610,7 @@ def test_is_not_in_list(spark):
             [
                 "Value 'banned' in Column 'a' is in the forbidden list: [banned, suspended, deleted]",
                 None,
-                "Value 'banned' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [banned, error]",
+                "Value 'banned' in Column 'c['status']' is in the forbidden list: [banned, error]",
                 None,  # try_element_at returns None, which passes
                 "Value 'banned' in Column 'a' is in the forbidden list: [banned, suspended]",
                 None,
@@ -642,7 +639,7 @@ def test_is_not_in_list(spark):
                 None,
                 None,  # case sensitive: "ADMIN" not in ["admin", "root"]
                 "Value 'BANNED' in Column 'a' is in the forbidden list: [banned, suspended]",  # case insensitive
-                "Value 'OK' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [ok]",  # case insensitive
+                "Value 'OK' in Column 'c['status']' is in the forbidden list: [ok]",  # case insensitive
                 "Value 'ADMIN' in Column 'try_element_at(d, 1)' is in the forbidden list: [admin]",  # case insensitive: "ADMIN" in ["admin"]
                 None,
                 None,
@@ -652,7 +649,7 @@ def test_is_not_in_list(spark):
             [
                 None,
                 None,
-                "Value 'error' in Column 'UnresolvedExtractValue(c, status)' is in the forbidden list: [banned, error]",
+                "Value 'error' in Column 'c['status']' is in the forbidden list: [banned, error]",
                 None,  # case sensitive: "read" not in ["admin", "root"]
                 None,
                 None,
@@ -760,16 +757,16 @@ def test_is_col_older_than_col2_for_n_days(spark):
 
     checked_schema = (
         "is_col_a_older_than_b_for_n_days: string, "
-        + "is_col_unresolvedextractvalue_c_val_older_than_try_element_at_d_1_for_n_days: string, "
+        + "is_col_c_val_older_than_try_element_at_d_1_for_n_days: string, "
         + "is_col_a_not_older_than_b_for_n_days: string, "
-        + "is_col_unresolvedextractvalue_c_val_not_older_than_try_element_at_d_1_for_n_days: string"
+        + "is_col_c_val_not_older_than_try_element_at_d_1_for_n_days: string"
     )
     expected = spark.createDataFrame(
         [
             [
                 "Value '2023-01-10' in Column 'a' is not less than Value '2023-01-12' in Column 'b' "
                 + "for more than 2 days",
-                "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is not less than Value "
+                "Value '2023-01-10' in Column 'c['val']' is not less than Value "
                 + "'2023-01-12' in Column 'try_element_at(d, 1)' for more than 2 days",
                 None,
                 None,
@@ -779,13 +776,13 @@ def test_is_col_older_than_col2_for_n_days(spark):
                 None,
                 "Value '2023-01-10' in Column 'a' is less than Value '2023-01-13' in Column 'b' "
                 + "for 2 or more days",
-                "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is less than Value "
+                "Value '2023-01-10' in Column 'c['val']' is less than Value "
                 + "'2023-01-13' in Column 'try_element_at(d, 1)' for 2 or more days",
             ],
             [
                 "Value '2023-01-10' in Column 'a' is not less than Value '2023-01-05' in Column 'b' "
                 + "for more than 2 days",
-                "Value '2023-01-10' in Column 'UnresolvedExtractValue(c, val)' is not less than Value "
+                "Value '2023-01-10' in Column 'c['val']' is not less than Value "
                 + "'2023-01-05' in Column 'try_element_at(d, 1)' for more than 2 days",
                 None,
                 None,
@@ -821,17 +818,17 @@ def test_is_col_older_than_n_days(spark):
 
     checked_schema = (
         "is_col_a_older_than_n_days: string, "
-        + "is_col_unresolvedextractvalue_b_val_older_than_n_days: string, "
+        + "is_col_b_val_older_than_n_days: string, "
         + "is_col_try_element_at_c_1_older_than_n_days: string, "
         + "is_col_a_not_older_than_n_days: string, "
-        + "is_col_unresolvedextractvalue_b_val_not_older_than_n_days: string, "
+        + "is_col_b_val_not_older_than_n_days: string, "
         + "is_col_try_element_at_c_1_not_older_than_n_days: string"
     )
     expected = spark.createDataFrame(
         [
             [
                 "Value '2023-01-10' in Column 'a' is not less than current date '2023-01-12' for more than 2 days",
-                "Value '2023-01-11' in Column 'UnresolvedExtractValue(b, val)' is not less than "
+                "Value '2023-01-11' in Column 'b['val']' is not less than "
                 + "current date '2023-01-12' for more than 2 days",
                 "Value '2023-01-12' in Column 'try_element_at(c, 1)' is not less than "
                 + "current date '2023-01-12' for more than 2 days",
@@ -844,7 +841,7 @@ def test_is_col_older_than_n_days(spark):
                 None,
                 None,
                 "Value '2023-01-05' in Column 'a' is less than current date '2023-01-12' for 2 or more days",
-                "Value '2023-01-05' in Column 'UnresolvedExtractValue(b, val)' is less than "
+                "Value '2023-01-05' in Column 'b['val']' is less than "
                 + "current date '2023-01-12' for 2 or more days",
                 "Value '2023-01-05' in Column 'try_element_at(c, 1)' is less than "
                 + "current date '2023-01-12' for 2 or more days",
@@ -873,13 +870,13 @@ def test_col_is_not_in_future(spark):
         is_not_in_future(F.col("b").getItem("dt"), 2, F.lit("2023-01-10 11:08:40")),
     )
 
-    checked_schema = "a_in_future: string, unresolvedextractvalue_b_dt_in_future: string"
+    checked_schema = "a_in_future: string, b_dt_in_future: string"
     expected = spark.createDataFrame(
         [
             [None, None],
             [
                 "Value '2023-01-10 11:08:43' in Column 'a' is greater than time '2023-01-10 11:08:42'",
-                "Value '2024-01-02 02:41:20' in Column 'UnresolvedExtractValue(b, dt)' is greater than time '2023-01-10 11:08:42'",
+                "Value '2024-01-02 02:41:20' in Column 'b['dt']' is greater than time '2023-01-10 11:08:42'",
             ],
             [None, None],
         ],
@@ -907,14 +904,14 @@ def test_col_is_not_in_near_future(spark):
         is_not_in_near_future(F.col("c").getItem("dt"), 2, F.lit("2023-01-10 11:08:40")),
     )
 
-    checked_schema = "a_in_near_future: string, cast_b_as_timestamp_in_near_future: string, unresolvedextractvalue_c_dt_in_near_future: string"
+    checked_schema = "a_in_near_future: string, cast_b_as_timestamp_in_near_future: string, c_dt_in_near_future: string"
     expected = spark.createDataFrame(
         [
             [None, None, None],
             [
                 "Value '2023-01-10 11:08:41' in Column 'a' is greater than '2023-01-10 11:08:40 and smaller than '2023-01-10 11:08:42'",
                 "Value '2023-01-10 11:08:41' in Column 'CAST(b AS TIMESTAMP)' is greater than '2023-01-10 11:08:40 and smaller than '2023-01-10 11:08:42'",
-                "Value '2023-01-10 11:08:41' in Column 'UnresolvedExtractValue(c, dt)' is greater than '2023-01-10 11:08:40 and smaller than '2023-01-10 11:08:42'",
+                "Value '2023-01-10 11:08:41' in Column 'c['dt']' is greater than '2023-01-10 11:08:40 and smaller than '2023-01-10 11:08:42'",
             ],
             [None, None, None],
             [None, None, None],
@@ -941,8 +938,8 @@ def test_is_col_older_than_n_days_cur(spark):
     )
 
     checked_schema = (
-        "is_col_a_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_older_than_n_days: string,"
-        + "is_col_a_not_older_than_n_days: string, is_col_unresolvedextractvalue_b_dt_not_older_than_n_days: string"
+        "is_col_a_older_than_n_days: string, is_col_b_dt_older_than_n_days: string,"
+        + "is_col_a_not_older_than_n_days: string, is_col_b_dt_not_older_than_n_days: string"
     )
 
     expected = spark.createDataFrame(
@@ -951,13 +948,12 @@ def test_is_col_older_than_n_days_cur(spark):
                 None,
                 None,
                 f"Value '2023-01-10' in Column 'a' is less than current date '{cur_date}' for 2 or more days",
-                f"Value '2023-01-10' in Column 'UnresolvedExtractValue(b, dt)' is less than current date "
-                f"'{cur_date}' for 2 or more days",
+                f"Value '2023-01-10' in Column 'b['dt']' is less than current date " f"'{cur_date}' for 2 or more days",
             ],
             [None, None, None, None],
             [
                 f"Value '{cur_date}' in Column 'a' is not less than current date '{cur_date}' for more than 2 days",
-                f"Value '{cur_date}' in Column 'UnresolvedExtractValue(b, dt)' is not less than current date "
+                f"Value '{cur_date}' in Column 'b['dt']' is not less than current date "
                 f"'{cur_date}' for more than 2 days",
                 None,
                 None,
@@ -1001,7 +997,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
         "b_less_than_limit: string, c_less_than_limit: string, c_less_than_limit: string, "
         "d_less_than_limit: string, d_less_than_limit: string, "
         "e_less_than_limit: string, try_element_at_f_1_less_than_limit: string, "
-        "unresolvedextractvalue_g_val_less_than_limit: string, "
+        "g_val_less_than_limit: string, "
         "h_less_than_limit: string"
     )
 
@@ -1018,7 +1014,7 @@ def test_col_is_not_less_than(spark, set_utc_timezone):
                 "Value '2025-01-01 00:00:00' in Column 'd' is less than limit: 2025-02-01 00:00:00",
                 "Value '1.00' in Column 'e' is less than limit: 2",
                 "Value '1' in Column 'try_element_at(f, 1)' is less than limit: 2",
-                "Value '1' in Column 'UnresolvedExtractValue(g, val)' is less than limit: 2",
+                "Value '1' in Column 'g['val']' is less than limit: 2",
                 "Value '1.2' in Column 'h' is less than limit: 2.4",
             ],
             [
@@ -1162,7 +1158,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
         "b_not_in_range: string, b_not_in_range: string, "
         "c_not_in_range: string, c_not_in_range: string, c_not_in_range: string, "
         "d_not_in_range: string, f_not_in_range: string, g_not_in_range: string, "
-        "unresolvedextractvalue_h_val_not_in_range: string, i_not_in_range: string"
+        "h_val_not_in_range: string, i_not_in_range: string"
     )
     expected = spark.createDataFrame(
         [
@@ -1177,7 +1173,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '-1' in Column 'd' not in range: [0, 4]",
                 "Value '6' in Column 'f' not in range: [0, 5]",
                 None,
-                "Value '0' in Column 'UnresolvedExtractValue(h, val)' not in range: [1, 3]",
+                "Value '0' in Column 'h['val']' not in range: [1, 3]",
                 "Value '0.0' in Column 'i' not in range: [0.1, 0.7]",
             ],
             [None, None, None, None, None, None, None, None, None, None, None, None],
@@ -1194,7 +1190,7 @@ def test_col_is_in_range(spark, set_utc_timezone):
                 "Value '2' in Column 'd' not in range: [4, 8]",
                 "Value '3' in Column 'f' not in range: [4, 5]",
                 "Value '3.01' in Column 'g' not in range: [1, 3]",
-                "Value '4' in Column 'UnresolvedExtractValue(h, val)' not in range: [1, 3]",
+                "Value '4' in Column 'h['val']' not in range: [1, 3]",
                 "Value '0.8' in Column 'i' not in range: [0.1, 0.7]",
             ],
             [None, None, None, None, None, None, None, None, None, None, None, None],
@@ -1307,13 +1303,11 @@ def test_col_matching_regex(spark):
         regex_match("a", date_re), regex_match("a", date_re, negate=True), regex_match(F.col("b").getItem("s"), date_re)
     )
 
-    checked_schema = (
-        "a_not_matching_regex: string, a_matching_regex: string, unresolvedextractvalue_b_s_not_matching_regex: string"
-    )
+    checked_schema = "a_not_matching_regex: string, a_matching_regex: string, b_s_not_matching_regex: string"
     expected = spark.createDataFrame(
         [
             [None, "Column 'a' is matching regex", None],
-            ["Column 'a' is not matching regex", None, "Column 'UnresolvedExtractValue(b, s)' is not matching regex"],
+            ["Column 'a' is not matching regex", None, "Column 'b['s']' is not matching regex"],
             [None, None, None],
         ],
         checked_schema,
@@ -1405,7 +1399,7 @@ def test_col_is_not_null_and_not_empty_array(spark):
         "str_col_is_null_or_empty_array: string, int_col_is_null_or_empty_array: string, "
         "timestamp_col_is_null_or_empty_array: string, date_col_is_null_or_empty_array: string, "
         "struct_col_is_null_or_empty_array: string, "
-        "unresolvedextractvalue_nested_array_col_arr_is_null_or_empty_array: string"
+        "nested_array_col_arr_is_null_or_empty_array: string"
     )
     # Create the data
     checked_data = [
@@ -1416,7 +1410,7 @@ def test_col_is_not_null_and_not_empty_array(spark):
             "Column 'timestamp_col' is null or empty array",
             "Column 'date_col' is null or empty array",
             "Column 'struct_col' is null or empty array",
-            "Column 'UnresolvedExtractValue(nested_array_col, arr)' is null or empty array",
+            "Column 'nested_array_col['arr']' is null or empty array",
         ),
         (
             "Column 'str_col' is null or empty array",
@@ -1424,7 +1418,7 @@ def test_col_is_not_null_and_not_empty_array(spark):
             "Column 'timestamp_col' is null or empty array",
             "Column 'date_col' is null or empty array",
             "Column 'struct_col' is null or empty array",
-            "Column 'UnresolvedExtractValue(nested_array_col, arr)' is null or empty array",
+            "Column 'nested_array_col['arr']' is null or empty array",
         ),
         (None, None, None, None, None, None),
     ]
@@ -1456,7 +1450,7 @@ def test_col_is_valid_date(spark, set_utc_timezone):
         b_is_not_valid_date: string,
         c_is_not_valid_date: string,
         d_is_not_valid_date: string,
-        unresolvedextractvalue_e_dt_is_not_valid_date: string
+        e_dt_is_not_valid_date: string
         """
     checked_data = [
         [None, None, "Value 'invalid_date' in Column 'c' is not a valid date with format 'yyyy-MM-dd'", None, None],
@@ -1465,14 +1459,14 @@ def test_col_is_valid_date(spark, set_utc_timezone):
             "Value '2024-01-01' in Column 'b' is not a valid date with format 'MM/dd/yyyy'",
             "Value 'invalid_date' in Column 'c' is not a valid date with format 'yyyy-MM-dd'",
             None,
-            "Value '12/31/2025' in Column 'UnresolvedExtractValue(e, dt)' is not a valid date",
+            "Value '12/31/2025' in Column 'e['dt']' is not a valid date",
         ],
         [
             "Value '12/31/2025' in Column 'a' is not a valid date",
             "Value 'invalid_date' in Column 'b' is not a valid date with format 'MM/dd/yyyy'",
             None,
             None,
-            "Value '12/31/2025' in Column 'UnresolvedExtractValue(e, dt)' is not a valid date",
+            "Value '12/31/2025' in Column 'e['dt']' is not a valid date",
         ],
     ]
     expected = spark.createDataFrame(checked_data, checked_schema)
@@ -1526,7 +1520,7 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
         c_is_not_valid_timestamp: string,
         d_is_not_valid_timestamp: string,
         e_is_not_valid_timestamp: string,
-        unresolvedextractvalue_f_dt_is_not_valid_timestamp: string
+        f_dt_is_not_valid_timestamp: string
         """
     checked_data = [
         [
@@ -1543,7 +1537,7 @@ def test_col_is_valid_timestamp(spark, set_utc_timezone):
             "Value 'invalid_timestamp' in Column 'c' is not a valid timestamp with format 'yyyy-MM-dd HH:mm:ss'",
             None,
             "Value '2025-01-31 00:00:00' in Column 'e' is not a valid timestamp with format 'yyyy-MM-dd'T'HH:mm:ss'",
-            "Value '12/31/2025 00:00:00' in Column 'UnresolvedExtractValue(f, dt)' is not a valid timestamp",
+            "Value '12/31/2025 00:00:00' in Column 'f['dt']' is not a valid timestamp",
         ],
         [
             None,

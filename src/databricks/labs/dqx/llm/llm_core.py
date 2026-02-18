@@ -27,19 +27,6 @@ class LLMModelConfigurator:
         """
         self._model_config = model_config
 
-    def configure(self) -> None:
-        """Configure the DSPy language model once with base settings."""
-        if dspy.settings.lm is not None:
-            logger.debug("DSPy is already configured, skipping reconfiguration")
-            return
-
-        try:
-            dspy.configure(lm=self.create_lm())
-            logger.info(f"Configured DSPy model: {self._model_config.model_name}")
-        except RuntimeError as e:
-            # Race condition: another thread configured DSPy concurrently
-            logger.debug(f"DSPy already configured by another thread: {e}")
-
     def create_lm(self) -> dspy.LM:
         """
         Create an LM instance with current config for per-request override.
