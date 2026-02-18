@@ -31,7 +31,7 @@ from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
 logger = logging.getLogger(__name__)
 
 
-TEST_CATALOG = "dqx"
+TEST_CATALOG = "gh_catalog_001"
 
 
 @pytest.fixture(scope="session")
@@ -73,6 +73,15 @@ def set_utc_timezone():
 
 @pytest.fixture
 def skip_if_classic_compute(debug_env):
+    """
+    Skips the test if the cluster is a classic compute cluster.
+    """
+    if not debug_env.get("DATABRICKS_SERVERLESS_COMPUTE_ID"):
+        pytest.skip("This test requires a serverless compute cluster")
+
+
+@pytest.fixture
+def skip_if_serverless_compute(debug_env):
     """
     Skips the test if the cluster is a classic compute cluster.
     """

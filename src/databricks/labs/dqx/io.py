@@ -85,7 +85,9 @@ def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFram
     return spark.readStream.options(**input_config.options).table(input_config.location)
 
 
-def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> StreamingQuery | None:
+def save_dataframe_as_table(
+    df: DataFrame, output_config: OutputConfig, spark: SparkSession | None = None
+) -> StreamingQuery | None:
     """
     Saves a DataFrame as a table using a Unity Catalog table reference or storage path.
 
@@ -104,6 +106,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
             - partition_by: Optional list of columns to partition by
             - cluster_by: Optional list of columns to cluster by (Delta Liquid Clustering)
             - trigger: (Streaming only) Trigger configuration dict (e.g., "availableNow", "processingTime")
+        spark: Optional SparkSession used to validate configuration for writing data with liquid clustering (default None)
 
     Returns:
         StreamingQuery if the DataFrame is streaming, None if the DataFrame is batch
@@ -124,7 +127,11 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
         )
 
         if output_config.cluster_by:
-            if _supports_streaming_cluster_on_write():
+            if not spark:
+                logger.warning(
+                    "Ignoring 'cluster_by' for streaming writes; Pass 'spark' when calling save_dataframe_as_table to validate that the current session supports cluster on-write for streaming workloads"
+                )
+            elif _supports_streaming_cluster_on_write(spark):
                 stream_writer = stream_writer.clusterBy(*output_config.cluster_by)
             else:
                 logger.warning(
@@ -191,9 +198,12 @@ def _write_stream(writer: DataStreamWriter, output_config: OutputConfig) -> Stre
     )
 
 
-def _supports_streaming_cluster_on_write() -> bool:
+def _supports_streaming_cluster_on_write(spark: SparkSession) -> bool:
     """
     Checks if the execution environment supports liquid clustering on write with structured streaming.
+
+    Args:
+        spark: SparkSession used to validate configuration for writing data with liquid clustering
 
     Returns:
         True if the environment supports liquid clustering on write with structured streaming, False otherwise
@@ -225,6 +235,12 @@ def _supports_streaming_cluster_on_write() -> bool:
             f"Ignoring 'cluster_by' for streaming writes; Could not parse Databricks Runtime version '{environment_version}'"
         )
         return False
+
+    clustering_conf = "spark.databricks.delta.liquid.eagerClustering.streaming.enabled"
+    if spark.conf.get(clustering_conf, default="false") != "true":
+        logger.warning(
+            f"Ignoring 'cluster_by' for streaming writes; Set spark.conf.set('{clustering_conf}', 'true') to enable liquid clustering"
+        )
 
     major_version = int(matched.group(1))
     return major_version >= _supported_major_version

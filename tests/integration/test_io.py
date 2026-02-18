@@ -148,7 +148,7 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
 
     data_schema = "a: int, b: int"
     input_df = spark.createDataFrame([[1, 2]], data_schema)
-    save_dataframe_as_table(input_df, output_config)
+    save_dataframe_as_table(input_df, output_config, spark)
 
     result_df = spark.table(table_name)
     assert_df_equality(input_df, result_df)
@@ -156,7 +156,7 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
     output_config.mode = "append"
     output_config.options = {"mergeSchema": "true"}
     changed_df = input_df.selectExpr("*", "1 AS c")
-    save_dataframe_as_table(changed_df, output_config)
+    save_dataframe_as_table(changed_df, output_config, spark)
 
     result_df = spark.table(table_name)
     expected_df = changed_df.union(input_df.selectExpr("*", "NULL AS c"))
@@ -174,7 +174,7 @@ def test_save_dataframe_as_table_with_partition_by(spark, make_schema, make_rand
 
     data_schema = "a: int, b: int"
     input_df = spark.createDataFrame([[1, 2], [1, 3]], data_schema)
-    save_dataframe_as_table(input_df, output_config)
+    save_dataframe_as_table(input_df, output_config, spark)
 
     result_df = spark.table(table_name)
     assert_df_equality(input_df, result_df)
@@ -191,7 +191,7 @@ def test_save_dataframe_as_table_with_cluster_by(spark, make_schema, make_random
 
     data_schema = "a: int, b: int"
     input_df = spark.createDataFrame([[1, 2], [1, 3]], data_schema)
-    save_dataframe_as_table(input_df, output_config)
+    save_dataframe_as_table(input_df, output_config, spark)
 
     result_df = spark.table(table_name)
     assert_df_equality(input_df, result_df)
@@ -216,18 +216,12 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
     input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
     streaming_input_df = spark.readStream.table(table_name)
 
-    save_dataframe_as_table(
-        streaming_input_df,
-        output_config,
-    ).awaitTermination()
+    save_dataframe_as_table(streaming_input_df, output_config, spark).awaitTermination()
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)
 
-    save_dataframe_as_table(
-        streaming_input_df,
-        output_config,
-    ).awaitTermination()
+    save_dataframe_as_table(streaming_input_df, output_config, spark).awaitTermination()
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)  # no new records
@@ -249,10 +243,7 @@ def test_save_streaming_dataframe_in_table_with_partition_by(spark, make_schema,
     input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
     streaming_input_df = spark.readStream.table(table_name)
 
-    save_dataframe_as_table(
-        streaming_input_df,
-        output_config,
-    ).awaitTermination()
+    save_dataframe_as_table(streaming_input_df, output_config, spark).awaitTermination()
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)
@@ -261,7 +252,13 @@ def test_save_streaming_dataframe_in_table_with_partition_by(spark, make_schema,
     assert table_detail["partitionColumns"] == ["a"]
 
 
-def test_save_streaming_dataframe_in_table_with_cluster_by(spark, make_schema, make_random, make_volume, caplog):
+def test_save_streaming_dataframe_in_table_with_cluster_by_env_var(
+    spark,
+    make_schema,
+    make_random,
+    make_volume,
+    caplog,
+):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
@@ -277,19 +274,22 @@ def test_save_streaming_dataframe_in_table_with_cluster_by(spark, make_schema, m
     input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
     streaming_input_df = spark.readStream.table(table_name)
 
-    # NOTE: Streaming writes with `cluster_by` will generate warnings via logger; Using caplog in this test to check
-    # the generated logs and ensure the appropriate warnings are written
+    # NOTE: Streaming writes with `cluster_by` will generate warnings via logger; Using caplog in this test to ensure
+    # that the generated logs and ensure the appropriate warnings are written
     with caplog.at_level(logging.WARNING):
-        save_dataframe_as_table(
-            streaming_input_df,
-            output_config,
-        ).awaitTermination()
+        save_dataframe_as_table(streaming_input_df, output_config, spark).awaitTermination()
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)
     assert any(
         r.levelno == logging.WARNING
         and "Ignoring 'cluster_by' for streaming writes; Cluster on-write is supported for streaming workloads with Databricks Runtime versions 16 or later"
+        in r.message
+        for r in caplog.records
+    )
+    assert any(
+        r.levelno == logging.WARNING
+        and "Ignoring 'cluster_by' for streaming writes; Missing 'DATABRICKS_RUNTIME_VERSION' in environment variables"
         in r.message
         for r in caplog.records
     )
@@ -307,7 +307,7 @@ def test_save_batch_dataframe_to_path(spark, make_schema, make_volume, make_rand
     data_schema = "a: int, b: int"
     input_df = spark.createDataFrame([[1, 2], [3, 4]], data_schema)
 
-    save_dataframe_as_table(input_df, output_config)
+    save_dataframe_as_table(input_df, output_config, spark)
 
     result_df = spark.read.format("delta").load(volume_path)
     assert_df_equality(input_df, result_df, ignore_row_order=True)
@@ -336,7 +336,7 @@ def test_save_streaming_dataframe_to_path(spark, make_schema, make_volume, make_
         trigger={"availableNow": True},
     )
 
-    query = save_dataframe_as_table(streaming_input_df, output_config)
+    query = save_dataframe_as_table(streaming_input_df, output_config, spark)
     query.awaitTermination()
 
     result_df = spark.read.format("delta").load(volume_path)
