@@ -1,17 +1,20 @@
 # Databricks notebook source
 
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
-%pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}' chispa == 0.10.1
+%pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
 
 # COMMAND ----------
 
 dbutils.library.restartPython()
 
 # COMMAND ----------
+dbutils.widgets.text("test_catalog", "", "Test Catalog")
+dbutils.widgets.text("test_schema", "", "Test Schema")
+dbutils.widgets.text("test_volume", "", "Test Volume")
 
-test_catalog = dbutils.widgets.get("test_catalog", "")
-test_schema = dbutils.widgets.get("test_schema", "")
-test_volume = dbutils.widgets.get("test_volume", "")
+test_catalog = dbutils.widgets.get("test_catalog")
+test_schema = dbutils.widgets.get("test_schema")
+test_volume = dbutils.widgets.get("test_volume")
 
 # COMMAND ----------
 

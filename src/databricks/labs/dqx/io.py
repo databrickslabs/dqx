@@ -85,9 +85,7 @@ def _read_table_data(spark: SparkSession, input_config: InputConfig) -> DataFram
     return spark.readStream.options(**input_config.options).table(input_config.location)
 
 
-def save_dataframe_as_table(
-    df: DataFrame, output_config: OutputConfig, spark: SparkSession | None = None
-) -> StreamingQuery | None:
+def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> StreamingQuery | None:
     """
     Saves a DataFrame as a table using a Unity Catalog table reference or storage path.
 
@@ -106,7 +104,6 @@ def save_dataframe_as_table(
             - partition_by: Optional list of columns to partition by
             - cluster_by: Optional list of columns to cluster by (Delta Liquid Clustering)
             - trigger: (Streaming only) Trigger configuration dict (e.g., "availableNow", "processingTime")
-        spark: Optional SparkSession used to validate configuration for writing data with liquid clustering (default None)
 
     Returns:
         StreamingQuery if the DataFrame is streaming, None if the DataFrame is batch
@@ -127,16 +124,8 @@ def save_dataframe_as_table(
         )
 
         if output_config.cluster_by:
-            if not spark:
-                logger.warning(
-                    "Ignoring 'cluster_by' for streaming writes; Pass 'spark' when calling save_dataframe_as_table to validate that the current session supports cluster on-write for streaming workloads"
-                )
-            elif _supports_streaming_cluster_on_write(spark):
+            if _supports_streaming_cluster_on_write(df.sparkSession):
                 stream_writer = stream_writer.clusterBy(*output_config.cluster_by)
-            else:
-                logger.warning(
-                    "Ignoring 'cluster_by' for streaming writes; Cluster on-write is supported for streaming workloads with Databricks Runtime versions 16 or later"
-                )
 
         if output_config.partition_by:
             stream_writer = stream_writer.partitionBy(*output_config.partition_by)
@@ -211,9 +200,10 @@ def _supports_streaming_cluster_on_write(spark: SparkSession) -> bool:
     Note:
         The `cluster_by` method of Spark's `DataStreamWriter` is supported for creating liquid clustered tables as of
         Databricks Runtime version 16+ (see: https://docs.databricks.com/aws/en/delta/clustering#create-tables-with-clustering).
-        Users must manually enable `spark.databricks.delta.liquid.eagerClustering.streaming.enabled` to allow clustering
-        on write for streaming workloads. This method is used to validate that the
-        execution environment supports streaming writes with liquid clustering.
+        Clustering on write is not supported for serverless compute. Users must manually enable
+        `spark.databricks.delta.liquid.eagerClustering.streaming.enabled` in the Spark configuration to allow clustering
+        on write for streaming workloads. This method is used to validate that the execution environment supports
+        streaming writes with liquid clustering.
     """
     environment_version = os.environ.get("DATABRICKS_RUNTIME_VERSION", "")
     if not environment_version:
@@ -223,16 +213,24 @@ def _supports_streaming_cluster_on_write(spark: SparkSession) -> bool:
         return False
 
     if "IS_SERVERLESS" in os.environ:
-        _supported_major_version = 3
-        runtime_version_pattern = re.compile(r"client\.(\d+)\.(\d+)")
-    else:
-        _supported_major_version = 16
-        runtime_version_pattern = re.compile(r"(\d+)\.(\d+)")
+        logger.warning(
+            "Ignoring 'cluster_by' for streaming writes; Cluster on-write is not supported on serverless compute"
+        )
+        return False
 
+    _supported_major_version = 16
+    runtime_version_pattern = re.compile(r"(\d+)\.(\d+)")
     matched = re.match(runtime_version_pattern, environment_version)
     if not matched:
         logger.warning(
             f"Ignoring 'cluster_by' for streaming writes; Could not parse Databricks Runtime version '{environment_version}'"
+        )
+        return False
+
+    major_version = int(matched.group(1))
+    if major_version <= _supported_major_version:
+        logger.warning(
+            "Ignoring 'cluster_by' for streaming writes; Cluster on-write is supported for streaming workloads with Databricks Runtime versions 16 or later"
         )
         return False
 
@@ -241,9 +239,9 @@ def _supports_streaming_cluster_on_write(spark: SparkSession) -> bool:
         logger.warning(
             f"Ignoring 'cluster_by' for streaming writes; Set spark.conf.set('{clustering_conf}', 'true') to enable liquid clustering"
         )
+        return False
 
-    major_version = int(matched.group(1))
-    return major_version >= _supported_major_version
+    return True
 
 
 def is_one_time_trigger(trigger: dict[str, Any] | None) -> bool:
