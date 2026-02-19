@@ -218,7 +218,7 @@ def test_add_top_contributors_message(spark: SparkSession):
     assert format_contributions_map({"amount": 90.0, "quantity": 10.0}, 2) != ""
 
 
-def test_add_top_contributors_handles_null_map(spark: SparkSession):
+def test_add_top_contributors_handles_null_map():
     """Null or empty contributions should yield empty contributor message."""
     assert format_contributions_map(None, 2) == ""
     assert format_contributions_map({}, 2) == ""

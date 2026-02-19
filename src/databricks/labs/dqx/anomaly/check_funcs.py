@@ -9,7 +9,7 @@ import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 import cloudpickle
 import numpy as np
@@ -862,7 +862,7 @@ def _score_with_sklearn_model_local(
     )
 
     engineered_feature_cols = feature_metadata.engineered_feature_names
-    local_pdf = engineered_df.select(*merge_columns, *engineered_feature_cols).toPandas()
+    local_pdf = cast(pd.DataFrame, engineered_df.select(*merge_columns, *engineered_feature_cols).toPandas())
 
     feature_matrix = local_pdf[engineered_feature_cols]
     scores = -sklearn_model.score_samples(feature_matrix)
@@ -913,7 +913,7 @@ def _score_ensemble_models_local(
         df_filtered, columns, merge_columns, column_infos, feature_metadata
     )
     engineered_feature_cols = feature_metadata.engineered_feature_names
-    local_pdf = engineered_df.select(*merge_columns, *engineered_feature_cols).toPandas()
+    local_pdf = cast(pd.DataFrame, engineered_df.select(*merge_columns, *engineered_feature_cols).toPandas())
 
     feature_matrix = local_pdf[engineered_feature_cols]
     scores_matrix = np.array([-model.score_samples(feature_matrix) for model in models])

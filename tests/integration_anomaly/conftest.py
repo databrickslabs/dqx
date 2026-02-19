@@ -83,9 +83,10 @@ def anomaly_registry_schema(make_schema):
 
 
 @pytest.fixture
-def anomaly_registry_prefix(anomaly_registry_schema):
+def anomaly_registry_prefix(request):
     """Registry prefix for anomaly detection tests."""
-    return f"{TEST_CATALOG}.{anomaly_registry_schema.name}"
+    schema = request.getfixturevalue("anomaly_registry_schema")
+    return f"{TEST_CATALOG}.{schema.name}"
 
 
 @pytest.fixture
@@ -217,7 +218,7 @@ def anomaly_scorer():
 
 
 @pytest.fixture
-def quick_model_factory(ws, spark, make_random, make_schema):
+def quick_model_factory(ws, make_random, make_schema):
     """
     Factory for training lightweight models with custom parameters.
 

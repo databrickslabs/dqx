@@ -40,7 +40,6 @@ def test_ensemble_training(spark: SparkSession, make_random, anomaly_engine, ano
 
 
 def test_ensemble_scoring_with_confidence(
-    ws,
     spark: SparkSession,
     make_random,
     anomaly_engine,
@@ -123,7 +122,6 @@ def test_ensemble_scoring_distributed_path(
 
 
 def test_ensemble_with_feature_contributions(
-    ws,
     spark: SparkSession,
     make_random,
     anomaly_engine,

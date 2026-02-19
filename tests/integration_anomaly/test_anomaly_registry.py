@@ -167,7 +167,6 @@ def test_active_model_retrieval(
 
 
 def test_model_staleness_warning(
-    ws,
     spark: SparkSession,
     make_random: Callable[[int], str],
     anomaly_engine,
@@ -348,7 +347,7 @@ def test_nonexistent_model_returns_none(
     assert model is None
 
 
-def test_config_hash_stability(spark: SparkSession):
+def test_config_hash_stability():
     """Test that config_hash is stable for same inputs."""
     columns = ["amount", "quantity", "discount"]
     segment_by = ["region", "category"]
@@ -361,7 +360,7 @@ def test_config_hash_stability(spark: SparkSession):
     assert len(hash1) == 16  # 16 hex characters
 
 
-def test_config_hash_order_independence(spark: SparkSession):
+def test_config_hash_order_independence():
     """Test that config_hash is order-independent (columns are sorted internally)."""
     # Different order should produce same hash
     hash1 = compute_config_hash(["amount", "quantity", "discount"], ["region", "category"])
@@ -370,7 +369,7 @@ def test_config_hash_order_independence(spark: SparkSession):
     assert hash1 == hash2
 
 
-def test_config_hash_differentiation(spark: SparkSession):
+def test_config_hash_differentiation():
     """Test that different configs produce different hashes."""
     hash1 = compute_config_hash(["amount", "quantity"], None)
     hash2 = compute_config_hash(["amount", "quantity", "discount"], None)

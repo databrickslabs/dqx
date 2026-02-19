@@ -38,7 +38,11 @@ from tests.integration_anomaly.test_anomaly_utils import (
 
 
 def test_missing_columns_error(
-    ws, spark: SparkSession, make_random, anomaly_engine, test_df_factory, anomaly_registry_prefix
+    spark: SparkSession,
+    make_random,
+    anomaly_engine,
+    test_df_factory,
+    anomaly_registry_prefix,
 ):
     """Test error when input DataFrame is missing model columns."""
     unique_id = make_random(8).lower()
@@ -68,7 +72,6 @@ def test_missing_columns_error(
 
 
 def test_column_order_independence(
-    ws,
     spark: SparkSession,
     make_random,
     anomaly_engine,
@@ -158,7 +161,10 @@ def test_empty_dataframe_error(spark: SparkSession, make_random, anomaly_engine,
 
 
 def test_missing_registry_table_for_scoring_error(
-    ws, spark: SparkSession, make_random, test_df_factory, anomaly_registry_prefix
+    spark: SparkSession,
+    make_random,
+    test_df_factory,
+    anomaly_registry_prefix,
 ):
     """Test error when registry table doesn't exist during scoring."""
     unique_id = make_random(8).lower()
@@ -184,9 +190,7 @@ def test_missing_registry_table_for_scoring_error(
         result_df.collect()
 
 
-def test_model_not_found_error(
-    ws, spark: SparkSession, make_random, test_df_factory, anomaly_engine, anomaly_registry_prefix
-):
+def test_model_not_found_error(spark: SparkSession, make_random, test_df_factory, anomaly_registry_prefix):
     """Test error when model doesn't exist (neither global nor segmented) during scoring."""
     unique_id = make_random(8).lower()
     model_name = f"{anomaly_registry_prefix}.test_nonexistent_model_{make_random(4).lower()}"
