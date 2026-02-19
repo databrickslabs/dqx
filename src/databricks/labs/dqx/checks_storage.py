@@ -109,6 +109,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
         try:
+            # to be handled by the sdk: https://github.com/databrickslabs/dqx/issues/1036
             url_safe_table_name = urllib.parse.quote(config.location.replace("`", ""))
             self.ws.tables.get(full_name=url_safe_table_name)
         except NotFound as e:
