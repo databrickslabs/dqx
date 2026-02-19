@@ -1,7 +1,8 @@
 import json
 import logging
-import uuid
 import os
+import urllib
+import uuid
 from io import StringIO, BytesIO
 from pathlib import Path
 from abc import ABC, abstractmethod
@@ -107,8 +108,13 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             NotFound: if the table does not exist in the workspace
         """
         logger.info(f"Loading quality rules (checks) from table '{config.location}'")
-        if not self.spark.catalog.tableExists(config.location):
-            raise NotFound(f"Checks table {config.location} does not exist in the workspace")
+        try:
+            # to be handled by the sdk: https://github.com/databricks/databricks-sdk-py/issues/1266
+            url_safe_table_name = urllib.parse.quote(config.location.replace("`", ""))
+            self.ws.tables.get(full_name=url_safe_table_name)
+        except NotFound as e:
+            raise NotFound(f"Checks table '{config.location}' does not exist in the workspace") from e
+
         rules_df = self.spark.read.table(config.location)
         return DataFrameConverter.from_dataframe(rules_df, run_config_name=config.run_config_name) or []
 
