@@ -190,7 +190,6 @@ jobs:
         run: |
           hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 1 --reruns-delay 5
 
-
       # collects all coverage reports
       - name: Publish test coverage
         uses: codecov/codecov-action@v5
