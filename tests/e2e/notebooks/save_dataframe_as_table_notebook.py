@@ -27,12 +27,12 @@ from chispa import assert_df_equality
 
 # COMMAND ----------
 
-logger = logging.getLogger("test_io")
+logger = logging.getLogger("databricks.labs.dqx.io")
 
 def test_save_streaming_dataframe_in_table_with_cluster_by_missing_spark_config():
-    input_table_name = f"{test_catalog}.{test_schema}.test_input_table"
-    output_table_name = f"{test_catalog}.{test_schema}.test_output_table"
-    options = {"checkpointLocation": test_volume}
+    input_table_name = f"{test_catalog}.{test_schema}.test_input_table_001"
+    output_table_name = f"{test_catalog}.{test_schema}.test_output_table_001"
+    options = {"checkpointLocation": f"{test_volume}/_checkpoint_001"}
     trigger = {"availableNow": True}
     output_config = OutputConfig(location=output_table_name, options=options, trigger=trigger, cluster_by=["a"])
 
@@ -63,9 +63,9 @@ test_save_streaming_dataframe_in_table_with_cluster_by_missing_spark_config()
 # COMMAND ----------
 
 def test_save_streaming_dataframe_in_table_with_cluster_by():
-    input_table_name = f"{test_catalog}.{test_schema}.test_input_table"
-    output_table_name = f"{test_catalog}.{test_schema}.test_output_table"
-    options = {"checkpointLocation": test_volume}
+    input_table_name = f"{test_catalog}.{test_schema}.test_input_table_002"
+    output_table_name = f"{test_catalog}.{test_schema}.test_output_table_002"
+    options = {"checkpointLocation": f"{test_volume}/_checkpoint_002"}
     trigger = {"availableNow": True}
     output_config = OutputConfig(location=output_table_name, options=options, trigger=trigger, cluster_by=["a"])
 
