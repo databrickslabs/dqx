@@ -44,6 +44,23 @@ def product_info():
     return "dqx", __version__
 
 
+@pytest.fixture(scope="function", autouse=True)
+def override_cluster_id(debug_env):
+    """
+    Override DATABRICKS_CLUSTER_ID in debug_env if DATABRICKS_DQX_CLUSTER_ID is set.
+    This allows GitHub Actions to override the cluster ID from vault secrets.
+
+    This fixture runs automatically before each test and modifies the debug_env
+    dictionary (which is os.environ) to use DATABRICKS_DQX_CLUSTER_ID if available.
+    """
+    dqx_cluster_id = os.environ.get("DATABRICKS_DQX_CLUSTER_ID")
+    if dqx_cluster_id:
+        # debug_env is os.environ, so modifying it will affect all subsequent reads
+        debug_env["DATABRICKS_CLUSTER_ID"] = dqx_cluster_id
+        logger.info(f"Overriding DATABRICKS_CLUSTER_ID with DATABRICKS_DQX_CLUSTER_ID: {dqx_cluster_id}")
+    return debug_env
+
+
 @pytest.fixture
 def set_utc_timezone():
     """
