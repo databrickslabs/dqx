@@ -228,7 +228,7 @@ def _supports_streaming_cluster_on_write(spark: SparkSession) -> bool:
         return False
 
     major_version = int(matched.group(1))
-    if major_version <= _supported_major_version:
+    if major_version < _supported_major_version:
         logger.warning(
             "Ignoring 'cluster_by' for streaming writes; Cluster on-write is supported for streaming workloads with Databricks Runtime versions 16 or later"
         )

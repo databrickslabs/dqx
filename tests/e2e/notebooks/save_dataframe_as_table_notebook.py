@@ -49,7 +49,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by_missing_spark_config(
     logger.addHandler(handler)
 
     try:
-        save_dataframe_as_table(streaming_input_df, output_config, spark).awaitTermination()
+        save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
         handler.flush()
         assert "Ignoring 'cluster_by' for streaming writes; Set spark.conf.set('spark.databricks.delta.liquid.eagerClustering.streaming.enabled', 'true') to enable liquid clustering" in log_stream.getvalue()
     finally:
@@ -75,7 +75,7 @@ def test_save_streaming_dataframe_in_table_with_cluster_by():
     streaming_input_df = spark.readStream.table(input_table_name)
 
     spark.conf.set("spark.databricks.delta.liquid.eagerClustering.streaming.enabled", "true")
-    save_dataframe_as_table(streaming_input_df, output_config, spark).awaitTermination()
+    save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
 
     result_df = spark.table(output_table_name)
     assert_df_equality(input_df, result_df)
