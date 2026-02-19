@@ -6,6 +6,7 @@ import pytest
 
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
+from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
@@ -237,7 +238,8 @@ def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_r
     else:
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
-    assert not spark.catalog.tableExists(metrics_table_name)
+    with pytest.raises(NotFound):
+        ws.tables.get(full_name=metrics_table_name)
 
 
 def test_save_summary_metrics(ws, spark, make_schema, make_random):
