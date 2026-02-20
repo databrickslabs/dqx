@@ -62,6 +62,7 @@ import yaml from "js-yaml";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQueryClient, QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
+import { useAIAssistant } from "@/components/AIAssistantProvider";
 
 export const Route = createFileRoute("/_sidebar/runs")({
   component: RunsPage,
@@ -423,11 +424,10 @@ function RunEditorContainer({
     useDeleteRunConfig();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { setRunContext } = useAIAssistant();
 
-  // New state for controlling the Delete Dialog
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 
-  // Notify parent when isDeleting changes
   useEffect(() => {
     onDeletingChange(isDeleting);
   }, [isDeleting, onDeletingChange]);
@@ -439,9 +439,6 @@ function RunEditorContainer({
 
   const hasRuns = runConfigs.length > 0;
   const runNotFound = currentRunName && !selectedRun;
-
-  // Remove auto-select logic - let users explicitly choose a run
-  // This prevents issues when deleting runs or navigating
 
   const [yamlContent, setYamlContent] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -461,6 +458,15 @@ function RunEditorContainer({
       setIsDirty(false);
     }
   }, [selectedRun, currentRunName]);
+
+  useEffect(() => {
+    if (currentRunName && yamlContent) {
+      setRunContext({ runName: currentRunName, yaml: yamlContent });
+    } else {
+      setRunContext(null);
+    }
+    return () => setRunContext(null);
+  }, [currentRunName, yamlContent, setRunContext]);
 
   const handleSave = async () => {
     if (!currentRunName) return;
