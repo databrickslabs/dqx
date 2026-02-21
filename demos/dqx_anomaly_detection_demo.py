@@ -234,7 +234,7 @@ print(f"✅ Registry ready for new models")
 print("🎯 Training anomaly detection model...")
 print("   DQX will automatically discover patterns in your data\n")
 
-model_name_auto = f"{catalog}.{schema_name}.sales_auto"  # for easy tracking we name the model the same as the input data set
+model_name_auto = f"{catalog}.{schema_name}.sales_auto"  # stored in Unity Catalog and must be fully qualified name
 model_uri_auto = anomaly_engine.train(
     df=spark.table(train_table),
     model_name=model_name_auto,
@@ -574,7 +574,7 @@ display(borderline.select(
 # DBTITLE 1,Training with Manual Column Selection
 
 print("🎯 Training model with manual column selection...\n")
-model_name_manual = f"{catalog}.{schema_name}.sales_manual"
+model_name_manual = f"{catalog}.{schema_name}.sales_manual"  # stored in Unity Catalog and must be fully qualified name
 model_uri_manual = anomaly_engine.train(
     df=spark.table(train_table),
     columns=["amount", "quantity"],  # Explicitly specify numeric columns only

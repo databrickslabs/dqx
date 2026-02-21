@@ -1,13 +1,8 @@
 """Validation utilities for anomaly detection."""
 
 import warnings
-from typing import TYPE_CHECKING
-
 import sklearn
-
-# Type checking imports (for type hints only, not evaluated at runtime)
-if TYPE_CHECKING:
-    from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 
 
 def _parse_version_tuple(version_str: str) -> tuple[int, int]:

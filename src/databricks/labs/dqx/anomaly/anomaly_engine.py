@@ -15,8 +15,6 @@ class AnomalyEngine(DQEngineBase):
     """Engine for anomaly detection model lifecycle management.
 
     This class provides methods for training, managing, and working with anomaly detection models.
-    It follows the same architectural pattern as DQProfiler, managing state like SparkSession
-    and WorkspaceClient while delegating operations to internal helper functions.
 
     Args:
         workspace_client: WorkspaceClient instance used to access the Databricks workspace.
@@ -80,9 +78,9 @@ class AnomalyEngine(DQEngineBase):
 
         Args:
             df: Input DataFrame containing historical "normal" data.
-            model_name: Model name (REQUIRED). Must be fully qualified as
+            model_name: Model name (REQUIRED). Must be fully qualified Unity Catalog name as
                        'catalog.schema.model'.
-            registry_table: Registry table (REQUIRED). Must be fully qualified as
+            registry_table: Registry table (REQUIRED). Must be fully qualified Unity Catalog table as
                             'catalog.schema.table'.
             columns: Columns to use for anomaly detection (auto-discovered if omitted).
             segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).

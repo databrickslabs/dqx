@@ -9,7 +9,7 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
 
@@ -30,10 +30,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
-
-# Type checking imports (for type hints only, not evaluated at runtime)
-if TYPE_CHECKING:
-    from databricks.labs.dqx.llm.llm_engine import DQLLMEngine  # type: ignore
+from databricks.labs.dqx.llm.llm_engine import DQLLMEngine  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +48,7 @@ class DataContractRulesGenerator(DQEngineBase):
     def __init__(
         self,
         workspace_client: WorkspaceClient,
-        llm_engine: "DQLLMEngine | None" = None,
+        llm_engine: DQLLMEngine | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
     ):
         """

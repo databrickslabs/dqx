@@ -7,7 +7,7 @@ clean: docs-clean
 .venv/bin/python:
 	pip install hatch
 	hatch env create
-	hatch run pip install ".[llm,pii,datacontract]"
+	hatch run pip install ".[llm,pii,datacontract,anomaly]"
 
 dev: .venv/bin/python
 	@hatch run which python

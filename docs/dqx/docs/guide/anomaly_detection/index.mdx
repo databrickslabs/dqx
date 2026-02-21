@@ -120,7 +120,7 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
 
     model_name = anomaly_engine.train(
       df=spark.table("catalog.schema.orders_training"),
-      model_name="catalog.schema.orders_monitor",  # you can use input table name to ease tracing
+      model_name="catalog.schema.orders_monitor",  # stored in Unity Catalog and must be fully qualified table name
       columns=["amount", "quantity", "discount"],  # optional; omit to use all supported columns
       registry_table="catalog.schema.dqx_anomaly_models",  # always use fully qualified table name
     )

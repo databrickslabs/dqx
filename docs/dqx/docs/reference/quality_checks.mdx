@@ -3063,7 +3063,7 @@ checks = [
 - 90 sensitive (more alerts), 95 balanced (default), 98 strict (fewer anomalies).
 
 **Parameters**
-- `model`: Model name (required, fully qualified `catalog.schema.model`).
+- `model`: Model name (required, the model is stored in Unity Catalog, therefore fully qualified name must be provided: `catalog.schema.model`).
 - `registry_table`: Registry table (required, fully qualified table name: `catalog.schema.table`).
 - `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
@@ -3072,7 +3072,7 @@ checks = [
 - `include_confidence`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
 
 **Notes**
-- For workflow training, `model_name` and `registry_table` are required and must be fully qualified.
+- For workflow training, `model_name` and `registry_table` are required and must be fully qualified. Both are stored in Unity Catalog.
 - Scoring uses the columns the model was trained on.
 - Rows with nulls in anomaly columns are skipped (not flagged).
 - When `row_filter` is used, all original rows are preserved; non-filtered rows have `null` scores.
