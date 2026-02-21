@@ -1,3 +1,10 @@
+"""
+E2E tests for streaming DataFrame with liquid clustering (cluster_by).
+
+We need to implement streaming tests for cluster_by using e2e tests in a notebook since Spark Connect,
+which is used to run integration tests, does not support setting the Spark property
+'spark.databricks.delta.liquid.eagerClustering.streaming.enabled'.
+"""
 import logging
 from pathlib import Path
 
