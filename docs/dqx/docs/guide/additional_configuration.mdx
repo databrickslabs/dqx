@@ -85,14 +85,14 @@ override the values set in the engine.
 
 ## Customizing result columns
 
-By default, DQX appends `_errors`, `_warnings`, and `_dq_info` result columns to the output DataFrame or Table to flag quality issues.
+By default, DQX appends `_errors`, `_warnings`, and `_dq_info` (only if certain checks are used) result columns to the output DataFrame or Table to flag quality issues.
 You can customize the names of these result columns by specifying extra parameters when creating the engine.
 
 | Default Column | Purpose | Customization Key |
 |----------------|---------|-------------------|
 | `_errors` | Array of critical quality check failures | `errors` |
 | `_warnings` | Array of warning-level quality check issues | `warnings` |
-| `_dq_info` | Structured metadata from produced by certain dataset-level checks (e.g., anomaly detection) | `info` |
+| `_dq_info` | Structured metadata produced by certain dataset-level checks (e.g., anomaly detection) | `info` |
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -102,9 +102,9 @@ You can customize the names of these result columns by specifying extra paramete
     from databricks.labs.dqx.config import ExtraParams
 
     custom_column_names = {
-        "errors": "dq_errors",
-        "warnings": "dq_warnings",
-        "info": "dq_info"  # used for some checks, e.g. anomaly detection
+      "errors": "dq_errors",
+      "warnings": "dq_warnings",
+      "info": "dq_info"  # used for some checks only, e.g. anomaly detection
     }
 
     # use ExtraParams to configure one or more optional parameters
@@ -118,16 +118,16 @@ You can customize the names of these result columns by specifying extra paramete
     You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to customize the result columns when using DQX workflows:
     ```yaml
     extra_params:
-        result_column_names:
-            errors: dq_errors
-            warnings: dq_warnings
-            info: dq_info
+      result_column_names:
+        errors: dq_errors
+        warnings: dq_warnings
+        info: dq_info
     ```
   </TabItem>
 </Tabs>
 
 <Admonition type="info" title="Info column usage">
-The `_dq_info` column contains structured metadata and is created when applying certain checks, such as `has_no_anomalies`.
-For anomaly detection checks, it includes details like anomaly scores, thresholds, and feature contributions.
+The `_dq_info` reporting column contains structured metadata and is created when applying certain checks, such as `has_no_anomalies`.
+For anomaly detection check, it includes details like anomaly scores, thresholds, and feature contributions for all rows.
 See [Anomaly Detection](/docs/guide/anomaly_detection) for details.
 </Admonition>

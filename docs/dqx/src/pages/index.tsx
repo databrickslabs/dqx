@@ -73,7 +73,7 @@ const Capabilities = () => {
     },
     {
       title: 'DQ Anomaly Detection',
-      description: 'Automatically detect unusual data patterns with trained models and explanations.',
+      description: 'Automatically detect unusual data patterns with trained ML Models and explanations.',
       icon: Radar,
     },
   ];

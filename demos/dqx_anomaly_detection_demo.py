@@ -33,7 +33,7 @@
 # MAGIC - **Unknown unknowns**: multi‑column or subtle patterns you didn’t anticipate.
 # MAGIC
 # MAGIC **Data Quality Monitoring (DQM) vs DQX Anomaly detection**
-# MAGIC - **Data Quality Monitoring (DQM)**: use table‑level signals (row counts, freshness, commit patterns).
+# MAGIC - **[Data Quality Monitoring (DQM)](https://docs.databricks.com/aws/en/data-quality-monitoring/anomaly-detection)**: uses table‑level signals such as row counts and commit patterns.
 # MAGIC - **DQX Anomaly**: look for row‑level patterns within the data (per‑record anomalies with explanations).
 # MAGIC - DQM and DQX each provide distinct capabilities. Together, they complement one another to deliver comprehensive coverage across the full spectrum of data quality checks.
 # MAGIC
@@ -568,7 +568,7 @@ display(borderline.select(
 # MAGIC
 # MAGIC We will train a model with specific columns. While applying the anomaly detection check, only the columns the model was trained on will be used.
 # MAGIC
-# MAGIC This is important in production when you need strict feature control. By default, all columns are used.
+# MAGIC This is important in production when you need strict feature control. By default, all supported columns are used.
 
 # COMMAND ----------
 # DBTITLE 1,Training with Manual Column Selection

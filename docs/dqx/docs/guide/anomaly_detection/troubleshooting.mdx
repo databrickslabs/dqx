@@ -21,10 +21,10 @@ This guide helps you resolve common issues when using DQX anomaly detection.
 ```python
 # Explicitly specify behavioral columns
 anomaly_engine.train(
-    df=df,
-    columns=["amount", "quantity", "discount"],  # Specify columns
-    model_name=model_name,
-    registry_table=registry_table,
+  df=df,
+  columns=["amount", "quantity", "discount"],  # specify selected columns
+  model_name=model_name,
+  registry_table=registry_table,
 )
 ```
 
@@ -49,12 +49,15 @@ print(df.columns)
 
 # Then specify correct column names
 anomaly_engine.train(
-    df=df,
-    columns=["actual_column_name"],  # Use correct names
-    model_name=model_name,
-    registry_table=registry_table,
+  df=df,
+  columns=["actual_column_name"],  # Use correct names
+  model_name=model_name,
+  registry_table=registry_table,
 )
 ```
+
+Note also that columns can only be defined when training the model. Scoring uses the columns the model was trained on.
+Ensure scoring DataFrame has all columns used during training.
 
 ---
 
@@ -71,10 +74,10 @@ exclude_list = ["order_id", "user_id"]
 valid_excludes = [col for col in exclude_list if col in existing_cols]
 
 anomaly_engine.train(
-    df=df,
-    exclude_columns=valid_excludes,
-    model_name=model_name,
-    registry_table=registry_table,
+  df=df,
+  exclude_columns=valid_excludes,
+  model_name=model_name,
+  registry_table=registry_table,
 )
 ```
 
@@ -93,7 +96,7 @@ import pyspark.sql.functions as F
 
 # Verify model exists
 display(spark.table("catalog.schema.anomaly_registry").filter(
-    F.col("identity.model_name") == "your_model_name"
+  F.col("identity.model_name") == "your_model_name"
 ))
 
 # Check for typos in model_name (case-sensitive!)
@@ -111,7 +114,7 @@ display(spark.table("catalog.schema.anomaly_registry").filter(
 # Check training columns from registry
 registry_df = spark.table("catalog.schema.anomaly_registry")
 model_info = registry_df.filter(
-    F.col("identity.model_name") == "your_model"
+  F.col("identity.model_name") == "your_model"
 ).select("training.columns").first()
 
 training_cols = model_info[0] if model_info else []
@@ -121,7 +124,7 @@ print(f"Required columns: {training_cols}")
 scoring_cols = set(df.columns)
 missing = set(training_cols) - scoring_cols
 if missing:
-    print(f"Missing columns: {missing}")
+  print(f"Missing columns: {missing}")
 ```
 
 ---
@@ -140,30 +143,30 @@ if missing:
 **Option 1: Sample during training** (recommended)
 ```python
 anomaly_engine.train(
-    df=df,
-    sample_fraction=0.1,  # Train on 10% of data
-    model_name=model_name,
-    registry_table=registry_table,
+  df=df,
+  sample_fraction=0.1,  # Train on 10% of data
+  model_name=model_name,
+  registry_table=registry_table,
 )
 ```
 
 **Option 2: Cap maximum rows**
 ```python
 anomaly_engine.train(
-    df=df,
-    max_rows=100000,  # Use at most 100K rows
-    model_name=model_name,
-    registry_table=registry_table,
+  df=df,
+  max_rows=100000,  # Use at most 100K rows
+  model_name=model_name,
+  registry_table=registry_table,
 )
 ```
 
 **Option 3: Explicit column selection** (reduces features)
 ```python
 anomaly_engine.train(
-    df=df,
-    columns=["amount", "quantity"],  # Only key columns
-    model_name=model_name,
-    registry_table=registry_table,
+  df=df,
+  columns=["amount", "quantity"],  # Only key columns
+  model_name=model_name,
+  registry_table=registry_table,
 )
 ```
 
@@ -182,16 +185,16 @@ Sampling doesn't hurt model quality if the sample is representative!
 ```python
 # Production: fast scoring, no explanations
 has_no_anomalies(
-    model=model_name,
-    registry_table=registry_table,
-    include_contributions=False,  # 10x faster
+  model=model_name,
+  registry_table=registry_table,
+  include_contributions=False,  # 10x faster
 )
 
 # Investigation: slower, with explanations
 has_no_anomalies(
-    model=model_name,
-    registry_table=registry_table,
-    include_contributions=True,  # Default, slower
+  model=model_name,
+  registry_table=registry_table,
+  include_contributions=True,  # Default, slower
 )
 ```
 
@@ -209,18 +212,18 @@ has_no_anomalies(
 **Option 1: Raise threshold** (fewer alerts)
 ```python
 has_no_anomalies(
-    model=model_name,
-    registry_table=registry_table,
-    threshold=98,  # Was 95 (default), now stricter
+  model=model_name,
+  registry_table=registry_table,
+  threshold=98,  # Was 95 (default), now stricter
 )
 ```
 
 **Option 2: Enable drift detection** (warns if data changed)
 ```python
 has_no_anomalies(
-    model=model_name,
-    registry_table=registry_table,
-    drift_threshold=3.0,  # Warn on distribution shift
+  model=model_name,
+  registry_table=registry_table,
+  drift_threshold=3.0,  # Warn on distribution shift
 )
 ```
 
@@ -228,31 +231,31 @@ has_no_anomalies(
 ```python
 # Filter to recent, known-good data
 clean_data = spark.table("orders").filter(
-    F.col("order_date") >= F.current_date() - F.expr("INTERVAL 30 DAYS")
+  F.col("order_date") >= F.current_date() - F.expr("INTERVAL 30 DAYS")
 )
 anomaly_engine.train(df=clean_data, ...)
 ```
 
 ---
 
-### Q: No anomalies detected (but I see unusual data)
+### Q: No anomalies detected but I see unusual data
 
 **Likely causes**:
 1. Threshold too high (95 = only top 5%)
-2. Unusual data was in training set (model learned it as "normal")
+2. Unusual data was in training set: model learned it as "normal"
 
 **Solutions**:
 
 **Option 1: Lower threshold**
 ```python
 has_no_anomalies(
-    model=model_name,
-    registry_table=registry_table,
-    threshold=90,  # Was 95, now more sensitive
+  model=model_name,
+  registry_table=registry_table,
+  threshold=90,  # Was 95, now more sensitive
 )
 ```
 
-**Option 2: Check severity percentiles** (even "normal" rows have scores)
+**Option 2: Check severity percentiles** (even "normal" rows in the output have scores)
 ```python
 import pyspark.sql.functions as F
 
@@ -260,11 +263,11 @@ df_scored = dq_engine.apply_checks(df, checks)
 
 # View top 20 by severity (regardless of threshold)
 display(df_scored.orderBy(
-    F.col("_dq_info.anomaly.severity_percentile").desc()
+  F.col("_dq_info.anomaly.severity_percentile").desc()
 ).select(
-    "transaction_id",
-    "_dq_info.anomaly.severity_percentile",
-    "_dq_info.anomaly.score",
+  "transaction_id",
+  "_dq_info.anomaly.severity_percentile",
+  "_dq_info.anomaly.score",
 ).limit(20))
 ```
 
@@ -272,22 +275,22 @@ display(df_scored.orderBy(
 
 ### Q: Memory errors during training
 
-**Cause**: Dataset too large for cluster.
+**Cause**: Dataset too large for the cluster.
 
 **Solutions**:
-1. Use `sample_fraction` to reduce data
+1. Use `sample_fraction` to reduce amount data
 2. Use `max_rows` to cap size
 3. Scale up cluster (more memory)
 
 ```python
 # Conservative settings for large datasets
 anomaly_engine.train(
-    df=df,
-    sample_fraction=0.05,  # 5% sample
-    max_rows=50000,  # Cap at 50K
-    columns=["amount", "quantity"],  # Select only key columns
-    model_name=model_name,
-    registry_table=registry_table,
+  df=df,
+  sample_fraction=0.05,  # 5% sample
+  max_rows=50000,  # Cap at 50K
+  columns=["amount", "quantity"],  # Select only key columns
+  model_name=model_name,
+  registry_table=registry_table,
 )
 ```
 
@@ -301,37 +304,36 @@ anomaly_engine.train(
 
 **Best practices**:
 - Train model on historical batch data first
-- Disable contributions: `include_contributions=False` (recommended for streaming performance)
-- For end-to-end methods, use `InputConfig` with `is_streaming=True`
+- Disable contributions: `include_contributions=False` (recommended for performance)
 
 **Example 1: DIY Approach** (you manage readStream/writeStream):
 ```python
 # 1. Train on batch
 model_name = anomaly_engine.train(
-    df=spark.table("catalog.schema.orders_historical"),
-    model_name="catalog.schema.orders_monitor",
-    registry_table="catalog.schema.anomaly_registry",
+  df=spark.table("catalog.schema.orders_historical"),
+  model_name="catalog.schema.orders_monitor",
+  registry_table="catalog.schema.anomaly_registry",
 )
 
 # 2. Apply to streaming DataFrame
 streaming_df = spark.readStream.table("catalog.schema.orders_stream")
 
 checks = [
-    has_no_anomalies(
-        model=model_name,
-        registry_table="catalog.schema.anomaly_registry",
-        include_contributions=False,  # Recommended: too slow for real-time
-    )
+  has_no_anomalies(
+    model=model_name,
+    registry_table="catalog.schema.anomaly_registry",
+    include_contributions=False,  # Recommended: too slow for real-time
+  )
 ]
 
 result_stream = dq_engine.apply_checks(streaming_df, checks)
 
 # 3. Write results
 result_stream.writeStream \
-    .format("delta") \
-    .outputMode("append") \
-    .option("checkpointLocation", "/tmp/checkpoint") \
-    .table("catalog.schema.orders_scored")
+  .format("delta") \
+  .outputMode("append") \
+  .option("checkpointLocation", "/tmp/checkpoint") \
+  .table("catalog.schema.orders_scored")
 ```
 
 **Example 2: End-to-End Approach** (DQX manages streaming):
@@ -342,30 +344,26 @@ from databricks.labs.dqx.config import InputConfig, OutputConfig
 
 # 2. Configure streaming input/output
 input_config = InputConfig(
-    location="catalog.schema.orders_stream",
-    format="delta",
-    is_streaming=True  # This flag enables streaming
+  location="catalog.schema.orders_stream",
+  format="delta",
+  is_streaming=True  # This flag enables streaming
 )
 
 output_config = OutputConfig(
-    location="catalog.schema.orders_scored",
-    format="delta",
-    mode="append",
-    trigger={"availableNow": True},
-    options={"checkpointLocation": "/tmp/checkpoint"}
+  location="catalog.schema.orders_scored",
+  format="delta",
+  mode="append",
+  trigger={"availableNow": True},
+  options={"checkpointLocation": "/tmp/checkpoint"}
 )
 
 # 3. Apply checks with streaming config
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-    checks=checks_metadata,  # List of check dicts
-    input_config=input_config,
-    output_config=output_config,
+  checks=checks_metadata,  # List of check dicts
+  input_config=input_config,
+  output_config=output_config,
 )
 ```
-
-See [Streaming Demos](https://github.com/databrickslabs/dqx/tree/main/demos):
-- `dqx_streaming_demo_diy.py` - DIY approach (Example 1)
-- `dqx_streaming_demo_native.py` - End-to-end approach (Example 2)
 
 <Admonition type="warning" title="Streaming recommendation">
 Disable contributions for streaming workloads. SHAP is compute-intensive (5-10x slower) and not suitable for real-time processing.
