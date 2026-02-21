@@ -5,6 +5,7 @@ We need to implement streaming tests for cluster_by using e2e tests in a noteboo
 which is used to run integration tests, does not support setting the Spark property
 'spark.databricks.delta.liquid.eagerClustering.streaming.enabled'.
 """
+
 import logging
 from pathlib import Path
 
