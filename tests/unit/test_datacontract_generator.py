@@ -832,6 +832,15 @@ class DataContractGeneratorTestBase:
         for substring in expected_substrings:
             assert substring in ddl, f"Expected DDL to contain {substring!r}, got: {ddl!r}"
 
+    def _assert_special_column_escapes_in_ddl(self, schema_rules, ddl):
+        """Assert DDL backtick-escapes special/digit-starting column names (Databricks/ANSI)."""
+        assert len(schema_rules) == 1
+        assert ddl is not None
+        assert "`col-name` STRING" in ddl
+        assert "`col name` STRING" in ddl
+        assert "`123col` STRING" in ddl, "Identifiers starting with digit must be backtick-escaped"
+        assert "normal_col STRING" in ddl
+
 
 class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
     """Test basic data contract generator functionality."""
@@ -1081,18 +1090,10 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         )
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
         try:
-            rules = generator.generate_rules_from_contract(
-                contract_file=temp_path,
-                generate_predefined_rules=False,
-                process_text_rules=False,
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
             )
-            schema_rules = get_schema_validation_rules(rules)
-            assert len(schema_rules) == 1
-            ddl = schema_rules[0]["check"]["arguments"]["expected_schema"]
-            assert "`col-name` STRING" in ddl
-            assert "`col name` STRING" in ddl
-            assert "`123col` STRING" in ddl, "Identifiers starting with digit must be backtick-escaped"
-            assert "normal_col STRING" in ddl
+            self._assert_special_column_escapes_in_ddl(schema_rules, ddl)
         finally:
             os.unlink(temp_path)
 
@@ -1418,6 +1419,26 @@ class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
             assert len(schema_rules) == 1
             assert "amount DECIMAL(10,2)" in ddl, "DECIMAL must be normalized without spaces for strict schema match"
             assert "DECIMAL ( 10 , 2 )" not in ddl, "DDL must not retain spaces from physicalType input"
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_complex_physical_type_normalized_uppercase(self, generator):
+        """Complex types (ARRAY, MAP, STRUCT) are normalized to uppercase for consistent DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {"name": "tags", "physicalType": "array<string>"},
+                {"name": "meta", "physicalType": "map<string, int>"},
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "tags ARRAY<STRING>" in ddl, "Complex types must be normalized to uppercase"
+            assert "meta MAP<STRING, INT>" in ddl, "MAP type must be normalized to uppercase"
+            assert "array<string>" not in ddl and "map<string" not in ddl, "DDL must not retain lowercase type"
         finally:
             os.unlink(temp_path)
 

@@ -326,7 +326,7 @@ class DataContractRulesGenerator(DQEngineBase):
         if decimal_match:
             return f"DECIMAL({decimal_match.group(1)},{decimal_match.group(2)})"
         if any(type_upper.startswith(prefix) for prefix in cls._UNITY_COMPLEX_PREFIXES):
-            return type_str_stripped
+            return type_upper
         raise InvalidPhysicalTypeError(
             f"physicalType '{type_str}' is not a valid Unity Catalog data type. "
             "Use Unity Catalog types (e.g. STRING, INT, DECIMAL(10,2), ARRAY<STRING>). "
@@ -355,13 +355,9 @@ class DataContractRulesGenerator(DQEngineBase):
             except InvalidPhysicalTypeError as e:
                 raise InvalidPhysicalTypeError(f"Schema '{schema_name}', property '{prop.name}': {e!s}") from e
             col_name = prop.name
-            # Databricks/ANSI: non-delimited identifiers must start with letter or underscore;
-            # only letters, digits, underscores allowed. Otherwise use backticks.
-            needs_escape = (
-                not col_name.replace("_", "").isalnum()
-                or not (col_name[0].isalpha() or col_name[0] == "_")
-            )
-            if needs_escape:
+            # Databricks/ANSI: valid unquoted identifier = start with letter/underscore, then [a-zA-Z0-9_]*.
+            # We do not check reserved keywords; Databricks handles that when parsing the DDL.
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", col_name):
                 col_name = f"`{col_name}`"
             parts.append(f"{col_name} {unity_type}")
         return ", ".join(parts)

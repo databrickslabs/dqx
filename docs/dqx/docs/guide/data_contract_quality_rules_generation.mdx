@@ -127,6 +127,10 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
 
 When `generate_schema_validation=True` (default), DQX generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. This ensures the dataset's columns and types match the contract. Schema validation is always **strict** (exact columns, order, and types). To skip these rules, pass `generate_schema_validation=False`:
 
+<Admonition type="note" title="Physical types required for schema validation">
+Schema validation requires every property in the contract to have a `physicalType` field set to a valid Unity Catalog data type. Properties with only `logicalType` will cause an `InvalidPhysicalTypeError`.
+</Admonition>
+
 ```python
 rules = generator.generate_rules_from_contract(
     contract_file="/path/to/contract.yaml",
