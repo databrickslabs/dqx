@@ -9,8 +9,8 @@
 # MAGIC ## What You'll Learn
 # MAGIC
 # MAGIC 1. Creating ODCS v3.x data contracts
-# MAGIC 2. Automatically generating DQX quality rules from property constraints
-# MAGIC 3. Understanding predefined vs explicit rule generation
+# MAGIC 2. Automatically generating DQX quality rules (schema validation, predefined, explicit, and text-based)
+# MAGIC 3. Understanding the four rule types: schema validation, predefined, explicit, and AI-assisted
 # MAGIC 4. Applying generated rules to your data
 # MAGIC 5. Using AI-assisted rule generation from text expectations
 # MAGIC
@@ -88,7 +88,7 @@ schema:
     properties:
       - name: order_id
         logicalType: string
-        physicalType: varchar(12)
+        physicalType: STRING
         description: Unique order identifier
         required: true
         unique: true
@@ -98,7 +98,7 @@ schema:
       
       - name: customer_email
         logicalType: string
-        physicalType: varchar(100)
+        physicalType: STRING
         description: Customer email address
         required: true
         logicalTypeOptions:
@@ -106,7 +106,7 @@ schema:
       
       - name: order_date
         logicalType: date
-        physicalType: date
+        physicalType: DATE
         description: Order placement date
         required: true
         logicalTypeOptions:
@@ -114,7 +114,7 @@ schema:
       
       - name: order_total
         logicalType: number
-        physicalType: decimal(10,2)
+        physicalType: DECIMAL(10,2)
         description: Total order amount
         required: true
         logicalTypeOptions:
@@ -136,7 +136,7 @@ schema:
       
       - name: order_status
         logicalType: string
-        physicalType: varchar(20)
+        physicalType: STRING
         description: Current order status
         required: true
         logicalTypeOptions:
@@ -144,7 +144,7 @@ schema:
       
       - name: quantity
         logicalType: integer
-        physicalType: int
+        physicalType: INT
         description: Number of items
         required: true
         logicalTypeOptions:
@@ -153,7 +153,7 @@ schema:
       
       - name: discount_percentage
         logicalType: number
-        physicalType: decimal(5,2)
+        physicalType: DECIMAL(5,2)
         description: Discount applied
         required: false
         logicalTypeOptions:
@@ -198,9 +198,13 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 # MAGIC %md
 # MAGIC ## 2. Generate DQX Rules from Contract stored in a file
 # MAGIC
-# MAGIC The ODCS v3.x contract above demonstrates three types of quality rules:
+# MAGIC The ODCS v3.x contract above demonstrates four types of quality rules:
 # MAGIC
-# MAGIC ### 1. Predefined Rules (from property constraints in logicalTypeOptions)
+# MAGIC ### 1. Schema Validation (dataset-level, from contract schema)
+# MAGIC - One `has_valid_schema` rule per ODCS schema, ensuring the dataset's columns and types match the contract
+# MAGIC - Always strict (exact column set, order, and types). Requires every property to have `physicalType` set to a Unity Catalog type (e.g. STRING, INT, DECIMAL(10,2))
+# MAGIC
+# MAGIC ### 2. Predefined Rules (from property constraints in logicalTypeOptions)
 # MAGIC - `required: true` → `is_not_null`
 # MAGIC - `unique: true` → `is_unique`
 # MAGIC - `pattern: regex` → `regex_match`
@@ -208,11 +212,11 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 # MAGIC - `minLength`/`maxLength` → `sql_expression` for LENGTH checks
 # MAGIC - `format` → `is_valid_date` or `is_valid_timestamp` for date/timestamp fields
 # MAGIC
-# MAGIC ### 2. Explicit DQX Rules (type: custom, engine: dqx, implementation: {...})
+# MAGIC ### 3. Explicit DQX Rules (type: custom, engine: dqx, implementation: {...})
 # MAGIC - Dataset-level: `is_aggr_not_less_than` to check dataset is not empty
 # MAGIC - Property-level: `is_not_greater_than` for warning on high order totals
 # MAGIC
-# MAGIC ### 3. Text-based Rules (type: text - AI-assisted via LLM)
+# MAGIC ### 4. Text-based Rules (type: text - AI-assisted via LLM)
 # MAGIC - Natural language business logic converted to executable rules by AI
 # MAGIC - Useful for complex conditional logic and cross-field validations
 # MAGIC - Example: "For rows where order_total > 10000, order_status must be 'confirmed' or 'shipped'"
@@ -231,10 +235,12 @@ rules = generator.generate_rules_from_contract(
 print(f"Generated {len(rules)} quality rules from contract")
 
 # Show rule breakdown by type
+schema_validation_count = len([r for r in rules if r.get("user_metadata", {}).get("rule_type") == "schema_validation"])
 predefined_count = len([r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"])
 explicit_count = len([r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"])
 text_llm_count = len([r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"])
 
+print(f"  - {schema_validation_count} schema validation rules (has_valid_schema from contract)")
 print(f"  - {predefined_count} predefined rules (from property constraints)")
 print(f"  - {explicit_count} explicit DQX rules")
 print(f"  - {text_llm_count} AI-generated rules (from text expectations)")
@@ -248,7 +254,7 @@ print(f"  - {text_llm_count} AI-generated rules (from text expectations)")
 # MAGIC - Check function and arguments
 # MAGIC - Criticality level
 # MAGIC - Contract metadata (contract ID, version, schema, field)
-# MAGIC - Rule type (predefined, explicit, or text_llm)
+# MAGIC - Rule type (schema_validation, predefined, explicit, or text_llm)
 
 # COMMAND ----------
 
@@ -412,7 +418,7 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # MAGIC ### What We Covered
 # MAGIC
 # MAGIC 1. ✅ Created an ODCS v3.x data contract with field constraints and text-based expectations
-# MAGIC 2. ✅ Generated DQX rules automatically from the contract (predefined, explicit, and AI-assisted)
+# MAGIC 2. ✅ Generated DQX rules automatically from the contract (schema validation, predefined, explicit, and AI-assisted)
 # MAGIC 3. ✅ Validated and applied rules to data
 # MAGIC 4. ✅ Split good and bad records for quarantine workflows
 # MAGIC 5. ✅ Saved and loaded generated rules for reuse
@@ -428,10 +434,11 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # MAGIC | `minLength`/`maxLength` | `logicalTypeOptions` | `sql_expression` | String length validation |
 # MAGIC | `format` | `logicalTypeOptions` | `is_valid_date`, `is_valid_timestamp` | Date/timestamp formats |
 # MAGIC
-# MAGIC ### Three Types of Rules
+# MAGIC ### Four Types of Rules
 # MAGIC
 # MAGIC | Rule Type | Source | Example |
 # MAGIC |-----------|--------|---------|
+# MAGIC | **Schema validation** | Contract schema (one per ODCS schema; requires Unity Catalog `physicalType`) | `has_valid_schema` (strict) |
 # MAGIC | **Predefined** | Property constraints (required, unique, logicalTypeOptions) | `is_not_null`, `is_unique`, `regex_match` |
 # MAGIC | **Explicit DQX** | Custom DQX rules in quality section with `implementation` | `is_aggr_not_less_than`, `is_not_greater_than` |
 # MAGIC | **Text-based (LLM)** | Natural language expectations (`type: text`) | Complex business logic converted by AI |
