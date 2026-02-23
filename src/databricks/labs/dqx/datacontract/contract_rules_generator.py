@@ -308,7 +308,7 @@ class DataContractRulesGenerator(DQEngineBase):
         "GEOMETRY(",
         "INTERVAL ",
     )
-    _UNITY_DECIMAL_PATTERN = re.compile(r"^DECIMAL\s*\(\s*\d+\s*,\s*\d+\s*\)\s*$", re.IGNORECASE)
+    _UNITY_DECIMAL_PATTERN = re.compile(r"^DECIMAL\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*$", re.IGNORECASE)
 
     @classmethod
     def _validate_unity_physical_type(cls, type_str: str) -> str:
@@ -322,8 +322,9 @@ class DataContractRulesGenerator(DQEngineBase):
         type_upper = type_str_stripped.upper()
         if type_upper in cls._UNITY_SIMPLE_TYPES:
             return type_upper
-        if cls._UNITY_DECIMAL_PATTERN.match(type_str_stripped):
-            return type_upper
+        decimal_match = cls._UNITY_DECIMAL_PATTERN.match(type_str_stripped)
+        if decimal_match:
+            return f"DECIMAL({decimal_match.group(1)},{decimal_match.group(2)})"
         if any(type_upper.startswith(prefix) for prefix in cls._UNITY_COMPLEX_PREFIXES):
             return type_str_stripped
         raise InvalidPhysicalTypeError(

@@ -1400,6 +1400,25 @@ class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
         finally:
             os.unlink(temp_path)
 
+    def test_schema_validation_decimal_physical_type_normalized_no_spaces(self, generator):
+        """DECIMAL with spaces in physicalType is normalized to DECIMAL(p,s) for consistent DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {"name": "id", "physicalType": "STRING"},
+                {"name": "amount", "physicalType": "DECIMAL ( 10 , 2 )"},
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "amount DECIMAL(10,2)" in ddl, "DECIMAL must be normalized without spaces for strict schema match"
+            assert "DECIMAL ( 10 , 2 )" not in ddl, "DDL must not retain spaces from physicalType input"
+        finally:
+            os.unlink(temp_path)
+
 
 class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
     """Test predefined rule generation from field constraints."""
