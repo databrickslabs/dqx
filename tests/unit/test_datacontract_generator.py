@@ -1069,12 +1069,13 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             os.unlink(temp_path)
 
     def test_schema_validation_ddl_escapes_special_column_names(self, generator):
-        """Test that column names with special characters are backtick-escaped in expected_schema."""
+        """Test that column names with special chars or starting with digit are backtick-escaped (Databricks/ANSI)."""
         contract_dict = self.create_basic_contract(
             schema_name="special_cols",
             properties=[
                 {"name": "col-name", "physicalType": "STRING"},
                 {"name": "col name", "physicalType": "STRING"},
+                {"name": "123col", "physicalType": "STRING"},
                 {"name": "normal_col", "physicalType": "STRING"},
             ],
         )
@@ -1090,6 +1091,7 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             ddl = schema_rules[0]["check"]["arguments"]["expected_schema"]
             assert "`col-name` STRING" in ddl
             assert "`col name` STRING" in ddl
+            assert "`123col` STRING" in ddl, "Identifiers starting with digit must be backtick-escaped"
             assert "normal_col STRING" in ddl
         finally:
             os.unlink(temp_path)

@@ -355,7 +355,13 @@ class DataContractRulesGenerator(DQEngineBase):
             except InvalidPhysicalTypeError as e:
                 raise InvalidPhysicalTypeError(f"Schema '{schema_name}', property '{prop.name}': {e!s}") from e
             col_name = prop.name
-            if not col_name.replace("_", "").isalnum():
+            # Databricks/ANSI: non-delimited identifiers must start with letter or underscore;
+            # only letters, digits, underscores allowed. Otherwise use backticks.
+            needs_escape = (
+                not col_name.replace("_", "").isalnum()
+                or not (col_name[0].isalpha() or col_name[0] == "_")
+            )
+            if needs_escape:
                 col_name = f"`{col_name}`"
             parts.append(f"{col_name} {unity_type}")
         return ", ".join(parts)
