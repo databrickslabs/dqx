@@ -1,12 +1,15 @@
-"""
-Data Contract to DQX Rules Generator.
+"""Data Contract to DQX Rules Generator.
 
-This module provides functionality to generate DQX quality rules from data contract
-specifications like ODCS (Open Data Contract Standard).
+Generates DQX quality rules from ODCS (Open Data Contract Standard) v3.x contracts.
+
+For schema validation we require every property to have physicalType set to a Unity Catalog
+data type (e.g. STRING, INT, ARRAY<STRING>, DECIMAL(10,2)). No ODCS→Unity mapping is performed.
+See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
 """
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -27,7 +30,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import ODCSContractError, ParameterError
+from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.package_utils import missing_required_packages
 from databricks.labs.dqx.llm.llm_engine import DQLLMEngine  # type: ignore
@@ -37,12 +40,11 @@ logger = logging.getLogger(__name__)
 
 class DataContractRulesGenerator(DQEngineBase):
     """
-    Generator for creating DQX quality rules from ODCS v3.x data contracts.
+    Generator for DQX quality rules from ODCS v3.x data contracts.
 
-    This class processes Open Data Contract Standard (ODCS) v3.x contracts natively,
-    extracting constraints from logicalTypeOptions and generating DQX quality rules.
-    Supports predefined rules from schema properties, explicit rules from quality sections,
-    and text-based expectations processed via LLM.
+    Schema validation requires every property to have physicalType set to a Unity Catalog type.
+    We do not map ODCS types; invalid or missing physicalType raises InvalidPhysicalTypeError.
+    Supports predefined rules from schema, explicit quality sections, and LLM-based expectations.
     """
 
     def __init__(
@@ -82,6 +84,7 @@ class DataContractRulesGenerator(DQEngineBase):
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
+        generate_schema_validation: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
         """
@@ -99,6 +102,7 @@ class DataContractRulesGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
             process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
+            generate_schema_validation: Whether to generate dataset-level has_valid_schema rules from the contract schema (default True). One rule per ODCS schema, always strict.
             default_criticality: Default criticality level for generated rules (default is "error").
 
         Returns:
@@ -114,7 +118,9 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs = self._load_contract_spec(contract, contract_file)
         self._validate_contract_spec(odcs)
 
-        dq_rules = self._generate_all_rules(odcs, generate_predefined_rules, process_text_rules, default_criticality)
+        dq_rules = self._generate_all_rules(
+            odcs, generate_predefined_rules, process_text_rules, generate_schema_validation, default_criticality
+        )
         valid_rules = self._validate_generated_rules(dq_rules)
 
         return valid_rules
@@ -210,6 +216,7 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs: OpenDataContractStandard,
         generate_predefined_rules: bool,
         process_text_rules: bool,
+        generate_schema_validation: bool,
         default_criticality: str,
     ) -> list[dict]:
         """Generate all rules from ODCS v3.x contract schemas."""
@@ -218,6 +225,12 @@ class DataContractRulesGenerator(DQEngineBase):
         # ODCS v3.x uses schema_ list instead of models dict
         for schema_obj in odcs.schema_ or []:
             schema_name = schema_obj.name or "unknown_schema"
+
+            if generate_schema_validation:
+                schema_validation_rules = self._generate_schema_validation_rules_for_schema(
+                    schema_obj, schema_name, odcs, default_criticality
+                )
+                dq_rules.extend(schema_validation_rules)
 
             if generate_predefined_rules:
                 predefined_rules = self._generate_predefined_rules_for_schema(
@@ -265,6 +278,116 @@ class DataContractRulesGenerator(DQEngineBase):
             logger.info(f"Successfully generated {len(valid_rules)} DQX rules from data contract")
 
         return valid_rules
+
+    # Schema validation: require physicalType to be a Unity Catalog type; no mapping.
+    # See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
+    _UNITY_SIMPLE_TYPES: frozenset[str] = frozenset(
+        {
+            "STRING",
+            "INT",
+            "BIGINT",
+            "FLOAT",
+            "DOUBLE",
+            "BOOLEAN",
+            "DATE",
+            "TIMESTAMP",
+            "TIMESTAMP_NTZ",
+            "BINARY",
+            "VARIANT",
+            "SMALLINT",
+            "TINYINT",
+            "VOID",
+            "OBJECT",
+        }
+    )
+    _UNITY_COMPLEX_PREFIXES: tuple[str, ...] = (
+        "ARRAY<",
+        "MAP<",
+        "STRUCT<",
+        "GEOGRAPHY(",
+        "GEOMETRY(",
+        "INTERVAL ",
+    )
+    _UNITY_DECIMAL_PATTERN = re.compile(r"^DECIMAL\s*\(\s*\d+\s*,\s*\d+\s*\)\s*$", re.IGNORECASE)
+
+    @classmethod
+    def _validate_unity_physical_type(cls, type_str: str) -> str:
+        """Validate and return normalized Unity Catalog type; raise InvalidPhysicalTypeError if invalid."""
+        type_str_stripped = type_str.strip()
+        if not type_str_stripped:
+            raise InvalidPhysicalTypeError(
+                "physicalType must be set to a Unity Catalog data type (e.g. STRING, INT, ARRAY<STRING>). "
+                "See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes"
+            )
+        type_upper = type_str_stripped.upper()
+        if type_upper in cls._UNITY_SIMPLE_TYPES:
+            return type_upper
+        if cls._UNITY_DECIMAL_PATTERN.match(type_str_stripped):
+            return type_upper
+        if any(type_upper.startswith(prefix) for prefix in cls._UNITY_COMPLEX_PREFIXES):
+            return type_str_stripped
+        raise InvalidPhysicalTypeError(
+            f"physicalType '{type_str}' is not a valid Unity Catalog data type. "
+            "Use Unity Catalog types (e.g. STRING, INT, DECIMAL(10,2), ARRAY<STRING>). "
+            "See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes"
+        )
+
+    def _schema_object_to_ddl(self, schema_obj: SchemaObject, schema_name: str = "") -> str:
+        """Build a Spark/Unity Catalog DDL string from an ODCS schema object.
+
+        Every property must have physicalType set to a Unity Catalog type. Raises
+        InvalidPhysicalTypeError (with schema and property name) when missing or invalid.
+        """
+        parts: list[str] = []
+        for prop in schema_obj.properties or []:
+            if not prop.name:
+                continue
+            physical_type = getattr(prop, "physicalType", None)
+            if not physical_type:
+                raise InvalidPhysicalTypeError(
+                    f"Schema '{schema_name}', property '{prop.name}': physicalType is required. "
+                    "Set physicalType to a Unity Catalog data type (e.g. STRING, INT). "
+                    "See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes"
+                )
+            try:
+                unity_type = self._validate_unity_physical_type(physical_type)
+            except InvalidPhysicalTypeError as e:
+                raise InvalidPhysicalTypeError(f"Schema '{schema_name}', property '{prop.name}': {e!s}") from e
+            col_name = prop.name
+            if not col_name.replace("_", "").isalnum():
+                col_name = f"`{col_name}`"
+            parts.append(f"{col_name} {unity_type}")
+        return ", ".join(parts)
+
+    def _generate_schema_validation_rules_for_schema(
+        self,
+        schema_obj: SchemaObject,
+        schema_name: str,
+        odcs: OpenDataContractStandard,
+        default_criticality: str,
+    ) -> list[dict]:
+        """Generate one dataset-level has_valid_schema rule per ODCS schema. Always strict."""
+        ddl = self._schema_object_to_ddl(schema_obj, schema_name)
+        if not ddl:
+            logger.warning(f"Schema '{schema_name}' has no flat properties; skipping schema validation rule.")
+            return []
+        contract_metadata = {
+            "contract_id": odcs.id or "unknown",
+            "contract_version": odcs.version or "unknown",
+            "odcs_version": odcs.apiVersion or "unknown",
+            "schema": schema_name,
+            "rule_type": "schema_validation",
+        }
+        rule = {
+            "check": {
+                "function": "has_valid_schema",
+                "arguments": {"expected_schema": ddl, "strict": True},
+            },
+            "name": f"{schema_name}_schema_validation",
+            "criticality": default_criticality,
+            "user_metadata": contract_metadata,
+        }
+        return [rule]
 
     # ODCS v3.x Native Support Methods
     def _generate_predefined_rules_for_schema(

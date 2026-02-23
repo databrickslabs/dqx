@@ -1,6 +1,68 @@
+"""
+Integration tests for data contract (ODCS) rule generation.
+
+Covers all code paths through DQGenerator.generate_rules_from_contract and the
+underlying DataContractRulesGenerator: contract loading (file, object, YAML string),
+rule generation flags (schema validation, predefined, text rules), default_criticality,
+multiple schemas, and error paths (ParameterError, NotFound, ODCSContractError).
+"""
+
 import os
+import tempfile
 import pytest
+import yaml
+from datacontract.data_contract import DataContract
+from databricks.sdk.errors import NotFound
+
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.errors import ODCSContractError, ParameterError
 from databricks.labs.dqx.profiler.generator import DQGenerator
+from tests.datacontract_helpers import get_schema_validation_rules
+
+
+# Minimal valid ODCS v3.x contract (single schema, one property) for contract-from-string path
+MINIMAL_ODCS_YAML = """
+kind: DataContract
+apiVersion: v3.0.2
+id: test:minimal
+name: Minimal Contract
+version: 1.0.0
+status: active
+schema:
+  - name: minimal_schema
+    physicalType: table
+    properties:
+      - name: id
+        physicalType: STRING
+        logicalType: string
+        required: true
+"""
+
+# Two schemas for multiple-schema path
+MULTI_SCHEMA_ODCS = {
+    "kind": "DataContract",
+    "apiVersion": "v3.0.2",
+    "id": "test:multi",
+    "name": "Multi Schema Contract",
+    "version": "1.0.0",
+    "status": "active",
+    "schema": [
+        {
+            "name": "schema_a",
+            "physicalType": "table",
+            "properties": [
+                {"name": "id_a", "physicalType": "STRING", "logicalType": "string", "required": True},
+            ],
+        },
+        {
+            "name": "schema_b",
+            "physicalType": "table",
+            "properties": [
+                {"name": "id_b", "physicalType": "STRING", "logicalType": "string", "required": True},
+            ],
+        },
+    ],
+}
 
 
 class TestDataContractIntegration:
@@ -12,25 +74,184 @@ class TestDataContractIntegration:
         tests_dir = os.path.dirname(os.path.dirname(__file__))
         return os.path.join(tests_dir, "resources", "sample_datacontract.yaml")
 
-    def test_generate_rules_with_text_processing(self, ws, spark, sample_contract_path):
-        """Test generating rules with process_text_rules=True for LLM-based rule generation."""
-        generator = DQGenerator(workspace_client=ws, spark=spark)
+    @pytest.fixture
+    def multi_schema_contract_path(self):
+        """Path to a temporary contract file with two schemas."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(MULTI_SCHEMA_ODCS, f)
+            path = f.name
+        yield path
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
-        # Generate rules with text processing enabled
+    def test_generate_rules_with_text_processing(self, ws, spark, sample_contract_path):
+        """Full path: contract_file, predefined + text rules + schema validation; validates checks."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
         rules = generator.generate_rules_from_contract(
             contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=True
         )
-
-        # Verify rules were generated
-        assert len(rules) > 36  # More than predefined + explicit rules due to text-based rules
-
-        # Verify that text-based rules were processed by LLM
-        # The sample contract has a text expectation about duplicate sensor readings
+        assert len(rules) > 36
         text_llm_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "text_llm"]
-        assert len(text_llm_rules) > 0, "Expected at least one text_llm rule from text expectations"
-
-        # Verify that we still have predefined and explicit rules too
+        assert len(text_llm_rules) > 0
         predefined_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "predefined"]
         explicit_rules = [r for r in rules if r["user_metadata"]["rule_type"] == "explicit"]
-        assert len(predefined_rules) > 0, "Expected predefined rules"
-        assert len(explicit_rules) > 0, "Expected explicit DQX rules"
+        assert len(predefined_rules) > 0
+        assert len(explicit_rules) > 0
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_rules_includes_schema_validation(self, ws, spark, sample_contract_path):
+        """Full path: contract_file, schema validation on; one schema_validation rule, validate_checks."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) >= 1
+        assert schema_validation_rules[0]["check"]["arguments"].get("strict") is True
+        assert "expected_schema" in schema_validation_rules[0]["check"]["arguments"]
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_rules_from_contract_object_from_file_path(self, ws, spark, sample_contract_path):
+        """Path: load from DataContract(data_contract_file=...); same output as contract_file."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        contract = DataContract(data_contract_file=sample_contract_path)
+        rules_from_object = generator.generate_rules_from_contract(
+            contract=contract, generate_predefined_rules=True, process_text_rules=False
+        )
+        rules_from_file = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path, generate_predefined_rules=True, process_text_rules=False
+        )
+        assert len(rules_from_object) == len(rules_from_file)
+        status = DQEngine.validate_checks(rules_from_object)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_rules_from_contract_object_from_yaml_string(self, ws, spark):
+        """Path: load from DataContract(data_contract_str=...); ODCS from string, validate_checks."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        contract = DataContract(data_contract_str=MINIMAL_ODCS_YAML)
+        rules = generator.generate_rules_from_contract(
+            contract=contract,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+        )
+        schema_rules = get_schema_validation_rules(rules)
+        assert len(schema_rules) == 1
+        assert schema_rules[0]["user_metadata"]["schema"] == "minimal_schema"
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_rules_schema_validation_disabled(self, ws, spark, sample_contract_path):
+        """Path: generate_schema_validation=False; no schema_validation rules, validate_checks."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) == 0
+        assert len(rules) > 0
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_rules_predefined_disabled(self, ws, spark, sample_contract_path):
+        """Path: generate_predefined_rules=False; schema_validation + explicit only, validate_checks."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+        )
+        predefined_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"]
+        assert len(predefined_rules) == 0
+        schema_rules = get_schema_validation_rules(rules)
+        assert len(schema_rules) >= 1
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_rules_default_criticality_warn(self, ws, spark, sample_contract_path):
+        """Path: default_criticality='warn'; at least one rule has criticality warn, validate_checks."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+            default_criticality="warn",
+        )
+        warn_rules = [r for r in rules if r.get("criticality") == "warn"]
+        assert len(warn_rules) >= 1
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_rules_multiple_schemas(self, ws, spark, multi_schema_contract_path):
+        """Path: contract with two schemas; two schema_validation rules, one per schema, validate_checks."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=multi_schema_contract_path,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+            generate_schema_validation=True,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) == 2
+        names = {r["name"] for r in schema_validation_rules}
+        assert "schema_a_schema_validation" in names
+        assert "schema_b_schema_validation" in names
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_error_neither_contract_nor_file(self, ws, spark):
+        """Error path: neither contract nor contract_file; raises ParameterError."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        with pytest.raises(ParameterError, match="Either .*contract.*contract_file.*must be provided"):
+            generator.generate_rules_from_contract()
+
+    def test_error_contract_object_without_path_or_data(self, ws, spark):
+        """Error path: DataContract() with no file path, data_contract, or data_contract_str; ParameterError."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        empty_contract = DataContract()
+        with pytest.raises(ParameterError, match="DataContract object must have either"):
+            generator.generate_rules_from_contract(contract=empty_contract)
+
+    def test_error_both_contract_and_file(self, ws, spark, sample_contract_path):
+        """Error path: both contract and contract_file; raises ParameterError."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        contract = DataContract(data_contract_file=sample_contract_path)
+        with pytest.raises(ParameterError, match="Cannot provide both"):
+            generator.generate_rules_from_contract(contract=contract, contract_file=sample_contract_path)
+
+    def test_error_unsupported_contract_format(self, ws, spark, sample_contract_path):
+        """Error path: contract_format != 'odcs'; raises ParameterError."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        with pytest.raises(ParameterError, match="not supported"):
+            generator.generate_rules_from_contract(contract_file=sample_contract_path, contract_format="unknown")
+
+    def test_error_contract_file_not_found(self, ws, spark):
+        """Error path: contract_file path does not exist; raises NotFound."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        with pytest.raises(NotFound, match="Contract file not found"):
+            generator.generate_rules_from_contract(contract_file="/nonexistent/contract.yaml")
+
+    def test_error_invalid_contract_raises_odcs_error(self, ws, spark):
+        """Error path: malformed ODCS (missing required fields); raises ODCSContractError."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write("kind: DataContract\n")
+            f.write("apiVersion: v3.0.2\n")
+            f.write("invalid_structure: missing_required_fields\n")
+            path = f.name
+        try:
+            generator = DQGenerator(workspace_client=ws, spark=spark)
+            with pytest.raises(ODCSContractError, match="Failed to parse ODCS contract"):
+                generator.generate_rules_from_contract(contract_file=path)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass

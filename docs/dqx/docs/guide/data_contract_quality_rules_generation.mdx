@@ -12,8 +12,9 @@ DQX provides the capability to generate data quality rules directly from data co
 
 ## Overview
 
-The data contract-based quality rules generation is available via the `DQGenerator` class and supports three types of rule generation:
+The data contract-based quality rules generation is available via the `DQGenerator` class and supports four types of rule generation:
 
+- **Schema Validation**: One dataset-level `has_valid_schema` rule per ODCS schema, derived from the contract's schema definition. Always uses strict mode (exact column set, order, and types). Ensures the dataset schema matches what the contract defines.
 - **Predefined Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, enum, format).
 - **Explicit Rules**: Custom DQX rules embedded directly in the contract's quality section using DQX native format.
 - **Text-Based Rules**: Natural language quality expectations that are processed using AI/LLM to generate appropriate checks (requires `[llm]` extra).
@@ -42,6 +43,7 @@ DQX natively supports Open Data Contract Standard (ODCS) v3.x contracts. ODCS is
 
 **Key Features:**
 - **Native Processing**: DQX processes ODCS v3.x contracts directly without conversion
+- **Schema Validation**: Generates one `has_valid_schema` rule per schema (always strict) from the contract's schema definition
 - **Full Support**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength)
 - **Quality Sections**: Handles explicit DQX rules via `implementation` blocks in quality sections
 - **Version Compatibility**: Supports ODCS v3.0.x and above (no backward compatibility with older versions)
@@ -120,6 +122,19 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
     ```
   </TabItem>
 </Tabs>
+
+### Schema validation
+
+When `generate_schema_validation=True` (default), DQX generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. This ensures the dataset's columns and types match the contract. Schema validation is always **strict** (exact columns, order, and types). To skip these rules, pass `generate_schema_validation=False`:
+
+```python
+rules = generator.generate_rules_from_contract(
+    contract_file="/path/to/contract.yaml",
+    generate_schema_validation=False  # Only predefined, explicit, and text rules
+)
+```
+
+Generated schema validation rules include `user_metadata.rule_type: "schema_validation"` and the expected DDL string built from the contract's `physicalType` / `logicalType` for each property.
 
 ## Predefined Rule Generation
 
