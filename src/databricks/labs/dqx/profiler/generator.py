@@ -26,7 +26,7 @@ except ImportError:
 # Conditional imports for data contract support
 try:
     from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
-    from datacontract.data_contract import DataContract  # type: ignore
+    from datacontract.data_contract import DataContract  # noqa: F401
 
     DATACONTRACT_ENABLED = True
 except ImportError:
