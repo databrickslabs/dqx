@@ -152,7 +152,7 @@ class DQGenerator(DQEngineBase):
     @telemetry_logger("generator", "generate_rules_from_contract")
     def generate_rules_from_contract(
         self,
-        contract: DataContract | None = None,
+        contract: "DataContract | None" = None,
         contract_file: str | None = None,
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,

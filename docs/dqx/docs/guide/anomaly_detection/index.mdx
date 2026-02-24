@@ -180,8 +180,8 @@ To review the most unusual rows:
 ```python
 import pyspark.sql.functions as F
 
-top = scored_df.orderBy(F.col("_dq_info.anomaly.score").desc()).limit(20)
-display(top.select("order_id", "_dq_info.anomaly.score", "_dq_info.anomaly.contributions"))
+top = scored_df.orderBy(F.col("_dq_info.anomaly.severity_percentile").desc()).limit(20)
+display(top.select("order_id", "_dq_info.anomaly.severity_percentile", "_dq_info.anomaly.contributions"))
 ```
 
 Scores are normalized into `severity_percentile` (0–100). The anomaly threshold is a percentile cutoff (default 95) that you should tune to your data.
