@@ -26,7 +26,7 @@ except ImportError:
 # Conditional imports for data contract support
 try:
     from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
-    from datacontract.data_contract import DataContract  # noqa: F401
+    from datacontract.data_contract import DataContract  # type: ignore
 
     DATACONTRACT_ENABLED = True
 except ImportError:
@@ -152,7 +152,7 @@ class DQGenerator(DQEngineBase):
     @telemetry_logger("generator", "generate_rules_from_contract")
     def generate_rules_from_contract(
         self,
-        contract: "DataContract | None" = None,
+        contract: DataContract | None = None,
         contract_file: str | None = None,
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
