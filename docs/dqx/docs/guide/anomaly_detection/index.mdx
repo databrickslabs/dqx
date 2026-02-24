@@ -111,7 +111,8 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
-    from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+    from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+    from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 

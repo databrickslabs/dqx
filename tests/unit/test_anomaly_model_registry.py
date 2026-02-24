@@ -2,13 +2,13 @@
 
 from datetime import datetime
 
+from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     FeatureEngineering,
     ModelIdentity,
     SegmentationConfig,
     TrainingMetadata,
-    compute_config_hash,
 )
 
 

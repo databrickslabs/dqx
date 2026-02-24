@@ -3,7 +3,8 @@ from typing import Any
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
-from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.rule import DQDatasetRule
 from tests.integration_anomaly.test_anomaly_constants import (

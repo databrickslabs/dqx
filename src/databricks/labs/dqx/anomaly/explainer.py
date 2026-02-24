@@ -20,10 +20,40 @@ from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
 from sklearn.pipeline import Pipeline
 
-from databricks.labs.dqx.anomaly.utils import format_contributions_map
 from databricks.labs.dqx.errors import InvalidParameterError
 
 logger = logging.getLogger(__name__)
+
+
+def format_contributions_map(contributions_map: dict[str, float | None] | None, top_n: int) -> str:
+    """Format contributions map as string for top N contributors.
+
+    Args:
+        contributions_map: Dictionary mapping feature names to contribution values (0-100 range)
+        top_n: Number of top contributors to include
+
+    Returns:
+        Formatted string like "amount (85%), quantity (10%), discount (5%)"
+        Empty string if contributions_map is None or empty
+
+    Example:
+        >>> format_contributions_map(dict(amount=85.0, quantity=10.0), 2)
+        'amount (85%), quantity (10%)'
+    """
+    if not contributions_map:
+        return ""
+
+    # Sort by absolute contribution value (descending) to rank by impact magnitude
+    sorted_contribs = sorted(
+        contributions_map.items(), key=lambda x: abs(x[1]) if x[1] is not None else 0.0, reverse=True
+    )
+
+    # Take top N
+    top_contribs = sorted_contribs[:top_n]
+
+    # Format as string: "amount (85%), quantity (10%), discount (5%)"
+    parts = [f"{col} ({val:.0f}%)" for col, val in top_contribs if val is not None]
+    return ", ".join(parts)
 
 
 def create_optimal_tree_explainer(tree_model: Any) -> shap.TreeExplainer:

@@ -12,7 +12,7 @@ from databricks.labs.dqx.anomaly.check_funcs import (
 )
 from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name
 from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo
-from databricks.labs.dqx.anomaly.utils.segment_utils import build_segment_name
+from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 from databricks.labs.dqx.errors import InvalidParameterError
 
 

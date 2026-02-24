@@ -23,7 +23,7 @@ from databricks.labs.dqx.anomaly.explainer import (
     add_top_contributors_to_message,
     create_optimal_tree_explainer,
 )
-from databricks.labs.dqx.anomaly.utils import format_contributions_map
+from databricks.labs.dqx.anomaly.explainer import format_contributions_map
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,

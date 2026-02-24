@@ -96,7 +96,8 @@ from datetime import datetime, timedelta
 import random
 import numpy as np
 
-from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
 from databricks.labs.dqx.check_funcs import is_not_null, is_in_range

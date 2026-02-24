@@ -2,7 +2,7 @@
 
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.synthetic_generators import (
     apply_distribution_shift,

@@ -2,8 +2,6 @@
 Shared profiling utilities.
 """
 
-from __future__ import annotations
-
 import collections.abc
 
 import pyspark.sql.functions as F

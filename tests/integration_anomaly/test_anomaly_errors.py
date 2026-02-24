@@ -12,7 +12,7 @@ import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     FeatureEngineering,
@@ -20,13 +20,13 @@ from databricks.labs.dqx.anomaly.model_registry import (
     SegmentationConfig,
     TrainingMetadata,
 )
-from databricks.labs.dqx.anomaly.utils import (
-    build_segment_filter,
-    create_null_scored_dataframe,
+from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility
+from databricks.labs.dqx.anomaly.scoring import (
     add_info_column,
+    create_null_scored_dataframe,
     create_udf_schema,
-    validate_sklearn_compatibility,
 )
+from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidParameterError
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD

@@ -1,4 +1,4 @@
-"""Scoring utilities for anomaly detection DataFrames."""
+"""Anomaly scoring DataFrame helpers."""
 
 from pyspark.sql import DataFrame
 from pyspark.sql.types import (
@@ -11,7 +11,7 @@ from pyspark.sql.types import (
 )
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.anomaly.utils.segment_utils import canonicalize_segment_values
+from databricks.labs.dqx.anomaly.segment_utils import canonicalize_segment_values
 
 
 def create_null_scored_dataframe(

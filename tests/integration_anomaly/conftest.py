@@ -7,7 +7,7 @@ import pyspark.sql.functions as F
 import pytest
 import mlflow
 
-from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from tests.constants import TEST_CATALOG

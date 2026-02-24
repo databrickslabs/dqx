@@ -23,7 +23,7 @@ class AnomalyEngine(DQEngineBase):
     Examples:
         # Initialize engine
         from databricks.sdk import WorkspaceClient
-        from databricks.labs.dqx.anomaly import AnomalyEngine
+        from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 
         ws = WorkspaceClient()
         anomaly_engine = AnomalyEngine(ws)

@@ -5,7 +5,7 @@ from collections.abc import Callable
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,

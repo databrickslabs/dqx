@@ -1,8 +1,14 @@
-"""Validation utilities for anomaly detection."""
+"""Validate model records for safe use at inference/load time.
+
+Single responsibility: compatibility checks when using an AnomalyModelRecord
+(e.g. sklearn version mismatch). Registry types and persistence live in model_registry.
+"""
 
 import warnings
+
 import sklearn
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
+
+from databricks.labs.dqx.anomaly.model_config import AnomalyModelRecord
 
 
 def _parse_version_tuple(version_str: str) -> tuple[int, int]:
@@ -13,7 +19,7 @@ def _parse_version_tuple(version_str: str) -> tuple[int, int]:
     return major, minor
 
 
-def validate_sklearn_compatibility(model_record: "AnomalyModelRecord") -> None:
+def validate_sklearn_compatibility(model_record: AnomalyModelRecord) -> None:
     """Validate sklearn version compatibility between training and inference.
 
     Args:

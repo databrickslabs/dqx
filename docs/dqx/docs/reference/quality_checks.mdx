@@ -2905,7 +2905,7 @@ Before you can flag unusual rows, the system needs to learn what "normal" looks 
 
 **Python**
 ```python
-from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.sdk import WorkspaceClient
 
 anomaly_engine = AnomalyEngine(WorkspaceClient())
@@ -2993,7 +2993,7 @@ Pass a `FeatureEngineeringConfig` object to `params.feature_engineering` to cont
 #### Example: Custom Training Parameters
 
 ```python
-from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig, FeatureEngineeringConfig
 from databricks.sdk import WorkspaceClient
 
@@ -3036,7 +3036,7 @@ Use the model name returned by training.
 
 **Python**
 ```python
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 
 checks = [
   has_no_anomalies(
@@ -3098,7 +3098,7 @@ ORDER BY training_time DESC
 Contributions are enabled by default. For performance reasons, you may want to disable them:
 
 ```python
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 
 checks = [
   has_no_anomalies(
@@ -3125,7 +3125,7 @@ display(top.select("order_id", "_dq_info.anomaly.severity_percentile", "_dq_info
 Automatically detects when current data distribution differs significantly from training data:
 
 ```python
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 
 checks = [
   has_no_anomalies(

@@ -22,6 +22,7 @@ from databricks.labs.dqx.anomaly.core import (
     sample_df,
     train_validation_split,
 )
+from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     AnomalyModelRegistry,
@@ -29,7 +30,6 @@ from databricks.labs.dqx.anomaly.model_registry import (
     ModelIdentity,
     SegmentationConfig,
     TrainingMetadata,
-    compute_config_hash,
 )
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
 from databricks.labs.dqx.anomaly.strategies import AnomalyTrainingStrategy, IsolationForestTrainingStrategy
@@ -39,7 +39,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering,
     reconstruct_column_infos,
 )
-from databricks.labs.dqx.anomaly.utils.segment_utils import build_segment_name
+from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 from databricks.labs.dqx.anomaly.types import AnomalyTrainingContext, TrainingArtifacts
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.errors import InvalidParameterError

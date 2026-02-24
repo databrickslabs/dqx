@@ -3,7 +3,7 @@
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine

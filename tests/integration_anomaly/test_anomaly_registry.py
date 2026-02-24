@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
+from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     AnomalyModelRegistry,
@@ -15,7 +16,6 @@ from databricks.labs.dqx.anomaly.model_registry import (
     ModelIdentity,
     SegmentationConfig,
     TrainingMetadata,
-    compute_config_hash,
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from tests.integration_anomaly.test_anomaly_constants import DEFAULT_SCORE_THRESHOLD

@@ -40,22 +40,25 @@ except Exception:  # pragma: no cover - optional dependency
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name
 from databricks.labs.dqx.anomaly.mlflow_registry import get_default_registry
-from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry, compute_config_hash
+from databricks.labs.dqx.anomaly.model_config import compute_config_hash
+from databricks.labs.dqx.anomaly.model_registry import (
+    AnomalyModelRecord,
+    AnomalyModelRegistry,
+)
+from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,
     SparkFeatureMetadata,
     apply_feature_engineering,
     reconstruct_column_infos,
 )
-from databricks.labs.dqx.anomaly.utils.segment_utils import build_segment_name
-from databricks.labs.dqx.anomaly.utils import (
+from databricks.labs.dqx.anomaly.scoring import (
     add_info_column,
     add_severity_percentile_column,
-    build_segment_filter,
     create_null_scored_dataframe,
     create_udf_schema,
-    validate_sklearn_compatibility,
 )
+from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter, build_segment_name
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
@@ -78,6 +81,28 @@ SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ScoringConfig:
+    """Configuration for anomaly scoring."""
+
+    columns: list[str]
+    model_name: str
+    registry_table: str
+    threshold: float
+    merge_columns: list[str]
+    row_filter: str | None = None
+    drift_threshold: float | None = None
+    drift_threshold_value: float = 3.0
+    include_contributions: bool = False
+    include_confidence: bool = False
+    segment_by: list[str] | None = None
+    driver_only: bool = False
+    score_col: str = "anomaly_score"
+    score_std_col: str = "anomaly_score_std"
+    contributions_col: str = "anomaly_contributions"
+    severity_col: str = "severity_percentile"
+
+
 class AnomalyScoringStrategy(ABC):
     """Scoring strategy interface for anomaly models."""
 
@@ -86,14 +111,14 @@ class AnomalyScoringStrategy(ABC):
         pass
 
     @abstractmethod
-    def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: "ScoringConfig") -> DataFrame:
+    def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: ScoringConfig) -> DataFrame:
         pass
 
     @abstractmethod
     def score_segmented(
         self,
         df: DataFrame,
-        config: "ScoringConfig",
+        config: ScoringConfig,
         registry_client: AnomalyModelRegistry,
         all_segments: list[AnomalyModelRecord],
     ) -> DataFrame:
@@ -106,13 +131,13 @@ class IsolationForestScoringStrategy(AnomalyScoringStrategy):
     def supports(self, algorithm: str) -> bool:
         return algorithm.startswith("IsolationForest")
 
-    def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: "ScoringConfig") -> DataFrame:
+    def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: ScoringConfig) -> DataFrame:
         return _score_global_model(df, record, config)
 
     def score_segmented(
         self,
         df: DataFrame,
-        config: "ScoringConfig",
+        config: ScoringConfig,
         registry_client: AnomalyModelRegistry,
         all_segments: list[AnomalyModelRecord],
     ) -> DataFrame:
@@ -268,28 +293,6 @@ def has_no_anomalies(
     return make_condition(condition_expr, message, "has_anomalies"), apply
 
 
-@dataclass
-class ScoringConfig:
-    """Configuration for anomaly scoring."""
-
-    columns: list[str]
-    model_name: str
-    registry_table: str
-    threshold: float
-    merge_columns: list[str]
-    row_filter: str | None = None
-    drift_threshold: float | None = None
-    drift_threshold_value: float = 3.0
-    include_contributions: bool = False
-    include_confidence: bool = False
-    segment_by: list[str] | None = None
-    driver_only: bool = False
-    score_col: str = "anomaly_score"
-    score_std_col: str = "anomaly_score_std"
-    contributions_col: str = "anomaly_contributions"
-    severity_col: str = "severity_percentile"
-
-
 _INTERNAL_ROW_ID = "_dqx_row_id"
 
 
@@ -337,7 +340,7 @@ def set_driver_only_for_tests(enabled: bool) -> None:
 def _check_segment_drift(
     segment_df: DataFrame,
     columns: list[str],
-    segment_model: "AnomalyModelRecord",
+    segment_model: AnomalyModelRecord,
     drift_threshold: float | None,
     drift_threshold_value: float,
 ) -> None:
@@ -972,7 +975,7 @@ def _get_record_for_discovery(
 
 def _load_segment_models(
     registry_client: AnomalyModelRegistry,
-    config: "ScoringConfig",
+    config: ScoringConfig,
 ) -> list[AnomalyModelRecord]:
     all_segments = registry_client.get_all_segment_models(config.registry_table, config.model_name)
     if not all_segments:
@@ -1119,12 +1122,12 @@ def _discover_model_and_config(
 
 
 def _get_and_validate_model_record(
-    registry_client: "AnomalyModelRegistry",
+    registry_client: AnomalyModelRegistry,
     registry: str,
     model_name: str,
     columns: list[str],
     segment_by: list[str] | None = None,
-) -> "AnomalyModelRecord":
+) -> AnomalyModelRecord:
     """
     Retrieve and validate model record from registry.
 
@@ -1168,7 +1171,7 @@ def _get_and_validate_model_record(
     return record
 
 
-def _check_model_staleness(record: "AnomalyModelRecord", model_name: str) -> None:
+def _check_model_staleness(record: AnomalyModelRecord, model_name: str) -> None:
     """Check model training age and issue warning if stale (>30 days)."""
     if record.training.training_time:
         age_days = (datetime.utcnow() - record.training.training_time).days
@@ -1183,7 +1186,7 @@ def _check_model_staleness(record: "AnomalyModelRecord", model_name: str) -> Non
 def _check_and_warn_drift(
     df: DataFrame,
     columns: list[str],
-    record: "AnomalyModelRecord",
+    record: AnomalyModelRecord,
     model_name: str,
     drift_threshold: float | None,
     drift_threshold_value: float,
@@ -1215,7 +1218,7 @@ def _check_and_warn_drift(
 def _prepare_drift_df(
     df: DataFrame,
     columns: list[str],
-    record: "AnomalyModelRecord",
+    record: AnomalyModelRecord,
 ) -> tuple[DataFrame, list[str]]:
     """Prepare drift DataFrame and columns aligned to training baseline stats."""
     feature_metadata_json = record.features.feature_metadata

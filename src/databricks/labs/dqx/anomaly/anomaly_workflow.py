@@ -4,7 +4,7 @@ Workflow to train anomaly detection models on Databricks.
 Requires the 'anomaly' extras: pip install databricks-labs-dqx[anomaly]
 """
 
-from databricks.labs.dqx.anomaly import AnomalyEngine
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task

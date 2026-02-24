@@ -1,7 +1,5 @@
 """Reusable synthetic data generators for anomaly detection tests."""
 
-from __future__ import annotations
-
 import numpy as np
 from pyspark.sql import DataFrame
 import pyspark.sql.functions as F

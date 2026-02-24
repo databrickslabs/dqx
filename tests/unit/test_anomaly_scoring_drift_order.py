@@ -6,13 +6,13 @@ from pyspark.sql import DataFrame
 
 from databricks.labs.dqx.anomaly import check_funcs
 from databricks.labs.dqx.anomaly.check_funcs import ScoringConfig
+from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     FeatureEngineering,
     ModelIdentity,
     SegmentationConfig,
     TrainingMetadata,
-    compute_config_hash,
 )
 from databricks.labs.dqx.errors import InvalidParameterError
 

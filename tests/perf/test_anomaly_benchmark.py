@@ -1,6 +1,7 @@
 from pyspark.sql import functions as F
 
-from databricks.labs.dqx.anomaly import AnomalyEngine, has_no_anomalies
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.errors import InvalidParameterError
 from tests.constants import TEST_CATALOG

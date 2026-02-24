@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import importlib.metadata
 import logging
 import os.path
@@ -785,7 +783,7 @@ class WorkflowDeployment(InstallationMixin):
 
 class MaxedStreamHandler(logging.StreamHandler):
     MAX_STREAM_SIZE = 2**20 - 2**6  # 1 Mb minus some buffer
-    _installed_handlers: dict[str, tuple[logging.Logger, MaxedStreamHandler]] = {}
+    _installed_handlers: dict[str, tuple[logging.Logger, "MaxedStreamHandler"]] = {}
     _sent_bytes = 0
 
     @classmethod

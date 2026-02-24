@@ -1,4 +1,4 @@
-"""Segment utilities for anomaly detection."""
+"""Segment naming and filtering for anomaly detection."""
 
 from collections.abc import Mapping
 from typing import Any
