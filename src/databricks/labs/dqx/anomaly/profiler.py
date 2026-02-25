@@ -408,10 +408,7 @@ def _analyze_column_by_type(
         unsupported_columns.append(col_name)
 
 
-def _auto_discover_heuristic(
-    df: DataFrame,
-    warnings: list[str],
-) -> AnomalyProfile:
+def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfile:
     """
     Auto-discover using on-the-fly heuristics with multi-type support.
 

@@ -263,7 +263,7 @@ def create_anomaly_check_rule(
         )
     """
     check_kwargs = {
-        "model": qualify_model_name(model_name, registry_table),
+        "model_name": qualify_model_name(model_name, registry_table),
         "registry_table": registry_table,
         "threshold": threshold,
     }
@@ -571,7 +571,7 @@ def create_anomaly_dataset_rule(
         criticality=criticality,
         check_func=has_no_row_anomalies,
         check_func_kwargs={
-            "model": qualify_model_name(model_name, registry_table),
+            "model_name": qualify_model_name(model_name, registry_table),
             "registry_table": registry_table,
             "threshold": threshold,
             **kwargs,

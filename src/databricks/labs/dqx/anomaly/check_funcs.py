@@ -153,6 +153,110 @@ def _resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:
     )
 
 
+def _validate_anomaly_model_and_registry(model_name: str, registry_table: str) -> None:
+    """Validate model_name and registry_table; raise InvalidParameterError if invalid."""
+    if not model_name:
+        raise InvalidParameterError(
+            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
+        )
+    if not registry_table:
+        raise InvalidParameterError(
+            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
+        )
+    validate_fully_qualified_name(model_name, label="model_name")
+    validate_fully_qualified_name(registry_table, label="registry_table")
+
+
+def _validate_anomaly_threshold(threshold: float) -> None:
+    """Validate threshold is a float in [0, 100]; raise InvalidParameterError if invalid."""
+    if not isinstance(threshold, (int, float)):
+        raise InvalidParameterError("threshold must be a float.")
+    if not 0.0 <= float(threshold) <= 100.0:
+        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
+
+
+def _validate_anomaly_row_filter(row_filter: str | None) -> None:
+    """Validate row_filter is str or None; raise InvalidParameterError if invalid."""
+    if row_filter is not None and not isinstance(row_filter, str):
+        raise InvalidParameterError("row_filter must be a SQL expression.")
+
+
+def _validate_anomaly_drift_threshold(drift_threshold: float | None) -> None:
+    """Validate drift_threshold is a positive float or None; raise InvalidParameterError if invalid."""
+    if drift_threshold is None:
+        return
+    if not isinstance(drift_threshold, (int, float)):
+        raise InvalidParameterError("drift_threshold must be a float.")
+    if drift_threshold <= 0:
+        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
+
+
+def _validate_anomaly_include_flags(include_contributions: bool, include_confidence: bool) -> None:
+    """Validate include_contributions and include_confidence are bool; raise InvalidParameterError if invalid."""
+    if not isinstance(include_contributions, bool):
+        raise InvalidParameterError("include_contributions must be a boolean.")
+    if not isinstance(include_confidence, bool):
+        raise InvalidParameterError("include_confidence must be a boolean.")
+
+
+def _validate_has_no_row_anomalies_params(
+    model_name: str,
+    registry_table: str,
+    threshold: float,
+    row_filter: str | None,
+    drift_threshold: float | None,
+    include_contributions: bool,
+    include_confidence: bool,
+) -> None:
+    """Validate has_no_row_anomalies arguments; raise InvalidParameterError if invalid."""
+    _validate_anomaly_model_and_registry(model_name, registry_table)
+    _validate_anomaly_threshold(threshold)
+    _validate_anomaly_row_filter(row_filter)
+    _validate_anomaly_drift_threshold(drift_threshold)
+    _validate_anomaly_include_flags(include_contributions, include_confidence)
+    if include_contributions and not SHAP_AVAILABLE:
+        raise InvalidParameterError(
+            "include_contributions=True requires the 'shap' dependency. "
+            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+        )
+
+
+def _check_reserved_row_id_columns(df: DataFrame) -> None:
+    """Raise if DataFrame has reserved _dqx_row_id / __dqx_row_id columns."""
+    reserved_prefixes = ("_dqx_row_id", "__dqx_row_id")
+    for col_name in df.columns:
+        if col_name.startswith(reserved_prefixes) or col_name == "_dqx_row_id":
+            raise InvalidParameterError(
+                f"Input DataFrame must not contain reserved column '{col_name}'. "
+                "Rename or drop this column before running the anomaly check."
+            )
+
+
+def _run_anomaly_scoring(
+    df_to_score: DataFrame,
+    config: ScoringConfig,
+    registry_table: str,
+    model_name: str,
+) -> DataFrame:
+    """Route to segmented or global scoring and return scored DataFrame (caller drops row_id_col)."""
+    registry_client = AnomalyModelRegistry(df_to_score.sparkSession)
+    if config.segment_by:
+        all_segments = _load_segment_models(registry_client, config)
+        strategy = _resolve_scoring_strategy(all_segments[0].identity.algorithm)
+        return strategy.score_segmented(df_to_score, config, registry_client, all_segments)
+
+    record = registry_client.get_active_model(registry_table, model_name)
+    if not record:
+        fallback = _try_segmented_scoring_fallback(df_to_score, config, registry_client)
+        if fallback is not None:
+            return fallback
+        raise InvalidParameterError(
+            f"Model '{model_name}' not found in '{registry_table}'. Train first using anomaly.train(...)."
+        )
+    strategy = _resolve_scoring_strategy(record.identity.algorithm)
+    return strategy.score_global(df_to_score, record, config)
+
+
 @register_rule("dataset")
 def has_no_row_anomalies(
     model_name: str,
@@ -208,44 +312,27 @@ def has_no_row_anomalies(
         >>> df_scored.select("_dq_info.anomaly.score", "_dq_info.anomaly.is_anomaly")
         >>> df_scored.filter(col("_dq_info.anomaly.is_anomaly"))
     """
-    if not model_name:
-        raise InvalidParameterError(
-            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
-        )
-
-    if not registry_table:
-        raise InvalidParameterError(
-            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
-        )
-
-    validate_fully_qualified_name(model_name, label="model_name")
-    validate_fully_qualified_name(registry_table, label="registry_table")
-
-    if not 0.0 <= float(threshold) <= 100.0:
-        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
-
-    if drift_threshold and drift_threshold <= 0:
-        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
-
-    if include_contributions and not SHAP_AVAILABLE:
-        raise InvalidParameterError(
-            "include_contributions=True requires the 'shap' dependency. "
-            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
-        )
+    _validate_has_no_row_anomalies_params(
+        model_name,
+        registry_table,
+        threshold,
+        row_filter,
+        drift_threshold,
+        include_contributions,
+        include_confidence,
+    )
 
     row_id_col = f"__dqx_row_id_{uuid.uuid4().hex}"
     score_col = f"__dq_anomaly_score_{uuid.uuid4().hex}"
     score_std_col = f"__dq_anomaly_score_std_{uuid.uuid4().hex}"
     contributions_col = f"__dq_anomaly_contributions_{uuid.uuid4().hex}"
     severity_col = f"__dq_severity_percentile_{uuid.uuid4().hex}"
-
     driver_only_local = _DRIVER_ONLY["value"]
 
     def apply(df: DataFrame) -> DataFrame:
+        _check_reserved_row_id_columns(df)
         df_to_score = df.withColumn(row_id_col, F.monotonically_increasing_id())
-
         columns, segment_by = _fetch_model_columns_and_segments(df_to_score, model_name, registry_table)
-
         config = ScoringConfig(
             columns=columns,
             model_name=model_name,
@@ -264,32 +351,9 @@ def has_no_row_anomalies(
             contributions_col=contributions_col,
             severity_col=severity_col,
         )
-
-        registry_client = AnomalyModelRegistry(df_to_score.sparkSession)
-
-        # Route to segmented or global scoring
-        if segment_by:
-            all_segments = _load_segment_models(registry_client, config)
-            strategy = _resolve_scoring_strategy(all_segments[0].identity.algorithm)
-            result = strategy.score_segmented(df_to_score, config, registry_client, all_segments)
-            return result.drop(row_id_col)
-
-        # Try global model first
-        record = registry_client.get_active_model(registry_table, model_name)
-        if not record:
-            # Fallback to segmented scoring
-            fallback = _try_segmented_scoring_fallback(df_to_score, config, registry_client)
-            if fallback is not None:
-                return fallback.drop(row_id_col)
-            raise InvalidParameterError(
-                f"Model '{model_name}' not found in '{registry_table}'. Train first using anomaly.train(...)."
-            )
-
-        strategy = _resolve_scoring_strategy(record.identity.algorithm)
-        result = strategy.score_global(df_to_score, record, config)
+        result = _run_anomaly_scoring(df_to_score, config, registry_table, model_name)
         return result.drop(row_id_col)
 
-    # Create condition directly from _dq_info.anomaly.is_anomaly (no intermediate column needed)
     message = F.concat_ws(
         "",
         F.lit("Anomaly severity "),
@@ -1271,7 +1335,7 @@ def _score_global_model(
 
     _check_model_staleness(record, config.model_name)
 
-    # Prepare data
+    # Prepare data: filter then drift check (order covered by integration tests with row_filter)
     df_filtered = _apply_row_filter(df, config.row_filter)
     _check_and_warn_drift(
         df_filtered,

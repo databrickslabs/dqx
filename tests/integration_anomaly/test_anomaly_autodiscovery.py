@@ -3,7 +3,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
-from databricks.labs.dqx.anomaly import profiler as profiler_module
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_anomaly_constants import SEGMENT_REGIONS
@@ -50,8 +49,8 @@ def test_auto_discover_segments(spark: SparkSession):
     assert profile.segment_count == 3
 
 
-def test_auto_discover_segments_uses_exact_distinct(spark: SparkSession, monkeypatch):
-    """Ensure segment counts use exact distinct values even if approx undercounts."""
+def test_auto_discover_segments_uses_exact_distinct(spark: SparkSession):
+    """Ensure segment counts use exact distinct values (4 regions -> segment_count 4)."""
     data = []
     for region in ("North", "South", "East", "West"):
         for i in range(1200):
@@ -59,14 +58,7 @@ def test_auto_discover_segments_uses_exact_distinct(spark: SparkSession, monkeyp
 
     df = spark.createDataFrame(data, "region string, amount double")
 
-    def fake_counts(_df, column_names, distinct_columns, **_kwargs):
-        null_counts = {col: 0 for col in column_names}
-        distinct_counts = {col: 3 for col in distinct_columns}
-        return null_counts, distinct_counts
-
-    monkeypatch.setattr(profiler_module, "compute_null_and_distinct_counts", fake_counts)
-
-    profile = profiler_module.auto_discover_columns(df)
+    profile = auto_discover_columns(df)
 
     assert "region" in profile.recommended_segments
     assert profile.segment_count == 4

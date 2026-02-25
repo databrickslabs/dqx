@@ -110,7 +110,7 @@ def test_segment_scoring(
         criticality="error",
         check_func=has_no_row_anomalies,
         check_func_kwargs={
-            "model": model_name,
+            "model_name": model_name,
             "registry_table": registry_table,
             "threshold": DQENGINE_SCORE_THRESHOLD,  # Lowered from 0.7 to account for IsolationForest scoring characteristics
         },
@@ -226,7 +226,7 @@ def test_unknown_segment_handling(
         criticality="error",
         check_func=has_no_row_anomalies,
         check_func_kwargs={
-            "model": model_name,
+            "model_name": model_name,
             "registry_table": registry_table,
         },
     )
@@ -283,7 +283,7 @@ def test_all_unknown_segments_yield_null_scores(
         criticality="error",
         check_func=has_no_row_anomalies,
         check_func_kwargs={
-            "model": model_name,
+            "model_name": model_name,
             "registry_table": registry_table,
             "include_contributions": True,
             "include_confidence": True,
