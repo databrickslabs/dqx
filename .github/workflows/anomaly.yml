@@ -37,7 +37,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.15.0
+        run: pip install hatch==1.15.0 'virtualenv<21'
 
       # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
@@ -130,7 +130,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.15.0
+        run: pip install hatch==1.15.0 'virtualenv<21'
 
       # Anomaly tests are run from within tests/integration_anomaly folder.
       # Create .coveragerc with correct relative path to source code.
