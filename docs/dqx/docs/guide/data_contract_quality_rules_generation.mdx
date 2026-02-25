@@ -131,6 +131,11 @@ When `generate_schema_validation=True` (default), DQX generates one **dataset-le
 Schema validation requires every property in the contract to have a `physicalType` field set to a valid Unity Catalog data type. Properties with only `logicalType` will cause an `InvalidPhysicalTypeError`.
 </Admonition>
 
+<Admonition type="info" title="Type validation rules">
+- **Recursive validation**: Inner types of `ARRAY&lt;T&gt;`, `MAP&lt;K,V&gt;`, and `STRUCT&lt;...&gt;` are validated at every nesting level. Invalid inner types (e.g. `ARRAY&lt;NOT_A_TYPE&gt;`) raise `InvalidPhysicalTypeError` at contract load time.
+- **Nesting depth limit**: Type nesting is limited to **50 levels** to avoid stack overflow on malformed or excessively deep types. Exceeding this limit raises `InvalidPhysicalTypeError`.
+</Admonition>
+
 ```python
 rules = generator.generate_rules_from_contract(
     contract_file="/path/to/contract.yaml",

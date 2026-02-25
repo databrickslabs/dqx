@@ -309,10 +309,126 @@ class DataContractRulesGenerator(DQEngineBase):
         "INTERVAL ",
     )
     _UNITY_DECIMAL_PATTERN = re.compile(r"^DECIMAL\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)\s*$", re.IGNORECASE)
+    _MAX_TYPE_RECURSION_DEPTH = 50
 
     @classmethod
-    def _validate_unity_physical_type(cls, type_str: str) -> str:
-        """Validate and return normalized Unity Catalog type; raise InvalidPhysicalTypeError if invalid."""
+    def _extract_content_in_angle_brackets(cls, type_str: str) -> str:
+        """Return the substring between the first '<' and its matching '>'; uses bracket counting."""
+        start = type_str.find("<")
+        if start < 0:
+            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has no opening angle bracket for complex type.")
+        depth = 1
+        i = start + 1
+        while i < len(type_str) and depth > 0:
+            if type_str[i] == "<":
+                depth += 1
+            elif type_str[i] == ">":
+                depth -= 1
+            i += 1
+        if depth != 0:
+            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has unmatched angle brackets.")
+        return type_str[start + 1 : i - 1].strip()
+
+    @classmethod
+    def _split_top_level_comma(cls, content: str) -> list[str]:
+        """Split content by commas only when bracket depth is 0."""
+        parts: list[str] = []
+        depth = 0
+        start = 0
+        for i, char in enumerate(content):
+            if char in "<(":
+                depth += 1
+            elif char in ">)":
+                depth -= 1
+            elif char == "," and depth == 0:
+                parts.append(content[start:i].strip())
+                start = i + 1
+        parts.append(content[start:].strip())
+        return parts
+
+    @classmethod
+    def _validate_decimal(cls, decimal_match: re.Match[str]) -> str:
+        """Validate DECIMAL precision/scale and return normalized string."""
+        precision = int(decimal_match.group(1))
+        scale = int(decimal_match.group(2))
+        if precision < 1 or precision > 38:
+            raise InvalidPhysicalTypeError(
+                f"DECIMAL precision must be between 1 and 38 (Spark limit), got {precision}."
+            )
+        if scale < 0 or scale > precision:
+            raise InvalidPhysicalTypeError(f"DECIMAL scale must be between 0 and precision ({precision}), got {scale}.")
+        return f"DECIMAL({precision},{scale})"
+
+    @classmethod
+    def _validate_array_type(cls, type_str_stripped: str, type_str: str, depth: int) -> str:
+        """Validate ARRAY<T> and return normalized string."""
+        inner = cls._extract_content_in_angle_brackets(type_str_stripped)
+        if not inner:
+            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has empty ARRAY element type.")
+        validated_inner = cls._validate_unity_physical_type(inner, depth + 1)
+        return f"ARRAY<{validated_inner}>"
+
+    @classmethod
+    def _validate_map_type(cls, type_str_stripped: str, type_str: str, depth: int) -> str:
+        """Validate MAP<K,V> and return normalized string."""
+        inner = cls._extract_content_in_angle_brackets(type_str_stripped)
+        if not inner:
+            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has empty MAP key/value types.")
+        key_value = cls._split_top_level_comma(inner)
+        if len(key_value) != 2:
+            raise InvalidPhysicalTypeError(
+                f"physicalType MAP must have exactly two type parameters (key, value), got {len(key_value)}."
+            )
+        validated_key = cls._validate_unity_physical_type(key_value[0], depth + 1)
+        validated_val = cls._validate_unity_physical_type(key_value[1], depth + 1)
+        return f"MAP<{validated_key},{validated_val}>"
+
+    @classmethod
+    def _parse_struct_field_and_validate(cls, field_spec: str, type_str: str, depth: int) -> str:
+        """Parse one STRUCT field 'name: type' and return 'name:validated_type'."""
+        if not field_spec:
+            raise InvalidPhysicalTypeError(f"physicalType STRUCT has empty field spec in '{type_str}'.")
+        colon_at = -1
+        bracket_depth = 0
+        for idx, char in enumerate(field_spec):
+            if char in "<(":
+                bracket_depth += 1
+            elif char in ">)":
+                bracket_depth -= 1
+            elif char == ":" and bracket_depth == 0:
+                colon_at = idx
+                break
+        if colon_at < 0:
+            raise InvalidPhysicalTypeError(f"physicalType STRUCT field must be 'name: type', got '{field_spec}'.")
+        field_name = field_spec[:colon_at].strip()
+        field_type = field_spec[colon_at + 1 :].strip()
+        if not field_name or not field_type:
+            raise InvalidPhysicalTypeError(f"physicalType STRUCT field has missing name or type in '{field_spec}'.")
+        validated_type = cls._validate_unity_physical_type(field_type, depth + 1)
+        return f"{field_name}:{validated_type}"
+
+    @classmethod
+    def _validate_struct_type(cls, type_str_stripped: str, type_str: str, depth: int) -> str:
+        """Validate STRUCT<...> and return normalized string."""
+        inner = cls._extract_content_in_angle_brackets(type_str_stripped)
+        if not inner:
+            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has empty STRUCT fields.")
+        fields = cls._split_top_level_comma(inner)
+        validated_parts = [cls._parse_struct_field_and_validate(spec, type_str, depth) for spec in fields]
+        return "STRUCT<" + ",".join(validated_parts) + ">"
+
+    @classmethod
+    def _validate_unity_physical_type(cls, type_str: str, depth: int = 0) -> str:
+        """Validate and return normalized Unity Catalog type; inner types are validated recursively.
+
+        DECIMAL precision/scale are bounded by Spark's limit (precision <= 38, scale <= precision).
+        Raises InvalidPhysicalTypeError if invalid or recursion depth exceeded.
+        """
+        if depth > cls._MAX_TYPE_RECURSION_DEPTH:
+            raise InvalidPhysicalTypeError(
+                f"physicalType nesting exceeds maximum depth ({cls._MAX_TYPE_RECURSION_DEPTH}). "
+                "Check for malformed or excessively nested types."
+            )
         type_str_stripped = type_str.strip()
         if not type_str_stripped:
             raise InvalidPhysicalTypeError(
@@ -324,7 +440,13 @@ class DataContractRulesGenerator(DQEngineBase):
             return type_upper
         decimal_match = cls._UNITY_DECIMAL_PATTERN.match(type_str_stripped)
         if decimal_match:
-            return f"DECIMAL({decimal_match.group(1)},{decimal_match.group(2)})"
+            return cls._validate_decimal(decimal_match)
+        if type_upper.startswith("ARRAY<"):
+            return cls._validate_array_type(type_str_stripped, type_str, depth)
+        if type_upper.startswith("MAP<"):
+            return cls._validate_map_type(type_str_stripped, type_str, depth)
+        if type_upper.startswith("STRUCT<"):
+            return cls._validate_struct_type(type_str_stripped, type_str, depth)
         if any(type_upper.startswith(prefix) for prefix in cls._UNITY_COMPLEX_PREFIXES):
             return type_upper
         raise InvalidPhysicalTypeError(
@@ -342,6 +464,7 @@ class DataContractRulesGenerator(DQEngineBase):
         parts: list[str] = []
         for prop in schema_obj.properties or []:
             if not prop.name:
+                logger.warning(f"Skipping property without name in schema '{schema_name}'")
                 continue
             physical_type = getattr(prop, "physicalType", None)
             if not physical_type:
@@ -994,11 +1117,14 @@ class DataContractRulesGenerator(DQEngineBase):
         """
         columns = []
 
+        schema_name_for_log = schema_obj.name or "unknown"
+
         def _extract_columns(props: list[SchemaProperty] | None, prefix: str = "") -> None:
             """Recursively extract column information from properties."""
             for prop in props or []:
                 # Skip properties without a name
                 if not prop.name:
+                    logger.warning(f"Skipping property without name in schema '{schema_name_for_log}'")
                     continue
 
                 column_path = f"{prefix}.{prop.name}" if prefix else prop.name

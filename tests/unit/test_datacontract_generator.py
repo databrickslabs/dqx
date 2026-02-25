@@ -1437,8 +1437,281 @@ class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
             )
             assert len(schema_rules) == 1
             assert "tags ARRAY<STRING>" in ddl, "Complex types must be normalized to uppercase"
-            assert "meta MAP<STRING, INT>" in ddl, "MAP type must be normalized to uppercase"
+            assert "meta MAP<STRING,INT>" in ddl, "MAP type must be normalized to uppercase"
             assert "array<string>" not in ddl and "map<string" not in ddl, "DDL must not retain lowercase type"
+        finally:
+            os.unlink(temp_path)
+
+
+class TestDataContractGeneratorSchemaValidationRecursiveAndDecimal(DataContractGeneratorTestBase):
+    """Tests for recursive type validation, DECIMAL limits, recursion depth, and nameless-property warnings."""
+
+    def test_schema_validation_recursive_invalid_inner_type_array(self, generator):
+        """ARRAY<NOT_A_TYPE> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "ARRAY<NOT_A_TYPE>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "NOT_A_TYPE" in str(exc_info.value) or "not a valid" in str(exc_info.value).lower()
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_inner_type_map_value(self, generator):
+        """MAP<STRING, NOT_A_TYPE> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "MAP<STRING, NOT_A_TYPE>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_inner_type_map_key(self, generator):
+        """MAP<NOT_A_TYPE, INT> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "MAP<NOT_A_TYPE, INT>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_inner_type_struct(self, generator):
+        """STRUCT<a:INT, b:NOT_A_TYPE> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "STRUCT<a:INT, b:NOT_A_TYPE>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_nested_array_map(self, generator):
+        """ARRAY<MAP<STRING, BAD>> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "ARRAY<MAP<STRING, BAD>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_struct_array_inner(self, generator):
+        """STRUCT<x:ARRAY<INVALID>> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "STRUCT<x:ARRAY<INVALID>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_array_array_int(self, generator):
+        """ARRAY<ARRAY<INT>> is valid and appears in DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "ARRAY<ARRAY<INT>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            self._assert_unity_ddl_contains(ddl, ["col ARRAY<ARRAY<INT>>"])
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_map_string_array_int(self, generator):
+        """MAP<STRING, ARRAY<INT>> is valid and appears in DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "MAP<STRING, ARRAY<INT>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            self._assert_unity_ddl_contains(ddl, ["col MAP<STRING,ARRAY<INT>>"])
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_struct_with_array(self, generator):
+        """STRUCT<a:INT, b:ARRAY<STRING>> is valid and appears in DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "STRUCT<a:INT, b:ARRAY<STRING>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "col STRUCT<" in ddl
+            assert "a:INT" in ddl
+            assert "b:ARRAY<STRING>" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_struct_nested_struct(self, generator):
+        """STRUCT<a:STRUCT<x:INT, y:STRING>> is valid and appears in DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "STRUCT<a:STRUCT<x:INT, y:STRING>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "col STRUCT<" in ddl
+            assert "a:STRUCT<" in ddl
+            assert "x:INT" in ddl
+            assert "y:STRING" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_deep_array(self, generator):
+        """ARRAY<ARRAY<ARRAY<STRING>>> is valid."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "ARRAY<ARRAY<ARRAY<STRING>>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "ARRAY<ARRAY<ARRAY<STRING>>>" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursion_limit_exceeded(self, generator):
+        """Type nested beyond max depth raises InvalidPhysicalTypeError."""
+        depth = 52  # One more than _MAX_TYPE_RECURSION_DEPTH (50)
+        nested = "STRING"
+        for _ in range(depth):
+            nested = f"ARRAY<{nested}>"
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": nested}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "depth" in str(exc_info.value).lower() or "50" in str(exc_info.value)
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_decimal_precision_over_38_raises(self, generator):
+        """DECIMAL(100,2) raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "DECIMAL(100,2)"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "38" in str(exc_info.value) or "precision" in str(exc_info.value).lower()
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_decimal_scale_over_precision_raises(self, generator):
+        """DECIMAL(10,50) raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "DECIMAL(10,50)"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "scale" in str(exc_info.value).lower() or "precision" in str(exc_info.value).lower()
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_decimal_38_10_accepted(self, generator):
+        """DECIMAL(38,10) is accepted (Spark max precision)."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "DECIMAL(38,10)"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "col DECIMAL(38,10)" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_nameless_property_warns_in_ddl_and_schema_info(self, generator, caplog):
+        """Skipping property without name logs warning in DDL and schema_info paths."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {"name": "valid_col", "physicalType": "STRING"},
+                {"name": "", "physicalType": "INT"},  # nameless
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with caplog.at_level(logging.WARNING):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=True,
+                    process_text_rules=False,
+                )
+            # Both _schema_object_to_ddl and _build_schema_info_from_model (via text/predefined path) may see props
+            # Predefined rules iterate properties and skip nameless with warning; DDL path also skips with warning
+            assert any("Skipping property without name" in rec.message for rec in caplog.records)
         finally:
             os.unlink(temp_path)
 

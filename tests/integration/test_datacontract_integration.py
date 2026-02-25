@@ -4,20 +4,51 @@ Integration tests for data contract (ODCS) rule generation.
 Covers all code paths through DQGenerator.generate_rules_from_contract and the
 underlying DataContractRulesGenerator: contract loading (file, object, YAML string),
 rule generation flags (schema validation, predefined, text rules), default_criticality,
-multiple schemas, and error paths (ParameterError, NotFound, ODCSContractError).
+multiple schemas, recursive type validation, DECIMAL validation, and error paths
+(ParameterError, NotFound, ODCSContractError, InvalidPhysicalTypeError).
 """
 
 import os
 import tempfile
+from typing import Any
+
 import pytest
 import yaml
 from datacontract.data_contract import DataContract
-from databricks.sdk.errors import NotFound
+from pyspark.sql import types as spark_types
 
+from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import ODCSContractError, ParameterError
+from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from tests.datacontract_helpers import get_schema_validation_rules
+
+
+def _generate_rules_from_temp_contract(
+    workspace_client: Any,
+    spark: Any,
+    contract: dict[str, Any],
+    **kwargs: Any,
+) -> list[dict]:
+    """Write contract to a temp YAML file, run generator, return rules. Cleans up the file."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.safe_dump(contract, f)
+        path = f.name
+    try:
+        generator = DQGenerator(workspace_client=workspace_client, spark=spark)
+        return generator.generate_rules_from_contract(contract_file=path, **kwargs)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _temp_contract_path_with_content(content: str) -> str:
+    """Write raw content to a temp YAML file and return its path. Caller must os.unlink(path)."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(content)
+        return f.name
 
 
 # Minimal valid ODCS v3.x contract (single schema, one property) for contract-from-string path
@@ -207,6 +238,195 @@ class TestDataContractIntegration:
         status = DQEngine.validate_checks(rules)
         assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
 
+    def test_schema_validation_expected_schema_parseable_by_spark(self, ws, spark, sample_contract_path):
+        """Generated expected_schema DDL string is parseable by Spark StructType.fromDDL (required at runtime)."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) >= 1
+        ddl = schema_validation_rules[0]["check"]["arguments"]["expected_schema"]
+        parsed = spark_types.StructType.fromDDL(ddl)
+        assert isinstance(parsed, spark_types.StructType)
+        assert len(parsed.fields) > 0
+
+    def test_generate_rules_complex_nested_types_valid(self, ws, spark):
+        """Contract with nested ARRAY, MAP, STRUCT generates valid rules and DDL parseable by Spark."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:complex",
+            "name": "Complex Types",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "nested_schema",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "id", "physicalType": "STRING", "required": True},
+                        {"name": "tags", "physicalType": "ARRAY<ARRAY<INT>>"},
+                        {"name": "meta", "physicalType": "MAP<STRING, ARRAY<INT>>"},
+                        {"name": "nested", "physicalType": "STRUCT<a:INT, b:ARRAY<STRING>>"},
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws,
+            spark,
+            contract,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+        )
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+        schema_rules = get_schema_validation_rules(rules)
+        assert len(schema_rules) == 1
+        ddl = schema_rules[0]["check"]["arguments"]["expected_schema"]
+        assert "tags ARRAY<ARRAY<INT>>" in ddl or "ARRAY<ARRAY<INT>>" in ddl
+        assert "MAP<STRING,ARRAY<INT>>" in ddl or "MAP<STRING, ARRAY<INT>>" in ddl
+        assert "STRUCT<" in ddl and "a:INT" in ddl and "b:ARRAY<STRING>" in ddl
+        parsed = spark_types.StructType.fromDDL(ddl)
+        assert isinstance(parsed, spark_types.StructType)
+
+    def test_generate_rules_decimal_within_spark_limit(self, ws, spark):
+        """Contract with DECIMAL(38,10) (Spark max precision) generates valid rules."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:decimal",
+            "name": "Decimal",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "dec_schema",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "id", "physicalType": "STRING"},
+                        {"name": "amount", "physicalType": "DECIMAL(38,10)"},
+                    ],
+                },
+            ],
+        }
+        rules = _generate_rules_from_temp_contract(
+            ws,
+            spark,
+            contract,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+        )
+        schema_rules = get_schema_validation_rules(rules)
+        assert len(schema_rules) == 1
+        ddl = schema_rules[0]["check"]["arguments"]["expected_schema"]
+        assert "DECIMAL(38,10)" in ddl
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors
+
+    def test_error_invalid_inner_physical_type_raises(self, ws, spark):
+        """Contract with invalid inner type (e.g. ARRAY<NOT_A_TYPE>) raises InvalidPhysicalTypeError."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:invalid",
+            "name": "Invalid",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "s",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "id", "physicalType": "STRING"},
+                        {"name": "bad", "physicalType": "ARRAY<NOT_A_VALID_TYPE>"},
+                    ],
+                },
+            ],
+        }
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws,
+                spark,
+                contract,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+        assert "NOT_A_VALID_TYPE" in str(exc_info.value) or "not a valid" in str(exc_info.value).lower()
+
+    def test_error_decimal_precision_over_38_raises(self, ws, spark):
+        """Contract with DECIMAL(100,2) raises InvalidPhysicalTypeError (Spark limit 38)."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:decimal_invalid",
+            "name": "Invalid Decimal",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "s",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "id", "physicalType": "STRING"},
+                        {"name": "col", "physicalType": "DECIMAL(100,2)"},
+                    ],
+                },
+            ],
+        }
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws,
+                spark,
+                contract,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+        assert "38" in str(exc_info.value) or "precision" in str(exc_info.value).lower()
+
+    def test_error_decimal_scale_over_precision_raises(self, ws, spark):
+        """Contract with DECIMAL(10,50) (scale > precision) raises InvalidPhysicalTypeError."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:decimal_scale",
+            "name": "Invalid Scale",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "s",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "id", "physicalType": "STRING"},
+                        {"name": "col", "physicalType": "DECIMAL(10,50)"},
+                    ],
+                },
+            ],
+        }
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws,
+                spark,
+                contract,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+        assert "scale" in str(exc_info.value).lower() or "precision" in str(exc_info.value).lower()
+
+
+class TestDataContractIntegrationErrors:
+    """Integration tests for data contract error paths and invalid inputs."""
+
+    @pytest.fixture
+    def sample_contract_path(self):
+        """Path to sample data contract."""
+        tests_dir = os.path.dirname(os.path.dirname(__file__))
+        return os.path.join(tests_dir, "resources", "sample_datacontract.yaml")
+
     def test_error_neither_contract_nor_file(self, ws, spark):
         """Error path: neither contract nor contract_file; raises ParameterError."""
         generator = DQGenerator(workspace_client=ws, spark=spark)
@@ -241,11 +461,9 @@ class TestDataContractIntegration:
 
     def test_error_invalid_contract_raises_odcs_error(self, ws, spark):
         """Error path: malformed ODCS (missing required fields); raises ODCSContractError."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("kind: DataContract\n")
-            f.write("apiVersion: v3.0.2\n")
-            f.write("invalid_structure: missing_required_fields\n")
-            path = f.name
+        path = _temp_contract_path_with_content(
+            "kind: DataContract\napiVersion: v3.0.2\ninvalid_structure: missing_required_fields\n"
+        )
         try:
             generator = DQGenerator(workspace_client=ws, spark=spark)
             with pytest.raises(ODCSContractError, match="Failed to parse ODCS contract"):
