@@ -21,7 +21,7 @@ def test_score_global_model_uses_filtered_df_for_drift(monkeypatch) -> None:
     filtered_df = cast(DataFrame, object())
     captured: dict[str, object] = {}
 
-    def fake_prepare(df, row_filter):
+    def fake_apply_row_filter(df, row_filter):
         captured["prepare"] = (df, row_filter)
         return filtered_df
 
@@ -29,7 +29,7 @@ def test_score_global_model_uses_filtered_df_for_drift(monkeypatch) -> None:
         captured["drift_df"] = df
         raise RuntimeError("stop")
 
-    monkeypatch.setattr(check_funcs, "_prepare_scoring_dataframe", fake_prepare)
+    monkeypatch.setattr(check_funcs, "_apply_row_filter", fake_apply_row_filter)
     monkeypatch.setattr(check_funcs, "_check_and_warn_drift", fake_check)
 
     columns = ["amount"]
