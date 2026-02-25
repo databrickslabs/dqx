@@ -1,9 +1,18 @@
 import logging
 import re
+import warnings
 
 import databricks.sdk.useragent as ua
 from databricks.labs.blueprint.logger import install_logger
 from databricks.labs.dqx.__about__ import __version__
+
+# Suppress Databricks notebook LSP warning: make_tokens_by_line expects lineending markers.
+# Emitted by Databricks runtime (lsp_backend/line_magic_sanitizer), not DQX; harmless.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*make_tokens_by_line.*lineending",
+    category=UserWarning,
+)
 
 install_logger()
 
