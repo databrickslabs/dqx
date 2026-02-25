@@ -5,7 +5,7 @@ clean: docs-clean
 	rm -fr **/*.pyc
 
 .venv/bin/python:
-	pip install hatch
+	pip install hatch 'virtualenv<21'
 	hatch env create
 	hatch run pip install ".[llm,pii,datacontract,anomaly]"
 
