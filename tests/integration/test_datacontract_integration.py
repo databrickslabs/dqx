@@ -177,21 +177,6 @@ class TestDataContractIntegration:
         status = DQEngine.validate_checks(rules)
         assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
 
-    def test_generate_rules_schema_validation_disabled(self, ws, spark, sample_contract_path):
-        """Path: generate_schema_validation=False; no schema_validation rules, validate_checks."""
-        generator = DQGenerator(workspace_client=ws, spark=spark)
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path,
-            generate_predefined_rules=True,
-            process_text_rules=False,
-            generate_schema_validation=False,
-        )
-        schema_validation_rules = get_schema_validation_rules(rules)
-        assert len(schema_validation_rules) == 0
-        assert len(rules) > 0
-        status = DQEngine.validate_checks(rules)
-        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
-
     def test_generate_rules_predefined_disabled(self, ws, spark, sample_contract_path):
         """Path: generate_predefined_rules=False; schema_validation + explicit only, validate_checks."""
         generator = DQGenerator(workspace_client=ws, spark=spark)
@@ -228,7 +213,6 @@ class TestDataContractIntegration:
             contract_file=multi_schema_contract_path,
             generate_predefined_rules=True,
             process_text_rules=False,
-            generate_schema_validation=True,
         )
         schema_validation_rules = get_schema_validation_rules(rules)
         assert len(schema_validation_rules) == 2

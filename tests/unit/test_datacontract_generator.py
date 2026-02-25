@@ -912,12 +912,12 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            assert len(rules) == 1
-            assert rules[0]["criticality"] == "warn"  # Should preserve 'warn' from contract
-            assert rules[0]["check"]["function"] == "regex_match"
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1
+            assert explicit[0]["criticality"] == "warn"  # Should preserve 'warn' from contract
+            assert explicit[0]["check"]["function"] == "regex_match"
         finally:
             os.unlink(temp_path)
 
@@ -948,12 +948,12 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            assert len(rules) == 1
-            assert rules[0]["criticality"] == "error"  # Should preserve 'error' from contract
-            assert rules[0]["check"]["function"] == "is_not_null_and_not_empty"
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1
+            assert explicit[0]["criticality"] == "error"  # Should preserve 'error' from contract
+            assert explicit[0]["check"]["function"] == "is_not_null_and_not_empty"
         finally:
             os.unlink(temp_path)
 
@@ -984,14 +984,14 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            assert len(rules) == 1
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1
             # When criticality is not specified in contract, it won't be in the rule
             # DQX engine will use its default 'error' when applying the rule
-            assert "criticality" not in rules[0] or rules[0].get("criticality") == "error"
-            assert rules[0]["check"]["function"] == "is_not_null"
+            assert "criticality" not in explicit[0] or explicit[0].get("criticality") == "error"
+            assert explicit[0]["check"]["function"] == "is_not_null"
         finally:
             os.unlink(temp_path)
 
@@ -1009,13 +1009,13 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=True,
                 process_text_rules=False,
-                generate_schema_validation=False,
                 default_criticality="warn",
             )
 
-            assert len(rules) == 1
-            assert rules[0]["criticality"] == "warn"  # Predefined rule should use default_criticality
-            assert rules[0]["check"]["function"] == "is_not_null"
+            predefined = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"]
+            assert len(predefined) == 1
+            assert predefined[0]["criticality"] == "warn"  # Predefined rule should use default_criticality
+            assert predefined[0]["check"]["function"] == "is_not_null"
         finally:
             os.unlink(temp_path)
 
@@ -1195,16 +1195,15 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             contract_file=sample_contract_path,
             generate_predefined_rules=False,
             process_text_rules=False,
-            generate_schema_validation=False,
         )
 
-        # Should only have explicit rules (no predefined rules)
-        # Sample ODCS v3.x contract has 8 explicit DQX rules (5 property-level + 3 schema-level)
-        assert len(rules) == 8
-
-        # Verify all rules are explicit
-        for rule in rules:
-            assert rule["user_metadata"]["rule_type"] == "explicit"
+        # Should have explicit rules plus schema validation (no predefined rules)
+        # Sample ODCS v3.x contract has 2 schemas (sensor_readings, all_data_types) + 8 explicit DQX rules
+        schema_rules = get_schema_validation_rules(rules)
+        explicit_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+        assert len(schema_rules) == 2
+        assert len(explicit_rules) == 8
+        assert len(rules) == 10
 
     def test_generate_rules_from_datacontract_obj_with_custom_check_func(
         self, mock_workspace_client, mock_spark, sample_contract_path
@@ -1236,8 +1235,11 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
         schema:
           - name: sensor_readings
+            physicalType: table
             properties:
               - name: sensor_id
+                physicalType: STRING
+                logicalType: string
                 quality:
                   # Explicit check with error criticality
                   - type: custom
@@ -1261,7 +1263,10 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                         function: not_ends_with_suffix
                         arguments:
                           column: sensor_name
-                          suffix: _test"""
+                          suffix: _test
+              - name: sensor_name
+                physicalType: STRING
+                logicalType: string"""
 
         contract = DataContract(data_contract_str=data_contract_str)
 
@@ -1270,7 +1275,6 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             contract=contract,
             generate_predefined_rules=False,
             process_text_rules=False,
-            generate_schema_validation=False,
         )
 
         # Verify rules were generated
@@ -1309,14 +1313,22 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             },
         ]
 
-        assert rules == expected_rules, f"Rules do not match expected: {rules}"
+        explicit_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+        assert len(explicit_rules) == len(expected_rules), f"Explicit rules count mismatch: {explicit_rules}"
+        assert len(get_schema_validation_rules(rules)) == 1, "Expected one schema_validation rule"
+        for exp in expected_rules:
+            match = next(
+                (r for r in explicit_rules if r.get("name") == exp.get("name") and r.get("check") == exp.get("check")),
+                None,
+            )
+            assert match is not None, f"No matching rule for expected {exp} in {explicit_rules}"
 
 
 class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
     """Tests for schema validation rule generation (has_valid_schema, physicalType)."""
 
     def test_schema_validation_rule_generated_by_default(self, generator, sample_contract_path):
-        """Test that when generate_schema_validation=True (default), rules include has_valid_schema per schema."""
+        """Test that rules include has_valid_schema per schema when the contract defines a schema."""
         rules = generator.generate_rules_from_contract(
             contract_file=sample_contract_path, generate_predefined_rules=False, process_text_rules=False
         )
@@ -1325,17 +1337,6 @@ class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
         assert schema_rules[0]["check"]["arguments"]["strict"] is True
         assert schema_rules[0]["user_metadata"]["schema"] == "sensor_readings"
         assert "expected_schema" in schema_rules[0]["check"]["arguments"]
-
-    def test_schema_validation_disabled_when_generate_schema_validation_false(self, generator, sample_contract_path):
-        """Test that when generate_schema_validation=False, no has_valid_schema rules are generated."""
-        rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path,
-            generate_predefined_rules=True,
-            process_text_rules=False,
-            generate_schema_validation=False,
-        )
-        schema_rules = get_schema_validation_rules(rules)
-        assert len(schema_rules) == 0, "Expected no schema validation rules when generate_schema_validation=False"
 
     def test_schema_validation_expected_schema_matches_contract(self, generator):
         """Test that derived expected_schema DDL matches contract properties (physicalType = Unity types)."""
@@ -1733,14 +1734,13 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=True,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            assert len(rules) == 1
-            assert rules[0]["check"]["function"] == "is_not_null"
-            assert rules[0]["check"]["arguments"]["column"] == "user_id"
-            assert rules[0]["user_metadata"]["rule_type"] == "predefined"
-            assert rules[0]["user_metadata"]["dimension"] == "completeness"
+            predefined = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"]
+            assert len(predefined) == 1
+            assert predefined[0]["check"]["function"] == "is_not_null"
+            assert predefined[0]["check"]["arguments"]["column"] == "user_id"
+            assert predefined[0]["user_metadata"]["dimension"] == "completeness"
         finally:
             os.unlink(temp_path)
 
@@ -1986,12 +1986,12 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=True,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            # Should only generate rule for required field
-            assert len(rules) == 1, "Should only generate rule for field with constraints"
-            assert rules[0]["check"]["arguments"]["column"] == "id"
+            # Should only generate predefined rule for required field (plus schema_validation)
+            predefined = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"]
+            assert len(predefined) == 1, "Should only generate one predefined rule for field with constraints"
+            assert predefined[0]["check"]["arguments"]["column"] == "id"
 
         finally:
             os.unlink(temp_path)
@@ -2014,11 +2014,11 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=True,
-                generate_schema_validation=False,
             )
 
-            # Should generate no rules since all text descriptions are empty/whitespace
-            assert len(rules) == 0, "Should skip text rules with empty or whitespace-only descriptions"
+            # Should generate no text_llm rules; only schema_validation when schema is present
+            text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+            assert len(text_rules) == 0, "Should skip text rules with empty or whitespace-only descriptions"
 
         finally:
             os.unlink(temp_path)
@@ -2076,16 +2076,16 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                     "name": "users",
                     "physicalType": "table",
                     "properties": [
-                        {"name": "user_id", "logicalType": "string", "required": True},
-                        {"name": "email", "logicalType": "string", "required": True},
+                        {"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True},
+                        {"name": "email", "physicalType": "STRING", "logicalType": "string", "required": True},
                     ],
                 },
                 {
                     "name": "orders",
                     "physicalType": "table",
                     "properties": [
-                        {"name": "order_id", "logicalType": "string", "required": True},
-                        {"name": "user_id", "logicalType": "string", "required": True},
+                        {"name": "order_id", "physicalType": "STRING", "logicalType": "string", "required": True},
+                        {"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True},
                     ],
                 },
             ],
@@ -2098,16 +2098,15 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=True,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            # Should generate rules for both schemas
+            # Should generate rules for both schemas (2 schema_validation + 4 predefined is_not_null)
             schemas_in_rules = {rule["user_metadata"]["schema"] for rule in rules}
             assert "users" in schemas_in_rules, "Should have rules for users schema"
             assert "orders" in schemas_in_rules, "Should have rules for orders schema"
 
-            # Should have 4 rules total (2 required fields per schema)
-            assert len(rules) == 4, f"Should have 4 rules, got {len(rules)}"
+            # 2 schema_validation + 4 predefined (2 required per schema)
+            assert len(rules) == 6, f"Should have 6 rules (2 schema + 4 predefined), got {len(rules)}"
 
         finally:
             os.unlink(temp_path)
@@ -2146,7 +2145,6 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=True,
                 process_text_rules=False,
-                generate_schema_validation=True,
             )
             schema_validation_rules = get_schema_validation_rules(rules)
             assert len(schema_validation_rules) == 2, "Expected one schema_validation rule per schema"
@@ -2237,13 +2235,13 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            # Should have 2 rules with different criticalities
-            assert len(rules) == 2, f"Should have 2 rules, got {len(rules)}"
+            # Should have 2 explicit rules with different criticalities plus schema validation
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 2, f"Should have 2 explicit rules, got {len(explicit)}"
 
-            criticalities = {rule["criticality"] for rule in rules}
+            criticalities = {rule["criticality"] for rule in explicit}
             assert "error" in criticalities, "Should have error criticality"
             assert "warn" in criticalities, "Should have warn criticality"
 
@@ -2422,12 +2420,12 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            # Should only have 1 rule (the DQX one)
-            assert len(rules) == 1, f"Should only extract DQX rules, got {len(rules)}"
-            assert rules[0]["check"]["function"] == "is_not_null"
+            # Should have 1 explicit rule (the DQX one) plus schema validation
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1, f"Should only extract one DQX explicit rule, got {len(explicit)}"
+            assert explicit[0]["check"]["function"] == "is_not_null"
 
         finally:
             os.unlink(temp_path)
@@ -2458,11 +2456,12 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            # Should generate no rules since non-DQX engines are not supported
-            assert len(rules) == 0, "Should ignore non-DQX custom quality checks"
+            # Should generate no explicit rules; only schema_validation is present
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 0, "Should ignore non-DQX custom quality checks"
+            assert len(get_schema_validation_rules(rules)) == 1
 
         finally:
             os.unlink(temp_path)
@@ -2771,11 +2770,11 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=True,
-                generate_schema_validation=False,
             )
 
-            # Should generate no rules since LLM is not available
-            assert len(rules) == 0, "Should skip text rules when LLM is not available"
+            # Should generate no text_llm rules (only schema_validation when schema is present)
+            text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+            assert len(text_rules) == 0, "Should skip text rules when LLM is not available"
 
         finally:
             os.unlink(temp_path)
@@ -2805,14 +2804,14 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
             # Should not call LLM
             assert not mock_llm_engine.detect_business_rules_with_llm.called
 
-            # Should generate no rules
-            assert len(rules) == 0, "Should skip text rules when process_text_rules=False"
+            # Should generate no text_llm rules (only schema_validation)
+            text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+            assert len(text_rules) == 0, "Should skip text rules when process_text_rules=False"
 
         finally:
             os.unlink(temp_path)
@@ -2850,14 +2849,15 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
     def _verify_multiple_text_rules(self, rules, mock_llm_engine):
         """Helper to verify multiple text rules were generated."""
         assert mock_llm_engine.detect_business_rules_with_llm.call_count == 2
-        assert len(rules) == 2
-        fields_with_rules = {r["user_metadata"]["field"] for r in rules}
+        text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+        assert len(text_rules) == 2
+        fields_with_rules = {r["user_metadata"]["field"] for r in text_rules}
         assert "order_id" in fields_with_rules
         assert "customer_email" in fields_with_rules
 
-        assert len(rules) > 0
+        assert len(text_rules) > 0
 
-        for rule in rules:
+        for rule in text_rules:
             # Use DQEngine's validate_checks method
             validation_status = DQEngine.validate_checks([rule], validate_custom_check_functions=False)
             assert not validation_status.has_errors, f"Rule validation failed: {validation_status.errors}"
@@ -2867,7 +2867,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 assert isinstance(rule["user_metadata"], dict), "user_metadata must be a dictionary"
 
         # Verify all are text_llm rules
-        for rule in rules:
+        for rule in text_rules:
             assert rule["user_metadata"]["rule_type"] == "text_llm"
 
     def test_multiple_text_rules_processed(self, generator):
@@ -2909,7 +2909,6 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 contract_file=temp_path,
                 generate_predefined_rules=False,
                 process_text_rules=True,
-                generate_schema_validation=False,
             )
             self._verify_multiple_text_rules(rules, mock_llm_engine)
         finally:
@@ -3090,7 +3089,6 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     contract_file=temp_path,
                     generate_predefined_rules=True,
                     process_text_rules=False,
-                    generate_schema_validation=False,
                 )
 
             # Should have rules for valid_field only (schema_validation has no 'field')
@@ -3103,6 +3101,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             assert "Skipping property without name" in caplog.text
         finally:
             os.unlink(temp_path)
+
+    @staticmethod
+    def _assert_invalid_explicit_rules_filtered(rules, caplog):
+        """Assert that invalid explicit rules were filtered and expected warnings were logged."""
+        explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+        assert len(explicit) == 0, "Invalid explicit rules should be filtered out"
+        assert len(get_schema_validation_rules(rules)) == 1
+        assert "Excluding invalid rule" in caplog.text
+        assert "invalid_rule" in caplog.text
+        assert "excluded 2 invalid rule(s)" in caplog.text
 
     def test_invalid_explicit_rule_is_filtered_out(self, generator, caplog):
         """Test that contracts with invalid explicit rules filter them out with warnings."""
@@ -3158,16 +3166,8 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     contract_file=temp_path,
                     generate_predefined_rules=False,
                     process_text_rules=False,
-                    generate_schema_validation=False,
                 )
-
-            # Should return empty list (invalid rule filtered out)
-            assert len(rules) == 0
-
-            # Should log warning about excluding invalid rule
-            assert "Excluding invalid rule" in caplog.text
-            assert "invalid_rule" in caplog.text
-            assert "excluded 2 invalid rule(s)" in caplog.text
+            self._assert_invalid_explicit_rules_filtered(rules, caplog)
         finally:
             os.unlink(temp_path)
 
@@ -3302,11 +3302,11 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 contract=data_contract,
                 generate_predefined_rules=False,
                 process_text_rules=False,
-                generate_schema_validation=False,
             )
 
-            assert len(rules) >= 1
-            assert rules[0]["criticality"] == "warn"
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) >= 1
+            assert explicit[0]["criticality"] == "warn"
         finally:
             os.unlink(temp_path)
 

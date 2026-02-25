@@ -84,7 +84,6 @@ class DataContractRulesGenerator(DQEngineBase):
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
-        generate_schema_validation: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
         """
@@ -92,6 +91,7 @@ class DataContractRulesGenerator(DQEngineBase):
 
         Parses an ODCS v3.x contract natively and generates rules based on schema properties,
         logicalTypeOptions constraints, explicit quality definitions, and text-based expectations.
+        When the contract defines a schema, one dataset-level has_valid_schema rule per schema is always generated.
 
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
@@ -102,7 +102,6 @@ class DataContractRulesGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
             process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
-            generate_schema_validation: Whether to generate dataset-level has_valid_schema rules from the contract schema (default True). One rule per ODCS schema, always strict.
             default_criticality: Default criticality level for generated rules (default is "error").
 
         Returns:
@@ -118,9 +117,7 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs = self._load_contract_spec(contract, contract_file)
         self._validate_contract_spec(odcs)
 
-        dq_rules = self._generate_all_rules(
-            odcs, generate_predefined_rules, process_text_rules, generate_schema_validation, default_criticality
-        )
+        dq_rules = self._generate_all_rules(odcs, generate_predefined_rules, process_text_rules, default_criticality)
         valid_rules = self._validate_generated_rules(dq_rules)
 
         return valid_rules
@@ -216,7 +213,6 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs: OpenDataContractStandard,
         generate_predefined_rules: bool,
         process_text_rules: bool,
-        generate_schema_validation: bool,
         default_criticality: str,
     ) -> list[dict]:
         """Generate all rules from ODCS v3.x contract schemas."""
@@ -226,11 +222,10 @@ class DataContractRulesGenerator(DQEngineBase):
         for schema_obj in odcs.schema_ or []:
             schema_name = schema_obj.name or "unknown_schema"
 
-            if generate_schema_validation:
-                schema_validation_rules = self._generate_schema_validation_rules_for_schema(
-                    schema_obj, schema_name, odcs, default_criticality
-                )
-                dq_rules.extend(schema_validation_rules)
+            schema_validation_rules = self._generate_schema_validation_rules_for_schema(
+                schema_obj, schema_name, odcs, default_criticality
+            )
+            dq_rules.extend(schema_validation_rules)
 
             if generate_predefined_rules:
                 predefined_rules = self._generate_predefined_rules_for_schema(

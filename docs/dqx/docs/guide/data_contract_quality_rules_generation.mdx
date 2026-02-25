@@ -125,7 +125,7 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
 
 ### Schema validation
 
-When `generate_schema_validation=True` (default), DQX generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. This ensures the dataset's columns and types match the contract. Schema validation is always **strict** (exact columns, order, and types). To skip these rules, pass `generate_schema_validation=False`:
+When the contract defines a schema, DQX always generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. This ensures the dataset's columns and types match the contract. Schema validation is always **strict** (exact columns, order, and types).
 
 <Admonition type="note" title="Physical types required for schema validation">
 Schema validation requires every property in the contract to have a `physicalType` field set to a valid Unity Catalog data type. Properties with only `logicalType` will cause an `InvalidPhysicalTypeError`.
@@ -136,14 +136,7 @@ Schema validation requires every property in the contract to have a `physicalTyp
 - **Nesting depth limit**: Type nesting is limited to **50 levels** to avoid stack overflow on malformed or excessively deep types. Exceeding this limit raises `InvalidPhysicalTypeError`.
 </Admonition>
 
-```python
-rules = generator.generate_rules_from_contract(
-    contract_file="/path/to/contract.yaml",
-    generate_schema_validation=False  # Only predefined, explicit, and text rules
-)
-```
-
-Generated schema validation rules include `user_metadata.rule_type: "schema_validation"` and the expected DDL string built from the contract's `physicalType` / `logicalType` for each property.
+Generated schema validation rules include `user_metadata.rule_type: "schema_validation"` and the expected DDL string built from the contract's `physicalType` for each property.
 
 ## Predefined Rule Generation
 
