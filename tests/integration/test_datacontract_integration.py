@@ -21,7 +21,7 @@ from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from tests.datacontract_helpers import get_schema_validation_rules
+from tests.conftest import get_schema_validation_rules
 
 
 def _generate_rules_from_temp_contract(

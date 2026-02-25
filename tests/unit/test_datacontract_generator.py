@@ -23,7 +23,7 @@ from databricks.labs.dqx.errors import (
     MissingParameterError,
 )
 from databricks.labs.dqx.profiler.generator import DQGenerator
-from tests.datacontract_helpers import get_schema_validation_rules
+from tests.conftest import get_schema_validation_rules
 
 
 class DataContractGeneratorTestBase:
