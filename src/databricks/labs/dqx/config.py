@@ -120,7 +120,7 @@ class FeatureEngineeringConfig:
 
 @dataclass
 class AnomalyParams:
-    """Optional tuning parameters for anomaly detection.
+    """Optional tuning parameters for row anomaly detection.
 
     Attributes:
         sample_fraction: Fraction of data to sample for training (default 0.3).
@@ -146,7 +146,7 @@ class AnomalyParams:
 
 @dataclass
 class AnomalyConfig:
-    """Configuration for anomaly detection."""
+    """Configuration for row anomaly detection."""
 
     columns: list[str] | None = None  # Auto-discovered if omitted
     segment_by: list[str] | None = None  # Auto-discovered if omitted (when columns also omitted)

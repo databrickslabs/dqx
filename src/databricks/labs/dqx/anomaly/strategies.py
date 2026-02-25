@@ -1,4 +1,4 @@
-"""Training strategy pattern for anomaly detection.
+"""Training strategy pattern for row anomaly detection.
 
 Enables different anomaly detection algorithms through a common interface.
 Currently implements IsolationForest, but designed for extensibility.
@@ -26,7 +26,7 @@ from databricks.labs.dqx.config import AnomalyParams
 
 
 class AnomalyTrainingStrategy(ABC):
-    """Training strategy interface for anomaly models.
+    """Training strategy interface for row anomaly models.
 
     Implement this interface to add new anomaly detection algorithms.
     Uses dependency injection for the model registry.

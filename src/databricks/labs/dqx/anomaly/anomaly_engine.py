@@ -1,5 +1,5 @@
 """
-AnomalyEngine entrypoint for anomaly detection.
+AnomalyEngine entrypoint for row anomaly detection.
 """
 
 from pyspark.sql import DataFrame, SparkSession
@@ -12,9 +12,9 @@ from databricks.sdk import WorkspaceClient
 
 
 class AnomalyEngine(DQEngineBase):
-    """Engine for anomaly detection model lifecycle management.
+    """Engine for row anomaly detection model lifecycle management.
 
-    This class provides methods for training, managing, and working with anomaly detection models.
+    This class provides methods for training, managing, and working with row anomaly detection models.
 
     Args:
         workspace_client: WorkspaceClient instance used to access the Databricks workspace.
@@ -66,7 +66,7 @@ class AnomalyEngine(DQEngineBase):
         expected_anomaly_rate: float = 0.02,
     ) -> str:
         """
-            Train anomaly detection model(s) with intelligent auto-discovery.
+            Train row anomaly detection model(s) with intelligent auto-discovery.
 
             Requires Spark >= 3.4 and the 'anomaly' extras installed:
                 pip install 'databricks-labs-dqx[anomaly]'
@@ -82,7 +82,7 @@ class AnomalyEngine(DQEngineBase):
                        'catalog.schema.model'.
             registry_table: Registry table (REQUIRED). Must be fully qualified Unity Catalog table as
                             'catalog.schema.table'.
-            columns: Columns to use for anomaly detection (auto-discovered if omitted).
+            columns: Columns to use for row anomaly detection (auto-discovered if omitted).
             segment_by: Segment columns (auto-discovered if both columns and segment_by omitted).
             params: Optional anomaly parameters for tuning training behavior.
             exclude_columns: Columns to exclude from training (e.g., IDs, labels, ground truth).

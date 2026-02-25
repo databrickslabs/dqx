@@ -1,9 +1,8 @@
 """
-Check functions for anomaly detection.
+Check functions for row anomaly detection.
 """
 
-import hashlib
-import logging
+import uuid
 import sys
 import warnings
 from abc import ABC, abstractmethod
@@ -33,7 +32,7 @@ try:
 
     SHAP = _shap
     SHAP_AVAILABLE = True
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # shap is optional
     SHAP = None
     SHAP_AVAILABLE = False
 
@@ -78,8 +77,6 @@ SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
     (100.0, "p100"),
 ]
 
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class ScoringConfig:
@@ -104,7 +101,7 @@ class ScoringConfig:
 
 
 class AnomalyScoringStrategy(ABC):
-    """Scoring strategy interface for anomaly models."""
+    """Scoring strategy interface for row anomaly models."""
 
     @abstractmethod
     def supports(self, algorithm: str) -> bool:
@@ -157,8 +154,8 @@ def _resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:
 
 
 @register_rule("dataset")
-def has_no_anomalies(
-    model: str,
+def has_no_row_anomalies(
+    model_name: str,
     registry_table: str,
     threshold: float = 95.0,
     row_filter: str | None = None,
@@ -189,14 +186,14 @@ def has_no_anomalies(
         Segmentation is inferred from the trained model configuration.
 
     Args:
-        model: Model name (REQUIRED). Provide the fully qualified model name
-            in catalog.schema.model format returned from train().
+        model_name: Model name (REQUIRED). Provide the fully qualified model name
+            in catalog.schema.table format returned from train().
         registry_table: Registry table (REQUIRED). Provide the fully qualified table
             name in catalog.schema.table format.
         threshold: Severity percentile threshold (0–100, default 95).
             Records with severity_percentile >= threshold are flagged as anomalous.
             Higher threshold = stricter detection (fewer anomalies).
-        row_filter: Optional SQL expression to filter rows before scoring.
+        row_filter: Optional SQL expression to filter rows before scoring. Auto-injected from the check filter.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
         include_contributions: Include SHAP feature contributions for explainability (default True).
             Requires SHAP library. Performance-optimized with native batching.
@@ -211,34 +208,50 @@ def has_no_anomalies(
         >>> df_scored.select("_dq_info.anomaly.score", "_dq_info.anomaly.is_anomaly")
         >>> df_scored.filter(col("_dq_info.anomaly.is_anomaly"))
     """
-    _validate_has_no_anomalies_args(
-        model=model,
-        registry_table=registry_table,
-        threshold=threshold,
-        row_filter=row_filter,
-        drift_threshold=drift_threshold,
-        include_contributions=include_contributions,
-        include_confidence=include_confidence,
-    )
-
-    def apply(df: DataFrame) -> DataFrame:
-        df_to_score, local_merge_columns, row_id_col = _ensure_merge_columns(df)
-
-        driver_only_local = _DRIVER_ONLY["value"]
-        score_col, score_std_col, contributions_col, severity_col = _resolve_internal_columns(df_to_score)
-
-        # Auto-discover configuration
-        normalized_columns, segment_by, model_name, registry = _discover_model_and_config(
-            df_to_score, model, registry_table
+    if not model_name:
+        raise InvalidParameterError(
+            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
         )
 
-        # Create scoring configuration
+    if not registry_table:
+        raise InvalidParameterError(
+            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
+        )
+
+    validate_fully_qualified_name(model_name, label="model_name")
+    validate_fully_qualified_name(registry_table, label="registry_table")
+
+    if not 0.0 <= float(threshold) <= 100.0:
+        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
+
+    if drift_threshold and drift_threshold <= 0:
+        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
+
+    if include_contributions and not SHAP_AVAILABLE:
+        raise InvalidParameterError(
+            "include_contributions=True requires the 'shap' dependency. "
+            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+        )
+
+    row_id_col = f"__dqx_row_id_{uuid.uuid4().hex}"
+    score_col = f"__dq_anomaly_score_{uuid.uuid4().hex}"
+    score_std_col = f"__dq_anomaly_score_std_{uuid.uuid4().hex}"
+    contributions_col = f"__dq_anomaly_contributions_{uuid.uuid4().hex}"
+    severity_col = f"__dq_severity_percentile_{uuid.uuid4().hex}"
+
+    driver_only_local = _DRIVER_ONLY["value"]
+
+    def apply(df: DataFrame) -> DataFrame:
+        df_to_score = df.withColumn(row_id_col, F.monotonically_increasing_id())
+
+        columns, segment_by = _fetch_model_columns_and_segments(df_to_score, model_name, registry_table)
+
         config = ScoringConfig(
-            columns=normalized_columns,
+            columns=columns,
             model_name=model_name,
-            registry_table=registry,
+            registry_table=registry_table,
             threshold=threshold,
-            merge_columns=local_merge_columns,
+            merge_columns=[row_id_col],
             row_filter=row_filter,
             drift_threshold=drift_threshold,
             drift_threshold_value=drift_threshold if drift_threshold is not None else 3.0,
@@ -259,28 +272,22 @@ def has_no_anomalies(
             all_segments = _load_segment_models(registry_client, config)
             strategy = _resolve_scoring_strategy(all_segments[0].identity.algorithm)
             result = strategy.score_segmented(df_to_score, config, registry_client, all_segments)
-            if row_id_col:
-                result = result.drop(row_id_col)
-            return result
+            return result.drop(row_id_col)
 
         # Try global model first
-        record = registry_client.get_active_model(registry, model_name)
+        record = registry_client.get_active_model(registry_table, model_name)
         if not record:
             # Fallback to segmented scoring
             fallback = _try_segmented_scoring_fallback(df_to_score, config, registry_client)
             if fallback is not None:
-                if row_id_col:
-                    fallback = fallback.drop(row_id_col)
-                return fallback
+                return fallback.drop(row_id_col)
             raise InvalidParameterError(
-                f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
+                f"Model '{model_name}' not found in '{registry_table}'. Train first using anomaly.train(...)."
             )
 
         strategy = _resolve_scoring_strategy(record.identity.algorithm)
         result = strategy.score_global(df_to_score, record, config)
-        if row_id_col:
-            result = result.drop(row_id_col)
-        return result
+        return result.drop(row_id_col)
 
     # Create condition directly from _dq_info.anomaly.is_anomaly (no intermediate column needed)
     message = F.concat_ws(
@@ -290,46 +297,7 @@ def has_no_anomalies(
         F.lit(f" exceeded threshold {threshold}"),
     )
     condition_expr = F.col("_dq_info").anomaly.is_anomaly
-    return make_condition(condition_expr, message, "has_anomalies"), apply
-
-
-_INTERNAL_ROW_ID = "_dqx_row_id"
-
-
-def _ensure_merge_columns(df: DataFrame) -> tuple[DataFrame, list[str], str | None]:
-    if _INTERNAL_ROW_ID in df.columns:
-        raise InvalidParameterError(
-            f"Input DataFrame already contains column '{_INTERNAL_ROW_ID}'. " "Rename the column to use anomaly checks."
-        )
-    return df.withColumn(_INTERNAL_ROW_ID, F.monotonically_increasing_id()), [_INTERNAL_ROW_ID], _INTERNAL_ROW_ID
-
-
-def _resolve_internal_columns(df: DataFrame) -> tuple[str, str, str, str]:
-    """Resolve internal scoring column names to avoid collisions with user columns."""
-    columns_set = set(df.columns)
-    suffix_base = ",".join(sorted(columns_set))
-
-    def resolve(name: str, dq_name: str) -> str:
-        if name not in columns_set:
-            return name
-        if dq_name not in columns_set:
-            return dq_name
-        digest = hashlib.sha1(f"{suffix_base}|{name}".encode("utf-8")).hexdigest()[:8]
-        hashed = f"{dq_name}_{digest}"
-        if hashed in columns_set:
-            raise InvalidParameterError(
-                f"Input DataFrame contains internal scoring column '{name}' and its "
-                f"backup '{dq_name}', and hashed fallback '{hashed}' also collides. "
-                "Rename one of these columns to use anomaly checks."
-            )
-        return hashed
-
-    score_col = resolve("anomaly_score", "_dq_anomaly_score")
-    score_std_col = resolve("anomaly_score_std", "_dq_anomaly_score_std")
-    contributions_col = resolve("anomaly_contributions", "_dq_anomaly_contributions")
-    severity_col = resolve("severity_percentile", "_dq_severity_percentile")
-
-    return score_col, score_std_col, contributions_col, severity_col
+    return make_condition(condition_expr, message, "has_row_anomalies"), apply
 
 
 def set_driver_only_for_tests(enabled: bool) -> None:
@@ -364,7 +332,7 @@ def _check_segment_drift(
             warnings.warn(
                 f"Data drift detected in segment '{segment_name}', columns: {drifted_cols_str} "
                 f"(drift score: {drift_result.drift_score:.2f}). "
-                f"Consider retraining the segmented model.",
+                f"Consider retraining the segmented anomaly model.",
                 UserWarning,
                 stacklevel=5,
             )
@@ -954,22 +922,22 @@ def _score_ensemble_models_local(
 
 def _get_record_for_discovery(
     registry_client: AnomalyModelRegistry,
-    registry: str,
+    registry_table: str,
     model_name_local: str,
 ) -> AnomalyModelRecord:
     """Get model record for auto-discovery, checking global and segmented models."""
-    record = registry_client.get_active_model(registry, model_name_local)
+    record = registry_client.get_active_model(registry_table, model_name_local)
 
     if record:
         return record
 
     # Try segmented models
-    all_segments = registry_client.get_all_segment_models(registry, model_name_local)
+    all_segments = registry_client.get_all_segment_models(registry_table, model_name_local)
     if all_segments:
         return _select_segment_record(all_segments)
 
     raise InvalidParameterError(
-        f"Model '{model_name_local}' not found in '{registry}'. " "Train first using anomaly.train(...)."
+        f"Model '{model_name_local}' not found in '{registry_table}'. " "Train first using anomaly.train(...)."
     )
 
 
@@ -984,72 +952,6 @@ def _load_segment_models(
             "Train segmented models first using anomaly.train(...)."
         )
     return all_segments
-
-
-def _validate_has_no_anomalies_args(
-    *,
-    model: str,
-    registry_table: str,
-    threshold: float,
-    row_filter: str | None,
-    drift_threshold: float | None,
-    include_contributions: bool,
-    include_confidence: bool,
-) -> None:
-    """Validate has_no_anomalies arguments that do not require Spark."""
-    _validate_required_name(
-        model,
-        label="model",
-        example="has_no_anomalies(model='catalog.schema.my_model', ...)",
-    )
-    _validate_required_name(
-        registry_table,
-        label="registry_table",
-        example="registry_table='catalog.schema.dqx_anomaly_models'",
-    )
-    validate_fully_qualified_name(model, label="model")
-    validate_fully_qualified_name(registry_table, label="registry_table")
-    _validate_threshold(threshold)
-    _validate_optional_sql_expression(row_filter)
-    _validate_optional_positive_float(drift_threshold, label="drift_threshold")
-    _validate_boolean(include_contributions, label="include_contributions")
-    _validate_boolean(include_confidence, label="include_confidence")
-    if include_contributions and not SHAP_AVAILABLE:
-        raise InvalidParameterError(
-            "include_contributions=True requires the 'shap' dependency. "
-            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
-        )
-
-
-def _validate_required_name(value: str, *, label: str, example: str) -> None:
-    if not value:
-        raise InvalidParameterError(f"{label} parameter is required. Example: {example}.")
-
-
-def _validate_threshold(threshold: float) -> None:
-    if isinstance(threshold, bool) or not isinstance(threshold, (int, float)):
-        raise InvalidParameterError("threshold must be a float between 0.0 and 100.0.")
-    if not 0.0 <= float(threshold) <= 100.0:
-        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
-
-
-def _validate_optional_sql_expression(row_filter: str | None) -> None:
-    if row_filter is not None and not isinstance(row_filter, str):
-        raise InvalidParameterError("row_filter must be a SQL expression string when provided.")
-
-
-def _validate_optional_positive_float(value: float | None, *, label: str) -> None:
-    if value is None:
-        return
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise InvalidParameterError(f"{label} must be a float when provided.")
-    if value <= 0:
-        raise InvalidParameterError(f"{label} must be greater than 0 when provided.")
-
-
-def _validate_boolean(value: bool, *, label: str) -> None:
-    if not isinstance(value, bool):
-        raise InvalidParameterError(f"{label} must be a boolean.")
 
 
 def _select_segment_record(all_segments: list[AnomalyModelRecord]) -> AnomalyModelRecord:
@@ -1084,91 +986,30 @@ def _extract_quantile_points(record: AnomalyModelRecord) -> list[tuple[float, fl
     return points
 
 
-def _discover_model_and_config(
+def _fetch_model_columns_and_segments(
     df: DataFrame,
-    model: str,
+    model_name: str,
     registry_table: str,
-) -> tuple[list[str], list[str] | None, str, str]:
+) -> tuple[list[str], list[str] | None]:
     """Auto-discover columns and segmentation from the model registry.
 
     Returns:
         Tuple of (columns, segment_by, model_name, registry)
     """
-    registry = registry_table
-
-    if not model:
-        raise InvalidParameterError(
-            "model parameter is required. Example: has_no_anomalies(model='catalog.schema.my_model', ...)"
-        )
-
-    validate_fully_qualified_name(registry, label="registry_table")
-    validate_fully_qualified_name(model, label="model")
-    model_name = model
-
     registry_client = AnomalyModelRegistry(df.sparkSession)
-    record = _get_record_for_discovery(registry_client, registry, model_name)
+    record = _get_record_for_discovery(registry_client, registry_table, model_name)
 
-    normalized_columns = list(record.training.columns)
+    columns = list(record.training.columns)
     segment_by = record.segmentation.segment_by
 
-    missing_columns = [col for col in normalized_columns if col not in df.columns]
+    missing_columns = [col for col in columns if col not in df.columns]
     if missing_columns:
         raise InvalidParameterError(
             f"Input DataFrame is missing required columns for model '{model_name}': {missing_columns}. "
             f"Available columns: {df.columns}."
         )
 
-    return normalized_columns, segment_by, model_name, registry
-
-
-def _get_and_validate_model_record(
-    registry_client: AnomalyModelRegistry,
-    registry: str,
-    model_name: str,
-    columns: list[str],
-    segment_by: list[str] | None = None,
-) -> AnomalyModelRecord:
-    """
-    Retrieve and validate model record from registry.
-
-    Validates that the configuration (columns + segment_by) matches the trained model.
-
-    Args:
-        registry_client: Registry client instance
-        registry: Registry table name
-        model_name: Model name to retrieve
-        columns: Columns to use for scoring
-        segment_by: Segmentation columns (optional)
-
-    Returns:
-        Validated AnomalyModelRecord
-
-    Raises:
-        InvalidParameterError: If model not found or config doesn't match
-    """
-    record = registry_client.get_active_model(registry, model_name)
-
-    if not record:
-        raise InvalidParameterError(
-            f"Model '{model_name}' not found in '{registry}'. Train first using anomaly.train(...)."
-        )
-
-    # Compute expected config hash and compare with stored hash
-    expected_hash = compute_config_hash(columns, segment_by)
-
-    if expected_hash != record.segmentation.config_hash:
-        raise InvalidParameterError(
-            f"Configuration mismatch for model '{model_name}':\n"
-            f"  Trained columns: {record.training.columns}\n"
-            f"  Provided columns: {columns}\n"
-            f"  Trained segment_by: {record.segmentation.segment_by}\n"
-            f"  Provided segment_by: {segment_by}\n\n"
-            f"This model was trained with a different configuration. Either:\n"
-            f"  1. Use the correct columns/segments that match the trained model\n"
-            f"  2. Retrain the model with the new configuration"
-        )
-
-    return record
+    return columns, segment_by
 
 
 def _check_model_staleness(record: AnomalyModelRecord, model_name: str) -> None:

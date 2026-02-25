@@ -1,4 +1,4 @@
-"""Model configuration and record structure for anomaly detection.
+"""Model configuration and record structure for row anomaly detection.
 
 Single responsibility: model record structure (dataclasses) and config identity
 (compute_config_hash). Persistence lives in model_registry.

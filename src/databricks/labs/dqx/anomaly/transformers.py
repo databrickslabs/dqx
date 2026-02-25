@@ -1,5 +1,5 @@
 """
-Feature engineering for anomaly detection.
+Feature engineering for row anomaly detection.
 
 Provides column type analysis and Spark-native feature transformations.
 All transformations are applied in Spark (distributed) for scalability and

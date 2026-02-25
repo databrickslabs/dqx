@@ -1,4 +1,4 @@
-"""Unit tests for anomaly detection validation logic and error handling."""
+"""Unit tests for row anomaly detection validation logic and error handling."""
 
 import pytest
 
@@ -24,6 +24,12 @@ def test_validate_fully_qualified_name_rejects_invalid():
 
     with pytest.raises(InvalidParameterError):
         service.validate_fully_qualified_name("schema.model", label="model_name")
+
+    with pytest.raises(InvalidParameterError):
+        service.validate_fully_qualified_name("catalog..table", label="model_name")
+
+    with pytest.raises(InvalidParameterError):
+        service.validate_fully_qualified_name("catalog.schema.table.extra", label="model_name")
 
 
 # ============================================================================

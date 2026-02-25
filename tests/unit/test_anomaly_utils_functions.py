@@ -14,23 +14,8 @@ from databricks.labs.dqx.errors import InvalidParameterError
 from tests.unit.test_anomaly_test_helpers import STANDARD_REGION_PRODUCT_FEATURES
 
 # ============================================================================
-# Fully Qualified Name Validation Tests
+# Expected anomaly rate / contamination (service helpers)
 # ============================================================================
-
-
-def test_validate_fully_qualified_name_accepts_valid():
-    """Test fully qualified name validation with valid values."""
-    service.validate_fully_qualified_name("catalog.schema.model", label="model_name")
-    service.validate_fully_qualified_name("catalog.schema.registry", label="registry_table")
-
-
-def test_validate_fully_qualified_name_rejects_invalid():
-    """Test fully qualified name validation with invalid values."""
-    with pytest.raises(InvalidParameterError):
-        service.validate_fully_qualified_name("model", label="model_name")
-
-    with pytest.raises(InvalidParameterError):
-        service.validate_fully_qualified_name("schema.model", label="model_name")
 
 
 def test_expected_anomaly_rate_applies_when_contamination_unset():

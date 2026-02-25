@@ -1,4 +1,4 @@
-"""Type definitions for anomaly detection module.
+"""Type definitions for row anomaly detection module.
 
 Contains:
 - Type protocols for duck typing (TrainedModel, MLflowSignature)

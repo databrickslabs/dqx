@@ -1,4 +1,4 @@
-"""Anomaly training service - Main orchestration layer.
+"""Anomaly training service.
 
 Provides the high-level API for training anomaly detection models, including
 context building, validation, and both global and segmented training.
@@ -62,15 +62,18 @@ def validate_spark_version(spark: SparkSession) -> None:
 
 
 def validate_fully_qualified_name(value: str, *, label: str) -> None:
-    """Validate that a name is in catalog.schema.name format."""
-    if value.count(".") != 2:
-        raise InvalidParameterError(f"{label} must be fully qualified as catalog.schema.name, got: {value!r}.")
+    """Validate that a name is in catalog.schema.table format (exactly three non-empty parts)."""
+    parts = value.split(".")
+    if len(parts) != 3 or not all(parts):
+        raise InvalidParameterError(
+            f"{label} must be fully qualified as catalog.schema.table (three non-empty parts), got: {value!r}."
+        )
 
 
 def validate_columns(
     df: DataFrame, columns: collections.abc.Iterable[str], params: AnomalyParams | None = None
 ) -> list[str]:
-    """Validate columns for anomaly detection with multi-type support."""
+    """Validate columns for row anomaly detection with multi-type support."""
     params = params or AnomalyParams()
     fe_config = params.feature_engineering
 

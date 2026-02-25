@@ -1,4 +1,4 @@
-"""Integration tests for anomaly detection with custom column naming.
+"""Integration tests for row anomaly detection with custom column naming.
 
 Note: This test file is separate because it tests the _dq_info column renaming behavior,
 which is specific to anomaly detection. In the future, if _dq_info is used by other modules
@@ -21,7 +21,7 @@ def test_anomaly_check_with_custom_info_column_name(
         if "_dq_info" in result_df.columns and info_col_name != "_dq_info":
             result_df = result_df.withColumnRenamed("_dq_info", info_col_name)
 
-    Works correctly for anomaly detection checks.
+    Works correctly for row anomaly detection checks.
     """
     # Train a simple anomaly model
     unique_id = make_random(8).lower()

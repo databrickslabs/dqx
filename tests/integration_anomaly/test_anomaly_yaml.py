@@ -22,9 +22,9 @@ def test_yaml_based_checks(ws, spark: SparkSession, shared_2d_model):
     checks_yaml = f"""
     - criticality: error
       check:
-        function: has_no_anomalies
+        function: has_no_row_anomalies
         arguments:
-          model: {model_name}
+          model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
     """
@@ -58,9 +58,9 @@ def test_yaml_based_checks_columns_autodiscovery(ws, spark: SparkSession, shared
     checks_yaml = f"""
     - criticality: error
       check:
-        function: has_no_anomalies
+        function: has_no_row_anomalies
         arguments:
-          model: {model_name}
+          model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
     """
@@ -100,9 +100,9 @@ def test_yaml_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
           column: amount
     - criticality: error
       check:
-        function: has_no_anomalies
+        function: has_no_row_anomalies
         arguments:
-          model: {model_name}
+          model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DQENGINE_SCORE_THRESHOLD}
     """
@@ -157,9 +157,9 @@ def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
     checks_yaml = f"""
     - criticality: error
       check:
-        function: has_no_anomalies
+        function: has_no_row_anomalies
         arguments:
-          model: {model_name}
+          model_name: {model_name}
           registry_table: {registry_table}
           threshold: 90.0
     """
@@ -193,9 +193,9 @@ def test_yaml_with_contributions(ws, spark: SparkSession, shared_3d_model):
     checks_yaml = f"""
     - criticality: error
       check:
-        function: has_no_anomalies
+        function: has_no_row_anomalies
         arguments:
-          model: {model_name}
+          model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
           include_contributions: true
@@ -229,9 +229,9 @@ def test_yaml_with_drift_threshold(ws, spark: SparkSession, shared_2d_model):
     checks_yaml = f"""
     - criticality: error
       check:
-        function: has_no_anomalies
+        function: has_no_row_anomalies
         arguments:
-          model: {model_name}
+          model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DQENGINE_SCORE_THRESHOLD}
           drift_threshold: 3.0
@@ -266,9 +266,9 @@ def test_yaml_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     checks_yaml = f"""
     - criticality: warn
       check:
-        function: has_no_anomalies
+        function: has_no_row_anomalies
         arguments:
-          model: {model_name}
+          model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DQENGINE_SCORE_THRESHOLD}
     """
@@ -297,9 +297,9 @@ def test_yaml_parsing_validation(ws, spark: SparkSession):
     checks_yaml = """
     - criticality: error
       check:
-        function: has_no_anomalies
+        function: has_no_row_anomalies
         arguments:
-          # Missing model argument
+          # Missing model_name argument
           threshold: {DEFAULT_SCORE_THRESHOLD}
     """
 
@@ -314,7 +314,7 @@ def test_yaml_parsing_validation(ws, spark: SparkSession):
 
     dq_engine = DQEngine(ws, spark)
 
-    # Should raise error about missing model
+    # Should raise error about missing model_name
     with pytest.raises(Exception):  # May be TypeError or InvalidParameterError
         result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
         result_df.collect()

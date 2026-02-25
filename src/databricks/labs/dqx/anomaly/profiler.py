@@ -1,5 +1,5 @@
 """
-Auto-discovery logic for anomaly detection.
+Auto-discovery logic for row anomaly detection.
 
 Analyzes DataFrames to recommend columns and segments suitable for
 anomaly detection using on-the-fly heuristics.
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AnomalyProfile:
-    """Auto-discovery results for anomaly detection."""
+    """Auto-discovery results for row anomaly detection."""
 
     recommended_columns: list[str]
     recommended_segments: list[str]
@@ -45,7 +45,7 @@ class AnomalyProfile:
 
 def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
     """
-    Auto-discover columns and segments for anomaly detection.
+    Auto-discover columns and segments for row anomaly detection.
 
     Analyzes the DataFrame using on-the-fly heuristics to recommend
     suitable columns and segmentation strategy.
@@ -174,7 +174,7 @@ def _select_top_columns(
 
     if not recommended_columns:
         warnings.append(
-            "No suitable columns found for anomaly detection. "
+            "No suitable columns found for row anomaly detection. "
             "Supported types: numeric, categorical (string), datetime (date/timestamp), boolean. "
             "Provide columns explicitly."
         )

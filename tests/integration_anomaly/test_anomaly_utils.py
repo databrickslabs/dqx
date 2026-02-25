@@ -4,7 +4,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.rule import DQDatasetRule
 from tests.integration_anomaly.test_anomaly_constants import (
@@ -24,7 +24,7 @@ def qualify_model_name(model_name: str, registry_table: str) -> str:
 
 def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwargs):
     """
-    Create apply function from has_no_anomalies check.
+    Create apply function from has_no_row_anomalies check.
 
     This is a shared helper to reduce code duplication between
     the anomaly_scorer fixture and score_with_anomaly_check function.
@@ -32,13 +32,13 @@ def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwarg
     Args:
         model_name: Name of the trained model
         registry_table: Registry table path
-        **check_kwargs: Additional arguments for has_no_anomalies
+        **check_kwargs: Additional arguments for has_no_row_anomalies
 
     Returns:
-        Apply function from has_no_anomalies check
+        Apply function from has_no_row_anomalies check
     """
-    _, apply_fn = has_no_anomalies(
-        model=qualify_model_name(model_name, registry_table),
+    _, apply_fn = has_no_row_anomalies(
+        model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         **check_kwargs,
     )
@@ -271,7 +271,7 @@ def create_anomaly_check_rule(
 
     return DQDatasetRule(
         criticality=criticality,
-        check_func=has_no_anomalies,
+        check_func=has_no_row_anomalies,
         check_func_kwargs=check_kwargs,
     )
 
@@ -293,7 +293,7 @@ def apply_anomaly_check_direct(
         model_name: Model name
         registry_table: Registry table path
         threshold: Severity percentile threshold (0–100)
-        **kwargs: Additional has_no_anomalies kwargs
+        **kwargs: Additional has_no_row_anomalies kwargs
 
     Returns:
         DataFrame with anomaly_score column (extracted from _dq_info.anomaly.score)
@@ -303,8 +303,8 @@ def apply_anomaly_check_direct(
             test_df, "my_model", "main.default.registry"
         )
     """
-    _, apply_fn = has_no_anomalies(
-        model=qualify_model_name(model_name, registry_table),
+    _, apply_fn = has_no_row_anomalies(
+        model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         threshold=threshold,
         **kwargs,
@@ -484,7 +484,7 @@ def score_with_anomaly_check(
     threshold: float = 60.0,
 ):
     """
-    Helper to score a DataFrame using has_no_anomalies and collect results.
+    Helper to score a DataFrame using has_no_row_anomalies and collect results.
 
     Reduces duplication of scoring pattern across integration tests.
 
@@ -557,7 +557,7 @@ def create_anomaly_dataset_rule(
         registry_table: Registry table path
         criticality: Rule criticality (default: "error")
         threshold: Severity percentile threshold (default: 60.0)
-        **kwargs: Additional has_no_anomalies arguments
+        **kwargs: Additional has_no_row_anomalies arguments
 
     Returns:
         DQDatasetRule configured for anomaly detection
@@ -569,7 +569,7 @@ def create_anomaly_dataset_rule(
     """
     return DQDatasetRule(
         criticality=criticality,
-        check_func=has_no_anomalies,
+        check_func=has_no_row_anomalies,
         check_func_kwargs={
             "model": qualify_model_name(model_name, registry_table),
             "registry_table": registry_table,

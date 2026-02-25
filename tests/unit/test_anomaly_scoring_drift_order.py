@@ -14,7 +14,6 @@ from databricks.labs.dqx.anomaly.model_registry import (
     SegmentationConfig,
     TrainingMetadata,
 )
-from databricks.labs.dqx.errors import InvalidParameterError
 
 
 def test_score_global_model_uses_filtered_df_for_drift(monkeypatch) -> None:
@@ -67,56 +66,3 @@ def test_score_global_model_uses_filtered_df_for_drift(monkeypatch) -> None:
 
     assert captured["prepare"] == (sentinel_df, config.row_filter)
     assert captured["drift_df"] is filtered_df
-
-
-def test_resolve_internal_columns_hashes_on_double_collision() -> None:
-    class DummyDf:
-        columns = [
-            "anomaly_score",
-            "_dq_anomaly_score",
-            "anomaly_score_std",
-            "_dq_anomaly_score_std",
-            "anomaly_contributions",
-            "_dq_anomaly_contributions",
-            "severity_percentile",
-            "_dq_severity_percentile",
-        ]
-
-    resolve_internal_columns = getattr(check_funcs, "_resolve_internal_columns")
-    score_col, score_std_col, contributions_col, severity_col = resolve_internal_columns(cast(DataFrame, DummyDf()))
-
-    assert score_col.startswith("_dq_anomaly_score_")
-    assert score_std_col.startswith("_dq_anomaly_score_std_")
-    assert contributions_col.startswith("_dq_anomaly_contributions_")
-    assert severity_col.startswith("_dq_severity_percentile_")
-
-
-def test_resolve_internal_columns_raises_on_hashed_collision(monkeypatch) -> None:
-    base_columns = [
-        "anomaly_score",
-        "_dq_anomaly_score",
-        "anomaly_score_std",
-        "_dq_anomaly_score_std",
-        "anomaly_contributions",
-        "_dq_anomaly_contributions",
-        "severity_percentile",
-        "_dq_severity_percentile",
-    ]
-
-    class DummyDf:
-        columns = base_columns
-
-    resolve_internal_columns = getattr(check_funcs, "_resolve_internal_columns")
-    score_col, _, _, _ = resolve_internal_columns(cast(DataFrame, DummyDf()))
-
-    class FakeHash:
-        def hexdigest(self) -> str:
-            return "deadbeef" * 5
-
-    monkeypatch.setattr(check_funcs.hashlib, "sha1", lambda *_args, **_kwargs: FakeHash())
-
-    class DummyDfCollision:
-        columns = base_columns + [score_col, "_dq_anomaly_score_deadbeef"]
-
-    with pytest.raises(InvalidParameterError):
-        resolve_internal_columns(cast(DataFrame, DummyDfCollision()))

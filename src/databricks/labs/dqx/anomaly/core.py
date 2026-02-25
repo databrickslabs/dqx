@@ -1,4 +1,4 @@
-"""Core ML operations for anomaly detection.
+"""Core ML operations for row anomaly detection.
 
 Contains the fundamental building blocks for training and scoring:
 - Feature engineering (prepare_training_features, prepare_engineered_pandas)

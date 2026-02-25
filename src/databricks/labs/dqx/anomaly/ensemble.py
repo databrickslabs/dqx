@@ -1,4 +1,4 @@
-"""Ensemble trainer for anomaly detection models.
+"""Ensemble trainer for row anomaly detection models.
 
 Encapsulates the logic for training multiple models with different random seeds
 to create a robust ensemble.

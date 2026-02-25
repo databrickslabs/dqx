@@ -6,28 +6,28 @@ import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-# Anomaly Detection (ML-based)
+# Row Anomaly Detection (ML-based)
 
-Use anomaly detection to automatically find unusual rows in your data without manually specifying thresholds so you can catch issues that rule-based checks miss. You provide recent good data; DQX trains a model and flags rows that don't fit typical patterns. No ML expertise required. Each flagged row includes an explainable breakdown of which columns drove the score, so you can see why it was flagged.
+Use row anomaly detection to automatically find unusual rows in your data (per‑record anomalies with explanations) without manually specifying thresholds so you can catch issues that rule-based checks miss. You provide recent good data; DQX trains a model and flags rows that don't fit typical patterns. No ML expertise required. Each flagged row includes an explainable breakdown of which columns drove the score, so you can see why it was flagged.
 
 ## What it is and why it helps
 
-Use anomaly detection to learn typical patterns from recent "good" data and highlight rows that look unusual when you consider multiple columns together. You do not need to define thresholds or write rules; the model learns from your data and surfaces what stands out.
+Use row anomaly detection to learn typical patterns from recent "good" data and highlight rows that look unusual when you consider multiple columns together. You do not need to define thresholds or write rules; the model learns from your data and surfaces what stands out.
 
 It works alongside your existing rule-based checks:
 - **Rules** catch the issues you can anticipate and describe (for example, "amount must be positive").
-- **Anomaly detection** surfaces unusual patterns you did not think to write rules for, especially combinations across columns.
+- **Row anomaly detection** surfaces unusual patterns you did not think to write rules for, especially combinations across columns.
 
 Example: amount, quantity, and discount might all pass your rules individually, but a row where all three are at the extreme end for your business could be rare. Anomaly detection can flag that row so you can review it.
 
 ## Why to use it
 
-Anomaly detection finds issues that look "valid" to static rules but are still suspicious when you look at the full row. This is especially useful for:
+Row anomaly detection finds issues that look "valid" to static rules but are still suspicious when you look at the full row. This is especially useful for:
 - unexpected spikes or dips that are hard to encode as a rule
 - unusual combinations across columns
 - silent pipeline changes that shift data behavior without breaking schemas
 
-In practice, it helps reduce blind spots and speeds up triage because you can focus on the top-ranked unusual rows first. It also helps you find the issues you didn't plan for. Manual rules can only catch what you anticipate; anomaly detection surfaces what stands out as unusual in your data so you can catch problems before they affect downstream dashboards, reports, or AI models.
+In practice, it helps reduce blind spots and speeds up triage because you can focus on the top-ranked unusual rows first. It also helps you find the issues you didn't plan for. Manual rules can only catch what you anticipate; row anomaly detection surfaces what stands out as unusual in your data so you can catch problems before they affect downstream dashboards, reports, or AI models.
 
 Because results are **explainable**, you don't just get a list of flagged rows. You see *why* each one was flagged, which makes investigation faster and builds trust in the output.
 
@@ -35,7 +35,7 @@ Because results are **explainable**, you don't just get a list of flagged rows. 
 
 ### Decision Matrix
 
-| Scenario | Use Rule Checks | Use Anomaly Detection | Recommended Approach |
+| Scenario | Use Rule Checks | Use Row Anomaly Detection | Recommended Approach |
 |----------|----------------|----------------------|---------------------|
 | **Null values** | Yes | Yes | Both may be useful depending on the scenario |
 | **Schema validation** | Yes, explicit | No | Rules only |
@@ -48,7 +48,7 @@ Because results are **explainable**, you don't just get a list of flagged rows. 
 
 ### Data Quality vs Domain-Specific Detection
 
-**DQX Anomaly Detection focuses on data quality issues**:
+**DQX Row Anomaly Detection focuses on data quality issues**:
 - Unusual data patterns (statistical outliers)
 - Distribution shifts (drift detection)
 - Cross-column inconsistencies
@@ -68,7 +68,7 @@ Because results are **explainable**, you don't just get a list of flagged rows. 
 
 ## Complements Databricks Data Quality Monitoring
 
-[Databricks Data Quality Monitoring (DQM)](https://docs.databricks.com/aws/en/data-quality-monitoring/anomaly-detection). focuses on table-level signals like freshness and completeness. DQX anomaly detection focuses on unusual rows and cross-column patterns.
+[Databricks Data Quality Monitoring (DQM)](https://docs.databricks.com/aws/en/data-quality-monitoring/anomaly-detection) focuses on table-level signals like freshness and completeness. DQX row anomaly detection focuses on unusual rows and cross-column patterns.
 Use both together to cover:
 - **Data availability**: Is new data arriving as expected?
 - **Data content quality**: Are the rows themselves unusual or inconsistent?
@@ -101,7 +101,7 @@ pip install 'databricks-labs-dqx[anomaly]'
 Getting started is two steps: train once on recent "good" data, then run the same model as a check on new or incoming data. No configuration files or tuning required to begin. The example below uses defaults that work for most tables.
 
 <Admonition type="tip" title="Training data requirements">
-**Quantity**: 1,000+ rows preferred; quality and coverage matter more than raw count. **Quality**: Use clean, representative data; anomalies in training are learned as "normal." **Coverage**: Include all realistic scenarios (regions, time ranges, categories). Have a very large table? DQX automatically samples a representative portion (default 30%, capped at 1M rows) before training. See [Anomaly Detection in Quality Checks](/docs/reference/quality_checks#anomaly-detection) for full parameter details.
+**Quantity**: 1,000+ rows preferred; quality and coverage matter more than raw count. **Quality**: Use clean, representative data; anomalies in training are learned as "normal." **Coverage**: Include all realistic scenarios (regions, time ranges, categories). Have a very large table? DQX automatically samples a representative portion (default 30%, capped at 1M rows) before training. See [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection) for full parameter details.
 </Admonition>
 
 <Admonition type="warning" title="Exclude identifier columns">
@@ -112,7 +112,7 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
   <TabItem value="Python" label="Python" default>
     ```python
     from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
-    from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+    from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
 
@@ -129,12 +129,12 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
     # Define checks
     # Note that columns are not specified in the check; Scoring uses the columns the model was trained on
     checks = [
-      has_no_anomalies(
+      has_no_row_anomalies(
         model=model_name,
         registry_table="catalog.schema.dqx_anomaly_models",
         # threshold=98,  # default 95, now stricter (only extreme anomalies)
       )
-      # you can define other checks together with anomaly detection
+      # you can define other checks together with row anomaly detection
       # ...
     ]
 
@@ -156,19 +156,19 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
           registry_table: catalog.schema.dqx_anomaly_models
     ```
 
-    Define checks separately (YAML, Python, etc.). See [Anomaly Detection in Quality Checks](/docs/reference/quality_checks#anomaly-detection).
+    Define checks separately (YAML, Python, etc.). See [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection).
   </TabItem>
 </Tabs>
 
 ## Investigate anomalies
 
 Anomalies are reported the same way as other checks, using the `_errors` and `_warnings` reporting columns in the output data.
-However, when you run an anomaly detection check, DQX also adds a `_dq_info` column that contains structured metadata from the ML model scoring which is useful if we want to understand why a particular row was marked as anomalous.
+However, when you run a row anomaly detection check, DQX also adds a `_dq_info` column that contains structured metadata from the ML model scoring which is useful if we want to understand why a particular row was marked as anomalous.
 
 Feature contributions are enabled by default. You can disable them for faster scoring:
 
 ```python
-has_no_anomalies(
+has_no_row_anomalies(
   model=model_name,
   registry_table="catalog.schema.dqx_anomaly_models",
   include_contributions=False,
@@ -192,7 +192,7 @@ The threshold controls how many rows are flagged as anomalies (percentile cutoff
 
 ## How it works under the hood
 
-For full parameter and schema details, see [Anomaly Detection in Quality Checks](/docs/reference/quality_checks#anomaly-detection).
+For full parameter and schema details, see [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection).
 
 ### Architecture overview
 
@@ -224,8 +224,8 @@ Retrain the model when "normal" changes: seasonality, new pricing rules, new pro
 
 If you want to quarantine anomalies for investigation, use DQX quarantine pattern (see [Applying Checks](/docs/guide/quality_checks_apply)).
 
-<Admonition type="tip" title="When to use anomaly detection">
-Use anomaly detection when you want to catch unusual combinations across columns that are hard to capture with static rules.
+<Admonition type="tip" title="When to use row anomaly detection">
+Use row anomaly detection when you want to catch unusual combinations across columns that are hard to capture with static rules.
 </Admonition>
 
 ## Frequently Asked Questions
@@ -288,7 +288,7 @@ See the **Training data requirements** tip under Quick start. In short: 1,000+ r
 - Table-level metrics (completeness and freshness)
 - Column-level statistics (mean, stddev, null rate)
 
-**DQX Anomaly Detection**:
+**DQX Row Anomaly Detection**:
 - Row-level anomaly scores
 - Cross-column pattern detection
 - Per-row explanations (SHAP contributions)
@@ -368,4 +368,4 @@ Having issues? See the [Troubleshooting Guide](./troubleshooting) for solutions 
 
 ## Next steps
 
-For training options, parameters, and YAML examples, see [Anomaly Detection in Quality Checks](/docs/reference/quality_checks#anomaly-detection) section.
+For training options, parameters, and YAML examples, see [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection) section.

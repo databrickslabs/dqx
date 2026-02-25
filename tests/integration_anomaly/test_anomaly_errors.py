@@ -1,4 +1,4 @@
-"""Integration tests for anomaly detection error cases.
+"""Integration tests for row anomaly detection error cases.
 
 Tests integration-level errors that occur with real Spark operations,
 model training, and Delta table access. Pure parameter validation errors
@@ -12,7 +12,7 @@ import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     FeatureEngineering,
@@ -62,8 +62,8 @@ def test_missing_columns_error(
 
     # Should raise error about missing model columns in the input DataFrame
     with pytest.raises(InvalidParameterError, match="missing required columns"):
-        _, apply_fn = has_no_anomalies(
-            model=qualify_model_name(model_name, registry_table),
+        _, apply_fn = has_no_row_anomalies(
+            model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
         )
@@ -181,8 +181,8 @@ def test_missing_registry_table_for_scoring_error(
 
     # Try to score with non-existent registry
     with pytest.raises((InvalidParameterError, Exception)):  # Delta/Spark exception
-        _, apply_fn = has_no_anomalies(
-            model=qualify_model_name(model_name, registry_table),
+        _, apply_fn = has_no_row_anomalies(
+            model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
         )
@@ -224,8 +224,8 @@ def test_model_not_found_error(spark: SparkSession, make_random, test_df_factory
 
     # Try to score with non-existent model (registry exists but model doesn't)
     with pytest.raises(InvalidParameterError, match="not found in.*Train first"):
-        _, apply_fn = has_no_anomalies(
-            model=qualify_model_name(model_name, registry_table),
+        _, apply_fn = has_no_row_anomalies(
+            model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
         )
@@ -274,11 +274,11 @@ def test_internal_score_column_collision(ws, spark: SparkSession, make_random, a
     assert "ambiguous" in str(exc.value).lower()
 
 
-def test_has_no_anomalies_requires_fully_qualified_model_name():
+def test_has_no_row_anomalies_requires_fully_qualified_model_name():
     """Ensure model name must be fully qualified."""
     with pytest.raises(InvalidParameterError):
-        has_no_anomalies(
-            model="schema.model",
+        has_no_row_anomalies(
+            model_name="schema.model",
             registry_table="catalog.schema.table",
         )
 
@@ -295,10 +295,10 @@ def test_has_no_anomalies_requires_fully_qualified_model_name():
         ({"include_confidence": "no"}, "include_confidence must be a boolean"),  # type: ignore[arg-type]
     ],
 )
-def test_has_no_anomalies_invalid_inputs(kwargs, match):
+def test_has_no_row_anomalies_invalid_inputs(kwargs, match):
     with pytest.raises(InvalidParameterError, match=match):
-        has_no_anomalies(
-            model="catalog.schema.model",
+        has_no_row_anomalies(
+            model_name="catalog.schema.model",
             registry_table="catalog.schema.table",
             **kwargs,
         )
@@ -327,8 +327,8 @@ def test_row_filter_scores_only_matching_rows(
         columns_schema="amount double, quantity double",
     )
 
-    _, apply_fn = has_no_anomalies(
-        model=qualify_model_name(model_name, registry_table),
+    _, apply_fn = has_no_row_anomalies(
+        model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
         row_filter="amount > 150",

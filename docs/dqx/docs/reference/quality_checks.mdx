@@ -2891,13 +2891,13 @@ Using non-curated aggregate functions is supported with the following limitation
 - Some aggregate functions are only available in newer versions of the Databricks Runtime. If a function is unavailable in your environment, DQX will raise an error indicating the minimum required runtime version. Use the latest Databricks Runtime version for best compatibility.
 </Admonition>
 
-## Anomaly Detection
+## Row Anomaly Detection
 
 Detects unusual rows by learning what "normal" looks like across multiple columns, then flags rows that deviate. Train on recent "good" data so the anomaly model learns typical ranges and combinations (e.g., amount and quantity together), not just single-column thresholds.
 
 **Current algorithm**: IsolationForest (scikit-learn with Spark scoring, requires Spark >= 3.4). Future releases may add additional algorithms behind the same interface.
 
-For a conceptual overview (including how this complements Databricks data quality monitoring), see [Anomaly Detection](/docs/guide/anomaly_detection).
+For a conceptual overview (including how this complements Databricks data quality monitoring), see [Row Anomaly Detection](/docs/guide/row_anomaly_detection).
 
 ### Model training
 
@@ -2945,7 +2945,7 @@ Required arguments: `df`, `model_name`, `registry_table`. Optional parameters:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `columns` | list[str] | None | Columns to use for anomaly detection (auto-discovered if omitted) |
+| `columns` | list[str] | None | Columns to use for row anomaly detection (auto-discovered if omitted) |
 | `segment_by` | list[str] | None | Train separate models per segment (auto-discovered if both columns and segment_by omitted) |
 | `exclude_columns` | list[str] | None | Columns to exclude from training (e.g., IDs, labels, ground truth) |
 | `expected_anomaly_rate` | float | 0.02 | Expected fraction of anomalies in your data (0.02 = 2%). Sets model contamination parameter. |
@@ -3036,11 +3036,11 @@ Use the model name returned by training.
 
 **Python**
 ```python
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
-  has_no_anomalies(
-    model="catalog.schema.orders_monitor",
+  has_no_row_anomalies(
+    model_name="catalog.schema.orders_monitor",
     registry_table="catalog.schema.dqx_anomaly_models",
     threshold=95.0,  # percentile cutoff (0-100); higher = fewer anomalies
   )
@@ -3052,9 +3052,9 @@ checks = [
 # checks.yml
 - criticality: warn
   check:
-    function: has_no_anomalies
+    function: has_no_row_anomalies
     arguments:
-      model: catalog.schema.dqx_anomaly_orders
+      model_name: catalog.schema.dqx_anomaly_orders
       registry_table: catalog.schema.dqx_anomaly_models
       threshold: 95.0  # optional
 ```
@@ -3063,7 +3063,7 @@ checks = [
 - 90 sensitive (more alerts), 95 balanced (default), 98 strict (fewer anomalies).
 
 **Parameters**
-- `model`: Model name (required, the model is stored in Unity Catalog, therefore fully qualified name must be provided: `catalog.schema.model`).
+- `model_name`: Model name (required, the model is stored in Unity Catalog, therefore fully qualified name must be provided: `catalog.schema.table`).
 - `registry_table`: Registry table (required, fully qualified table name: `catalog.schema.table`).
 - `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
@@ -3098,11 +3098,11 @@ ORDER BY training_time DESC
 Contributions are enabled by default. For performance reasons, you may want to disable them:
 
 ```python
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
-  has_no_anomalies(
-    model="catalog.schema.orders_monitor",
+  has_no_row_anomalies(
+    model_name="catalog.schema.orders_monitor",
     registry_table="catalog.schema.dqx_anomaly_models",
     threshold=95.0,
     include_contributions=False,
@@ -3125,11 +3125,11 @@ display(top.select("order_id", "_dq_info.anomaly.severity_percentile", "_dq_info
 Automatically detects when current data distribution differs significantly from training data:
 
 ```python
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
-  has_no_anomalies(
-    model="catalog.schema.orders_monitor",
+  has_no_row_anomalies(
+    model_name="catalog.schema.orders_monitor",
     registry_table="catalog.schema.dqx_anomaly_models",
     drift_threshold=3.0,  # Enable drift detection; 3.0 = ~3-sigma deviation
   )

@@ -1,4 +1,4 @@
-"""Segment naming and filtering for anomaly detection."""
+"""Segment naming and filtering for row anomaly detection."""
 
 from collections.abc import Mapping
 from typing import Any

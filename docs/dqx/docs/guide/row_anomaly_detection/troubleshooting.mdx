@@ -4,9 +4,9 @@ sidebar_position: 1
 
 import Admonition from '@theme/Admonition';
 
-# Troubleshooting Anomaly Detection
+# Troubleshooting Row Anomaly Detection
 
-This guide helps you resolve common issues when using DQX anomaly detection.
+This guide helps you resolve common issues when using DQX row anomaly detection.
 
 ## Common Errors
 
@@ -184,15 +184,15 @@ Sampling doesn't hurt model quality if the sample is representative!
 
 ```python
 # Production: fast scoring, no explanations
-has_no_anomalies(
-  model=model_name,
+has_no_row_anomalies(
+  model_name=model_name,
   registry_table=registry_table,
   include_contributions=False,  # 10x faster
 )
 
 # Investigation: slower, with explanations
-has_no_anomalies(
-  model=model_name,
+has_no_row_anomalies(
+  model_name=model_name,
   registry_table=registry_table,
   include_contributions=True,  # Default, slower
 )
@@ -211,8 +211,8 @@ has_no_anomalies(
 
 **Option 1: Raise threshold** (fewer alerts)
 ```python
-has_no_anomalies(
-  model=model_name,
+has_no_row_anomalies(
+  model_name=model_name,
   registry_table=registry_table,
   threshold=98,  # Was 95 (default), now stricter
 )
@@ -220,8 +220,8 @@ has_no_anomalies(
 
 **Option 2: Enable drift detection** (warns if data changed)
 ```python
-has_no_anomalies(
-  model=model_name,
+has_no_row_anomalies(
+  model_name=model_name,
   registry_table=registry_table,
   drift_threshold=3.0,  # Warn on distribution shift
 )
@@ -248,8 +248,8 @@ anomaly_engine.train(df=clean_data, ...)
 
 **Option 1: Lower threshold**
 ```python
-has_no_anomalies(
-  model=model_name,
+has_no_row_anomalies(
+  model_name=model_name,
   registry_table=registry_table,
   threshold=90,  # Was 95, now more sensitive
 )
@@ -298,7 +298,7 @@ anomaly_engine.train(
 
 ## Streaming-Specific Issues
 
-### Q: Can I use anomaly detection with streaming?
+### Q: Can I use row anomaly detection with streaming?
 
 **Yes!** Train on batch, score on streaming data.
 
@@ -319,8 +319,8 @@ model_name = anomaly_engine.train(
 streaming_df = spark.readStream.table("catalog.schema.orders_stream")
 
 checks = [
-  has_no_anomalies(
-    model=model_name,
+  has_no_row_anomalies(
+    model_name=model_name,
     registry_table="catalog.schema.anomaly_registry",
     include_contributions=False,  # Recommended: too slow for real-time
   )

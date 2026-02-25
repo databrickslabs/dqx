@@ -5,7 +5,7 @@ from collections.abc import Callable
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from tests.integration_anomaly.test_anomaly_constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -102,8 +102,8 @@ def test_partial_nulls(spark: SparkSession, shared_3d_model, test_df_factory):
     )
 
     # Call apply function directly to get anomaly_score column
-    _, apply_fn = has_no_anomalies(
-        model=model_name,
+    _, apply_fn = has_no_row_anomalies(
+        model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
     )

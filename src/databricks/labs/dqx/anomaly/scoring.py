@@ -88,7 +88,7 @@ def add_info_column(
     Args:
         df: Scored DataFrame with anomaly_score, prediction, etc.
         model_name: Name of the model used for scoring.
-        threshold: Threshold used for anomaly detection.
+        threshold: Threshold used for row anomaly detection.
         segment_values: Segment values if model is segmented (None for global models).
         include_contributions: Whether anomaly_contributions are available (0–100 percent).
         include_confidence: Whether anomaly_score_std is available.
@@ -102,7 +102,7 @@ def add_info_column(
     """
     # Build anomaly info struct
     anomaly_info_fields = {
-        "check_name": F.lit("has_no_anomalies"),
+        "check_name": F.lit("has_no_row_anomalies"),
         "score": F.round(F.col(score_col), 3),
         "severity_percentile": F.round(F.col(severity_col), 1),
         "is_anomaly": F.col(severity_col) >= F.lit(threshold),

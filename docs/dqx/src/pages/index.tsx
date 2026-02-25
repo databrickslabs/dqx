@@ -72,8 +72,8 @@ const Capabilities = () => {
       icon: PieChart,
     },
     {
-      title: 'DQ Anomaly Detection',
-      description: 'Automatically detect unusual data patterns with trained ML Models and explanations.',
+      title: 'DQ Row Anomaly Detection',
+      description: 'Automatically detect unusual rows with trained ML Models and explanations.',
       icon: Radar,
     },
   ];

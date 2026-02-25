@@ -1,4 +1,4 @@
-"""Integration tests for anomaly detection end-to-end flow."""
+"""Integration tests for row anomaly detection end-to-end flow."""
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession

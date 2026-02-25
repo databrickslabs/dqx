@@ -1,5 +1,5 @@
 """
-Drift detection for anomaly models.
+Drift detection for row anomaly models.
 
 Compares current data distribution against baseline statistics
 to detect significant changes that may indicate model staleness.

@@ -1,4 +1,4 @@
-"""Model registry abstraction for anomaly detection.
+"""Model registry abstraction for row anomaly detection.
 
 Provides an abstract interface for model registration, with MLflow/Unity Catalog
 as the default implementation. This abstraction enables:

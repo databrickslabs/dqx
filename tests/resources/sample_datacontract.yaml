@@ -26,7 +26,7 @@ description:
   limitations: |
     - Sensor data is collected at 1-minute intervals
     - Historical data is retained for 90 days
-    - Anomaly detection requires manual review
+    - Row anomaly detection requires manual review
 
 tags:
   - iot

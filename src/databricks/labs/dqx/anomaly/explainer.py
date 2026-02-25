@@ -1,5 +1,5 @@
 """
-Explainability utilities for anomaly detection.
+Explainability utilities for row anomaly detection.
 
 Provides TreeSHAP-based feature contribution analysis to understand which columns
 contribute most to anomaly scores for individual records.

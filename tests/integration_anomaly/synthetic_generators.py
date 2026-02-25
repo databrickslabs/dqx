@@ -1,4 +1,4 @@
-"""Reusable synthetic data generators for anomaly detection tests."""
+"""Reusable synthetic data generators for row anomaly detection tests."""
 
 import numpy as np
 from pyspark.sql import DataFrame

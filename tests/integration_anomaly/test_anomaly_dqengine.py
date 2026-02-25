@@ -354,7 +354,7 @@ def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
         assert hasattr(anomaly, field), f"_dq_info.anomaly should have '{field}' field"
 
     # Verify field values and types
-    assert anomaly.check_name == "has_no_anomalies", "check_name should be 'has_no_anomalies'"
+    assert anomaly.check_name == "has_no_row_anomalies", "check_name should be 'has_no_row_anomalies'"
     assert isinstance(anomaly.score, (float, type(None))), "score should be float or None"
     assert isinstance(anomaly.is_anomaly, (bool, type(None))), "is_anomaly should be boolean or None"
     assert anomaly.threshold == 60.0, f"threshold should be 60.0, got {anomaly.threshold}"

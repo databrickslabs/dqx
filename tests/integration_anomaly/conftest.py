@@ -1,4 +1,4 @@
-"""Pytest configuration and fixtures for anomaly detection integration tests."""
+"""Pytest configuration and fixtures for row anomaly detection integration tests."""
 
 import logging
 import os
@@ -78,13 +78,13 @@ def configure_mlflow_tracking():
 
 @pytest.fixture
 def anomaly_registry_schema(make_schema):
-    """Schema for anomaly detection test isolation."""
+    """Schema for row anomaly detection test isolation."""
     return make_schema(catalog_name=TEST_CATALOG)
 
 
 @pytest.fixture
 def anomaly_registry_prefix(request):
-    """Registry prefix for anomaly detection tests."""
+    """Registry prefix for row anomaly detection tests."""
     schema = request.getfixturevalue("anomaly_registry_schema")
     return f"{TEST_CATALOG}.{schema.name}"
 

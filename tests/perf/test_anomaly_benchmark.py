@@ -1,7 +1,7 @@
 from pyspark.sql import functions as F
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.errors import InvalidParameterError
 from tests.constants import TEST_CATALOG
@@ -91,8 +91,8 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, m
         _TRAINED_MODEL["registry_table"] = registry_table
 
     try:
-        _, apply_fn = has_no_anomalies(
-            model=model_name,
+        _, apply_fn = has_no_row_anomalies(
+            model_name=model_name,
             registry_table=registry_table,
             include_contributions=False,
         )
@@ -108,8 +108,8 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, m
         )
         _TRAINED_MODEL["model_name"] = model_name
         _TRAINED_MODEL["registry_table"] = registry_table
-        _, apply_fn = has_no_anomalies(
-            model=model_name,
+        _, apply_fn = has_no_row_anomalies(
+            model_name=model_name,
             registry_table=registry_table,
             include_contributions=False,
         )

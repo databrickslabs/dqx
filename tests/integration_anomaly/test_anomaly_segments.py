@@ -3,7 +3,7 @@
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
@@ -108,7 +108,7 @@ def test_segment_scoring(
     dq_engine = DQEngine(ws, spark)
     check = DQDatasetRule(
         criticality="error",
-        check_func=has_no_anomalies,
+        check_func=has_no_row_anomalies,
         check_func_kwargs={
             "model": model_name,
             "registry_table": registry_table,
@@ -224,7 +224,7 @@ def test_unknown_segment_handling(
     dq_engine = DQEngine(ws, spark)
     check = DQDatasetRule(
         criticality="error",
-        check_func=has_no_anomalies,
+        check_func=has_no_row_anomalies,
         check_func_kwargs={
             "model": model_name,
             "registry_table": registry_table,
@@ -281,7 +281,7 @@ def test_all_unknown_segments_yield_null_scores(
     dq_engine = DQEngine(ws, spark)
     check = DQDatasetRule(
         criticality="error",
-        check_func=has_no_anomalies,
+        check_func=has_no_row_anomalies,
         check_func_kwargs={
             "model": model_name,
             "registry_table": registry_table,

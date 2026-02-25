@@ -1,5 +1,5 @@
 """
-Model registry utilities for anomaly detection.
+Model registry utilities for row anomaly detection.
 
 Persistence only: schema and AnomalyModelRegistry. Record types live in model_config.
 """

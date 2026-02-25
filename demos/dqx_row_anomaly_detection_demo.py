@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
-# MAGIC # 📊 Anomaly Detection Demo
+# MAGIC # 📊 Row Anomaly Detection Demo
 # MAGIC
-# MAGIC ## Learn Anomaly Detection in 15 Minutes
+# MAGIC ## Learn Row Anomaly Detection in 15 Minutes
 # MAGIC
 # MAGIC **Quickstart (5–10 minutes):**
-# MAGIC - Train an anomaly model on sample data using DQX Anomaly Detection Engine
+# MAGIC - Train an anomaly model on sample data using DQX Row Anomaly Detection Engine
 # MAGIC - Apply checks and see flagged anomalies
 # MAGIC - View severity percentiles and top contributors
 # MAGIC
@@ -17,13 +17,13 @@
 # MAGIC %md
 # MAGIC ---
 # MAGIC
-# MAGIC ## What is Anomaly Detection?
+# MAGIC ## What is Row Anomaly Detection?
 # MAGIC
 # MAGIC - Standard rule-based checks catch *known* issues (nulls, ranges, formats).
-# MAGIC - Anomaly detection finds *unknown* patterns across multiple columns.
+# MAGIC - Row anomaly detection finds *unknown* patterns in rows across multiple columns.
 # MAGIC - Use both together for better coverage.
 # MAGIC
-# MAGIC **Why anomaly detection**
+# MAGIC **Why row anomaly detection**
 # MAGIC - Learns "normal" from data
 # MAGIC - Flags deviations without manual rules and thresholds
 # MAGIC - Complements rule-based checks rather than replacing them
@@ -32,7 +32,7 @@
 # MAGIC - **Known unknowns**: rule‑based checks (nulls, ranges, formats).
 # MAGIC - **Unknown unknowns**: multi‑column or subtle patterns you didn’t anticipate.
 # MAGIC
-# MAGIC **Data Quality Monitoring (DQM) vs DQX Anomaly detection**
+# MAGIC **Data Quality Monitoring (DQM) vs DQX Row Anomaly detection**
 # MAGIC - **[Data Quality Monitoring (DQM)](https://docs.databricks.com/aws/en/data-quality-monitoring/anomaly-detection)**: uses table‑level signals such as row counts and commit patterns.
 # MAGIC - **DQX Anomaly**: look for row‑level patterns within the data (per‑record anomalies with explanations).
 # MAGIC - DQM and DQX each provide distinct capabilities. Together, they complement one another to deliver comprehensive coverage across the full spectrum of data quality checks.
@@ -51,7 +51,7 @@
 # MAGIC ```
 # MAGIC
 # MAGIC **What's included in `[anomaly]` extras:**
-# MAGIC - `scikit-learn` - Machine learning algorithms used for anomaly detection
+# MAGIC - `scikit-learn` - Machine learning algorithms used for row anomaly detection
 # MAGIC - `mlflow` - Model tracking and registry
 # MAGIC - `shap` - Feature contributions for explainability
 # MAGIC - `cloudpickle` - Model serialization
@@ -97,7 +97,7 @@ import random
 import numpy as np
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule, DQRowRule
 from databricks.labs.dqx.check_funcs import is_not_null, is_in_range
@@ -224,15 +224,15 @@ print(f"✅ Registry ready for new models")
 # MAGIC
 # MAGIC We’ll run:
 # MAGIC - Simple rule checks (nulls, ranges)
-# MAGIC - Anomaly detection for unusual multi‑column patterns
+# MAGIC - Row anomaly detection for unusual multi‑column patterns
 # MAGIC
 # MAGIC In DQX you can run all types of rules in the same run.
 
 # COMMAND ----------
 # DBTITLE 1,Train the Anomaly Model
 
-# Train anomaly detection model with zero configuration
-print("🎯 Training anomaly detection model...")
+# Train row anomaly detection model with zero configuration
+print("🎯 Training row anomaly detection model...")
 print("   DQX will automatically discover patterns in your data\n")
 
 model_name_auto = f"{catalog}.{schema_name}.sales_auto"  # stored in Unity Catalog and must be fully qualified name
@@ -383,9 +383,9 @@ print(f"✅ New data saved to: {new_table}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Section 4: Apply checks including anomaly detection
+# MAGIC ### Section 4: Apply checks including row anomaly detection
 # MAGIC
-# MAGIC Now apply anomaly detection + rule-based checks to the **new data**.
+# MAGIC Now apply row anomaly detection + rule-based checks to the **new data**.
 
 # COMMAND ----------
 # DBTITLE 1,Apply quality checks
@@ -401,9 +401,9 @@ checks_combined = [
     DQRowRule(check_func=is_not_null, check_func_kwargs={"column": "quantity"}),
     DQRowRule(check_func=is_in_range, check_func_kwargs={"column": "quantity", "min_limit": 1, "max_limit": 1000}),
     
-    # Anomaly detection for unusual patterns
+    # Row anomaly detection for unusual patterns
     DQDatasetRule(
-        check_func=has_no_anomalies,
+        check_func=has_no_row_anomalies,
         check_func_kwargs={
             "model": model_name_auto,
             "registry_table": registry_table
@@ -431,7 +431,7 @@ print("   • Threshold is a percentile cutoff — tune it based on your data an
 # MAGIC
 # MAGIC This section is optional. Skip if you only want the quickstart.
 # MAGIC
-# MAGIC In the quarantine dataset we can find the regular `_error` and `_warnings` reporting columns, and `_dq_info` column  which contains additional information from anomaly detection. The field `_dq_info.anomaly` includes:
+# MAGIC In the quarantine dataset we can find the regular `_error` and `_warnings` reporting columns, and `_dq_info` column  which contains additional information from row anomaly detection. The field `_dq_info.anomaly` includes:
 # MAGIC - `severity_percentile` (0–100): percentile of anomaly severity
 # MAGIC - `score`: raw model score (diagnostic only)
 # MAGIC - `contributions`: feature-level explanations
@@ -567,7 +567,7 @@ display(borderline.select(
 # MAGIC
 # MAGIC Skip this if you only want the quickstart.
 # MAGIC
-# MAGIC We will train a model with specific columns. While applying the anomaly detection check, only the columns the model was trained on will be used.
+# MAGIC We will train a model with specific columns. While applying the row anomaly detection check, only the columns the model was trained on will be used.
 # MAGIC
 # MAGIC This is important in production when you need strict feature control. By default, all supported columns are used.
 
@@ -617,7 +617,7 @@ print("🔍 Scoring with manual model...\n")
 
 checks_manual = [
     DQDatasetRule(
-        check_func=has_no_anomalies,
+        check_func=has_no_row_anomalies,
         check_func_kwargs={
             "model": model_name_manual,
             "threshold": 95.0,
@@ -655,7 +655,7 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC
 # MAGIC ### Advanced Options (Reference)
 # MAGIC
-# MAGIC **Scoring options (`has_no_anomalies`):**
+# MAGIC **Scoring options (`has_no_row_anomalies`):**
 # MAGIC - `threshold` (float, 0–100): percentile cutoff (default 95)
 # MAGIC - `include_contributions` (bool): feature contributions in `_dq_info.anomaly`
 # MAGIC - `include_confidence` (bool): confidence estimate (std dev across ensemble)
@@ -680,7 +680,7 @@ print("🔍 Scoring with feature contributions (explainability)...\n")
 
 checks_with_contrib = [
     DQDatasetRule(
-        check_func=has_no_anomalies,
+        check_func=has_no_row_anomalies,
         check_func_kwargs={
             "model": model_name_manual,
             "threshold": 95.0,
@@ -767,7 +767,7 @@ else:
 # MAGIC ## Summary & Next Steps
 # MAGIC
 # MAGIC **Key takeaways:**
-# MAGIC - You can apply anomaly detection and rule-based checks together.
+# MAGIC - You can apply row anomaly detection and rule-based checks together.
 # MAGIC - Start with threshold 95 (default), tune as needed.
 # MAGIC - Use contributions to triage anomalies faster.
 # MAGIC
@@ -781,7 +781,7 @@ else:
 # MAGIC )
 # MAGIC
 # MAGIC checks = [
-# MAGIC     has_no_anomalies(
+# MAGIC     has_no_row_anomalies(
 # MAGIC         model="your_catalog.your_schema.your_model_name",
 # MAGIC         registry_table="your_catalog.your_schema.dqx_anomaly_models",
 # MAGIC     )
@@ -800,14 +800,14 @@ else:
 # MAGIC
 # MAGIC ### 📚 Resources
 # MAGIC
-# MAGIC - [DQX Anomaly Detection Documentation](https://databrickslabs.github.io/dqx/guide/anomaly_detection)
-# MAGIC - [API Reference](https://databrickslabs.github.io/dqx/reference/quality_checks#has_no_anomalies)
+# MAGIC - [DQX Row Anomaly Detection Documentation](https://databrickslabs.github.io/dqx/guide/row_anomaly_detection)
+# MAGIC - [API Reference](https://databrickslabs.github.io/dqx/reference/quality_checks#has_no_row_anomalies)
 # MAGIC - [Data Quality Monitoring (DQM)](https://docs.databricks.com/aws/en/data-quality-monitoring/anomaly-detection/#-table-quality-details)
 # MAGIC
 # MAGIC ### 🎉 You're Ready!
 # MAGIC
 # MAGIC You now understand:
-# MAGIC - ✅ What anomaly detection is and when to use it
+# MAGIC - ✅ What row anomaly detection is and when to use it
 # MAGIC - ✅ How to implement it with minimal configuration
 # MAGIC - ✅ How to interpret and tune results
 # MAGIC - ✅ How to integrate it into production

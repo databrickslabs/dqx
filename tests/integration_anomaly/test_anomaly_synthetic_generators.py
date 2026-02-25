@@ -2,7 +2,7 @@
 
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.anomaly.check_funcs import has_no_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.synthetic_generators import (
     apply_distribution_shift,
@@ -34,8 +34,8 @@ def test_synthetic_generator_threshold_monotonicity(anomaly_engine, spark, make_
         columns=feature_cols,
     )
 
-    _, apply_low = has_no_anomalies(model=model_name, registry_table=registry_table, threshold=30.0)
-    _, apply_high = has_no_anomalies(model=model_name, registry_table=registry_table, threshold=90.0)
+    _, apply_low = has_no_row_anomalies(model_name=model_name, registry_table=registry_table, threshold=30.0)
+    _, apply_high = has_no_row_anomalies(model_name=model_name, registry_table=registry_table, threshold=90.0)
 
     low_count = apply_low(test_df).filter(F.col("_dq_info.anomaly.is_anomaly") == F.lit(True)).count()
     high_count = apply_high(test_df).filter(F.col("_dq_info.anomaly.is_anomaly") == F.lit(True)).count()
