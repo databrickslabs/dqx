@@ -782,7 +782,7 @@ else:
 # MAGIC
 # MAGIC checks = [
 # MAGIC     has_no_row_anomalies(
-# MAGIC         model="your_catalog.your_schema.your_model_name",
+# MAGIC         model_name="your_catalog.your_schema.your_model_name",
 # MAGIC         registry_table="your_catalog.your_schema.dqx_anomaly_models",
 # MAGIC     )
 # MAGIC ]

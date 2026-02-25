@@ -362,7 +362,7 @@ def _join_filtered_results_back(
     return df.join(scored_subset_unique, on=merge_columns, how="left")
 
 
-def _prepare_scoring_dataframe(df: DataFrame, row_filter: str | None) -> DataFrame:
+def _apply_row_filter(df: DataFrame, row_filter: str | None) -> DataFrame:
     """Prepare DataFrame for scoring by applying optional row filter."""
     return df.filter(F.expr(row_filter)) if row_filter else df
 
@@ -386,6 +386,7 @@ def _score_single_segment(
     assert (
         segment_model.features.feature_metadata is not None
     ), f"Model {segment_model.identity.model_name} missing feature_metadata"
+
     if config.driver_only:
         segment_scored = _score_with_sklearn_model_local(
             segment_model.identity.model_uri,
@@ -406,9 +407,11 @@ def _score_single_segment(
             include_contributions=config.include_contributions,
             model_record=segment_model,  # Pass model record for version validation
         )
+
     segment_scored = segment_scored.withColumn("anomaly_score_std", F.lit(0.0))
     segment_scored = segment_scored.withColumnRenamed("anomaly_score", config.score_col)
     segment_scored = segment_scored.withColumnRenamed("anomaly_score_std", config.score_std_col)
+
     if config.include_contributions and "anomaly_contributions" in segment_scored.columns:
         segment_scored = segment_scored.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
@@ -468,7 +471,7 @@ def _score_segmented(
         )
 
     # Filter rows if row_filter is provided
-    df_to_score = _prepare_scoring_dataframe(df, config.row_filter)
+    df_to_score = _apply_row_filter(df, config.row_filter)
 
     scored_dfs: list[DataFrame] = []
 
@@ -1269,7 +1272,7 @@ def _score_global_model(
     _check_model_staleness(record, config.model_name)
 
     # Prepare data
-    df_filtered = _prepare_scoring_dataframe(df, config.row_filter)
+    df_filtered = _apply_row_filter(df, config.row_filter)
     _check_and_warn_drift(
         df_filtered,
         config.columns,
