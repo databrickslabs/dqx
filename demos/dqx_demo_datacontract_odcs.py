@@ -10,7 +10,7 @@
 # MAGIC
 # MAGIC 1. Creating ODCS v3.x data contracts
 # MAGIC 2. Automatically generating DQX quality rules (schema validation, predefined, explicit, and text-based)
-# MAGIC 3. Understanding the four rule types: schema validation, predefined, explicit, and AI-assisted
+# MAGIC 3. Understanding the generated rule types: schema validation, predefined, explicit, and AI-assisted
 # MAGIC 4. Applying generated rules to your data
 # MAGIC 5. Using AI-assisted rule generation from text expectations
 # MAGIC
@@ -198,7 +198,7 @@ with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
 # MAGIC %md
 # MAGIC ## 2. Generate DQX Rules from Contract stored in a file
 # MAGIC
-# MAGIC The ODCS v3.x contract above demonstrates four types of quality rules:
+# MAGIC The ODCS v3.x contract above demonstrates following types of quality rules:
 # MAGIC
 # MAGIC ### 1. Schema Validation (dataset-level, from contract schema)
 # MAGIC - One `has_valid_schema` rule per ODCS schema, ensuring the dataset's columns and types match the contract
@@ -434,7 +434,7 @@ print(f"Loaded {len(loaded_rules)} rules from file")
 # MAGIC | `minLength`/`maxLength` | `logicalTypeOptions` | `sql_expression` | String length validation |
 # MAGIC | `format` | `logicalTypeOptions` | `is_valid_date`, `is_valid_timestamp` | Date/timestamp formats |
 # MAGIC
-# MAGIC ### Four Types of Rules
+# MAGIC ### Types of Generated Rules
 # MAGIC
 # MAGIC | Rule Type | Source | Example |
 # MAGIC |-----------|--------|---------|

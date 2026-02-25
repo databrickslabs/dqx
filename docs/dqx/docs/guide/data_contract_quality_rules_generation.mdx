@@ -8,19 +8,19 @@ import TabItem from '@theme/TabItem';
 
 # Data Contract Quality Rules Generation
 
-DQX provides the capability to generate data quality rules directly from data contracts following the Open Data Contract Standard (ODCS). This feature enables teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
+DQX enables the generation of data quality rules directly from data contracts that follow the Open Data Contract Standard (ODCS). This feature allows teams to implement federated governance strategies by defining data contracts for their Data Products and automatically deriving comprehensive quality checks from those contracts.
 
 ## Overview
 
-The data contract-based quality rules generation is available via the `DQGenerator` class and supports four types of rule generation:
+The data contract-based quality rules generation is available via the `DQGenerator` class and supports generation of the following rule types:
 
-- **Schema Validation**: One dataset-level `has_valid_schema` rule per ODCS schema, derived from the contract's schema definition. Always uses strict mode (exact column set, order, and types). Ensures the dataset schema matches what the contract defines.
+- **Schema Validation**: One dataset-level `has_valid_schema` rule per ODCS schema, derived from the contract's schema definition. Always uses strict mode (exact column set, order, and types). Ensures the dataset schema matches the contract's definition.
 - **Predefined Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, enum, format).
 - **Explicit Rules**: Custom DQX rules embedded directly in the contract's quality section using DQX native format.
 - **Text-Based Rules**: Natural language quality expectations that are processed using AI/LLM to generate appropriate checks (requires `[llm]` extra).
 
-This approach is particularly useful when you want to:
-- Implement standardized data contracts across your organization
+This approach is beneficial when you want to:
+- Implement standardised data contracts across your organisation
 - Enable data product owners to define quality expectations in a familiar format
 - Maintain version-controlled quality rules alongside schema definitions
 - Trace quality checks back to contract specifications for compliance and lineage
@@ -28,7 +28,7 @@ This approach is particularly useful when you want to:
 <Admonition type="tip" title="When to use Data Contract-Based Generation">
 Data contract-based generation is ideal for:
 - **Federated Data Governance**: Enable data product teams to define and own their quality contracts
-- **Standardization**: Use industry-standard ODCS format for data contracts
+- **Standardisation**: Use industry-standard ODCS format for data contracts
 - **Version Control**: Track data contracts and derived quality rules together
 - **Compliance**: Maintain auditable links between contracts and quality checks
 - **Data Mesh**: Support domain-oriented data ownership with clear contracts
@@ -48,7 +48,7 @@ DQX natively supports Open Data Contract Standard (ODCS) v3.x contracts. ODCS is
 - **Quality Sections**: Handles explicit DQX rules via `implementation` blocks in quality sections
 - **Version Compatibility**: Supports ODCS v3.0.x and above (no backward compatibility with older versions)
 
-DQX leverages the `datacontract-cli` library for parsing and validating contracts, ensuring full compatibility with the ODCS ecosystem.
+DQX leverages the `datacontract-cli` library to parse and validate contracts, ensuring full compatibility with the ODCS ecosystem.
 
 ## Prerequisites
 
