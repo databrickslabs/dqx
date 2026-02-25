@@ -405,7 +405,7 @@ checks_combined = [
     DQDatasetRule(
         check_func=has_no_row_anomalies,
         check_func_kwargs={
-            "model": model_name_auto,
+            "model_name": model_name_auto,
             "registry_table": registry_table
         }
     )
