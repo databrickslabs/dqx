@@ -619,7 +619,7 @@ checks_manual = [
     DQDatasetRule(
         check_func=has_no_row_anomalies,
         check_func_kwargs={
-            "model": model_name_manual,
+            "model_name": model_name_manual,
             "threshold": 95.0,
             "registry_table": registry_table
             # we don't specify which column to apply the anomaly check on; the same columns that were selected for the training are used
@@ -682,7 +682,7 @@ checks_with_contrib = [
     DQDatasetRule(
         check_func=has_no_row_anomalies,
         check_func_kwargs={
-            "model": model_name_manual,
+            "model_name": model_name_manual,
             "threshold": 95.0,
             "include_contributions": True,  # On by default; explicit here for clarity.
             "registry_table": registry_table

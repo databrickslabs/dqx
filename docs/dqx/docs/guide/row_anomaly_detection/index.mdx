@@ -130,7 +130,7 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
     # Note that columns are not specified in the check; Scoring uses the columns the model was trained on
     checks = [
       has_no_row_anomalies(
-        model=model_name,
+        model_name=model_name,
         registry_table="catalog.schema.dqx_anomaly_models",
         # threshold=98,  # default 95, now stricter (only extreme anomalies)
       )
@@ -169,7 +169,7 @@ Feature contributions are enabled by default. You can disable them for faster sc
 
 ```python
 has_no_row_anomalies(
-  model=model_name,
+  model_name=model_name,
   registry_table="catalog.schema.dqx_anomaly_models",
   include_contributions=False,
 )
