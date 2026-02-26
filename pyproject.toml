@@ -128,7 +128,7 @@ path = ".venv"
 
 [tool.hatch.envs.default.scripts]
 test            = "pytest tests/unit/ -n 10 --cov --cov-report=xml:coverage-unit.xml --timeout 60 --durations 20"
-test_coverage   = "pytest tests/ -n 10 --cov --cov-report=html --timeout 600 --durations 20"
+test_coverage   = "pytest tests/ -n 10 --ignore=tests/e2e --ignore=tests/perf --cov --cov-report=html --timeout 600 --durations 20"
 # Note that integration tests are controlled by the acceptance action (e.g. running 10 tests in parallel):
 # https://github.com/databrickslabs/sandbox/blob/main/acceptance/ecosystem/pytest_run.py
 # This integration config is only used when running integration tests locally.
@@ -653,8 +653,6 @@ disable = [
     "broad-exception-caught",
     "rewrite-as-for-loop",
     "redundant-returns-doc",
-    # dbx pylint is not up-to-date, e.g. spark.catalog.tableExists is compatible with UC since DBR 14+
-    "incompatible-with-uc",
     # Test fixtures may use closure to capture spark from outer scope
     "no-spark-argument-in-function",
     # PySpark Column objects support ~ operator but pylint type inference doesn't recognize it
