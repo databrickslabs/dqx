@@ -54,10 +54,6 @@ def enable_driver_only_scoring_for_anomaly_tests():
         anomaly_check_funcs.set_driver_only_for_tests(False)
 
 
-# Set by configure_mlflow_tracking on first use; cleared by _cleanup_mlflow_experiment after session.
-_mlflow_session_experiment_id: str | None = None
-
-
 def _create_mlflow_experiment_for_session(ws, _tracking_uri: str, _registry_uri: str) -> tuple[str | None, str | None]:
     """Create or get MLflow experiment for this test session; returns (experiment_id, experiment_path)."""
     os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
@@ -70,17 +66,17 @@ def _create_mlflow_experiment_for_session(ws, _tracking_uri: str, _registry_uri:
     return experiment_id, experiment_path
 
 
-def _configure_mlflow_impl(ws, tracking_uri: str, registry_uri: str) -> None:
-    """Set MLflow URIs, create or reuse session experiment, set env and log. Uses global _mlflow_session_experiment_id."""
-    global _mlflow_session_experiment_id  # pylint: disable=global-statement
+def _configure_mlflow_impl(ws, tracking_uri: str, registry_uri: str, session_state: dict[str, str | None]) -> None:
+    """Set MLflow URIs, create or reuse session experiment, set env and log."""
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_registry_uri(registry_uri)
-    if _mlflow_session_experiment_id is not None:
-        os.environ["MLFLOW_EXPERIMENT_ID"] = _mlflow_session_experiment_id
+    existing_id = session_state.get("experiment_id")
+    if existing_id is not None:
+        os.environ["MLFLOW_EXPERIMENT_ID"] = existing_id
         return
     experiment_id, experiment_path = _create_mlflow_experiment_for_session(ws, tracking_uri, registry_uri)
     if experiment_id:
-        _mlflow_session_experiment_id = experiment_id
+        session_state["experiment_id"] = experiment_id
         os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
     msg = f"MLflow configured: tracking_uri={tracking_uri} " f"registry_uri={registry_uri} experiment={experiment_path}"
     logger.info(msg)
@@ -97,18 +93,24 @@ def _delete_mlflow_experiment(experiment_id: str) -> None:
         logger.warning(msg)
 
 
+@pytest.fixture(scope="session")
+def _mlflow_session_state():
+    """Hold MLflow session experiment id for configure and cleanup. One dict per session."""
+    return {"experiment_id": None}
+
+
 @pytest.fixture(autouse=True, scope="session")
-def _cleanup_mlflow_experiment():
+def _cleanup_mlflow_experiment(_mlflow_session_state):
     """Delete the session MLflow experiment after all anomaly integration tests finish."""
     yield
-    global _mlflow_session_experiment_id  # pylint: disable=global-statement
-    if _mlflow_session_experiment_id:
-        _delete_mlflow_experiment(_mlflow_session_experiment_id)
-        _mlflow_session_experiment_id = None
+    experiment_id = _mlflow_session_state.get("experiment_id")
+    if experiment_id:
+        _delete_mlflow_experiment(experiment_id)
+        _mlflow_session_state["experiment_id"] = None
 
 
 @pytest.fixture(autouse=True)
-def configure_mlflow_tracking(ws):
+def configure_mlflow_tracking(ws, _mlflow_session_state):
     """Configure MLflow for integration tests; reuse one unique experiment per session and clean up after.
 
     Uses a unique experiment path per session (user home + worker id + short uuid) so
@@ -128,7 +130,7 @@ def configure_mlflow_tracking(ws):
     registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
 
     try:
-        _configure_mlflow_impl(ws, tracking_uri, registry_uri)
+        _configure_mlflow_impl(ws, tracking_uri, registry_uri, _mlflow_session_state)
     except Exception as e:
         msg = f"Failed to configure MLflow: {e}"
         logger.error(msg)
