@@ -9,10 +9,28 @@ from typing import Any
 
 from pyspark.sql import Column
 import pyspark.sql.functions as F
+from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames
 from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
 from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "CHECK_FUNC_REGISTRY",
+    "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
+    "ColumnArguments",
+    "Criticality",
+    "DefaultColumnNames",
+    "DQDatasetRule",
+    "DQForEachColRule",
+    "DQRule",
+    "DQRowRule",
+    "MultipleColumnsMixin",
+    "SingleColumnMixin",
+    "normalize_bound_args",
+    "register_for_original_columns_preselection",
+    "register_rule",
+]
 
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
@@ -40,22 +58,6 @@ class Criticality(Enum):
 
     WARN = "warn"
     ERROR = "error"
-
-
-class DefaultColumnNames(Enum):
-    """Enum class to represent columns in the dataframe that will be used for error and warning reporting."""
-
-    ERRORS = "_errors"
-    WARNINGS = "_warnings"
-    INFO = "_dq_info"
-
-
-class ColumnArguments(Enum):
-    """Enum class that is used as input parsing for custom column naming."""
-
-    ERRORS = "errors"
-    WARNINGS = "warnings"
-    INFO = "info"
 
 
 class SingleColumnMixin:

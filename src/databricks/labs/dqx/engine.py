@@ -33,10 +33,9 @@ from databricks.labs.dqx.config import (
     ExtraParams,
 )
 from databricks.labs.dqx.manager import DQRuleManager
+from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, InfoColumn
 from databricks.labs.dqx.rule import (
     Criticality,
-    ColumnArguments,
-    DefaultColumnNames,
     DQRule,
     CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
@@ -144,10 +143,18 @@ class DQEngineCore(DQEngineCoreBase):
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
         result_df = self._create_results_array(
-            df, error_checks, self._result_column_names[ColumnArguments.ERRORS], ref_dfs
+            df,
+            error_checks,
+            self._result_column_names[ColumnArguments.ERRORS],
+            self._result_column_names[ColumnArguments.INFO],
+            ref_dfs,
         )
         result_df = self._create_results_array(
-            result_df, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs
+            result_df,
+            warning_checks,
+            self._result_column_names[ColumnArguments.WARNINGS],
+            self._result_column_names[ColumnArguments.INFO],
+            ref_dfs,
         )
         observed_result = self._observe_metrics(result_df)
 
@@ -414,7 +421,12 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     def _create_results_array(
-        self, df: DataFrame, checks: list[DQRule], dest_col: str, ref_dfs: dict[str, DataFrame] | None = None
+        self,
+        df: DataFrame,
+        checks: list[DQRule],
+        dest_col: str,
+        dest_info_col: str,
+        ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
@@ -428,6 +440,7 @@ class DQEngineCore(DQEngineCoreBase):
             df: The input DataFrame to which checks are applied.
             checks: List of DQRule instances representing the checks to apply.
             dest_col: Name of the output column where the check results map will be stored.
+            dest_info_col: Name of the output column where the check info struct will be stored.
             ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
 
         Returns:
@@ -472,9 +485,7 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
-        info_col_name = self._result_column_names[ColumnArguments.INFO]
-        if "_dq_info" in result_df.columns and info_col_name != "_dq_info":
-            result_df = result_df.withColumnRenamed("_dq_info", info_col_name)
+        result_df = InfoColumn.merge_cols(dest_info_col, result_df)
 
         # Drop temporary columns used to build check conditions, while preserving result columns.
         columns_to_drop = [
@@ -482,7 +493,7 @@ class DQEngineCore(DQEngineCoreBase):
             for col in result_df.columns
             if col not in original_columns
             and col != dest_col
-            and col != info_col_name
+            and col != dest_info_col
             and col != self._result_column_names[ColumnArguments.ERRORS]
             and col != self._result_column_names[ColumnArguments.WARNINGS]
         ]

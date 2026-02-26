@@ -88,12 +88,19 @@ class MLflowModelRegistry(ModelRegistryBase):
 
         Sets registry URI to 'databricks-uc' (or MLFLOW_REGISTRY_URI env var).
         Also sets tracking URI if MLFLOW_TRACKING_URI is set.
+        Ensures an experiment is set (create if missing) so start_run() works in
+        job contexts (e.g. Databricks jobs) where no experiment is active.
         """
         registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
         mlflow.set_registry_uri(registry_uri)
         tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
+
+        experiment_name = os.environ.get("MLFLOW_EXPERIMENT_NAME", "/Shared/dqx_anomaly_models")
+        if mlflow.get_experiment_by_name(experiment_name) is None:
+            mlflow.create_experiment(experiment_name)
+        mlflow.set_experiment(experiment_name)
 
     def register_model(
         self,

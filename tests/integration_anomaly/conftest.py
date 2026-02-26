@@ -3,6 +3,7 @@
 import logging
 import os
 from typing import Any
+from uuid import uuid4
 
 import mlflow
 import pytest
@@ -53,14 +54,72 @@ def enable_driver_only_scoring_for_anomaly_tests():
         anomaly_check_funcs.set_driver_only_for_tests(False)
 
 
+# Set by configure_mlflow_tracking on first use; cleared by _cleanup_mlflow_experiment after session.
+_mlflow_session_experiment_id: str | None = None
+
+
+def _create_mlflow_experiment_for_session(ws, _tracking_uri: str, _registry_uri: str) -> tuple[str | None, str | None]:
+    """Create or get MLflow experiment for this test session; returns (experiment_id, experiment_path)."""
+    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
+    user_name = ws.current_user.me().user_name
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    unique_suffix = uuid4().hex[:8]
+    experiment_path = f"/Users/{user_name}/dqx_integration_tests_{worker_id}_{unique_suffix}"
+    experiment = mlflow.set_experiment(experiment_path)
+    experiment_id = getattr(experiment, "experiment_id", None) if experiment else None
+    return experiment_id, experiment_path
+
+
+def _configure_mlflow_impl(ws, tracking_uri: str, registry_uri: str) -> None:
+    """Set MLflow URIs, create or reuse session experiment, set env and log. Uses global _mlflow_session_experiment_id."""
+    global _mlflow_session_experiment_id  # pylint: disable=global-statement
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_registry_uri(registry_uri)
+    if _mlflow_session_experiment_id is not None:
+        os.environ["MLFLOW_EXPERIMENT_ID"] = _mlflow_session_experiment_id
+        return
+    experiment_id, experiment_path = _create_mlflow_experiment_for_session(ws, tracking_uri, registry_uri)
+    if experiment_id:
+        _mlflow_session_experiment_id = experiment_id
+        os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
+    msg = f"MLflow configured: tracking_uri={tracking_uri} " f"registry_uri={registry_uri} experiment={experiment_path}"
+    logger.info(msg)
+
+
+def _delete_mlflow_experiment(experiment_id: str) -> None:
+    """Delete an MLflow experiment; log and ignore errors so teardown does not fail the run."""
+    try:
+        mlflow.delete_experiment(experiment_id)
+        msg = f"Deleted MLflow experiment {experiment_id}"
+        logger.debug(msg)
+    except Exception as e:
+        msg = f"Could not delete MLflow experiment {experiment_id}: {e}"
+        logger.warning(msg)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _cleanup_mlflow_experiment():
+    """Delete the session MLflow experiment after all anomaly integration tests finish."""
+    yield
+    global _mlflow_session_experiment_id  # pylint: disable=global-statement
+    if _mlflow_session_experiment_id:
+        _delete_mlflow_experiment(_mlflow_session_experiment_id)
+        _mlflow_session_experiment_id = None
+
+
 @pytest.fixture(autouse=True)
-def configure_mlflow_tracking():
-    """Configure MLflow to use Databricks workspace tracking backend for integration tests."""
+def configure_mlflow_tracking(ws):
+    """Configure MLflow for integration tests; reuse one unique experiment per session and clean up after.
+
+    Uses a unique experiment path per session (user home + worker id + short uuid) so
+    parallel workers and repeated runs do not collide. The experiment is deleted when
+    the session ends via _cleanup_mlflow_experiment.
+    """
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
         local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB")
         if not local_mlflow_db:
-            worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+            worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
             local_mlflow_db = f"/tmp/dqx-mlflow-{worker_id}.db"
         tracking_uri = f"sqlite:///{local_mlflow_db}"
         os.environ.setdefault("MLFLOW_TRACKING_URI", tracking_uri)
@@ -69,15 +128,10 @@ def configure_mlflow_tracking():
     registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
 
     try:
-        os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
-        mlflow.set_tracking_uri(tracking_uri)
-        mlflow.set_registry_uri(registry_uri)
-        experiment = mlflow.set_experiment("/Shared/dqx_integration_tests")
-        if experiment and getattr(experiment, "experiment_id", None):
-            os.environ["MLFLOW_EXPERIMENT_ID"] = experiment.experiment_id
-        logger.info(f"MLflow configured: tracking_uri={tracking_uri} registry_uri={registry_uri}")
+        _configure_mlflow_impl(ws, tracking_uri, registry_uri)
     except Exception as e:
-        logger.error(f"Failed to configure MLflow: {e}")
+        msg = f"Failed to configure MLflow: {e}"
+        logger.error(msg)
         raise
 
 
@@ -361,6 +415,21 @@ def qualify_model_name(model_name: str, registry_table: str) -> str:
     return f"{registry_prefix}.{model_name}"
 
 
+def _normalize_anomaly_apply_fn(apply_fn):
+    """Wrap apply_fn so the result DataFrame exposes _dq_info for direct-access tests.
+
+    When used through DQEngine the engine handles the final column name; this wrapper
+    is only needed for test helpers that call apply_fn directly.
+    """
+    info_col = apply_fn.__dqx_info_col__
+
+    def normalized(df: DataFrame) -> DataFrame:
+        result = apply_fn(df)
+        return result.withColumnRenamed(info_col, "_dq_info") if info_col in result.columns else result
+
+    return normalized
+
+
 def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwargs):
     """Create apply function from has_no_row_anomalies check."""
     _, apply_fn = has_no_row_anomalies(
@@ -368,7 +437,7 @@ def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwarg
         registry_table=registry_table,
         **check_kwargs,
     )
-    return apply_fn
+    return _normalize_anomaly_apply_fn(apply_fn)
 
 
 def train_model_with_params(

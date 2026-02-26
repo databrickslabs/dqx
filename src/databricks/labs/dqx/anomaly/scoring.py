@@ -22,6 +22,7 @@ def create_null_scored_dataframe(
     score_std_col: str = "anomaly_score_std",
     contributions_col: str = "anomaly_contributions",
     severity_col: str = "severity_percentile",
+    info_col_name: str = "_dq_info",
 ) -> DataFrame:
     """Create a DataFrame with null anomaly scores (for empty segments or filtered rows).
 
@@ -33,9 +34,10 @@ def create_null_scored_dataframe(
         score_std_col: Name for the standard deviation column
         contributions_col: Name for the contributions column
         severity_col: Name for the severity percentile column
+        info_col_name: Name for the info struct column (collision-safe UUID name expected).
 
     Returns:
-        DataFrame with null anomaly scores and properly structured _dq_info column
+        DataFrame with null anomaly scores and properly structured info column
     """
     result = df.withColumn(score_col, F.lit(None).cast(DoubleType()))
     if include_confidence:
@@ -44,7 +46,6 @@ def create_null_scored_dataframe(
         result = result.withColumn(contributions_col, F.lit(None).cast(MapType(StringType(), DoubleType())))
     result = result.withColumn(severity_col, F.lit(None).cast(DoubleType()))
 
-    # Add null _dq_info column with proper schema (direct struct, not array)
     null_anomaly_info = F.lit(None).cast(
         StructType(
             [
@@ -61,20 +62,14 @@ def create_null_scored_dataframe(
         )
     )
 
-    if "_dq_info" in result.columns:
-        # Add or replace the 'anomaly' field in the existing struct
-        result = result.withColumn("_dq_info", F.col("_dq_info").withField("anomaly", null_anomaly_info))
-    else:
-        # Create a new struct with only the 'anomaly' field
-        result = result.withColumn("_dq_info", F.struct(null_anomaly_info.alias("anomaly")))
-
-    return result
+    return result.withColumn(info_col_name, F.struct(null_anomaly_info.alias("anomaly")))
 
 
 def add_info_column(
     df: DataFrame,
     model_name: str,
     threshold: float,
+    info_col_name: str,
     segment_values: dict[str, str] | None = None,
     include_contributions: bool = False,
     include_confidence: bool = False,
@@ -83,12 +78,13 @@ def add_info_column(
     contributions_col: str = "anomaly_contributions",
     severity_col: str = "severity_percentile",
 ) -> DataFrame:
-    """Add _dq_info struct column with anomaly metadata.
+    """Add info struct column with anomaly metadata.
 
     Args:
         df: Scored DataFrame with anomaly_score, prediction, etc.
         model_name: Name of the model used for scoring.
         threshold: Threshold used for row anomaly detection.
+        info_col_name: Name for the info struct column (collision-safe UUID name expected).
         segment_values: Segment values if model is segmented (None for global models).
         include_contributions: Whether anomaly_contributions are available (0–100 percent).
         include_confidence: Whether anomaly_score_std is available.
@@ -98,7 +94,7 @@ def add_info_column(
         severity_col: Column name for severity percentile (internal, collision-safe).
 
     Returns:
-        DataFrame with _dq_info column added/updated.
+        DataFrame with info column added.
     """
     # Build anomaly info struct
     anomaly_info_fields = {
@@ -131,15 +127,8 @@ def add_info_column(
     else:
         anomaly_info_fields["confidence_std"] = F.lit(None).cast(DoubleType())
 
-    # Create anomaly info struct and wrap in array
     anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()])
-
-    # Create _dq_info struct with anomaly (direct struct, not array - single result per row)
-    info_struct = F.struct(anomaly_info.alias("anomaly"))
-
-    if "_dq_info" in df.columns:
-        return df.withColumn("_dq_info", F.col("_dq_info").withField("anomaly", anomaly_info))
-    return df.withColumn("_dq_info", info_struct)
+    return df.withColumn(info_col_name, F.struct(anomaly_info.alias("anomaly")))
 
 
 def add_severity_percentile_column(

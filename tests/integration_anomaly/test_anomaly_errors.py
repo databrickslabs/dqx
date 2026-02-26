@@ -362,6 +362,7 @@ def test_add_info_column_preserves_existing_info(spark: SparkSession):
         df,
         model_name="catalog.schema.model",
         threshold=60.0,
+        info_col_name="_dq_info",
         include_contributions=False,
         include_confidence=False,
     )

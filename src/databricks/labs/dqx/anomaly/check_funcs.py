@@ -6,7 +6,7 @@ import uuid
 import sys
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, cast
 
@@ -61,8 +61,10 @@ from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter, buil
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.reporting_columns import InfoColumn
 
 _DRIVER_ONLY = {"value": False}
+
 SEVERITY_QUANTILE_KEYS: list[tuple[float, str]] = [
     (0.0, "p00"),
     (1.0, "p01"),
@@ -98,6 +100,7 @@ class ScoringConfig:
     score_std_col: str = "anomaly_score_std"
     contributions_col: str = "anomaly_contributions"
     severity_col: str = "severity_percentile"
+    info_col: str = field(default_factory=InfoColumn.get_collision_free_name)
 
 
 class AnomalyScoringStrategy(ABC):
@@ -274,6 +277,7 @@ def has_no_row_anomalies(
     score_std_col = f"__dq_anomaly_score_std_{uuid.uuid4().hex}"
     contributions_col = f"__dq_anomaly_contributions_{uuid.uuid4().hex}"
     severity_col = f"__dq_severity_percentile_{uuid.uuid4().hex}"
+    info_col = InfoColumn().get_collision_free_name()
     driver_only_local = _DRIVER_ONLY["value"]
 
     def apply(df: DataFrame) -> DataFrame:
@@ -297,6 +301,7 @@ def has_no_row_anomalies(
             score_std_col=score_std_col,
             contributions_col=contributions_col,
             severity_col=severity_col,
+            info_col=info_col,
         )
         result = _run_anomaly_scoring(df_to_score, config, registry_table, model_name)
         return result.drop(row_id_col)
@@ -304,10 +309,10 @@ def has_no_row_anomalies(
     message = F.concat_ws(
         "",
         F.lit("Anomaly severity "),
-        F.round(F.col("_dq_info").anomaly.severity_percentile, 1).cast("string"),
+        F.round(F.col(info_col).anomaly.severity_percentile, 1).cast("string"),
         F.lit(f" exceeded threshold {threshold}"),
     )
-    condition_expr = F.col("_dq_info").anomaly.is_anomaly
+    condition_expr = F.col(info_col).anomaly.is_anomaly
     return make_condition(condition_expr, message, "has_row_anomalies"), apply
 
 
@@ -354,10 +359,10 @@ def _join_filtered_results_back(
     result: DataFrame,
     merge_columns: list[str],
     score_col: str,
+    info_col: str,
 ) -> DataFrame:
     """Join scored results back to original DataFrame (for row_filter case)."""
-    # Get score columns to join (only anomaly_score and _dq_info now)
-    score_cols_to_join = [score_col, "_dq_info"]
+    score_cols_to_join = [score_col, info_col]
 
     # Select only merge columns + score columns
     scored_subset = result.select(*merge_columns, *score_cols_to_join)
@@ -365,7 +370,7 @@ def _join_filtered_results_back(
     # Take distinct rows to avoid duplicates
     agg_exprs = [
         F.max(score_col).alias(score_col),
-        F.max_by("_dq_info", score_col).alias("_dq_info"),
+        F.max_by(info_col, score_col).alias(info_col),
     ]
     scored_subset_unique = scored_subset.groupBy(*merge_columns).agg(*agg_exprs)
 
@@ -434,11 +439,12 @@ def _score_single_segment(
         quantile_points=quantile_points,
     )
 
-    # Add _info column with segment values
+    # Add info column with segment values
     segment_scored = add_info_column(
         segment_scored,
         config.model_name,
         config.threshold,
+        info_col_name=config.info_col,
         segment_values=segment_model.segmentation.segment_values,
         include_contributions=config.include_contributions,
         include_confidence=config.include_confidence,
@@ -508,27 +514,30 @@ def _score_segmented(
             score_std_col=config.score_std_col,
             contributions_col=config.contributions_col,
             severity_col=config.severity_col,
+            info_col_name=config.info_col,
         )
     else:
         result = scored_dfs[0]
         for sdf in scored_dfs[1:]:
             result = result.union(sdf)
 
-    # Drop internal columns that are now in _dq_info (after union, before join)
+    # Drop internal columns that are now in the info struct (after union, before join)
     result = result.drop(config.score_std_col)  # Always drop (null if not ensemble)
     if config.include_contributions:
-        result = result.drop(config.contributions_col)  # Drop top-level, use _dq_info instead
+        result = result.drop(config.contributions_col)
     result = result.drop(config.severity_col)
 
     # Always join back to original DataFrame to include unscored rows
     # (rows with segment combinations not seen during training will have null scores)
     if config.row_filter:
-        result = _join_filtered_results_back(df, result, config.merge_columns, config.score_col)
+        result = _join_filtered_results_back(df, result, config.merge_columns, config.score_col, config.info_col)
     else:
         # Even without row_filter, join back to include all rows (including unscored segments)
-        result = _join_filtered_results_back(df_to_score, result, config.merge_columns, config.score_col)
+        result = _join_filtered_results_back(
+            df_to_score, result, config.merge_columns, config.score_col, config.info_col
+        )
 
-    # Drop internal anomaly_score column (use _dq_info.anomaly.score instead)
+    # Drop internal anomaly_score column
     result = result.drop(config.score_col)
 
     return result
@@ -1355,11 +1364,12 @@ def _score_global_model(
         quantile_points=quantile_points,
     )
 
-    # Add _dq_info column (before dropping internal columns)
+    # Add info column (before dropping internal columns)
     scored_df = add_info_column(
         scored_df,
         config.model_name,
         config.threshold,
+        info_col_name=config.info_col,
         segment_values=None,  # Global model has no segments
         include_contributions=config.include_contributions,
         include_confidence=config.include_confidence,
@@ -1369,16 +1379,16 @@ def _score_global_model(
         severity_col=config.severity_col,
     )
 
-    # Post-process: drop internal columns that are now in _dq_info
+    # Post-process: drop internal columns that are now in the info struct
     scored_df = scored_df.drop(config.score_std_col)  # Always drop (null if not ensemble)
     if config.include_contributions:
-        scored_df = scored_df.drop(config.contributions_col)  # Drop top-level, use _dq_info instead
+        scored_df = scored_df.drop(config.contributions_col)
     scored_df = scored_df.drop(config.severity_col)
 
     if config.row_filter:
-        scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns, config.score_col)
+        scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns, config.score_col, config.info_col)
 
-    # Drop internal anomaly_score column (use _dq_info.anomaly.score instead)
+    # Drop internal anomaly_score column
     scored_df = scored_df.drop(config.score_col)
 
     return scored_df

@@ -10,6 +10,10 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import ReadTimeout as RequestsReadTimeout
+
+import databricks
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.parallel import ManyError
@@ -42,8 +46,6 @@ from databricks.sdk.service import compute, jobs
 from databricks.sdk.service.jobs import Run
 from databricks.sdk.service.workspace import ObjectType
 from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
-
-import databricks
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.installer.mixins import InstallationMixin
@@ -216,8 +218,13 @@ class DeployedWorkflows:
             if '.log' not in object_info.path:
                 continue
             task_name = os.path.basename(object_info.path).split('.')[0]
-            with self._ws.workspace.download(object_info.path) as raw_file:
-                text_io = StringIO(raw_file.read().decode())
+            try:
+                with self._ws.workspace.download(object_info.path) as raw_file:
+                    text_io = StringIO(raw_file.read().decode())
+            except (RequestsConnectionError, RequestsReadTimeout, TimeoutError) as e:
+                msg = f"Could not fetch workflow log {object_info.path} " f"(workflow run already completed): {e}"
+                logger.warning(msg)
+                continue
             for record in parse_logs(text_io):
                 yield replace(record, component=f'{record.component}:{task_name}')
 
