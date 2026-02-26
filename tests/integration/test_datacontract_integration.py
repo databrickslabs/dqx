@@ -8,6 +8,7 @@ multiple schemas, recursive type validation, DECIMAL validation, and error paths
 (ParameterError, NotFound, ODCSContractError, InvalidPhysicalTypeError).
 """
 
+import logging
 import os
 import tempfile
 from typing import Any
@@ -311,6 +312,108 @@ class TestDataContractIntegration:
         status = DQEngine.validate_checks(rules)
         assert not status.has_errors
 
+    def test_generate_rules_geography_interval_types_valid(self, ws, spark):
+        """Contract with GEOGRAPHY or INTERVAL physicalType generates rules and DDL contains type (prefix branch)."""
+        for physical_type in ("GEOGRAPHY(Point)", "INTERVAL DAY"):
+            contract = {
+                "kind": "DataContract",
+                "apiVersion": "v3.0.2",
+                "id": "test:geo",
+                "name": "Geo",
+                "version": "1.0.0",
+                "status": "active",
+                "schema": [
+                    {
+                        "name": "geo_schema",
+                        "physicalType": "table",
+                        "properties": [
+                            {"name": "id", "physicalType": "STRING"},
+                            {"name": "geom", "physicalType": physical_type},
+                        ],
+                    },
+                ],
+            }
+            rules = _generate_rules_from_temp_contract(
+                ws,
+                spark,
+                contract,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+            schema_rules = get_schema_validation_rules(rules)
+            assert len(schema_rules) == 1
+            ddl = schema_rules[0]["check"]["arguments"]["expected_schema"]
+            assert physical_type.upper() in ddl or physical_type in ddl
+            status = DQEngine.validate_checks(rules)
+            assert not status.has_errors
+
+    def test_schema_with_empty_properties_no_crash(self, ws, spark, caplog):
+        """Schema with properties: [] produces no schema_validation rule for that schema; no exception."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:empty_props",
+            "name": "Empty Props",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "empty_schema",
+                    "physicalType": "table",
+                    "properties": [],
+                },
+            ],
+        }
+        with caplog.at_level(logging.WARNING):
+            rules = _generate_rules_from_temp_contract(
+                ws,
+                spark,
+                contract,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+        schema_rules = get_schema_validation_rules(rules)
+        assert len(schema_rules) == 0
+        assert "no flat properties" in caplog.text or "skipping schema validation" in caplog.text.lower()
+
+    def test_nameless_property_warning_in_schema_info(self, ws, spark, caplog):
+        """Schema with nameless property and text rule triggers warning when building schema info for LLM."""
+        contract = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:nameless",
+            "name": "Nameless",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "mixed_schema",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "id", "physicalType": "STRING", "logicalType": "string"},
+                        {"name": "", "physicalType": "STRING", "logicalType": "string"},
+                        {
+                            "name": "data",
+                            "physicalType": "STRING",
+                            "logicalType": "string",
+                            "quality": [
+                                {"type": "text", "description": "Data must be non-empty"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+        with caplog.at_level(logging.WARNING):
+            _generate_rules_from_temp_contract(
+                ws,
+                spark,
+                contract,
+                generate_predefined_rules=False,
+                process_text_rules=True,
+            )
+        assert "Skipping property without name in schema" in caplog.text
+
     def test_error_invalid_inner_physical_type_raises(self, ws, spark):
         """Contract with invalid inner type (e.g. ARRAY<NOT_A_TYPE>) raises InvalidPhysicalTypeError."""
         contract = {
@@ -457,3 +560,122 @@ class TestDataContractIntegrationErrors:
                 os.unlink(path)
             except OSError:
                 pass
+
+    def _contract_with_physical_type(self, physical_type: str) -> dict[str, Any]:
+        """Minimal ODCS contract with one schema and one property with given physicalType."""
+        return {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:pt",
+            "name": "PT",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "s",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "id", "physicalType": "STRING"},
+                        {"name": "col", "physicalType": physical_type},
+                    ],
+                },
+            ],
+        }
+
+    def test_error_unmatched_angle_brackets_raises(self, ws, spark):
+        """Contract with physicalType ARRAY<INT (no closing >) raises InvalidPhysicalTypeError."""
+        contract = self._contract_with_physical_type("ARRAY<INT")
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+            )
+        msg = str(exc_info.value).lower()
+        assert "unmatched" in msg or "bracket" in msg or "angle" in msg or "invalid" in msg
+
+    def test_error_empty_array_raises(self, ws, spark):
+        """Contract with physicalType ARRAY<> raises InvalidPhysicalTypeError."""
+        contract = self._contract_with_physical_type("ARRAY<>")
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+            )
+        assert "empty" in str(exc_info.value).lower() or "ARRAY" in str(exc_info.value)
+
+    def test_error_empty_map_raises(self, ws, spark):
+        """Contract with physicalType MAP<> raises InvalidPhysicalTypeError."""
+        contract = self._contract_with_physical_type("MAP<>")
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+            )
+        assert "empty" in str(exc_info.value).lower() or "MAP" in str(exc_info.value)
+
+    def test_error_map_wrong_number_of_params_raises(self, ws, spark):
+        """Contract with physicalType MAP<STRING> or MAP<INT,INT,INT> raises InvalidPhysicalTypeError."""
+        for bad_type in ("MAP<STRING>", "MAP<INT,INT,INT>"):
+            contract = self._contract_with_physical_type(bad_type)
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                _generate_rules_from_temp_contract(
+                    ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+                )
+            msg = str(exc_info.value).lower()
+            assert "two" in msg or "exactly" in msg or "parameter" in msg
+
+    def test_error_empty_struct_raises(self, ws, spark):
+        """Contract with physicalType STRUCT<> raises InvalidPhysicalTypeError."""
+        contract = self._contract_with_physical_type("STRUCT<>")
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+            )
+        assert "empty" in str(exc_info.value).lower() or "STRUCT" in str(exc_info.value)
+
+    def test_error_struct_field_without_colon_raises(self, ws, spark):
+        """Contract with physicalType STRUCT<id INT> (no colon) raises InvalidPhysicalTypeError."""
+        contract = self._contract_with_physical_type("STRUCT<id INT>")
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+            )
+        msg = str(exc_info.value).lower()
+        assert "name" in msg and ("type" in msg or ":" in msg or "colon" in msg)
+
+    def test_error_struct_field_missing_name_or_type_raises(self, ws, spark):
+        """Contract with physicalType STRUCT<:INT> or STRUCT<name:> raises InvalidPhysicalTypeError."""
+        for bad_type in ("STRUCT<:INT>", "STRUCT<name:>"):
+            contract = self._contract_with_physical_type(bad_type)
+            with pytest.raises(InvalidPhysicalTypeError):
+                _generate_rules_from_temp_contract(
+                    ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+                )
+
+    def test_error_recursion_depth_exceeded_raises(self, ws, spark):
+        """Contract with physicalType nested beyond max depth raises InvalidPhysicalTypeError."""
+        nested = "ARRAY<" * 51 + "INT" + ">" * 51
+        contract = self._contract_with_physical_type(nested)
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+            )
+        msg = str(exc_info.value)
+        assert "50" in msg or "depth" in msg.lower() or "maximum" in msg.lower()
+
+    def test_error_empty_physical_type_raises(self, ws, spark):
+        """Contract with physicalType '' or whitespace raises InvalidPhysicalTypeError."""
+        for bad_type in ("", "   "):
+            contract = self._contract_with_physical_type(bad_type)
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                _generate_rules_from_temp_contract(
+                    ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+                )
+            assert "physicalType" in str(exc_info.value) or "Unity" in str(exc_info.value)
+
+    def test_error_unknown_physical_type_raises(self, ws, spark):
+        """Contract with physicalType NOT_A_UC_TYPE raises InvalidPhysicalTypeError."""
+        contract = self._contract_with_physical_type("NOT_A_UC_TYPE")
+        with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+            _generate_rules_from_temp_contract(
+                ws, spark, contract, generate_predefined_rules=False, process_text_rules=False
+            )
+        msg = str(exc_info.value).lower()
+        assert "not a valid" in msg or "unity catalog" in msg or "NOT_A_UC_TYPE" in str(exc_info.value)
