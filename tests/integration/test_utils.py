@@ -201,9 +201,3 @@ def test_get_table_primary_keys_nonexistent_table(spark, make_schema, make_rando
     # Should return empty set without raising exception
     pk_cols = get_table_primary_keys(fake_table_name, spark)
     assert pk_cols == set()
-
-
-# Note: get_table_foreign_keys() tests are NOT included here because it's a simple
-# wrapper that delegates to SparkTableDataProvider.get_table_foreign_keys(),
-# which is already thoroughly tested in test_table_manager.py.
-# The wrapper adds only a try/except for error handling (returns empty dict on error).

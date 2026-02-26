@@ -10,14 +10,14 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.engine import DQEngine
-from tests.integration_anomaly.test_anomaly_constants import (
+from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     DRIFT_THRESHOLD,
     DRIFT_TRAIN_SIZE,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.test_anomaly_utils import (
+from tests.integration_anomaly.conftest import (
     create_anomaly_check_rule,
     train_simple_2d_model,
 )
@@ -255,11 +255,6 @@ def test_segment_drift_warns_per_segment(
         drift_warnings = [warning for warning in w if "data drift detected" in str(warning.message).lower()]
         assert drift_warnings
         assert any("segment" in str(warning.message).lower() for warning in drift_warnings)
-
-
-# ============================================================================
-# Direct Drift Detector Module Tests
-# ============================================================================
 
 
 def test_drift_detector_no_drift_when_distributions_match(spark):

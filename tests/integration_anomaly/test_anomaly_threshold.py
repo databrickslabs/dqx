@@ -7,11 +7,11 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
-from tests.integration_anomaly.test_anomaly_constants import (
+from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
 )
-from tests.integration_anomaly.test_anomaly_utils import (
+from tests.integration_anomaly.conftest import (
     apply_anomaly_check_direct,
     create_anomaly_dataset_rule,
     train_simple_2d_model,

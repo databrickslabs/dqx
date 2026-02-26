@@ -758,28 +758,23 @@ class LakebaseInstance:
     database_name: str
 
 
-@pytest.fixture
-def make_lakebase_instance(ws, make_random):
-    def create() -> LakebaseInstance:
-        run_id = os.getenv("GITHUB_RUN_ID", "local")
-        instance_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
-        database_name = "dqx"  # does not need to be random
-        catalog_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
-        capacity = "CU_1"
+@retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=20))
+def _lakebase_create_database_instance(workspace: WorkspaceClient, instance_name: str, capacity: str) -> None:
+    """Create database instance; retries on quota/rate limits."""
+    workspace.database.create_database_instance_and_wait(
+        database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
+    )
 
-        # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
-        # Retries are performed until the timeout is reached.
-        @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=20))
-        def _create_database_instance():
-            ws.database.create_database_instance_and_wait(
-                database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
-            )
 
-        _create_database_instance()
-
-        logger.info(f"Successfully created database instance: {instance_name}")
-
-        ws.database.create_database_catalog(
+def _lakebase_create_catalog(
+    workspace: WorkspaceClient,
+    catalog_name: str,
+    database_name: str,
+    instance_name: str,
+) -> None:
+    """Create catalog; on failure delete instance and re-raise."""
+    try:
+        workspace.database.create_database_catalog(
             DatabaseCatalog(
                 name=catalog_name,
                 database_name=database_name,
@@ -788,29 +783,52 @@ def make_lakebase_instance(ws, make_random):
             )
         )
         logger.info(f"Successfully created database catalog: {catalog_name}")
+    except Exception:
+        logger.warning(f"Failed to create catalog {catalog_name}, cleaning up instance {instance_name}")
+        try:
+            workspace.database.delete_database_instance(name=instance_name)
+        except Exception as delete_error:
+            logger.warning(f"Failed to delete instance {instance_name} during cleanup: {delete_error}")
+        raise
 
+
+@retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+def _lakebase_delete_catalog(workspace: WorkspaceClient, catalog_name: str) -> None:
+    """Delete database catalog; retries on rate limits."""
+    try:
+        workspace.database.delete_database_catalog(name=catalog_name)
+        logger.info(f"Successfully deleted database catalog: {catalog_name}")
+    except NotFound:
+        logger.info(f"Database catalog {catalog_name} not found (already deleted)")
+
+
+@retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+def _lakebase_delete_database_instance(workspace: WorkspaceClient, instance_name: str) -> None:
+    """Delete database instance; retries on rate limits."""
+    try:
+        workspace.database.delete_database_instance(name=instance_name)
+        logger.info(f"Successfully deleted database instance: {instance_name}")
+    except NotFound:
+        logger.info(f"Database instance {instance_name} not found (already deleted)")
+
+
+@pytest.fixture
+def make_lakebase_instance(ws, make_random):
+    def create() -> LakebaseInstance:
+        run_id = os.getenv("GITHUB_RUN_ID", "local")
+        instance_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
+        database_name = "dqx"
+        catalog_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
+        capacity = "CU_1"
+
+        _lakebase_create_database_instance(ws, instance_name, capacity)
+        logger.info(f"Successfully created database instance: {instance_name}")
+        _lakebase_create_catalog(ws, catalog_name, database_name, instance_name)
         return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
 
     def delete(instance: LakebaseInstance) -> None:
-        # Delete catalog first, then instance.
-        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
-        def _delete_catalog():
-            try:
-                ws.database.delete_database_catalog(name=instance.catalog_name)
-                logger.info(f"Successfully deleted database catalog: {instance.catalog_name}")
-            except NotFound:
-                logger.info(f"Database catalog {instance.catalog_name} not found (already deleted)")
-
-        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
-        def _delete_instance():
-            try:
-                ws.database.delete_database_instance(name=instance.name)
-                logger.info(f"Successfully deleted database instance: {instance.name}")
-            except NotFound:
-                logger.info(f"Database instance {instance.name} not found (already deleted)")
-
-        _delete_catalog()
-        _delete_instance()
+        _lakebase_delete_catalog(ws, instance.catalog_name)
+        _lakebase_delete_database_instance(ws, instance.name)
 
     yield from factory("lakebase", create, delete)
 

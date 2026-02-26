@@ -9,7 +9,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
-from tests.integration_anomaly.test_anomaly_utils import (
+from tests.integration_anomaly.conftest import (
     create_anomaly_check_rule,
     train_large_dataset_model,
     train_model_with_params,
@@ -295,7 +295,7 @@ def test_performance_with_many_columns(
 
     # This should complete without timing out
     model_uri = train_model_with_params(
-        anomaly_engine=anomaly_engine,
+        engine=anomaly_engine,
         df=df,
         model_name=model_name,
         registry_table=registry_table,

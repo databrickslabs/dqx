@@ -4,7 +4,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
 
-from tests.integration_anomaly.test_anomaly_constants import (
+from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     DQENGINE_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -12,7 +12,7 @@ from tests.integration_anomaly.test_anomaly_constants import (
 )
 
 
-def test_yaml_based_checks(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_check_by_metadata(ws, spark: SparkSession, shared_2d_model):
     """Test applying anomaly checks defined in YAML."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -49,7 +49,7 @@ def test_yaml_based_checks(ws, spark: SparkSession, shared_2d_model):
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
-def test_yaml_based_checks_columns_autodiscovery(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_check_by_metadata_with_columns_autodiscovery(ws, spark: SparkSession, shared_2d_model):
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
@@ -85,7 +85,7 @@ def test_yaml_based_checks_columns_autodiscovery(ws, spark: SparkSession, shared
     assert len(rows[1]["_errors"]) > 0  # Anomalous row has errors
 
 
-def test_yaml_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_check_by_metadata_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
     """Test YAML with multiple anomaly and standard checks."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -147,7 +147,7 @@ def test_yaml_with_multiple_checks(ws, spark: SparkSession, shared_2d_model):
     assert len(row2_errors) > 0
 
 
-def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_check_by_metadata_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
     """Test YAML configuration with custom threshold."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -183,7 +183,7 @@ def test_yaml_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
     assert all(count == 0 for count in error_counts) or sum(error_counts) <= 1
 
 
-def test_yaml_with_contributions(ws, spark: SparkSession, shared_3d_model):
+def test_apply_anomaly_check_by_metadata_with_contributions(ws, spark: SparkSession, shared_3d_model):
     """Test YAML configuration with include_contributions flag."""
     # Use shared pre-trained 3D model (no training needed!)
     model_name = shared_3d_model["model_name"]
@@ -219,7 +219,7 @@ def test_yaml_with_contributions(ws, spark: SparkSession, shared_3d_model):
     assert len(rows[0]["_errors"]) > 0
 
 
-def test_yaml_with_drift_threshold(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_check_by_metadata_with_drift_threshold(ws, spark: SparkSession, shared_2d_model):
     """Test YAML configuration with drift_threshold."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -256,7 +256,7 @@ def test_yaml_with_drift_threshold(ws, spark: SparkSession, shared_2d_model):
     assert len(row_errors) == 0
 
 
-def test_yaml_criticality_warn(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_check_by_metadata_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     """Test YAML with criticality='warn'."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -291,7 +291,7 @@ def test_yaml_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     assert rows[1]["_warnings"] is not None or rows[1]["_errors"] is not None
 
 
-def test_yaml_parsing_validation(ws, spark: SparkSession):
+def test_apply_anomaly_check_by_metadata_parsing_validation(ws, spark: SparkSession):
     """Test that invalid YAML is caught."""
     # Invalid YAML (missing required argument)
     checks_yaml = """

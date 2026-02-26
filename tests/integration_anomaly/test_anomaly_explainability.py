@@ -24,12 +24,12 @@ from databricks.labs.dqx.anomaly.explainer import (
     create_optimal_tree_explainer,
 )
 from databricks.labs.dqx.anomaly.explainer import format_contributions_map
-from tests.integration_anomaly.test_anomaly_constants import (
+from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.test_anomaly_utils import score_3d_with_contributions
+from tests.integration_anomaly.conftest import score_3d_with_contributions
 
 
 def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):

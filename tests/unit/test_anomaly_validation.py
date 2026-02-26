@@ -397,7 +397,3 @@ def test_error_message_formats():
     assert "Model" in error_msg
     assert model_name in error_msg
     assert registry in error_msg
-
-    # Internal row id collision error
-    error_msg = "Input DataFrame already contains column '_dqx_row_id'."
-    assert "_dqx_row_id" in error_msg

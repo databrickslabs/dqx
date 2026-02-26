@@ -7,7 +7,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.manager import DQRuleManager
 from databricks.labs.dqx.schema import dq_result_schema
 from tests.constants import TEST_CATALOG
-from tests.integration_anomaly.test_anomaly_utils import (
+from tests.integration_anomaly.conftest import (
     create_anomaly_check_rule,
     get_percentile_threshold_from_data,
     get_standard_2d_training_data,

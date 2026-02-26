@@ -6,12 +6,22 @@ from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.errors import InvalidConfigError
 from tests.constants import TEST_CATALOG
-from tests.integration_anomaly.test_anomaly_utils import get_standard_2d_training_data
+from tests.integration_anomaly.conftest import get_standard_2d_training_data
 
 
 def _make_workflow_ctx(run_config, spark, ws):
     """Create a WorkflowContext with overridden properties for testing."""
     return WorkflowContext().replace(run_config=run_config, spark=spark, workspace_client=ws)
+
+
+def test_anomaly_workflow_deploy_and_run(spark, setup_anomaly_deployed_workflow):
+    """Deploy DQX and run the anomaly-trainer workflow as a job; verify the model is in the registry."""
+    installation_ctx, run_config, registry_table, model_name, _ = setup_anomaly_deployed_workflow()
+
+    installation_ctx.deployed_workflows.run_workflow("anomaly-trainer", run_config.name)
+
+    models_df = spark.table(registry_table).select(F.col("identity.model_name").alias("model_name"))
+    assert models_df.filter(F.col("model_name") == model_name).count() > 0
 
 
 def test_anomaly_workflow_trains_with_explicit_model_name(ws, spark, make_schema, make_random):

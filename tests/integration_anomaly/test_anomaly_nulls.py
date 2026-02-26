@@ -6,12 +6,12 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
-from tests.integration_anomaly.test_anomaly_constants import (
+from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.test_anomaly_utils import apply_anomaly_check_direct
+from tests.integration_anomaly.conftest import apply_anomaly_check_direct
 
 
 def test_training_filters_nulls(

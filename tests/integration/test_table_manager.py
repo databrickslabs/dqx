@@ -1,34 +1,6 @@
-import os
 import datetime as dt
-import pytest
-
 from databricks.labs.dqx.table_manager import SparkTableDataProvider, TableManager
-
-TEST_CATALOG = "dqx"
-
-if not os.getenv("DATABRICKS_HOST"):
-    pytest.skip(
-        "DATABRICKS_HOST not set; skipping integration tests requiring Databricks workspace.", allow_module_level=True
-    )
-
-
-def _create_simple_table(spark, make_schema, make_random) -> tuple[str, str]:
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    table_name = f"{TEST_CATALOG}.{schema.name}.table_manager_{make_random(8).lower()}"
-    df = spark.createDataFrame([(1, "a"), (2, "b")], "id int, name string")
-    df.write.format("delta").saveAsTable(table_name)
-    return schema.name, table_name
-
-
-def _create_typed_table(spark, make_schema, make_random) -> str:
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    table_name = f"{TEST_CATALOG}.{schema.name}.table_manager_types_{make_random(8).lower()}"
-    df = spark.createDataFrame(
-        [(1, "a", dt.date(2024, 1, 1), dt.datetime(2024, 1, 1, 0, 0, 0))],
-        "id int, name string, event_date date, event_ts timestamp",
-    )
-    df.write.format("delta").saveAsTable(table_name)
-    return table_name
+from tests.constants import TEST_CATALOG
 
 
 def test_table_manager_definition_and_columns(spark, make_schema, make_random):
@@ -107,3 +79,26 @@ def test_spark_table_data_provider_foreign_keys_parsing(spark, make_schema, make
 
     assert "foreign_key_invalid" not in foreign_keys
     assert "foreign_key_missing_ref" not in foreign_keys
+
+
+def _create_simple_table(spark, make_schema, make_random) -> tuple[str, str]:
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    table_name = f"{TEST_CATALOG}.{schema.name}.table_manager_{make_random(8).lower()}"
+
+    df = spark.createDataFrame([(1, "a"), (2, "b")], "id int, name string")
+    df.write.format("delta").saveAsTable(table_name)
+
+    return schema.name, table_name
+
+
+def _create_typed_table(spark, make_schema, make_random) -> str:
+    schema = make_schema(catalog_name=TEST_CATALOG)
+
+    table_name = f"{TEST_CATALOG}.{schema.name}.table_manager_types_{make_random(8).lower()}"
+    df = spark.createDataFrame(
+        [(1, "a", dt.date(2024, 1, 1), dt.datetime(2024, 1, 1, 0, 0, 0))],
+        "id int, name string, event_date date, event_ts timestamp",
+    )
+    df.write.format("delta").saveAsTable(table_name)
+
+    return table_name

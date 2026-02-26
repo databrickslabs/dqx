@@ -8,16 +8,15 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
-from tests.integration_anomaly.test_anomaly_constants import (
-    DQENGINE_SCORE_THRESHOLD,
+from tests.integration_anomaly.constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.test_anomaly_utils import create_anomaly_check_rule
+from tests.integration_anomaly.conftest import create_anomaly_check_rule
 
 
-def test_apply_checks_by_metadata(ws, spark: SparkSession, shared_2d_model):
-    """Test that apply_checks_by_metadata adds anomaly scores and DQX metadata."""
+def test_apply_anomaly_checks(ws, spark: SparkSession, shared_2d_model):
+    """Test that test_apply_anomaly_checks adds anomaly scores and DQX metadata."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
@@ -52,8 +51,8 @@ def test_apply_checks_by_metadata(ws, spark: SparkSession, shared_2d_model):
     assert has_error, "Expected at least one row to have anomaly error"
 
 
-def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
-    """Test that apply_checks_by_metadata_and_split correctly splits valid/quarantine."""
+def test_apply_anomaly_checks_and_split(ws, spark: SparkSession, shared_2d_model):
+    """Test that test_apply_anomaly_checks_and_split correctly splits valid/quarantine."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
@@ -91,7 +90,7 @@ def test_apply_checks_and_split(ws, spark: SparkSession, shared_2d_model):
     assert "amount" in quarantine_df.columns
 
 
-def test_quarantine_dataframe_structure(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_checks_and_split_with_correct_quarantine_structure(ws, spark: SparkSession, shared_2d_model):
     """Test that quarantine DataFrame has expected structure."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -129,7 +128,7 @@ def test_quarantine_dataframe_structure(ws, spark: SparkSession, shared_2d_model
     assert row["quantity"] == OUTLIER_QUANTITY
 
 
-def test_multiple_checks_combined(ws, spark: SparkSession, shared_2d_model):
+def test_anomaly_and_other_checks_combined(ws, spark: SparkSession, shared_2d_model):
     """Test combining anomaly check with other DQX checks."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -192,35 +191,7 @@ def test_multiple_checks_combined(ws, spark: SparkSession, shared_2d_model):
         ), f"Anomaly row has is_not_null error: {rows[2]['_errors']}"
 
 
-def test_criticality_error(ws, spark: SparkSession, shared_2d_model):
-    """Test anomaly check with criticality='error'."""
-    # Use shared pre-trained model (no training needed!)
-    model_name = shared_2d_model["model_name"]
-    registry_table = shared_2d_model["registry_table"]
-
-    test_df = spark.createDataFrame(
-        [(1, 100.0, 2.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
-        "transaction_id int, amount double, quantity double",
-    )
-
-    dq_engine = DQEngine(ws, spark)
-
-    checks = [
-        create_anomaly_check_rule(
-            model_name=model_name,
-            registry_table=registry_table,
-            threshold=60.0,
-        )
-    ]
-
-    _valid_df, quarantine_df = dq_engine.apply_checks_and_split(test_df, checks)
-
-    # Anomalous rows should be in quarantine
-    assert quarantine_df.count() >= 1
-    assert "_errors" in quarantine_df.columns
-
-
-def test_criticality_warn(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_check_with_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     """Test anomaly check with criticality='warn'."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -253,53 +224,7 @@ def test_criticality_warn(ws, spark: SparkSession, shared_2d_model):
     assert anomalous_row["_warnings"] is not None or anomalous_row["_errors"] is not None
 
 
-def test_get_valid_and_invalid_helpers(ws, spark: SparkSession, shared_2d_model):
-    """Test that get_valid() and get_invalid() helpers work with anomaly checks."""
-    # Use shared pre-trained model (no training needed!)
-    model_name = shared_2d_model["model_name"]
-    registry_table = shared_2d_model["registry_table"]
-
-    # Test with in-cluster point (in dense part of range) and far-out anomaly
-    test_df = spark.createDataFrame(
-        [(1, 100.0, 10.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
-        "transaction_id int, amount double, quantity double",
-    )
-
-    dq_engine = DQEngine(ws, spark)
-    checks = [
-        create_anomaly_check_rule(
-            model_name=model_name,
-            registry_table=registry_table,
-            threshold=DQENGINE_SCORE_THRESHOLD,
-        )
-    ]
-
-    # Apply checks
-    result_df = dq_engine.apply_checks(test_df, checks)
-
-    # Use helpers to split
-    valid_df = dq_engine.get_valid(result_df)
-    invalid_df = dq_engine.get_invalid(result_df)
-
-    # Verify split
-    assert valid_df.count() + invalid_df.count() == test_df.count()
-    assert (
-        invalid_df.count() >= 1
-    ), f"Expected >= 1 anomalous row, got {invalid_df.count()}"  # At least one anomalous row
-
-    # get_valid() drops DQX metadata columns
-    assert "_errors" not in valid_df.columns, f"_errors should be dropped from valid. Columns: {valid_df.columns}"
-    assert "_warnings" not in valid_df.columns, f"_warnings should be dropped from valid. Columns: {valid_df.columns}"
-
-    # get_invalid() KEEPS metadata columns so you can inspect failures
-    assert "_errors" in invalid_df.columns, f"_errors should be kept in invalid. Columns: {invalid_df.columns}"
-    assert "_warnings" in invalid_df.columns, f"_warnings should be kept in invalid. Columns: {invalid_df.columns}"
-
-    # Anomaly scoring info should be present in both (in _dq_info column)
-    assert "_dq_info" in valid_df.columns or "_dq_info" in invalid_df.columns
-
-
-def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
+def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shared_2d_model):
     """Test that _dq_info.anomaly has all expected fields with correct structure."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
@@ -366,7 +291,7 @@ def test_info_column_structure(ws, spark: SparkSession, shared_2d_model):
     assert anomaly.confidence_std is None, "confidence_std should be None when not requested"
 
 
-def test_info_column_with_contributions(ws, spark: SparkSession, shared_3d_model):
+def test_apply_anomaly_check_with_contributions(ws, spark: SparkSession, shared_3d_model):
     """Test that _dq_info.anomaly includes contributions when requested."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]

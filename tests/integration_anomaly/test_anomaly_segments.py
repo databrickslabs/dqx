@@ -9,11 +9,11 @@ from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 from tests.constants import TEST_CATALOG
-from tests.integration_anomaly.test_anomaly_constants import (
+from tests.integration_anomaly.constants import (
     DQENGINE_SCORE_THRESHOLD,
     SEGMENT_REGIONS,
 )
-from tests.integration_anomaly.test_anomaly_utils import create_anomaly_check_rule, train_model_with_params
+from tests.integration_anomaly.conftest import create_anomaly_check_rule, train_model_with_params
 
 
 def test_explicit_segment_training(
@@ -164,7 +164,7 @@ def test_multi_column_segments(
     registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
 
     train_model_with_params(
-        anomaly_engine=anomaly_engine,
+        engine=anomaly_engine,
         df=spark.table(table_name),
         model_name=model_name,
         registry_table=registry_table,
