@@ -1,7 +1,9 @@
+import json
 import logging
 import os
 import re
 from collections.abc import Callable, Generator
+from pathlib import Path
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import cached_property
@@ -38,7 +40,27 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+
+
+@pytest.fixture
+def debug_env(monkeypatch, debug_env_name):
+    """
+    Load env from ~/.databricks/debug-env.json so it works when running tests from terminal or IDEs (Cursor, VS Code, PyCharm etc.).
+    Overrides pytester's debug_env which only loads the file when is_in_debug is True (PyCharm/IntelliJ).
+    In CI we do not load from the file.
+    """
+    if os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true":
+        return os.environ
+
+    conf_file = Path.home() / ".databricks" / "debug-env.json"
+    if conf_file.exists():
+        with conf_file.open("r") as f:
+            conf = json.load(f)
+            if debug_env_name in conf:
+                for env_key, value in conf[debug_env_name].items():
+                    monkeypatch.setenv(env_key, str(value))
+    return os.environ
 
 
 @pytest.fixture
