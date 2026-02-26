@@ -227,6 +227,11 @@ e2e_override_clusters:              # <- optional dictionary mapping job cluster
 e2e_spark_conf:                     # <- optional spark configuration to use for the end to end workflow
     spark.sql.ansi.enabled: true    # <- example setting
 
+anomaly_override_clusters:          # <- optional dictionary mapping job cluster names to existing cluster IDs (anomaly-trainer workflow)
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
+anomaly_spark_conf:                 # <- optional spark configuration to use for the anomaly-trainer workflow
+  spark.sql.ansi.enabled: true      # <- example setting
+
 extra_params:                       # <- optional extra parameters to pass to the workflows
     result_column_names:
         errors: dq_errors           # <- default is "_errors"

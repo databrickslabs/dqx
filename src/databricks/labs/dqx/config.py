@@ -235,11 +235,13 @@ class WorkspaceConfig:
     profiler_override_clusters: dict[str, str] | None = field(default_factory=dict)
     quality_checker_override_clusters: dict[str, str] | None = field(default_factory=dict)
     e2e_override_clusters: dict[str, str] | None = field(default_factory=dict)
+    anomaly_override_clusters: dict[str, str] | None = field(default_factory=dict)
 
     # extra spark config for jobs (applicable for non-serverless clusters only)
     profiler_spark_conf: dict[str, str] | None = field(default_factory=dict)
     quality_checker_spark_conf: dict[str, str] | None = field(default_factory=dict)
     e2e_spark_conf: dict[str, str] | None = field(default_factory=dict)
+    anomaly_spark_conf: dict[str, str] | None = field(default_factory=dict)
 
     profiler_max_parallelism: int = 4  # max parallelism for profiling multiple tables
     quality_checker_max_parallelism: int = 4  # max parallelism for quality checking multiple tables

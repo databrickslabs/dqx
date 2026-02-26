@@ -1,8 +1,21 @@
 """Unit tests for row anomaly detection validation logic and error handling."""
 
+import warnings
+from datetime import datetime
+
 import pytest
+import sklearn
 
 from databricks.labs.dqx.anomaly import validation
+from databricks.labs.dqx.anomaly.model_config import (
+    AnomalyModelRecord,
+    FeatureEngineering,
+    ModelIdentity,
+    SegmentationConfig,
+    TrainingMetadata,
+)
+from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility, validate_training_params
+from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -397,3 +410,94 @@ def test_error_message_formats():
     assert "Model" in error_msg
     assert model_name in error_msg
     assert registry in error_msg
+
+
+# ============================================================================
+# validate_training_params — direct calls with real AnomalyParams
+# ============================================================================
+
+
+def test_validate_training_params_accepts_defaults():
+    """Default AnomalyParams with a valid expected_anomaly_rate should not raise."""
+    validate_training_params(AnomalyParams(), expected_anomaly_rate=0.02)
+
+
+def test_validate_training_params_rejects_zero_sample_fraction():
+    with pytest.raises(InvalidParameterError, match="params.sample_fraction"):
+        validate_training_params(AnomalyParams(sample_fraction=0.0), expected_anomaly_rate=0.02)
+
+
+def test_validate_training_params_rejects_sample_fraction_above_one():
+    with pytest.raises(InvalidParameterError, match="params.sample_fraction"):
+        validate_training_params(AnomalyParams(sample_fraction=1.1), expected_anomaly_rate=0.02)
+
+
+def test_validate_training_params_rejects_zero_expected_anomaly_rate():
+    with pytest.raises(InvalidParameterError, match="expected_anomaly_rate"):
+        validate_training_params(AnomalyParams(), expected_anomaly_rate=0.0)
+
+
+def test_validate_training_params_rejects_expected_anomaly_rate_above_half():
+    with pytest.raises(InvalidParameterError, match="expected_anomaly_rate"):
+        validate_training_params(AnomalyParams(), expected_anomaly_rate=0.6)
+
+
+def test_validate_training_params_rejects_zero_max_rows():
+    with pytest.raises(InvalidParameterError, match="params.max_rows"):
+        validate_training_params(AnomalyParams(max_rows=0), expected_anomaly_rate=0.02)
+
+
+def test_validate_training_params_rejects_zero_ensemble_size():
+    with pytest.raises(InvalidParameterError, match="params.ensemble_size"):
+        validate_training_params(AnomalyParams(ensemble_size=0), expected_anomaly_rate=0.02)
+
+
+# ============================================================================
+# validate_sklearn_compatibility — direct calls with real AnomalyModelRecord
+# ============================================================================
+
+
+def _make_record(sklearn_version: str | None) -> AnomalyModelRecord:
+    return AnomalyModelRecord(
+        identity=ModelIdentity(
+            model_name="catalog.schema.model",
+            model_uri="models:/catalog.schema.model/1",
+            algorithm="IsolationForestV1",
+            mlflow_run_id="run123",
+        ),
+        training=TrainingMetadata(
+            columns=["amount", "quantity"],
+            hyperparameters={},
+            training_rows=1000,
+            training_time=datetime.now(),
+        ),
+        features=FeatureEngineering(),
+        segmentation=SegmentationConfig(sklearn_version=sklearn_version),
+    )
+
+
+def test_validate_sklearn_compatibility_no_warning_on_exact_match():
+    """No warning when the stored version matches the installed version."""
+    record = _make_record(sklearn_version=sklearn.__version__)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        validate_sklearn_compatibility(record)
+    assert not any("SKLEARN" in str(w.message) for w in caught)
+
+
+def test_validate_sklearn_compatibility_warns_on_version_mismatch():
+    """UserWarning is emitted when the stored sklearn version differs from the current one."""
+    record = _make_record(sklearn_version="0.0.0")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        validate_sklearn_compatibility(record)
+    assert any("SKLEARN VERSION MISMATCH" in str(w.message) for w in caught)
+
+
+def test_validate_sklearn_compatibility_skips_when_no_version():
+    """No warning and no error when model was saved without a sklearn_version."""
+    record = _make_record(sklearn_version=None)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        validate_sklearn_compatibility(record)
+    assert not any("SKLEARN" in str(w.message) for w in caught)

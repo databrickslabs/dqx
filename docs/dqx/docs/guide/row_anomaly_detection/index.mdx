@@ -156,6 +156,18 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
           registry_table: catalog.schema.dqx_anomaly_models
     ```
 
+    Then trigger the anomaly-trainer workflow via the CLI:
+
+    ```bash
+    # Train for all run configs
+    databricks labs dqx train-anomaly --timeout-minutes 60
+
+    # Train for a specific run config
+    databricks labs dqx train-anomaly --run-config orders --timeout-minutes 60
+    ```
+
+    When not using serverless clusters (`serverless_clusters: false`), you can override cluster configuration for the anomaly-trainer workflow in `config.yml` using `anomaly_override_clusters` (map job cluster names to existing cluster IDs) and optionally `anomaly_spark_conf` for Spark settings. See [Configuration file](/docs/installation/#configuration-file) for the full example.
+
     Define checks separately (YAML, Python, etc.). See [Row Anomaly Detection in Quality Checks](/docs/reference/quality_checks#row-anomaly-detection).
   </TabItem>
 </Tabs>

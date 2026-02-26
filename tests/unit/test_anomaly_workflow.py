@@ -95,6 +95,35 @@ def test_anomaly_workflow_validates_empty_registry_table(monkeypatch):
         workflow.train_model(ctx)
 
 
+def test_anomaly_workflow_missing_anomaly_config_raises():
+    """anomaly_config=None raises before any external call — no monkeypatch needed."""
+    run_config = RunConfig(
+        name="test",
+        input_config=InputConfig(location="catalog.schema.table"),
+        anomaly_config=None,
+    )
+    ctx = SimpleNamespace(run_config=run_config)
+
+    with pytest.raises(InvalidConfigError, match="anomaly_config is required"):
+        anomaly_workflow.AnomalyTrainerWorkflow().train_model(ctx)
+
+
+def test_anomaly_workflow_missing_input_config_raises():
+    """input_config=None raises before any external call — no monkeypatch needed."""
+    run_config = RunConfig(
+        name="test",
+        input_config=None,
+        anomaly_config=AnomalyConfig(
+            model_name="catalog.schema.model",
+            registry_table="catalog.schema.registry",
+        ),
+    )
+    ctx = SimpleNamespace(run_config=run_config)
+
+    with pytest.raises(InvalidConfigError, match="input_config is required"):
+        anomaly_workflow.AnomalyTrainerWorkflow().train_model(ctx)
+
+
 def test_anomaly_workflow_succeeds_with_valid_config(monkeypatch):
     """Test that workflow proceeds when both model_name and registry_table are provided."""
     train_called = {"called": False, "kwargs": {}}

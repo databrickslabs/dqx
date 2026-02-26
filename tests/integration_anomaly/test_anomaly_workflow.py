@@ -16,7 +16,7 @@ def _make_workflow_ctx(run_config, spark, ws):
 
 def test_anomaly_workflow_deploy_and_run(spark, setup_anomaly_deployed_workflow):
     """Deploy DQX and run the anomaly-trainer workflow as a job; verify the model is in the registry."""
-    installation_ctx, run_config, registry_table, model_name, _ = setup_anomaly_deployed_workflow()
+    installation_ctx, run_config, registry_table, model_name = setup_anomaly_deployed_workflow()
 
     installation_ctx.deployed_workflows.run_workflow("anomaly-trainer", run_config.name)
 

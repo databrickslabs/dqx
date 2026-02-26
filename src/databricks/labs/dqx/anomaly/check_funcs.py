@@ -144,7 +144,7 @@ class IsolationForestScoringStrategy(AnomalyScoringStrategy):
 _SCORING_STRATEGIES: list[AnomalyScoringStrategy] = [IsolationForestScoringStrategy()]
 
 
-def _resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:
+def resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:
     for strategy in _SCORING_STRATEGIES:
         if strategy.supports(algorithm):
             return strategy
@@ -174,7 +174,7 @@ def _run_anomaly_scoring(
     registry_client = AnomalyModelRegistry(df_to_score.sparkSession)
     if config.segment_by:
         all_segments = _load_segment_models(registry_client, config)
-        strategy = _resolve_scoring_strategy(all_segments[0].identity.algorithm)
+        strategy = resolve_scoring_strategy(all_segments[0].identity.algorithm)
         return strategy.score_segmented(df_to_score, config, registry_client, all_segments)
 
     record = registry_client.get_active_model(registry_table, model_name)
@@ -185,7 +185,7 @@ def _run_anomaly_scoring(
         raise InvalidParameterError(
             f"Model '{model_name}' not found in '{registry_table}'. Train first using anomaly.train(...)."
         )
-    strategy = _resolve_scoring_strategy(record.identity.algorithm)
+    strategy = resolve_scoring_strategy(record.identity.algorithm)
     return strategy.score_global(df_to_score, record, config)
 
 
@@ -1255,7 +1255,7 @@ def _try_segmented_scoring_fallback(
     # Auto-detect segmentation
     first_segment = _select_segment_record(all_segments)
     assert first_segment.segmentation.segment_by is not None, "Segment model must have segment_by"
-    strategy = _resolve_scoring_strategy(first_segment.identity.algorithm)
+    strategy = resolve_scoring_strategy(first_segment.identity.algorithm)
     return strategy.score_segmented(df, config, registry_client, all_segments)
 
 

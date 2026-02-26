@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from databricks.labs.dqx.anomaly import check_funcs
-from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies, resolve_scoring_strategy
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -94,3 +94,16 @@ def test_has_no_row_anomalies_include_contributions_requires_shap():
                 registry_table="catalog.schema.table",
                 include_contributions=True,
             )
+
+
+def test_resolve_scoring_strategy_raises_for_unknown_algorithm():
+    """resolve_scoring_strategy raises InvalidParameterError for an unrecognised algorithm name."""
+    with pytest.raises(InvalidParameterError, match="Unsupported model algorithm 'UnknownAlgorithm'"):
+        resolve_scoring_strategy("UnknownAlgorithm")
+
+
+def test_resolve_scoring_strategy_returns_strategy_for_isolation_forest():
+    """resolve_scoring_strategy succeeds for any IsolationForest algorithm variant."""
+    strategy = resolve_scoring_strategy("IsolationForestV1")
+    assert strategy is not None
+    assert strategy.supports("IsolationForestV1")
