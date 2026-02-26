@@ -59,14 +59,11 @@ class WorkflowsRunner:
             spark_conf=config.e2e_spark_conf,
             override_clusters=config.e2e_override_clusters,
         )
-        workflows: list[Workflow] = [profiler, quality_checker, e2e]
-
-        if ANOMALY_AVAILABLE:
-            anomaly_trainer = AnomalyTrainerWorkflow(
-                spark_conf=config.quality_checker_spark_conf,
-                override_clusters=config.quality_checker_override_clusters,
-            )
-            workflows.append(anomaly_trainer)
+        anomaly_trainer = AnomalyTrainerWorkflow(
+            spark_conf=config.quality_checker_spark_conf,
+            override_clusters=config.quality_checker_override_clusters,
+        )
+        workflows: list[Workflow] = [profiler, quality_checker, e2e, anomaly_trainer]
 
         return cls(workflows)
 

@@ -4,7 +4,6 @@ Workflow to train anomaly detection models on Databricks.
 Requires the 'anomaly' extras: pip install databricks-labs-dqx[anomaly]
 """
 
-from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.installer.workflow_task import Workflow, workflow_task
@@ -38,6 +37,9 @@ class AnomalyTrainerWorkflow(Workflow):
             raise InvalidConfigError("registry_table is required and must be fully qualified (catalog.schema.name).")
 
         df = read_input_data(ctx.spark, run_config.input_config)
+
+        # importing inside to avoid a need for installing anomaly dependencies during setup
+        from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 
         anomaly_engine = AnomalyEngine(ctx.workspace_client, ctx.spark)
         anomaly_engine.train(

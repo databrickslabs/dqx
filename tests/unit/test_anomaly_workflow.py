@@ -16,7 +16,10 @@ def test_anomaly_workflow_requires_model_name(monkeypatch):
         def train(self, **_kwargs):
             return None
 
-    monkeypatch.setattr(anomaly_workflow, "AnomalyEngine", FakeEngine)
+    monkeypatch.setattr(
+        "databricks.labs.dqx.anomaly.anomaly_engine.AnomalyEngine",
+        FakeEngine,
+    )
     monkeypatch.setattr(anomaly_workflow, "read_input_data", lambda _spark, _input_config: Mock())
 
     run_config = RunConfig(
@@ -41,7 +44,10 @@ def test_anomaly_workflow_requires_registry_table(monkeypatch):
         def train(self, **_kwargs):
             return None
 
-    monkeypatch.setattr(anomaly_workflow, "AnomalyEngine", FakeEngine)
+    monkeypatch.setattr(
+        "databricks.labs.dqx.anomaly.anomaly_engine.AnomalyEngine",
+        FakeEngine,
+    )
     monkeypatch.setattr(anomaly_workflow, "read_input_data", lambda _spark, _input_config: Mock())
 
     # Provide model_name but no registry_table
@@ -67,7 +73,10 @@ def test_anomaly_workflow_validates_empty_registry_table(monkeypatch):
         def train(self, **_kwargs):
             return None
 
-    monkeypatch.setattr(anomaly_workflow, "AnomalyEngine", FakeEngine)
+    monkeypatch.setattr(
+        "databricks.labs.dqx.anomaly.anomaly_engine.AnomalyEngine",
+        FakeEngine,
+    )
     monkeypatch.setattr(anomaly_workflow, "read_input_data", lambda _spark, _input_config: Mock())
 
     # Provide model_name but empty registry_table
@@ -99,7 +108,10 @@ def test_anomaly_workflow_succeeds_with_valid_config(monkeypatch):
             train_called["kwargs"] = kwargs
             return "catalog.schema.my_model"
 
-    monkeypatch.setattr(anomaly_workflow, "AnomalyEngine", FakeEngine)
+    monkeypatch.setattr(
+        "databricks.labs.dqx.anomaly.anomaly_engine.AnomalyEngine",
+        FakeEngine,
+    )
     monkeypatch.setattr(anomaly_workflow, "read_input_data", lambda _spark, _input_config: Mock())
 
     run_config = RunConfig(
