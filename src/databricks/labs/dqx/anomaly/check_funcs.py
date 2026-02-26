@@ -37,7 +37,7 @@ except ImportError:  # shap is optional
     SHAP_AVAILABLE = False
 
 from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
-from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name
+from databricks.labs.dqx.anomaly.validation import validate_fully_qualified_name
 from databricks.labs.dqx.anomaly.mlflow_registry import get_default_registry
 from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_registry import (
@@ -153,74 +153,6 @@ def _resolve_scoring_strategy(algorithm: str) -> AnomalyScoringStrategy:
     )
 
 
-def _validate_anomaly_model_and_registry(model_name: str, registry_table: str) -> None:
-    """Validate model_name and registry_table; raise InvalidParameterError if invalid."""
-    if not model_name:
-        raise InvalidParameterError(
-            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
-        )
-    if not registry_table:
-        raise InvalidParameterError(
-            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
-        )
-    validate_fully_qualified_name(model_name, label="model_name")
-    validate_fully_qualified_name(registry_table, label="registry_table")
-
-
-def _validate_anomaly_threshold(threshold: float) -> None:
-    """Validate threshold is a float in [0, 100]; raise InvalidParameterError if invalid."""
-    if not isinstance(threshold, (int, float)):
-        raise InvalidParameterError("threshold must be a float.")
-    if not 0.0 <= float(threshold) <= 100.0:
-        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
-
-
-def _validate_anomaly_row_filter(row_filter: str | None) -> None:
-    """Validate row_filter is str or None; raise InvalidParameterError if invalid."""
-    if row_filter is not None and not isinstance(row_filter, str):
-        raise InvalidParameterError("row_filter must be a SQL expression.")
-
-
-def _validate_anomaly_drift_threshold(drift_threshold: float | None) -> None:
-    """Validate drift_threshold is a positive float or None; raise InvalidParameterError if invalid."""
-    if drift_threshold is None:
-        return
-    if not isinstance(drift_threshold, (int, float)):
-        raise InvalidParameterError("drift_threshold must be a float.")
-    if drift_threshold <= 0:
-        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
-
-
-def _validate_anomaly_include_flags(include_contributions: bool, include_confidence: bool) -> None:
-    """Validate include_contributions and include_confidence are bool; raise InvalidParameterError if invalid."""
-    if not isinstance(include_contributions, bool):
-        raise InvalidParameterError("include_contributions must be a boolean.")
-    if not isinstance(include_confidence, bool):
-        raise InvalidParameterError("include_confidence must be a boolean.")
-
-
-def _validate_has_no_row_anomalies_params(
-    model_name: str,
-    registry_table: str,
-    threshold: float,
-    row_filter: str | None,
-    drift_threshold: float | None,
-    include_contributions: bool,
-    include_confidence: bool,
-) -> None:
-    """Validate has_no_row_anomalies arguments; raise InvalidParameterError if invalid."""
-    _validate_anomaly_model_and_registry(model_name, registry_table)
-    _validate_anomaly_threshold(threshold)
-    _validate_anomaly_row_filter(row_filter)
-    _validate_anomaly_drift_threshold(drift_threshold)
-    _validate_anomaly_include_flags(include_contributions, include_confidence)
-    if include_contributions and not SHAP_AVAILABLE:
-        raise InvalidParameterError(
-            "include_contributions=True requires the 'shap' dependency. "
-            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
-        )
-
-
 def _check_reserved_row_id_columns(df: DataFrame) -> None:
     """Raise if DataFrame has reserved _dqx_row_id / __dqx_row_id columns."""
     reserved_prefixes = ("_dqx_row_id", "__dqx_row_id")
@@ -312,15 +244,30 @@ def has_no_row_anomalies(
         >>> df_scored.select("_dq_info.anomaly.score", "_dq_info.anomaly.is_anomaly")
         >>> df_scored.filter(col("_dq_info.anomaly.is_anomaly"))
     """
-    _validate_has_no_row_anomalies_params(
-        model_name,
-        registry_table,
-        threshold,
-        row_filter,
-        drift_threshold,
-        include_contributions,
-        include_confidence,
-    )
+    if not model_name:
+        raise InvalidParameterError(
+            "model_name parameter is required. Example: has_no_row_anomalies(model_name='catalog.schema.my_model', ...)"
+        )
+
+    if not registry_table:
+        raise InvalidParameterError(
+            "registry_table parameter is required. Example: registry_table='catalog.schema.dqx_anomaly_models'"
+        )
+
+    validate_fully_qualified_name(model_name, label="model_name")
+    validate_fully_qualified_name(registry_table, label="registry_table")
+
+    if not 0.0 <= float(threshold) <= 100.0:
+        raise InvalidParameterError("threshold must be between 0.0 and 100.0.")
+
+    if drift_threshold is not None and drift_threshold <= 0:
+        raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
+
+    if include_contributions and not SHAP_AVAILABLE:
+        raise InvalidParameterError(
+            "include_contributions=True requires the 'shap' dependency. "
+            "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
+        )
 
     row_id_col = f"__dqx_row_id_{uuid.uuid4().hex}"
     score_col = f"__dq_anomaly_score_{uuid.uuid4().hex}"

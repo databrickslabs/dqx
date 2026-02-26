@@ -380,11 +380,6 @@ def aggregate_ensemble_metrics(all_metrics: list[dict[str, float]]) -> dict[str,
     return aggregated
 
 
-# =============================================================================
-# Feature Engineering Helpers
-# =============================================================================
-
-
 def prepare_engineered_pandas(train_df: DataFrame, feature_metadata: SparkFeatureMetadata) -> pd.DataFrame:
     """Prepare engineered pandas DataFrame from Spark DataFrame.
 

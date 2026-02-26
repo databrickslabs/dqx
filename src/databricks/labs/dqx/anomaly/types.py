@@ -17,11 +17,6 @@ from databricks.labs.dqx.anomaly.transformers import SparkFeatureMetadata
 from databricks.labs.dqx.config import AnomalyParams
 
 
-# =============================================================================
-# Type Protocols - Structural interfaces for duck typing
-# =============================================================================
-
-
 @runtime_checkable
 class TrainedModel(Protocol):
     """Protocol for trained sklearn-compatible models.
@@ -45,11 +40,6 @@ class MLflowSignature(Protocol):
 
     inputs: Any
     outputs: Any
-
-
-# =============================================================================
-# Data Classes - Immutable value objects for training
-# =============================================================================
 
 
 @dataclass(frozen=True)

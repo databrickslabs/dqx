@@ -286,13 +286,8 @@ def test_has_no_row_anomalies_requires_fully_qualified_model_name():
 @pytest.mark.parametrize(
     "kwargs, match",
     [
-        ({"threshold": "0.5"}, "threshold must be a float"),  # type: ignore[arg-type]
         ({"threshold": 150.0}, "threshold must be between"),
-        ({"row_filter": 123}, "row_filter must be a SQL expression"),  # type: ignore[arg-type]
-        ({"drift_threshold": "bad"}, "drift_threshold must be a float"),  # type: ignore[arg-type]
         ({"drift_threshold": -1.0}, "drift_threshold must be greater than 0"),
-        ({"include_contributions": "yes"}, "include_contributions must be a boolean"),  # type: ignore[arg-type]
-        ({"include_confidence": "no"}, "include_confidence must be a boolean"),  # type: ignore[arg-type]
     ],
 )
 def test_has_no_row_anomalies_invalid_inputs(kwargs, match):

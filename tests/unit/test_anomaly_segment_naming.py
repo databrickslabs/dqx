@@ -10,7 +10,7 @@ from pyspark.sql import types as T
 from databricks.labs.dqx.anomaly.check_funcs import (
     validate_fully_qualified_name as check_validate,
 )
-from databricks.labs.dqx.anomaly.service import validate_fully_qualified_name
+from databricks.labs.dqx.anomaly.validation import validate_fully_qualified_name
 from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 from databricks.labs.dqx.errors import InvalidParameterError

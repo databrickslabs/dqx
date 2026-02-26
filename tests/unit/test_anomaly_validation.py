@@ -2,7 +2,7 @@
 
 import pytest
 
-from databricks.labs.dqx.anomaly import service
+from databricks.labs.dqx.anomaly import validation
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -13,23 +13,23 @@ from databricks.labs.dqx.errors import InvalidParameterError
 
 def test_validate_fully_qualified_name_accepts_valid():
     """Test fully qualified name validation with valid values."""
-    service.validate_fully_qualified_name("catalog.schema.model", label="model_name")
-    service.validate_fully_qualified_name("catalog.schema.registry", label="registry_table")
+    validation.validate_fully_qualified_name("catalog.schema.model", label="model_name")
+    validation.validate_fully_qualified_name("catalog.schema.registry", label="registry_table")
 
 
 def test_validate_fully_qualified_name_rejects_invalid():
     """Test fully qualified name validation with invalid values."""
     with pytest.raises(InvalidParameterError):
-        service.validate_fully_qualified_name("model", label="model_name")
+        validation.validate_fully_qualified_name("model", label="model_name")
 
     with pytest.raises(InvalidParameterError):
-        service.validate_fully_qualified_name("schema.model", label="model_name")
+        validation.validate_fully_qualified_name("schema.model", label="model_name")
 
     with pytest.raises(InvalidParameterError):
-        service.validate_fully_qualified_name("catalog..table", label="model_name")
+        validation.validate_fully_qualified_name("catalog..table", label="model_name")
 
     with pytest.raises(InvalidParameterError):
-        service.validate_fully_qualified_name("catalog.schema.table.extra", label="model_name")
+        validation.validate_fully_qualified_name("catalog.schema.table.extra", label="model_name")
 
 
 # ============================================================================
