@@ -43,11 +43,15 @@ def test_synthetic_generator_threshold_monotonicity(anomaly_engine, spark, make_
         columns=feature_cols,
     )
 
-    _, apply_low, _ = has_no_row_anomalies(model_name=model_name, registry_table=registry_table, threshold=30.0)
-    _, apply_high, _ = has_no_row_anomalies(model_name=model_name, registry_table=registry_table, threshold=90.0)
+    _, apply_low, info_col_low = has_no_row_anomalies(
+        model_name=model_name, registry_table=registry_table, threshold=30.0
+    )
+    _, apply_high, info_col_high = has_no_row_anomalies(
+        model_name=model_name, registry_table=registry_table, threshold=90.0
+    )
 
-    low_count = apply_low(test_df).filter(F.col("_dq_info.anomaly.is_anomaly") == F.lit(True)).count()
-    high_count = apply_high(test_df).filter(F.col("_dq_info.anomaly.is_anomaly") == F.lit(True)).count()
+    low_count = apply_low(test_df).filter(F.col(f"{info_col_low}.anomaly.is_anomaly") == F.lit(True)).count()
+    high_count = apply_high(test_df).filter(F.col(f"{info_col_high}.anomaly.is_anomaly") == F.lit(True)).count()
 
     assert low_count >= high_count
 
