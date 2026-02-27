@@ -195,7 +195,11 @@ def save_run_checks(
         raise HTTPException(status_code=404, detail=f"Run config '{name}' not found")
 
     checks_config = InstallationChecksStorageConfig(run_config_name=run_config.name, install_folder=install_folder)
-    engine.save_checks(body.checks, checks_config)
+    try:
+        engine.save_checks(body.checks, checks_config)
+    except InvalidCheckError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid checks format: {e}")
+
     return ChecksOut(checks=body.checks)
 
 
