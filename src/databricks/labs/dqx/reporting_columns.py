@@ -29,6 +29,8 @@ def merge_info_columns(dest_name: str, df: DataFrame, info_col_names: list[str] 
     are combined into one struct under dest_name. Columns in info_col_names that are missing
     from the DataFrame are skipped.
 
+    If dest_name already exists, it is merged with the new info columns.
+
     Args:
         dest_name: Name of the output column (e.g. _dq_info).
         df: DataFrame that may contain the info columns.
@@ -39,13 +41,14 @@ def merge_info_columns(dest_name: str, df: DataFrame, info_col_names: list[str] 
     """
     info_cols = [c for c in (info_col_names or []) if c in df.columns]
 
-    if not info_cols:
+    if not info_cols and dest_name not in df.columns:
         return df
 
+    # Include existing dest + new info
+    cols_to_merge = ([dest_name] if dest_name in df.columns else []) + info_cols
     field_exprs = [
         F.col(col_name)[field.name].alias(field.name)
-        for col_name in info_cols
+        for col_name in cols_to_merge
         for field in cast(StructType, df.schema[col_name].dataType).fields
     ]
-    result_df = df.withColumn(dest_name, F.struct(*field_exprs))
-    return result_df.drop(*info_cols)
+    return df.withColumn(dest_name, F.struct(*field_exprs)).drop(*info_cols)
