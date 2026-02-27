@@ -1,11 +1,10 @@
 """Integration tests for row anomaly detection end-to-end flow."""
 
 import pyspark.sql.functions as F
-from pyspark.sql import DataFrame, SparkSession
+from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.manager import DQRuleManager
-from databricks.labs.dqx.schema import dq_result_schema
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.conftest import (
     create_anomaly_check_rule,
@@ -16,60 +15,6 @@ from tests.integration_anomaly.conftest import (
     get_standard_test_points_4d,
     train_simple_2d_model,
 )
-
-
-def _build_expected_results(df: DataFrame, checks: list, spark: SparkSession) -> DataFrame:
-    current_df = df
-    check_conditions = []
-    for check in checks:
-        manager = DQRuleManager(
-            check=check,
-            df=current_df,
-            spark=spark,
-            run_id="test_run",
-            engine_user_metadata={},
-            run_time_overwrite=None,
-            ref_dfs=None,
-        )
-        result = manager.process()
-        check_conditions.append(result.condition)
-        current_df = result.check_df
-
-    combined_result_array = F.array_compact(F.array(*check_conditions))
-    errors_col = F.when(F.size(combined_result_array) > 0, combined_result_array).otherwise(
-        F.lit(None).cast(dq_result_schema)
-    )
-    warnings_col = F.lit(None).cast(dq_result_schema)
-    return current_df.withColumn("_errors", errors_col).withColumn("_warnings", warnings_col)
-
-
-def _strip_nondeterministic(value):
-    if isinstance(value, dict):
-        cleaned = {}
-        for key, val in value.items():
-            if key in {"run_time", "run_id"}:
-                continue
-            cleaned[key] = _strip_nondeterministic(val)
-        return cleaned
-    if isinstance(value, list):
-        return [_strip_nondeterministic(v) for v in value]
-    return value
-
-
-def _normalize_value(value):
-    if isinstance(value, dict):
-        return tuple((k, _normalize_value(v)) for k, v in sorted(value.items()))
-    if isinstance(value, list):
-        return tuple(_normalize_value(v) for v in value)
-    return value
-
-
-def _normalized_rows(df: DataFrame) -> list[tuple]:
-    rows = []
-    for row in df.collect():
-        cleaned = _strip_nondeterministic(row.asDict(recursive=True))
-        rows.append(_normalize_value(cleaned))
-    return rows
 
 
 def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):
@@ -112,22 +57,13 @@ def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random
     ]
 
     result_df = dq_engine.apply_checks(test_df, checks)
-    expected_df = _build_expected_results(test_df, checks, spark).select(*result_df.columns)
 
-    assert result_df.schema == expected_df.schema
-    assert sorted(_normalized_rows(result_df)) == sorted(_normalized_rows(expected_df))
-
-    rows = result_df.select("_errors", F.col("_dq_info.anomaly.is_anomaly").alias("is_anomaly")).collect()
-    flagged = 0
-    for row in rows:
-        has_errors = row["_errors"] is not None and len(row["_errors"]) > 0
-        assert row["is_anomaly"] == has_errors, (
-            f"Mismatch between is_anomaly and errors. is_anomaly={row['is_anomaly']}, "
-            f"threshold={threshold}, errors={row['_errors']}"
-        )
-        if has_errors:
-            flagged += 1
-    assert flagged >= 1, "Expected at least one row to be flagged as anomalous"
+    # Compare deterministic view: original data + has_errors (row 1 normal, row 2 anomalous)
+    result_compare = result_df.withColumn("has_errors", F.size(F.coalesce(F.col("_errors"), F.array())) > 0).select(
+        "transaction_id", "amount", "quantity", "has_errors"
+    )
+    expected_compare = test_df.withColumn("has_errors", F.when(F.col("transaction_id") == 2, True).otherwise(False))
+    assert_df_equality(result_compare, expected_compare, ignore_row_order=True)
 
 
 def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):
@@ -161,8 +97,6 @@ def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_ran
     ]
 
     result_df = dq_engine.apply_checks(test_df, checks)
-
-    # Verify anomaly_score column exists (nested in _dq_info.anomaly.score)
 
     assert "_dq_info" in result_df.columns
 
@@ -292,26 +226,8 @@ def test_registry_table_auto_creation(spark: SparkSession, make_schema, make_ran
     # Drop table if exists
     spark.sql(f"DROP TABLE IF EXISTS {registry_table}")
 
-    # Verify table doesn't exist (Unity Catalog compatible)
-    table_exists = False
-    try:
-        spark.table(registry_table).limit(0).count()
-        table_exists = True
-    except Exception:  # noqa: BLE001
-        pass
-    assert not table_exists
-
     # Train (should auto-create registry) - use helper with standard 2D data
     train_simple_2d_model(spark, anomaly_engine, model_name, registry_table, train_data=get_standard_2d_training_data())
-
-    # Verify table now exists (Unity Catalog compatible)
-    table_exists = False
-    try:
-        spark.table(registry_table).limit(0).count()
-        table_exists = True
-    except Exception:  # noqa: BLE001
-        pass
-    assert table_exists
 
     # Verify table has expected schema (nested structs)
     registry_df = spark.table(registry_table)

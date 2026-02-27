@@ -6,7 +6,7 @@ import uuid
 import sys
 import warnings
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
@@ -61,7 +61,7 @@ from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter, buil
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
-from databricks.labs.dqx.reporting_columns import InfoColumn
+from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 
 _DRIVER_ONLY = {"value": False}
 
@@ -100,7 +100,7 @@ class ScoringConfig:
     score_std_col: str = "anomaly_score_std"
     contributions_col: str = "anomaly_contributions"
     severity_col: str = "severity_percentile"
-    info_col: str = field(default_factory=InfoColumn.get_collision_free_name)
+    info_col: str = DefaultColumnNames.INFO.value
 
 
 class AnomalyScoringStrategy(ABC):
@@ -201,7 +201,7 @@ def has_no_row_anomalies(
     drift_threshold: float | None = None,
     include_contributions: bool = True,
     include_confidence: bool = False,
-) -> tuple[Column, Any]:
+) -> tuple[Column, Any, str]:
     """Check that records are not anomalous according to a trained model(s).
 
     Auto-discovery:
@@ -240,7 +240,7 @@ def has_no_row_anomalies(
             Automatically available when training with ensemble_size > 1 (default is 3).
 
     Returns:
-        Tuple of condition expression and apply function.
+        Tuple of condition expression, apply function and info column name.
 
     Example:
         Access anomaly metadata via _dq_info column:
@@ -277,7 +277,7 @@ def has_no_row_anomalies(
     score_std_col = f"__dq_anomaly_score_std_{uuid.uuid4().hex}"
     contributions_col = f"__dq_anomaly_contributions_{uuid.uuid4().hex}"
     severity_col = f"__dq_severity_percentile_{uuid.uuid4().hex}"
-    info_col = InfoColumn().get_collision_free_name()
+    info_col = f"__dqx_info_{uuid.uuid4().hex}"
     driver_only_local = _DRIVER_ONLY["value"]
 
     def apply(df: DataFrame) -> DataFrame:
@@ -313,7 +313,7 @@ def has_no_row_anomalies(
         F.lit(f" exceeded threshold {threshold}"),
     )
     condition_expr = F.col(info_col).anomaly.is_anomaly
-    return make_condition(condition_expr, message, "has_row_anomalies"), apply
+    return make_condition(condition_expr, message, "has_row_anomalies"), apply, info_col
 
 
 def set_driver_only_for_tests(enabled: bool) -> None:
@@ -521,11 +521,12 @@ def _score_segmented(
         for sdf in scored_dfs[1:]:
             result = result.union(sdf)
 
-    # Drop internal columns that are now in the info struct (after union, before join)
-    result = result.drop(config.score_std_col)  # Always drop (null if not ensemble)
+    # Select to keep only needed columns
+    internal_to_remove = [config.score_std_col, config.severity_col]
     if config.include_contributions:
-        result = result.drop(config.contributions_col)
-    result = result.drop(config.severity_col)
+        internal_to_remove.append(config.contributions_col)
+    columns_to_keep = [c for c in result.columns if c not in internal_to_remove]
+    result = result.select(*columns_to_keep)
 
     # Always join back to original DataFrame to include unscored rows
     # (rows with segment combinations not seen during training will have null scores)
@@ -539,7 +540,6 @@ def _score_segmented(
 
     # Drop internal anomaly_score column
     result = result.drop(config.score_col)
-
     return result
 
 
@@ -1364,7 +1364,7 @@ def _score_global_model(
         quantile_points=quantile_points,
     )
 
-    # Add info column (before dropping internal columns)
+    # Add info column (before removing internal columns)
     scored_df = add_info_column(
         scored_df,
         config.model_name,
@@ -1379,16 +1379,22 @@ def _score_global_model(
         severity_col=config.severity_col,
     )
 
-    # Post-process: drop internal columns that are now in the info struct
-    scored_df = scored_df.drop(config.score_std_col)  # Always drop (null if not ensemble)
+    # Select to keep only needed columns
+    internal_to_remove = [config.score_std_col, config.severity_col]
     if config.include_contributions:
-        scored_df = scored_df.drop(config.contributions_col)
-    scored_df = scored_df.drop(config.severity_col)
+        internal_to_remove.append(config.contributions_col)
+
+    if config.row_filter:
+        # Keep score_col for _join_filtered_results_back
+        columns_to_keep = [c for c in scored_df.columns if c not in internal_to_remove]
+    else:
+        internal_to_remove.append(config.score_col)
+        columns_to_keep = [c for c in scored_df.columns if c not in internal_to_remove]
+    scored_df = scored_df.select(*columns_to_keep)
 
     if config.row_filter:
         scored_df = _join_filtered_results_back(df, scored_df, config.merge_columns, config.score_col, config.info_col)
-
-    # Drop internal anomaly_score column
-    scored_df = scored_df.drop(config.score_col)
+        # Drop internal anomaly_score column
+        scored_df = scored_df.drop(config.score_col)
 
     return scored_df

@@ -5,8 +5,10 @@ from collections.abc import Callable
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -16,6 +18,38 @@ from tests.integration_anomaly.conftest import (
     create_anomaly_dataset_rule,
     train_simple_2d_model,
 )
+from tests.integration_anomaly.synthetic_generators import generate_overlapping_gaussian_data
+
+
+def test_synthetic_generator_threshold_monotonicity(anomaly_engine, spark, make_schema, make_random):
+    """Lower threshold should flag at least as many anomalies as higher threshold."""
+    feature_cols, train_df, test_df = generate_overlapping_gaussian_data(
+        spark,
+        seed=123,
+        n_samples=2500,
+        n_features=8,
+        anomaly_frac=0.03,
+        anomaly_shift=2.1,
+    )
+
+    schema = make_schema(catalog_name=TEST_CATALOG).name
+    model_name = f"{TEST_CATALOG}.{schema}.syn_model_{make_random(4).lower()}"
+    registry_table = f"{TEST_CATALOG}.{schema}.syn_reg_{make_random(4).lower()}"
+
+    anomaly_engine.train(
+        df=train_df,
+        model_name=model_name,
+        registry_table=registry_table,
+        columns=feature_cols,
+    )
+
+    _, apply_low, _ = has_no_row_anomalies(model_name=model_name, registry_table=registry_table, threshold=30.0)
+    _, apply_high, _ = has_no_row_anomalies(model_name=model_name, registry_table=registry_table, threshold=90.0)
+
+    low_count = apply_low(test_df).filter(F.col("_dq_info.anomaly.is_anomaly") == F.lit(True)).count()
+    high_count = apply_high(test_df).filter(F.col("_dq_info.anomaly.is_anomaly") == F.lit(True)).count()
+
+    assert low_count >= high_count
 
 
 def test_threshold_affects_flagging(

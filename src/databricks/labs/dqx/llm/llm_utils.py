@@ -13,13 +13,10 @@ from databricks.labs.dqx.errors import DQXError
 from databricks.labs.dqx.rule import CHECK_FUNC_REGISTRY
 from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.io import read_input_data
-from databricks.labs.dqx.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
 
-# Re-export TableManager for backward compatibility
 __all__ = [
-    "TableManager",
     "get_check_function_definitions",
     "get_required_check_functions_definitions",
     "get_required_summary_stats",

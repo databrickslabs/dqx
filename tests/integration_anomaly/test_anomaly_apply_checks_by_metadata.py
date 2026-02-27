@@ -93,11 +93,28 @@ def test_apply_anomaly_check_by_metadata_with_multiple_checks(ws, spark: SparkSe
 
     # Define multiple checks in YAML
     checks_yaml = f"""
+    - criticality: warn
+      check:
+        function: is_not_null
+        arguments:
+          column: transaction_id
+    - criticality: warn
+      check:
+        function: is_unique
+        arguments:
+          columns: 
+          - transaction_id
     - criticality: error
       check:
         function: is_not_null
         arguments:
           column: amount
+    - criticality: error
+      check:
+        function: is_unique
+        arguments:
+          columns: 
+          - transaction_id
     - criticality: error
       check:
         function: has_no_row_anomalies

@@ -10,7 +10,7 @@ from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
-from databricks.labs.dqx.rule import ColumnArguments
+from databricks.labs.dqx.reporting_columns import ColumnArguments
 from tests.integration.conftest import EXTRA_PARAMS
 
 from tests.constants import TEST_CATALOG

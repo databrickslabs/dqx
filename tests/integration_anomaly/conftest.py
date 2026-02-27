@@ -417,13 +417,12 @@ def qualify_model_name(model_name: str, registry_table: str) -> str:
     return f"{registry_prefix}.{model_name}"
 
 
-def _normalize_anomaly_apply_fn(apply_fn):
+def _normalize_anomaly_apply_fn(apply_fn, info_col: str):
     """Wrap apply_fn so the result DataFrame exposes _dq_info for direct-access tests.
 
     When used through DQEngine the engine handles the final column name; this wrapper
     is only needed for test helpers that call apply_fn directly.
     """
-    info_col = apply_fn.__dqx_info_col__
 
     def normalized(df: DataFrame) -> DataFrame:
         result = apply_fn(df)
@@ -434,12 +433,12 @@ def _normalize_anomaly_apply_fn(apply_fn):
 
 def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwargs):
     """Create apply function from has_no_row_anomalies check."""
-    _, apply_fn = has_no_row_anomalies(
+    _, apply_fn, info_col = has_no_row_anomalies(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         **check_kwargs,
     )
-    return _normalize_anomaly_apply_fn(apply_fn)
+    return _normalize_anomaly_apply_fn(apply_fn, info_col)
 
 
 def train_model_with_params(
@@ -549,15 +548,15 @@ def apply_anomaly_check_direct(
     **kwargs: Any,
 ) -> Any:
     """Apply anomaly detection directly (without DQEngine) to get anomaly_score column."""
-    _, apply_fn = has_no_row_anomalies(
+    _, apply_fn, info_col = has_no_row_anomalies(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         threshold=threshold,
         **kwargs,
     )
     result_df = apply_fn(test_df)
-    return result_df.withColumn("anomaly_score", F.col("_dq_info.anomaly.score")).withColumn(
-        "severity_percentile", F.col("_dq_info.anomaly.severity_percentile")
+    return result_df.withColumn("anomaly_score", F.col(f"{info_col}.anomaly.score")).withColumn(
+        "severity_percentile", F.col(f"{info_col}.anomaly.severity_percentile")
     )
 
 

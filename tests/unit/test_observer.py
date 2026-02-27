@@ -3,7 +3,7 @@
 from pyspark.sql import Observation
 from pyspark.sql.connect.observation import Observation as SparkConnectObservation
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver
-from databricks.labs.dqx.rule import DefaultColumnNames
+from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 
 
 def test_dq_observer_default_initialization():

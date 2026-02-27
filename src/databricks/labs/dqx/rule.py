@@ -9,7 +9,6 @@ from typing import Any
 
 from pyspark.sql import Column
 import pyspark.sql.functions as F
-from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames
 from databricks.labs.dqx.utils import get_column_name_or_alias, normalize_bound_args
 from databricks.labs.dqx.errors import InvalidCheckError
 
@@ -18,9 +17,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CHECK_FUNC_REGISTRY",
     "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
-    "ColumnArguments",
     "Criticality",
-    "DefaultColumnNames",
     "DQDatasetRule",
     "DQForEachColRule",
     "DQRule",
@@ -371,14 +368,19 @@ class DQDatasetRule(DQRule):
         Returns:
             The Spark Column representing the check condition.
         """
-        check_condition, _ = self.check  # lazy evaluation of check function parameters
+        check_condition, _, _ = self.check  # lazy evaluation of check function parameters
         return check_condition
 
     @ft.cached_property
-    def check(self) -> tuple[Column, Callable]:
+    def check(self) -> tuple[Column, Callable, str | None]:
+        """Return (condition, apply_func, and optionally info_column_name)."""
         args, kwargs = self.prepare_check_func_args_and_kwargs()
-        condition, apply_func = self.check_func(*args, **kwargs)
-        return condition, apply_func
+        result = self.check_func(*args, **kwargs)
+        if len(result) == 3:
+            condition, apply_func, info_column_name = result[0], result[1], result[2]
+            return condition, apply_func, info_column_name
+        condition, apply_func = result[0], result[1]
+        return condition, apply_func, None
 
 
 @dataclass(frozen=True)

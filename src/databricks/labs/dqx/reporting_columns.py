@@ -1,13 +1,8 @@
-import re
-import uuid
 from typing import cast
 from enum import Enum
 from pyspark.sql import DataFrame
 from pyspark.sql.types import StructType
 from pyspark.sql import functions as F
-
-
-COLLISION_FREE_COL_NAME_PATTERN = re.compile(r"^__dqx_info_[0-9a-f]{32}$")
 
 
 class DefaultColumnNames(Enum):
@@ -18,34 +13,39 @@ class DefaultColumnNames(Enum):
     INFO = "_dq_info"
 
 
-class InfoColumn:
-    """Class handling optional info column"""
-
-    @staticmethod
-    def get_collision_free_name() -> str:
-        """Return a new collision-safe info column name"""
-        return f"__dqx_info_{uuid.uuid4().hex}"
-
-    @staticmethod
-    def merge_cols(dest_name: str, df: DataFrame) -> DataFrame:
-        """Collect all info columns and merge into destination name"""
-        info_cols = [c for c in df.columns if COLLISION_FREE_COL_NAME_PATTERN.match(c)]
-
-        result_df = df
-        if info_cols:
-            field_exprs = [
-                F.col(col_name)[field.name].alias(field.name)
-                for col_name in info_cols
-                for field in cast(StructType, df.schema[col_name].dataType).fields
-            ]
-            result_df = result_df.withColumn(dest_name, F.struct(*field_exprs))
-            return result_df.drop(*info_cols)
-        return result_df
-
-
 class ColumnArguments(Enum):
     """Enum class that is used as input parsing for custom column naming."""
 
     ERRORS = "errors"
     WARNINGS = "warnings"
     INFO = "info"
+
+
+def merge_info_columns(dest_name: str, df: DataFrame, info_col_names: list[str] | None = None) -> DataFrame:
+    """Dataset-level checks can optionally add an info column to the result DataFrame.
+    This function merges those info columns into a single struct column.
+
+    Each listed column must be a struct (e.g. with an "anomaly" field). Their top-level fields
+    are combined into one struct under dest_name. Columns in info_col_names that are missing
+    from the DataFrame are skipped.
+
+    Args:
+        dest_name: Name of the output column (e.g. _dq_info).
+        df: DataFrame that may contain the info columns.
+        info_col_names: Names of the info columns to merge; None or empty means no merge.
+
+    Returns:
+        DataFrame with the new merged column and the source info columns removed.
+    """
+    info_cols = [c for c in (info_col_names or []) if c in df.columns]
+
+    if not info_cols:
+        return df
+
+    field_exprs = [
+        F.col(col_name)[field.name].alias(field.name)
+        for col_name in info_cols
+        for field in cast(StructType, df.schema[col_name].dataType).fields
+    ]
+    result_df = df.withColumn(dest_name, F.struct(*field_exprs))
+    return result_df.drop(*info_cols)

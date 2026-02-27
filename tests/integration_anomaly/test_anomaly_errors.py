@@ -6,7 +6,7 @@ are covered by unit tests (tests/unit/test_anomaly_validation.py).
 """
 
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pyspark.sql.functions as F
 import pytest
@@ -62,7 +62,7 @@ def test_missing_columns_error(
 
     # Should raise error about missing model columns in the input DataFrame
     with pytest.raises(InvalidParameterError, match="missing required columns"):
-        _, apply_fn = has_no_row_anomalies(
+        _, apply_fn, _ = has_no_row_anomalies(
             model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
@@ -181,7 +181,7 @@ def test_missing_registry_table_for_scoring_error(
 
     # Try to score with non-existent registry
     with pytest.raises((InvalidParameterError, Exception)):  # Delta/Spark exception
-        _, apply_fn = has_no_row_anomalies(
+        _, apply_fn, _ = has_no_row_anomalies(
             model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
@@ -224,7 +224,7 @@ def test_model_not_found_error(spark: SparkSession, make_random, test_df_factory
 
     # Try to score with non-existent model (registry exists but model doesn't)
     with pytest.raises(InvalidParameterError, match="not found in.*Train first"):
-        _, apply_fn = has_no_row_anomalies(
+        _, apply_fn, _ = has_no_row_anomalies(
             model_name=qualify_model_name(model_name, registry_table),
             registry_table=registry_table,
             threshold=DEFAULT_SCORE_THRESHOLD,
@@ -322,14 +322,14 @@ def test_row_filter_scores_only_matching_rows(
         columns_schema="amount double, quantity double",
     )
 
-    _, apply_fn = has_no_row_anomalies(
+    _, apply_fn, info_col = has_no_row_anomalies(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
         row_filter="amount > 150",
         include_contributions=False,
     )
-    result = apply_fn(df).select("amount", F.col("_dq_info.anomaly.score").alias("score")).collect()
+    result = apply_fn(df).select("amount", F.col(f"{info_col}.anomaly.score").alias("score")).collect()
 
     scored = {row.amount: row.score for row in result}
     assert scored[100.0] is None
@@ -464,7 +464,7 @@ def test_validate_sklearn_compatibility_skips_when_missing_version():
             columns=["amount"],
             hyperparameters={},
             training_rows=10,
-            training_time=datetime.utcnow(),
+            training_time=datetime.now(timezone.utc),
         ),
         features=FeatureEngineering(feature_metadata=None),
         segmentation=SegmentationConfig(sklearn_version=None),

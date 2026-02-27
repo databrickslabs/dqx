@@ -91,7 +91,7 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, m
         _TRAINED_MODEL["registry_table"] = registry_table
 
     try:
-        _, apply_fn = has_no_row_anomalies(
+        _, apply_fn, _ = has_no_row_anomalies(
             model_name=model_name,
             registry_table=registry_table,
             include_contributions=False,
@@ -108,7 +108,7 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, m
         )
         _TRAINED_MODEL["model_name"] = model_name
         _TRAINED_MODEL["registry_table"] = registry_table
-        _, apply_fn = has_no_row_anomalies(
+        _, apply_fn, _ = has_no_row_anomalies(
             model_name=model_name,
             registry_table=registry_table,
             include_contributions=False,

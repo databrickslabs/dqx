@@ -17,11 +17,11 @@ from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, Ex
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
-    ColumnArguments,
     register_rule,
     DQRowRule,
     DQDatasetRule,
 )
+from databricks.labs.dqx.reporting_columns import ColumnArguments
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
 

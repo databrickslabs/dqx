@@ -101,14 +101,14 @@ def test_partial_nulls(spark: SparkSession, shared_3d_model, test_df_factory):
         columns_schema="amount double, quantity double, discount double",
     )
 
-    # Call apply function directly to get anomaly_score column
-    _, apply_fn = has_no_row_anomalies(
+    # Call apply function directly (info column has temp name, not _dq_info)
+    _, apply_fn, info_col = has_no_row_anomalies(
         model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
     )
     result_df = apply_fn(test_df)
-    rows = result_df.select("transaction_id", F.col("_dq_info.anomaly.score").alias("anomaly_score")).collect()
+    rows = result_df.select("transaction_id", F.col(f"{info_col}.anomaly.score").alias("anomaly_score")).collect()
 
     # All rows should have scores (nulls are imputed to 0)
     assert rows[0]["anomaly_score"] is not None

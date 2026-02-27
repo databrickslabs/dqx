@@ -33,7 +33,7 @@ from databricks.labs.dqx.config import (
     ExtraParams,
 )
 from databricks.labs.dqx.manager import DQRuleManager
-from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, InfoColumn
+from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
     DQRule,
@@ -452,6 +452,7 @@ class DQEngineCore(DQEngineCoreBase):
             return df.select("*", empty_result)
 
         check_conditions = []
+        info_col_names: list[str] = []
         current_df = df
         original_columns = set(df.columns)
 
@@ -470,6 +471,9 @@ class DQEngineCore(DQEngineCoreBase):
             log_telemetry(self.ws, "check", check.check_func.__name__)
             result = manager.process()
             check_conditions.append(result.condition)
+            if result.info_column_name:
+                # dataset-level checks can optionally add an info column to the result DataFrame
+                info_col_names.append(result.info_column_name)
             # The DataFrame should contain any new columns added by the dataset-level checks
             # to satisfy the check condition.
             current_df = result.check_df
@@ -485,7 +489,7 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
-        result_df = InfoColumn.merge_cols(dest_info_col, result_df)
+        result_df = merge_info_columns(dest_info_col, result_df, info_col_names=info_col_names)
 
         # Drop temporary columns used to build check conditions, while preserving result columns.
         columns_to_drop = [

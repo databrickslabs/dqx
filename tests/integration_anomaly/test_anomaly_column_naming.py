@@ -8,7 +8,8 @@ tests/integration/test_apply_checks.py where other column renaming tests live.
 
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.engine import DQEngine, ExtraParams, ColumnArguments
+from databricks.labs.dqx.engine import DQEngine, ExtraParams
+from databricks.labs.dqx.reporting_columns import ColumnArguments
 from tests.integration_anomaly.conftest import create_anomaly_check_rule
 
 
