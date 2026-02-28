@@ -1,6 +1,4 @@
-# Tests target internal scoring/validation APIs by design.
-# pylint: disable=protected-access
-
+from datetime import datetime
 from unittest.mock import create_autospec, patch
 
 import pytest
@@ -9,12 +7,14 @@ from pyspark.sql import DataFrame, SparkSession
 from databricks.labs.dqx.anomaly import check_funcs
 from databricks.labs.dqx.anomaly.check_funcs import (
     ScoringConfig,
+    get_quantile_points_for_severity,
     has_no_row_anomalies,
     resolve_scoring_strategy,
 )
 from databricks.labs.dqx.anomaly.model_config import (
     AnomalyModelRecord,
     ModelIdentity,
+    SegmentationConfig,
     TrainingMetadata,
 )
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
@@ -128,16 +128,11 @@ def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
     mock_spark = create_autospec(SparkSession, instance=True)
     mock_df = create_autospec(DataFrame, instance=True)
     mock_df.sparkSession = mock_spark
+    mock_df.withColumn.return_value = mock_df
+    mock_df.columns = ["a", "b"]
 
     registry_table = "catalog.schema.registry"
     model_name = "catalog.schema.my_model"
-    config = ScoringConfig(
-        columns=["a", "b"],
-        model_name=model_name,
-        registry_table=registry_table,
-        threshold=95.0,
-        merge_columns=[],
-    )
 
     with patch.object(check_funcs, "AnomalyModelRegistry") as mock_registry_cls:
         mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
@@ -145,8 +140,12 @@ def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
         mock_registry.get_all_segment_models.return_value = []  # fallback returns None
         mock_registry_cls.return_value = mock_registry
 
+        _, apply_fn, _ = has_no_row_anomalies(
+            model_name=model_name,
+            registry_table=registry_table,
+        )
         with pytest.raises(InvalidParameterError) as exc_info:
-            check_funcs._run_anomaly_scoring(mock_df, config, registry_table, model_name)
+            apply_fn(mock_df)
 
     assert model_name in str(exc_info.value)
     assert registry_table in str(exc_info.value)
@@ -154,21 +153,37 @@ def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
 
 
 def test_load_segment_models_raises_when_no_segments():
-    """_load_segment_models raises when get_all_segment_models returns an empty list."""
+    """Loading segment models raises when get_all_segment_models returns empty on second call."""
     registry_table = "catalog.schema.registry"
     model_name = "catalog.schema.my_model"
-    config = ScoringConfig(
-        columns=["a", "b"],
-        model_name=model_name,
-        registry_table=registry_table,
-        threshold=95.0,
-        merge_columns=[],
-    )
-    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-    mock_registry.get_all_segment_models.return_value = []
+    mock_spark = create_autospec(SparkSession, instance=True)
+    mock_df = create_autospec(DataFrame, instance=True)
+    mock_df.sparkSession = mock_spark
+    mock_df.withColumn.return_value = mock_df
+    mock_df.columns = ["a", "b"]
 
-    with pytest.raises(InvalidParameterError) as exc_info:
-        check_funcs._load_segment_models(mock_registry, config)
+    segment = create_autospec(AnomalyModelRecord, instance=True)
+    segment.identity = create_autospec(ModelIdentity, instance=True)
+    segment.identity.model_name = model_name
+    segment.identity.algorithm = "IsolationForestV1"
+    segment.training = create_autospec(TrainingMetadata, instance=True)
+    segment.training.columns = ["a", "b"]
+    segment.training.training_time = datetime.min
+    segment.segmentation = create_autospec(SegmentationConfig, instance=True)
+    segment.segmentation.segment_by = ["region"]
+
+    with patch.object(check_funcs, "AnomalyModelRegistry") as mock_registry_cls:
+        mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
+        mock_registry.get_active_model.return_value = None
+        mock_registry.get_all_segment_models.side_effect = [[segment], []]
+        mock_registry_cls.return_value = mock_registry
+
+        _, apply_fn, _ = has_no_row_anomalies(
+            model_name=model_name,
+            registry_table=registry_table,
+        )
+        with pytest.raises(InvalidParameterError) as exc_info:
+            apply_fn(mock_df)
 
     assert "No segment models found for base model" in str(exc_info.value)
     assert model_name in str(exc_info.value)
@@ -176,7 +191,7 @@ def test_load_segment_models_raises_when_no_segments():
 
 
 def test_score_segmented_raises_when_no_segments():
-    """_score_segmented raises when no segment models are found (all_segments empty)."""
+    """Scoring strategy raises when no segment models are passed (all_segments empty)."""
     mock_df = create_autospec(DataFrame, instance=True)
     registry_table = "catalog.schema.registry"
     model_name = "catalog.schema.my_model"
@@ -188,10 +203,10 @@ def test_score_segmented_raises_when_no_segments():
         merge_columns=[],
     )
     mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-    mock_registry.get_all_segment_models.return_value = []
 
+    strategy = resolve_scoring_strategy("IsolationForestV1")
     with pytest.raises(InvalidParameterError) as exc_info:
-        check_funcs._score_segmented(mock_df, config, mock_registry)
+        strategy.score_segmented(mock_df, config, mock_registry, all_segments=[])
 
     assert "No segment models found for base model" in str(exc_info.value)
     assert model_name in str(exc_info.value)
@@ -199,7 +214,7 @@ def test_score_segmented_raises_when_no_segments():
 
 
 def test_extract_quantile_points_raises_when_score_quantiles_missing():
-    """_extract_quantile_points raises when record.training.score_quantiles is missing or empty."""
+    """get_quantile_points_for_severity raises when record.training.score_quantiles is missing or empty."""
     record = create_autospec(AnomalyModelRecord, instance=True)
     record.identity = create_autospec(ModelIdentity, instance=True)
     record.identity.model_name = "catalog.schema.my_model"
@@ -207,7 +222,7 @@ def test_extract_quantile_points_raises_when_score_quantiles_missing():
     record.training.score_quantiles = None
 
     with pytest.raises(InvalidParameterError) as exc_info:
-        check_funcs._extract_quantile_points(record)
+        get_quantile_points_for_severity(record)
 
     assert "missing score quantiles" in str(exc_info.value)
     assert "catalog.schema.my_model" in str(exc_info.value)
@@ -215,7 +230,7 @@ def test_extract_quantile_points_raises_when_score_quantiles_missing():
 
 
 def test_extract_quantile_points_raises_when_score_quantiles_empty():
-    """_extract_quantile_points raises when record.training.score_quantiles is empty dict."""
+    """get_quantile_points_for_severity raises when record.training.score_quantiles is empty dict."""
     record = create_autospec(AnomalyModelRecord, instance=True)
     record.identity = create_autospec(ModelIdentity, instance=True)
     record.identity.model_name = "catalog.schema.other_model"
@@ -223,7 +238,7 @@ def test_extract_quantile_points_raises_when_score_quantiles_empty():
     record.training.score_quantiles = {}
 
     with pytest.raises(InvalidParameterError) as exc_info:
-        check_funcs._extract_quantile_points(record)
+        get_quantile_points_for_severity(record)
 
     assert "missing score quantiles" in str(exc_info.value)
     assert "catalog.schema.other_model" in str(exc_info.value)

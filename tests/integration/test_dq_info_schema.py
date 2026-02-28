@@ -8,7 +8,6 @@ import databricks.labs.dqx.schema.dq_info_schema as dq_info_schema_module
 from databricks.labs.dqx.schema.dq_info_schema import (
     build_dq_info_struct,
     dq_info_item_schema,
-    register_dq_info_field,
 )
 
 _TEST_FIELD_A = "_test_dq_info_integration_a"
@@ -22,15 +21,18 @@ def _get_registry():
 
 @pytest.fixture
 def register_dq_info_test_fields():
-    """Register test fields for the test; clean up after."""
-    register_dq_info_field(_TEST_FIELD_A, DoubleType())
-    register_dq_info_field(_TEST_FIELD_B, StringType())
+    """Isolate registry to only test fields for the test; restore after."""
+    registry = _get_registry()
+    saved = dict(registry)
+    registry.clear()
+    registry[_TEST_FIELD_A] = DoubleType()
+    registry[_TEST_FIELD_B] = StringType()
     yield
-    _get_registry().pop(_TEST_FIELD_A, None)
-    _get_registry().pop(_TEST_FIELD_B, None)
+    registry.clear()
+    registry.update(saved)
 
 
-def test_build_dq_info_struct_column_has_correct_schema(spark):
+def test_build_dq_info_struct_column_has_correct_schema(spark, register_dq_info_test_fields):
     """build_dq_info_struct() produces a column whose schema matches dq_info_item_schema()."""
     info_col = build_dq_info_struct()
     df = spark.createDataFrame([(1,)], "id int").withColumn("info", info_col)
@@ -39,7 +41,7 @@ def test_build_dq_info_struct_column_has_correct_schema(spark):
     assert actual == expected
 
 
-def test_build_dq_info_struct_all_nulls_without_kwargs(spark):
+def test_build_dq_info_struct_all_nulls_without_kwargs(spark, register_dq_info_test_fields):
     """With no kwargs, struct fields are null."""
     info_col = build_dq_info_struct()
     df = spark.createDataFrame([(1,)], "id int").withColumn("info", info_col)
@@ -51,7 +53,7 @@ def test_build_dq_info_struct_all_nulls_without_kwargs(spark):
     assert info[_TEST_FIELD_B] is None
 
 
-def test_build_dq_info_struct_with_kwarg_fills_field(spark):
+def test_build_dq_info_struct_with_kwarg_fills_field(spark, register_dq_info_test_fields):
     """Passing a kwarg fills the corresponding field in the struct."""
     info_col = build_dq_info_struct(**{_TEST_FIELD_A: F.lit(1.5), _TEST_FIELD_B: F.lit("x")})
     df = spark.createDataFrame([(1,)], "id int").withColumn("info", info_col)
@@ -61,7 +63,7 @@ def test_build_dq_info_struct_with_kwarg_fills_field(spark):
     assert row["info"][_TEST_FIELD_B] == "x"
 
 
-def test_build_dq_info_struct_schema_matches_registry():
+def test_build_dq_info_struct_schema_matches_registry(register_dq_info_test_fields):
     """dq_info_item_schema() field names match the registry."""
     schema = dq_info_item_schema()
     assert schema.fieldNames() == list(_get_registry().keys())

@@ -78,12 +78,12 @@ def test_ensemble_scoring_with_confidence(
         extract_score=False,
     )
 
-    # Check that confidence column exists in _dq_info (anomaly_scorer returns single struct, not array)
+    # Check that confidence column exists in _dq_info (array of structs; anomaly is first element)
     row = result_df.collect()[0]
-    assert row["_dq_info"]["anomaly"]["confidence_std"] is not None
+    assert row["_dq_info"][0]["anomaly"]["confidence_std"] is not None
 
     # Check that scores vary (std > 0 for some rows)
-    std_values = [r["_dq_info"]["anomaly"]["confidence_std"] for r in result_df.collect()]
+    std_values = [r["_dq_info"][0]["anomaly"]["confidence_std"] for r in result_df.collect()]
     assert any(std is not None and std > 0 for std in std_values)
 
 
@@ -153,7 +153,7 @@ def test_ensemble_with_feature_contributions(
         include_confidence=True,
     )
 
-    # Check both confidence and contributions exist in _dq_info (anomaly_scorer returns single struct)
+    # Check both confidence and contributions exist in _dq_info (array of structs; anomaly is first element)
     row = result_df.collect()[0]
-    assert row["_dq_info"]["anomaly"]["confidence_std"] is not None
-    assert row["_dq_info"]["anomaly"]["contributions"] is not None
+    assert row["_dq_info"][0]["anomaly"]["confidence_std"] is not None
+    assert row["_dq_info"][0]["anomaly"]["contributions"] is not None

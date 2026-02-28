@@ -988,6 +988,14 @@ def _select_segment_record(all_segments: list[AnomalyModelRecord]) -> AnomalyMod
     )
 
 
+def get_quantile_points_for_severity(record: AnomalyModelRecord) -> list[tuple[float, float]]:
+    """Extract percentile->score points for severity mapping.
+
+    Used internally for scoring and exposed for testing and advanced use.
+    """
+    return _extract_quantile_points(record)
+
+
 def _extract_quantile_points(record: AnomalyModelRecord) -> list[tuple[float, float]]:
     """Extract percentile->score points for severity mapping."""
     quantiles = record.training.score_quantiles
