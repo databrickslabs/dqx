@@ -278,7 +278,7 @@ def test_autodiscovery_with_various_cardinality_strings(spark: SparkSession):
     assert profile.column_types["amount"] == "numeric"
 
 
-def test_autodiscovery_with_many_columns(spark: SparkSession):
+def test_autodiscovery_with_many_columns(spark):
     """Test column selection limit when >10 suitable columns exist (lines 169-173)."""
     # Create DataFrame with 15 numeric columns (exceeds max of 10)
     # Use different multipliers to ensure variance in all columns

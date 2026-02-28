@@ -42,7 +42,7 @@ jobs:
 
       - name: Install hatch
         # pin virtual env: https://github.com/pypa/hatch/issues/2193
-        run: pip install hatch==1.15.0 'virtualenv<21'
+        run: pip install hatch==1.16.5
 
       - name: Run unit tests and generate test coverage report
         run: make test
@@ -106,7 +106,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.15.0 'virtualenv<21'
+        run: pip install hatch==1.16.5
 
       # Integration tests are run from within tests/integration folder.
       # Create .coveragerc with correct relative path to source code.
@@ -159,7 +159,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.15.0 'virtualenv<21'
+        run: pip install hatch==1.16.5
       
       - name: Install dbt
         run: |
@@ -215,7 +215,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        run: pip install hatch==1.15.0 'virtualenv<21'
+        run: pip install hatch==1.16.5
 
       - name: Install dbt
         run: |

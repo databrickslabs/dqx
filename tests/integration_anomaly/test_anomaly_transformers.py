@@ -8,6 +8,7 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
 from databricks.labs.dqx.anomaly.transformers import (
+    ColumnTypeInfo,
     ColumnTypeClassifier,
     SparkFeatureMetadata,
     apply_feature_engineering,
@@ -274,6 +275,73 @@ def test_categorical_onehot_vs_frequency_encoding(spark):
     # Verify metadata stores encoding info
     assert "low_card" in metadata.onehot_categories
     assert "high_card" in metadata.categorical_frequency_maps
+
+
+def test_frequency_encoding_empty_dataframe_training(spark):
+    """Frequency encoding with empty DataFrame (training) stores empty freq map and adds 0.0 column."""
+    empty_df = spark.createDataFrame([], "high_card string, amount double")
+    column_infos = [
+        ColumnTypeInfo(
+            name="high_card",
+            spark_type=T.StringType(),
+            category="categorical",
+            cardinality=100,
+            null_count=0,
+            encoding_strategy="frequency",
+        ),
+        ColumnTypeInfo(
+            name="amount",
+            spark_type=T.DoubleType(),
+            category="numeric",
+            cardinality=None,
+            null_count=0,
+        ),
+    ]
+    engineered_df, metadata = apply_feature_engineering(empty_df, column_infos, categorical_cardinality_threshold=5)
+
+    assert "high_card_freq" in engineered_df.columns
+    assert metadata.categorical_frequency_maps["high_card"] == {}
+    assert "high_card_freq" in metadata.engineered_feature_names
+    rows = engineered_df.collect()
+    assert len(rows) == 0
+
+
+def test_frequency_encoding_scoring_with_empty_freq_map(spark):
+    """Scoring with empty frequency map (e.g. column had no data at train time) adds 0.0 column."""
+    score_df = spark.createDataFrame(
+        [("u1", 10.0), ("u2", 20.0)],
+        "high_card string, amount double",
+    )
+    column_infos = [
+        ColumnTypeInfo(
+            name="high_card",
+            spark_type=T.StringType(),
+            category="categorical",
+            cardinality=100,
+            null_count=0,
+            encoding_strategy="frequency",
+        ),
+        ColumnTypeInfo(
+            name="amount",
+            spark_type=T.DoubleType(),
+            category="numeric",
+            cardinality=None,
+            null_count=0,
+        ),
+    ]
+    engineered_df, _ = apply_feature_engineering(
+        score_df,
+        column_infos,
+        categorical_cardinality_threshold=5,
+        frequency_maps={"high_card": {}},
+        onehot_categories={},
+    )
+
+    assert "high_card_freq" in engineered_df.columns
+    rows = engineered_df.select("high_card_freq").collect()
+    assert len(rows) == 2
+    assert rows[0]["high_card_freq"] == 0.0
+    assert rows[1]["high_card_freq"] == 0.0
 
 
 def test_frequency_encoding_unseen_category_maps_to_zero(spark):

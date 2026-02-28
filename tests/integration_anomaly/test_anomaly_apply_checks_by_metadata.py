@@ -2,13 +2,16 @@ import pytest
 import yaml
 from pyspark.sql import SparkSession
 
+from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.engine import DQEngine
 
+from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     DQENGINE_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
+    SEGMENT_REGIONS,
 )
 
 
@@ -367,6 +370,67 @@ def test_apply_anomaly_check_by_metadata_criticality_warn(ws, spark: SparkSessio
 
     # Anomalous row should have warnings or errors
     assert rows[1]["_warnings"] is not None or rows[1]["_errors"] is not None
+
+
+def test_apply_anomaly_check_by_metadata_with_filter_segmented(ws, spark: SparkSession, make_schema, make_random):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    # Training data: region + amount, quantity (for segment_by=["region"])
+    data = []
+    for region in SEGMENT_REGIONS:
+        base = 100 if region == "US" else (200 if region == "EU" else 150)
+        for i in range(60):
+            data.append((region, base + i * 0.5, base * 0.1 + i * 0.2))
+
+    train_df = spark.createDataFrame(data, "region string, amount double, quantity double")
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_filter_seg_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_filter_{suffix}"
+
+    engine = AnomalyEngine(ws, spark)
+    engine.train(
+        df=train_df,
+        columns=["amount", "quantity"],
+        segment_by=["region"],
+        model_name=model_name,
+        registry_table=registry_table,
+    )
+
+    # Check definition with filter: only score rows where region = 'US'; results are joined back to full df
+    checks_yaml = f"""
+    - criticality: error
+      filter: "region = 'US'"
+      check:
+        function: has_no_row_anomalies
+        arguments:
+          model_name: {model_name}
+          registry_table: {registry_table}
+          threshold: {DEFAULT_SCORE_THRESHOLD}
+    """
+    checks = yaml.safe_load(checks_yaml)
+
+    # Rows for all regions; only US rows are scored by the check, then joined back
+    test_df = spark.createDataFrame(
+        [
+            (1, "US", 150.0, 20.0),
+            (2, "EU", 210.0, 25.0),
+            (3, "US", OUTLIER_AMOUNT, OUTLIER_QUANTITY),
+        ],
+        "transaction_id int, region string, amount double, quantity double",
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    assert "_dq_info" in result_df.columns
+    assert "_errors" in result_df.columns
+    rows = result_df.orderBy("transaction_id").collect()
+    assert len(rows) == 3
+    # US rows should have anomaly info (filter matched); EU row should still be present (join back) with null or info
+    assert rows[0]["_dq_info"] is not None
+    assert rows[2]["_dq_info"] is not None
+    # Anomalous US row should have errors
+    assert len(rows[2]["_errors"]) > 0
 
 
 def test_apply_anomaly_check_by_metadata_parsing_validation(ws, spark: SparkSession):

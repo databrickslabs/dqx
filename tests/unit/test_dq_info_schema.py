@@ -1,5 +1,7 @@
 """Unit tests for dq_info_schema: registry and schema"""
 
+from collections.abc import Generator
+
 import pytest
 from pyspark.sql.types import DoubleType, StringType, StructType
 
@@ -18,7 +20,7 @@ def _get_registry():
 
 
 @pytest.fixture
-def cleaned_test_fields():
+def cleaned_test_fields() -> Generator[list[str], None, None]:
     """Yield a list; append any test field names you register. They are unregistered in teardown."""
     to_clean: list[str] = []
     yield to_clean

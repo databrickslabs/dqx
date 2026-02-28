@@ -175,7 +175,7 @@ dev/cleanup.py
 # Cursor IDE specific files
 .cursorrules
 .cursor/
-
+.claude/
 
 # docgen
 docs/dqx/docs/reference/api

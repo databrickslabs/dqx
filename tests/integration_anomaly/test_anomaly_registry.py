@@ -329,6 +329,16 @@ def test_nonexistent_registry_returns_none(spark: SparkSession, anomaly_registry
     assert model is None
 
 
+def test_get_segment_model_returns_none_when_registry_table_does_not_exist(
+    spark: SparkSession, anomaly_registry_prefix
+):
+    """Test that get_segment_model returns None when registry table does not exist."""
+    registry = AnomalyModelRegistry(spark)
+    nonexistent_table = f"{anomaly_registry_prefix}.nonexistent_registry_table"
+    result = registry.get_segment_model(nonexistent_table, "base_model", {"region": "US"})
+    assert result is None
+
+
 def test_nonexistent_model_returns_none(
     spark: SparkSession, make_random: Callable[[int], str], anomaly_engine, anomaly_registry_prefix
 ):

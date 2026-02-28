@@ -185,39 +185,3 @@ def compute_drift_score(
         recommendation=recommendation,
         sample_size=row_count,
     )
-
-
-def compute_ks_statistic(df: DataFrame, col: str, baseline_stats: dict[str, float]) -> float:
-    """
-    Compute Kolmogorov-Smirnov statistic for distribution comparison.
-
-    This is a more rigorous test but requires more computation.
-    For now, we use a simplified version based on quantile comparison.
-
-    Args:
-        df: Current DataFrame.
-        col: Column to check.
-        baseline_stats: Baseline statistics for the column.
-
-    Returns:
-        KS-like statistic (0 = identical, 1 = completely different).
-    """
-    # Get current quantiles
-    current_quantiles = df.approxQuantile(col, [0.25, 0.5, 0.75], 0.01)
-
-    # Compare to baseline quantiles
-    baseline_quantiles = [baseline_stats["p25"], baseline_stats["p50"], baseline_stats["p75"]]
-
-    # Compute max absolute difference (simplified KS statistic)
-    differences = [
-        abs(current - baseline) for current, baseline in zip(current_quantiles, baseline_quantiles, strict=False)
-    ]
-
-    # Normalize by baseline range to get a 0-1 score
-    baseline_range = baseline_stats["max"] - baseline_stats["min"]
-    if baseline_range > 0:
-        ks_score = max(differences) / baseline_range
-    else:
-        ks_score = 0.0
-
-    return min(ks_score, 1.0)  # Cap at 1.0

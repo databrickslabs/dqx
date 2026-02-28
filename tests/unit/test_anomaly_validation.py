@@ -20,6 +20,29 @@ from databricks.labs.dqx.errors import InvalidParameterError
 
 
 # ============================================================================
+# Spark Version Validation Tests
+# ============================================================================
+
+
+def test_validate_spark_version_raises_for_old_spark():
+    """Test that validate_spark_version raises for Spark < 3.4."""
+    mock_spark = type("MockSpark", (), {"version": "3.2.0"})()
+    with pytest.raises(InvalidParameterError) as exc_info:
+        validation.validate_spark_version(mock_spark)
+    assert "Spark >= 3.4" in str(exc_info.value)
+    assert "3.2" in str(exc_info.value)
+
+
+def test_validate_spark_version_raises_for_spark_2():
+    """Test that validate_spark_version raises for Spark 2.x."""
+    mock_spark = type("MockSpark", (), {"version": "2.4.8"})()
+    with pytest.raises(InvalidParameterError) as exc_info:
+        validation.validate_spark_version(mock_spark)
+    assert "Spark >= 3.4" in str(exc_info.value)
+    assert "2.4" in str(exc_info.value)
+
+
+# ============================================================================
 # Model Name Validation Tests
 # ============================================================================
 
@@ -422,6 +445,20 @@ def test_validate_training_params_accepts_defaults():
     validate_training_params(AnomalyParams(), expected_anomaly_rate=0.02)
 
 
+def test_validate_training_params_rejects_non_numeric_sample_fraction():
+    """Test that non-numeric sample_fraction raises (validation.py 64-65)."""
+    params = AnomalyParams(sample_fraction="0.5")  # type: ignore[arg-type]
+    with pytest.raises(InvalidParameterError, match="must be a numeric value"):
+        validate_training_params(params, expected_anomaly_rate=0.02)
+
+
+def test_validate_training_params_rejects_bool_sample_fraction():
+    """Test that bool sample_fraction raises."""
+    params = AnomalyParams(sample_fraction=True)  # type: ignore[arg-type]
+    with pytest.raises(InvalidParameterError, match="must be a numeric value"):
+        validate_training_params(params, expected_anomaly_rate=0.02)
+
+
 def test_validate_training_params_rejects_zero_sample_fraction():
     with pytest.raises(InvalidParameterError, match="params.sample_fraction"):
         validate_training_params(AnomalyParams(sample_fraction=0.0), expected_anomaly_rate=0.02)
@@ -440,6 +477,20 @@ def test_validate_training_params_rejects_zero_expected_anomaly_rate():
 def test_validate_training_params_rejects_expected_anomaly_rate_above_half():
     with pytest.raises(InvalidParameterError, match="expected_anomaly_rate"):
         validate_training_params(AnomalyParams(), expected_anomaly_rate=0.6)
+
+
+def test_validate_training_params_rejects_non_integer_max_rows():
+    """Test that non-integer max_rows raises."""
+    params = AnomalyParams(max_rows=1000.5)  # type: ignore[arg-type]
+    with pytest.raises(InvalidParameterError, match="must be an integer"):
+        validate_training_params(params, expected_anomaly_rate=0.02)
+
+
+def test_validate_training_params_rejects_bool_max_rows():
+    """Test that bool max_rows raises."""
+    params = AnomalyParams(max_rows=True)  # type: ignore[arg-type]
+    with pytest.raises(InvalidParameterError, match="must be an integer"):
+        validate_training_params(params, expected_anomaly_rate=0.02)
 
 
 def test_validate_training_params_rejects_zero_max_rows():

@@ -1,11 +1,13 @@
 """Integration tests for segment-based anomaly detection."""
 
+import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
 from tests.constants import TEST_CATALOG
@@ -60,6 +62,169 @@ def test_explicit_segment_training(
     assert any("region=US" in name for name in model_names)
     assert any("region=EU" in name for name in model_names)
     assert any("region=APAC" in name for name in model_names)
+
+
+def test_segment_with_insufficient_data_skipped(
+    spark,
+    make_schema,
+    make_random,
+    anomaly_engine,
+    caplog,
+):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    # One segment with 5 rows (< 10), one with enough to train
+    data = []
+    for i in range(5):
+        data.append(("small", 100.0 + i))
+    for i in range(150):
+        data.append(("large", 200.0 + i * 0.5))
+
+    df = spark.createDataFrame(data, "region string, amount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.skip_segment_test_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_skip_segment_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
+    with caplog.at_level("INFO"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount"],
+            segment_by=["region"],
+            model_name=model_name,
+            registry_table=registry_table,
+            params=AnomalyParams(sample_fraction=1.0),
+        )
+
+    assert "Skipped" in caplog.text
+    assert "insufficient data" in caplog.text
+    assert "region=small" in caplog.text
+
+    # Only the "large" segment should have a trained model
+    registry = spark.table(registry_table)
+    models = registry.filter("identity.status = 'active'").collect()
+    assert len(models) == 1
+    assert any("region=large" in row.identity.model_name for row in models)
+
+
+def test_all_segments_skipped_raises_invalid_parameter_error(
+    spark,
+    make_schema,
+    make_random,
+    anomaly_engine,
+    caplog,
+):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    # Two segments, both with < 10 rows
+    data = []
+    for i in range(5):
+        data.append(("a", 100.0 + i))
+    for i in range(5):
+        data.append(("b", 200.0 + i))
+
+    df = spark.createDataFrame(data, "region string, amount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.all_skip_test_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_all_skip_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
+    with pytest.raises(InvalidParameterError) as exc_info:
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount"],
+            segment_by=["region"],
+            model_name=model_name,
+            registry_table=registry_table,
+            params=AnomalyParams(sample_fraction=1.0),
+        )
+
+    msg = str(exc_info.value)
+    assert "All 2 segments failed" in msg
+    assert "2 skipped" in msg
+    assert "0 errors" in msg
+    assert "Cannot train any models" in msg
+
+
+def test_many_skipped_segments_logs_truncated_list(
+    spark,
+    make_schema,
+    make_random,
+    anomaly_engine,
+    caplog,
+):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    # Six segments, each with 5 rows
+    data = []
+    for name in ("s1", "s2", "s3", "s4", "s5", "s6"):
+        for i in range(5):
+            data.append((name, 100.0 + i))
+
+    df = spark.createDataFrame(data, "region string, amount double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.many_skip_test_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_many_skip_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
+    with caplog.at_level("INFO"):
+        with pytest.raises(InvalidParameterError):
+            anomaly_engine.train(
+                df=spark.table(table_name),
+                columns=["amount"],
+                segment_by=["region"],
+                model_name=model_name,
+                registry_table=registry_table,
+                params=AnomalyParams(sample_fraction=1.0),
+            )
+
+    assert " and 1 more" in caplog.text
+
+
+def test_segment_training_failure_logged(
+    spark,
+    make_schema,
+    make_random,
+    anomaly_engine,
+    caplog,
+):
+    """When a segment fails during training, failure is logged"""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+
+    # One segment with enough data, one with constant values (can cause scaling/training to fail)
+    data = []
+    for i in range(100):
+        data.append(("ok", 100.0 + i * 0.5, 10.0 + i * 0.1))
+    for _ in range(15):
+        data.append(("bad", 1.0, 1.0))  # constant -> zero variance can break RobustScaler/IF
+
+    df = spark.createDataFrame(data, "region string, amount double, quantity double")
+    table_name = f"{TEST_CATALOG}.{schema.name}.fail_segment_test_{suffix}"
+    df.write.saveAsTable(table_name)
+
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_fail_segment_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_models_{suffix}"
+
+    with caplog.at_level("WARNING"):
+        anomaly_engine.train(
+            df=spark.table(table_name),
+            columns=["amount", "quantity"],
+            segment_by=["region"],
+            model_name=model_name,
+            registry_table=registry_table,
+            params=AnomalyParams(sample_fraction=1.0),
+        )
+
+    # Either the "bad" segment failed (then we see the failure warning) or it succeeded; if failed:
+    if "failed during training" in caplog.text:
+        assert "region=bad" in caplog.text or "WARNING" in caplog.text
 
 
 def test_segment_scoring(

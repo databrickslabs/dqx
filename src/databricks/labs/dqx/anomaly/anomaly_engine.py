@@ -156,8 +156,6 @@ class AnomalyEngine(DQEngineBase):
             expected_anomaly_rate=expected_anomaly_rate,
         )
 
-        log_telemetry(self.ws, "anomaly_auto_discovery", str(columns is None).lower())
-        log_telemetry(self.ws, "anomaly_segmented", str(context.segment_by is not None).lower())
         log_telemetry(self.ws, "anomaly_num_features", str(len(context.columns)))
 
         return training_service.train(context)
