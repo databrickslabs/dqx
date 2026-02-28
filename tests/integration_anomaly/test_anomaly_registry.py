@@ -51,7 +51,7 @@ def test_explicit_model_names(
     # Verify model can be loaded with explicit name - use helper
     result_df = score_with_anomaly_check(df, model_name, registry_table)
 
-    # Verify _dq_info column exists (anomaly_score is now internal, use _dq_info.anomaly.score)
+    # Verify _dq_info column exists (anomaly_score is now internal, use _dq_info[0].anomaly.score)
     assert "_dq_info" in result_df.columns
 
 

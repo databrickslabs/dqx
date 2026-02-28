@@ -272,7 +272,12 @@ def anomaly_scorer():
         result_df = apply_fn(test_df)
 
         if extract_score:
-            return result_df.select("*", F.col("_dq_info.anomaly.score").alias("anomaly_score"))
+            # Use element_at(_, 1) for first array element to avoid Spark Connect resolving "0" as struct field
+            first_info = F.element_at(F.col("_dq_info"), 1)
+            return result_df.select(
+                "*",
+                first_info.getField("anomaly").getField("score").alias("anomaly_score"),
+            )
         return result_df
 
     return _score
@@ -420,13 +425,17 @@ def qualify_model_name(model_name: str, registry_table: str) -> str:
 def _normalize_anomaly_apply_fn(apply_fn, info_col: str):
     """Wrap apply_fn so the result DataFrame exposes _dq_info for direct-access tests.
 
-    When used through DQEngine the engine handles the final column name; this wrapper
-    is only needed for test helpers that call apply_fn directly.
+    When used through DQEngine the engine merges info columns into an array; this wrapper
+    ensures _dq_info is always array<struct<...>> (one element when a single check runs)
+    so tests can use row["_dq_info"][0]["anomaly"]["contributions"] etc.
     """
 
     def normalized(df: DataFrame) -> DataFrame:
         result = apply_fn(df)
-        return result.withColumnRenamed(info_col, "_dq_info") if info_col in result.columns else result
+        if info_col not in result.columns:
+            return result
+        # Single check produces one struct; wrap in array to match engine/merge contract
+        return result.withColumn("_dq_info", F.array(F.col(info_col))).drop(info_col)
 
     return normalized
 

@@ -2,7 +2,6 @@
 
 from pyspark.sql import DataFrame
 from pyspark.sql.types import (
-    BooleanType,
     DoubleType,
     MapType,
     StringType,
@@ -12,6 +11,14 @@ from pyspark.sql.types import (
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx.anomaly.segment_utils import canonicalize_segment_values
+from databricks.labs.dqx.anomaly.anomaly_info_schema import anomaly_info_struct_schema
+from databricks.labs.dqx.schema.dq_info_schema import (
+    build_dq_info_struct,
+    register_dq_info_field,
+)
+
+# Register anomaly field for the wide _dq_info struct (so merge gets a consistent schema)
+register_dq_info_field("anomaly", anomaly_info_struct_schema)
 
 
 def create_null_scored_dataframe(
@@ -46,23 +53,9 @@ def create_null_scored_dataframe(
         result = result.withColumn(contributions_col, F.lit(None).cast(MapType(StringType(), DoubleType())))
     result = result.withColumn(severity_col, F.lit(None).cast(DoubleType()))
 
-    null_anomaly_info = F.lit(None).cast(
-        StructType(
-            [
-                StructField("check_name", StringType(), True),
-                StructField("score", DoubleType(), True),
-                StructField("severity_percentile", DoubleType(), True),
-                StructField("is_anomaly", BooleanType(), True),
-                StructField("threshold", DoubleType(), True),
-                StructField("model", StringType(), True),
-                StructField("segment", MapType(StringType(), StringType()), True),
-                StructField("contributions", MapType(StringType(), DoubleType()), True),
-                StructField("confidence_std", DoubleType(), True),
-            ]
-        )
-    )
+    null_anomaly_info = F.lit(None).cast(anomaly_info_struct_schema)
 
-    return result.withColumn(info_col_name, F.struct(null_anomaly_info.alias("anomaly")))
+    return result.withColumn(info_col_name, build_dq_info_struct(anomaly=null_anomaly_info))
 
 
 def add_info_column(
@@ -127,8 +120,10 @@ def add_info_column(
     else:
         anomaly_info_fields["confidence_std"] = F.lit(None).cast(DoubleType())
 
-    anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()])
-    return df.withColumn(info_col_name, F.struct(anomaly_info.alias("anomaly")))
+    anomaly_info = F.struct(*[value.alias(key) for key, value in anomaly_info_fields.items()]).cast(
+        anomaly_info_struct_schema
+    )
+    return df.withColumn(info_col_name, build_dq_info_struct(anomaly=anomaly_info))
 
 
 def add_severity_percentile_column(
@@ -180,8 +175,8 @@ def add_severity_percentile_column(
 def create_udf_schema(include_contributions: bool) -> StructType:
     """Create schema for scoring UDF output.
 
-    The anomaly_score is used internally for populating _dq_info.anomaly.score.
-    Users should check _dq_info.anomaly.is_anomaly for anomaly status.
+    The anomaly_score is used internally for populating _dq_info (array of structs).
+    After merge, first check's anomaly info is at _dq_info[0].anomaly; check _dq_info[0].anomaly.is_anomaly for status.
 
     Args:
         include_contributions: Whether to include contributions field

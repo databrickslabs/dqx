@@ -101,7 +101,9 @@ def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_ran
     assert "_dq_info" in result_df.columns
 
     # Verify scores are present by accessing nested field
-    rows = result_df.select(F.col("_dq_info.anomaly.score").alias("anomaly_score")).collect()
+    rows = result_df.select(
+        F.col("_dq_info").getItem(0).getField("anomaly").getField("score").alias("anomaly_score")
+    ).collect()
     assert all(row["anomaly_score"] is not None for row in rows)
 
 
@@ -200,7 +202,7 @@ def test_threshold_flagging(ws, spark: SparkSession, make_schema, make_random, a
 
     rows = (
         dq_engine.apply_checks(test_df, checks)
-        .select("_errors", F.col("_dq_info.anomaly.is_anomaly").alias("is_anomaly"))
+        .select("_errors", F.col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly").alias("is_anomaly"))
         .collect()
     )
     flagged = 0
@@ -283,11 +285,13 @@ def test_multiple_columns(ws, spark: SparkSession, make_schema, make_random, ano
 
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Verify anomaly_score exists (nested in _dq_info.anomaly.score)
+    # Verify anomaly_score exists (nested in _dq_info[0].anomaly.score)
 
     assert "_dq_info" in result_df.columns
 
-    rows = result_df.select("_errors", F.col("_dq_info.anomaly.is_anomaly").alias("is_anomaly")).collect()
+    rows = result_df.select(
+        "_errors", F.col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly").alias("is_anomaly")
+    ).collect()
     flagged = 0
     for row in rows:
         has_errors = row["_errors"] is not None and len(row["_errors"]) > 0

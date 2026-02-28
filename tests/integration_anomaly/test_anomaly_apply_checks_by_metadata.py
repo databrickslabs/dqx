@@ -164,6 +164,67 @@ def test_apply_anomaly_check_by_metadata_with_multiple_checks(ws, spark: SparkSe
     assert len(row2_errors) > 0
 
 
+def test_apply_anomaly_multiple_checks_by_metadata(ws, spark, shared_2d_model):
+    """Two has_no_row_anomalies (error) + one (warn); _dq_info should be an array with 3 elements."""
+    model_name = shared_2d_model["model_name"]
+    registry_table = shared_2d_model["registry_table"]
+
+    checks_yaml = f"""
+    - criticality: error
+      check:
+        function: has_no_row_anomalies
+        arguments:
+          model_name: {model_name}
+          registry_table: {registry_table}
+          threshold: {DEFAULT_SCORE_THRESHOLD}
+    - criticality: error
+      check:
+        function: has_no_row_anomalies
+        arguments:
+          model_name: {model_name}
+          registry_table: {registry_table}
+          threshold: {DEFAULT_SCORE_THRESHOLD}
+    - criticality: warn
+      check:
+        function: has_no_row_anomalies
+        arguments:
+          model_name: {model_name}
+          registry_table: {registry_table}
+          threshold: {DEFAULT_SCORE_THRESHOLD}
+    """
+
+    checks = yaml.safe_load(checks_yaml)
+
+    test_df = spark.createDataFrame(
+        [(1, 150.0, 20.0), (2, OUTLIER_AMOUNT, OUTLIER_QUANTITY)],
+        "transaction_id int, amount double, quantity double",
+    )
+
+    dq_engine = DQEngine(ws, spark)
+    result_df = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    assert "_dq_info" in result_df.columns
+
+    rows = result_df.orderBy("transaction_id").collect()
+    for row in rows:
+        info_arr = row["_dq_info"]
+        assert info_arr is not None, "_dq_info should not be None"
+        assert len(info_arr) == 3, f"_dq_info should have 3 elements, got {len(info_arr)}"
+        for i, info in enumerate(info_arr):
+            assert hasattr(info, "anomaly"), f"_dq_info[{i}] should have 'anomaly' field"
+            anomaly = info.anomaly
+            assert anomaly is not None, f"_dq_info[{i}].anomaly should not be None"
+            assert hasattr(anomaly, "score"), f"_dq_info[{i}].anomaly should have 'score'"
+            assert hasattr(anomaly, "is_anomaly"), f"_dq_info[{i}].anomaly should have 'is_anomaly'"
+        # At least one element should have non-null score (first check runs full scoring)
+        scores = [info_arr[i].anomaly.score for i in range(3)]
+        assert any(s is not None for s in scores), "_dq_info should have at least one element with non-null score"
+        # When there is no anomaly, all 3 info results should be the same
+        if not info_arr[0].anomaly.is_anomaly:
+            assert info_arr[0].anomaly.score == info_arr[1].anomaly.score == info_arr[2].anomaly.score
+            assert info_arr[0].anomaly.is_anomaly == info_arr[1].anomaly.is_anomaly == info_arr[2].anomaly.is_anomaly
+
+
 def test_apply_anomaly_check_by_metadata_with_custom_threshold(ws, spark: SparkSession, shared_2d_model):
     """Test YAML configuration with custom threshold."""
     # Use shared pre-trained model (no training needed!)

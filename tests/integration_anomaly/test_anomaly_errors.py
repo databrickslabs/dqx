@@ -347,7 +347,8 @@ def test_create_null_scored_dataframe_updates_existing_info(spark: SparkSession)
         include_contributions=True,
         include_confidence=True,
     )
-    row = result.select(F.col("_dq_info.anomaly.score").alias("score")).first()
+    # Before merge, info column is a single struct<anomaly: ...>, not yet an array
+    row = result.select(F.col("_dq_info").getField("anomaly").getField("score").alias("score")).first()
     assert row is not None
     assert row["score"] is None
 
@@ -366,7 +367,8 @@ def test_add_info_column_preserves_existing_info(spark: SparkSession):
         include_contributions=False,
         include_confidence=False,
     )
-    row = result.select(F.col("_dq_info.anomaly.score").alias("score")).first()
+    # Before merge, info column is a single struct<anomaly: ...>, not yet an array
+    row = result.select(F.col("_dq_info").getField("anomaly").getField("score").alias("score")).first()
     assert row is not None
     assert row["score"] == 0.5
 

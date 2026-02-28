@@ -74,7 +74,9 @@ def test_apply_anomaly_checks_and_split(ws, spark: SparkSession, shared_2d_model
 
     # Get expected split from apply_checks to avoid threshold sensitivity across environments
     result_df = dq_engine.apply_checks(test_df, checks)
-    expected_quarantine = result_df.filter(F.col("_dq_info.anomaly.is_anomaly")).count()
+    expected_quarantine = result_df.filter(
+        F.col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly")
+    ).count()
     expected_valid = result_df.count() - expected_quarantine
 
     # Now split
@@ -225,7 +227,7 @@ def test_apply_anomaly_check_with_criticality_warn(ws, spark: SparkSession, shar
 
 
 def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shared_2d_model):
-    """Test that _dq_info.anomaly has all expected fields with correct structure."""
+    """Test that _dq_info[0].anomaly has all expected fields with correct structure."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
@@ -251,19 +253,18 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
     # Verify _dq_info column exists
     assert "_dq_info" in result_df.columns, "_dq_info column should be present"
 
-    # Get the row and extract _dq_info
+    # Get the row and extract _dq_info (array of structs; first element = first check)
     row = result_df.collect()[0]
-    info = row["_dq_info"]
+    info_arr = row["_dq_info"]
+    assert info_arr is not None and len(info_arr) >= 1, "_dq_info should be non-empty array"
+    info = info_arr[0]
 
-    # Verify _dq_info is a struct (not None)
-    assert info is not None, "_dq_info should not be None"
-
-    # Verify _dq_info.anomaly exists and is a struct
-    assert hasattr(info, "anomaly"), "_dq_info should have 'anomaly' field"
+    # Verify _dq_info[0].anomaly exists and is a struct
+    assert hasattr(info, "anomaly"), "_dq_info[0] should have 'anomaly' field"
     anomaly = info.anomaly
-    assert anomaly is not None, "_dq_info.anomaly should not be None"
+    assert anomaly is not None, "_dq_info[0].anomaly should not be None"
 
-    # Verify all required fields exist in _dq_info.anomaly
+    # Verify all required fields exist in _dq_info[0].anomaly
     expected_fields = [
         "check_name",
         "score",
@@ -276,7 +277,7 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
     ]
 
     for field in expected_fields:
-        assert hasattr(anomaly, field), f"_dq_info.anomaly should have '{field}' field"
+        assert hasattr(anomaly, field), f"_dq_info[0].anomaly should have '{field}' field"
 
     # Verify field values and types
     assert anomaly.check_name == "has_no_row_anomalies", "check_name should be 'has_no_row_anomalies'"
@@ -292,7 +293,7 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
 
 
 def test_apply_anomaly_check_with_contributions(ws, spark: SparkSession, shared_3d_model):
-    """Test that _dq_info.anomaly includes contributions when requested."""
+    """Test that _dq_info[0].anomaly includes contributions when requested."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
@@ -315,9 +316,9 @@ def test_apply_anomaly_check_with_contributions(ws, spark: SparkSession, shared_
 
     result_df = dq_engine.apply_checks(test_df, checks)
 
-    # Get the row and extract _dq_info.anomaly
+    # Get the row and extract _dq_info[0].anomaly
     row = result_df.collect()[0]
-    anomaly = row["_dq_info"].anomaly
+    anomaly = row["_dq_info"][0].anomaly
 
     # Verify contributions field is populated
     assert anomaly.contributions is not None, "contributions should not be None when requested"

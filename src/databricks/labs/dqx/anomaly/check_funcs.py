@@ -108,11 +108,11 @@ class AnomalyScoringStrategy(ABC):
 
     @abstractmethod
     def supports(self, algorithm: str) -> bool:
-        pass
+        """Return True if the strategy supports the given algorithm."""
 
     @abstractmethod
     def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: ScoringConfig) -> DataFrame:
-        pass
+        """Score a global model."""
 
     @abstractmethod
     def score_segmented(
@@ -122,7 +122,7 @@ class AnomalyScoringStrategy(ABC):
         registry_client: AnomalyModelRegistry,
         all_segments: list[AnomalyModelRecord],
     ) -> DataFrame:
-        pass
+        """Score a segmented model."""
 
 
 class IsolationForestScoringStrategy(AnomalyScoringStrategy):
@@ -209,15 +209,15 @@ def has_no_row_anomalies(
     - segmentation: Inferred from model registry (checks if model is segmented)
 
     Output columns:
-    - _dq_info: Structured anomaly metadata
-      - _dq_info.anomaly.score: Raw anomaly score (model-relative)
-      - _dq_info.anomaly.severity_percentile: Severity percentile (0–100)
-      - _dq_info.anomaly.is_anomaly: Boolean flag
-      - _dq_info.anomaly.threshold: Severity percentile threshold used (0–100)
-      - _dq_info.anomaly.model: Model name
-      - _dq_info.anomaly.segment: Segment values (if segmented)
-      - _dq_info.anomaly.contributions: SHAP contributions as percentages (0–100)
-    - _dq_info.anomaly.confidence_std: Ensemble std (if requested)
+    - _dq_info: Array of structs (one element per dataset-level check). For example:
+      - _dq_info[0].anomaly.score: Raw anomaly score (model-relative)
+      - _dq_info[0].anomaly.severity_percentile: Severity percentile (0–100)
+      - _dq_info[0].anomaly.is_anomaly: Boolean flag
+      - _dq_info[0].anomaly.threshold: Severity percentile threshold used (0–100)
+      - _dq_info[0].anomaly.model: Model name
+      - _dq_info[0].anomaly.segment: Segment values (if segmented)
+      - _dq_info[0].anomaly.contributions: SHAP contributions as percentages (0–100)
+      - _dq_info[0].anomaly.confidence_std: Ensemble std (if requested)
 
     Notes:
         DQX always scores using the columns the model was trained on.
@@ -243,9 +243,9 @@ def has_no_row_anomalies(
         Tuple of condition expression, apply function and info column name.
 
     Example:
-        Access anomaly metadata via _dq_info column:
-        >>> df_scored.select("_dq_info.anomaly.score", "_dq_info.anomaly.is_anomaly")
-        >>> df_scored.filter(col("_dq_info.anomaly.is_anomaly"))
+        Access anomaly metadata via _dq_info (array; first check = index 0):
+        >>> df_scored.select(col("_dq_info").getItem(0).getField("anomaly").getField("score"), ...)
+        >>> df_scored.filter(col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly"))
     """
     if not model_name:
         raise InvalidParameterError(

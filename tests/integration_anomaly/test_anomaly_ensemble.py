@@ -78,7 +78,7 @@ def test_ensemble_scoring_with_confidence(
         extract_score=False,
     )
 
-    # Check that confidence column exists in _dq_info
+    # Check that confidence column exists in _dq_info (anomaly_scorer returns single struct, not array)
     row = result_df.collect()[0]
     assert row["_dq_info"]["anomaly"]["confidence_std"] is not None
 
@@ -116,7 +116,7 @@ def test_ensemble_scoring_distributed_path(
 
         result = dq_engine.apply_checks(df, [check])
         row = result.collect()[0]
-        assert row["_dq_info"]["anomaly"]["confidence_std"] is not None
+        assert row["_dq_info"][0]["anomaly"]["confidence_std"] is not None
     finally:
         set_driver_only_for_tests(True)
 
@@ -153,7 +153,7 @@ def test_ensemble_with_feature_contributions(
         include_confidence=True,
     )
 
-    # Check both confidence and contributions exist in _dq_info
+    # Check both confidence and contributions exist in _dq_info (anomaly_scorer returns single struct)
     row = result_df.collect()[0]
     assert row["_dq_info"]["anomaly"]["confidence_std"] is not None
     assert row["_dq_info"]["anomaly"]["contributions"] is not None

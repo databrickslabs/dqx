@@ -118,8 +118,8 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, m
         scored_df = apply_fn(test_df)
         return scored_df.select(
             F.col("is_anomaly").cast("double").alias("label"),
-            F.col("_dq_info.anomaly.score").alias("score"),
-            F.col("_dq_info.anomaly.is_anomaly").cast("double").alias("pred"),
+            F.col("_dq_info").getItem(0).getField("anomaly").getField("score").alias("score"),
+            F.col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly").cast("double").alias("pred"),
         )
 
     scored = benchmark(run_score)

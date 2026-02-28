@@ -21,6 +21,7 @@ from pyspark.sql.types import DoubleType, MapType, StringType, StructField, Stru
 from sklearn.pipeline import Pipeline
 
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +171,13 @@ def add_top_contributors_to_message(df: DataFrame, threshold: float, top_n: int 
     """
     format_udf = F.udf(lambda m: format_contributions_map(m, top_n), StringType())
 
+    info_col = DefaultColumnNames.INFO.value
     if "severity_percentile" in df.columns:
         severity_col = F.col("severity_percentile")
-    elif "_dq_info" in df.columns:
-        severity_col = F.col("_dq_info").anomaly.severity_percentile
+    elif info_col in df.columns:
+        # Info column is array<struct<...>>; use element_at(_, 1) to avoid Spark Connect getItem(0) resolution bug
+        first_info = F.element_at(F.col(info_col), 1)
+        severity_col = first_info.getField("anomaly").getField("severity_percentile")
     else:
         raise InvalidParameterError(
             "severity_percentile is required to determine top contributors. "

@@ -12,7 +12,7 @@ shared_4d_model) to avoid retraining models. This reduces runtime from ~60 min t
 import numpy as np
 import pytest
 from pyspark.sql import SparkSession
-from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
+from pyspark.sql.types import ArrayType, DoubleType, MapType, StringType, StructField, StructType
 from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -48,11 +48,11 @@ def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_
     )
     row = result_df.collect()[0]
 
-    # Verify contributions exist in _dq_info.anomaly.contributions
-    assert row["_dq_info"]["anomaly"]["contributions"] is not None
+    # Verify contributions exist in _dq_info[0].anomaly.contributions
+    assert row["_dq_info"][0]["anomaly"]["contributions"] is not None
 
-    # Extract contributions map from _dq_info.anomaly.contributions
-    contribs = row["_dq_info"]["anomaly"]["contributions"]
+    # Extract contributions map from _dq_info[0].anomaly.contributions
+    contribs = row["_dq_info"][0]["anomaly"]["contributions"]
 
     # Verify contributions contain feature names
     assert contribs is not None
@@ -86,8 +86,8 @@ def test_contribution_percentages_sum_to_hundred(spark: SparkSession, shared_3d_
     )
     row = result_df.collect()[0]
 
-    # Extract contributions map from _dq_info.anomaly.contributions
-    contribs = row["_dq_info"]["anomaly"]["contributions"]
+    # Extract contributions map from _dq_info[0].anomaly.contributions
+    contribs = row["_dq_info"][0]["anomaly"]["contributions"]
 
     # Filter out None values before summing
     total = sum(v for v in contribs.values() if v is not None)
@@ -121,8 +121,8 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
     )
     row = result_df.collect()[0]
 
-    # Extract contributions map from _dq_info.anomaly.contributions
-    contribs = row["_dq_info"]["anomaly"]["contributions"]
+    # Extract contributions map from _dq_info[0].anomaly.contributions
+    contribs = row["_dq_info"][0]["anomaly"]["contributions"]
 
     # Verify all features are represented
     assert "amount" in contribs
@@ -184,8 +184,8 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
     )
     row = result_df.collect()[0]
 
-    # Extract contributions map from _dq_info.anomaly.contributions
-    contribs = row["_dq_info"]["anomaly"]["contributions"]
+    # Extract contributions map from _dq_info[0].anomaly.contributions
+    contribs = row["_dq_info"][0]["anomaly"]["contributions"]
 
     # Filter out None values
     valid_contribs = {k: v for k, v in contribs.items() if v is not None}
@@ -262,7 +262,7 @@ def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, t
             extract_score=False,
         )
         row = result_df.collect()[0]
-        contribs = row["_dq_info"]["anomaly"]["contributions"]
+        contribs = row["_dq_info"][0]["anomaly"]["contributions"]
         assert contribs is not None
         assert "amount" in contribs and "quantity" in contribs
     finally:
@@ -311,33 +311,28 @@ def test_format_contributions_map():
 
 
 def test_add_top_contributors_uses_dq_info(spark: SparkSession):
-    """Top contributors can be derived from _dq_info.severity_percentile."""
+    """Top contributors can be derived from _dq_info[0].anomaly.severity_percentile (array of struct)."""
+    # _dq_info is array<struct<anomaly: struct<...>>>
+    info_element_schema = StructType(
+        [
+            StructField(
+                "anomaly",
+                StructType([StructField("severity_percentile", DoubleType(), True)]),
+                True,
+            )
+        ]
+    )
     schema = StructType(
         [
             StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True),
-            StructField(
-                "_dq_info",
-                StructType(
-                    [
-                        StructField(
-                            "anomaly",
-                            StructType(
-                                [
-                                    StructField("severity_percentile", DoubleType()),
-                                ]
-                            ),
-                        )
-                    ]
-                ),
-                True,
-            ),
+            StructField("_dq_info", ArrayType(info_element_schema), True),
         ]
     )
-
-    df = spark.createDataFrame(
-        [({"amount": 70.0, "quantity": 30.0}, {"anomaly": {"severity_percentile": 80.0}})],
-        schema=schema,
+    one_row = (
+        {"amount": 70.0, "quantity": 30.0},
+        [{"anomaly": {"severity_percentile": 80.0}}],
     )
+    df = spark.createDataFrame([one_row], schema=schema)
 
     result = add_top_contributors_to_message(df, threshold=60.0, top_n=2)
     assert "_top_contributors" in result.columns

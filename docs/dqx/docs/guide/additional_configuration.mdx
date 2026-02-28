@@ -1,5 +1,5 @@
 ---
-sidebar_position: 310
+sidebar_position: 312
 ---
 
 import Admonition from '@theme/Admonition';
@@ -127,7 +127,5 @@ You can customize the names of these result columns by specifying extra paramete
 </Tabs>
 
 <Admonition type="info" title="Info column usage">
-The `_dq_info` reporting column contains structured metadata and is created when applying certain checks, such as `has_no_row_anomalies`.
-For row anomaly detection check, it includes details like anomaly scores, thresholds, and feature contributions for all rows.
-See [Row Anomaly Detection](/docs/guide/row_anomaly_detection) for details.
+The `_dq_info` reporting column is an **array of structs**: one element per dataset-level check that produces info (e.g. one per `has_no_row_anomalies`). Each element has a shared schema; for row anomaly detection the populated field is `anomaly`, with fields such as `score`, `severity_percentile`, `is_anomaly`, `threshold`, `model`, `contributions`, and `confidence_std`. For the full field list and types, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) in the Row Anomaly Detection guide.
 </Admonition>

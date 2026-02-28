@@ -66,11 +66,12 @@ def test_anomaly_check_with_custom_info_column_name(
     assert "custom_anomaly_info" in result_df.columns
     assert "_dq_info" not in result_df.columns
 
-    # Verify it contains anomaly metadata with expected structure
+    # Verify it contains anomaly metadata with expected structure (array of structs, one per check)
     row = result_df.collect()[0]
     assert row["custom_anomaly_info"] is not None
-    assert row["custom_anomaly_info"]["anomaly"] is not None
-    assert row["custom_anomaly_info"]["anomaly"]["score"] is not None
+    assert len(row["custom_anomaly_info"]) >= 1
+    assert row["custom_anomaly_info"][0]["anomaly"] is not None
+    assert row["custom_anomaly_info"][0]["anomaly"]["score"] is not None
 
 
 def test_anomaly_check_with_default_info_column_name(
@@ -118,5 +119,5 @@ def test_anomaly_check_with_default_info_column_name(
     # Verify it contains anomaly metadata
     row = result_df.collect()[0]
     assert row["_dq_info"] is not None
-    assert row["_dq_info"]["anomaly"] is not None
-    assert row["_dq_info"]["anomaly"]["score"] is not None
+    assert row["_dq_info"][0]["anomaly"] is not None
+    assert row["_dq_info"][0]["anomaly"]["score"] is not None

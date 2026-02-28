@@ -8,7 +8,7 @@ from databricks.labs.dqx.reporting_columns import DefaultColumnNames, merge_info
 
 
 def test_merge_info_columns_single_column(ws, spark):
-    """Merge one info struct column into dest; source column is dropped."""
+    """Merge one info struct column into dest; source column is dropped. Result is array of one struct."""
     df = spark.createDataFrame([(1,)], "id int").withColumn(
         "__dqx_info_abc",
         F.struct(F.struct(F.lit(0.75).alias("score"), F.lit(90.0).alias("severity_percentile")).alias("anomaly")),
@@ -22,9 +22,18 @@ def test_merge_info_columns_single_column(ws, spark):
 
     expected = spark.createDataFrame([(1,)], "id int").withColumn(
         DefaultColumnNames.INFO.value,
-        F.struct(F.struct(F.lit(0.75).alias("score"), F.lit(90.0).alias("severity_percentile")).alias("anomaly")),
+        F.array(
+            F.struct(
+                F.struct(
+                    F.lit(0.75).alias("score"),
+                    F.lit(90.0).alias("severity_percentile"),
+                ).alias("anomaly")
+            )
+        ),
     )
     assert_df_equality(result, expected, ignore_nullable=True)
+    row = result.select(DefaultColumnNames.INFO.value).first()
+    assert row is not None and row[0][0].anomaly.score == 0.75
 
 
 def test_merge_info_columns_no_names_returns_unchanged(ws, spark):
@@ -53,7 +62,7 @@ def test_merge_info_columns_skips_missing_columns(ws, spark):
 
     expected = spark.createDataFrame([(1,)], "id int").withColumn(
         "_dq_info",
-        F.struct(F.struct(F.lit(0.5).alias("score")).alias("anomaly")),
+        F.array(F.struct(F.struct(F.lit(0.5).alias("score")).alias("anomaly"))),
     )
     assert_df_equality(result, expected, ignore_nullable=True)
 
@@ -72,6 +81,9 @@ def test_merge_info_columns_called_twice_preserves_both(ws, spark):
     )
     assert after_first.columns == ["id", DefaultColumnNames.INFO.value]
 
+    # Select to avoid carrying references to dropped temp columns into the next merge
+    after_first = after_first.select("id", DefaultColumnNames.INFO.value)
+
     # Simulate engine adding _warnings between passes
     with_warnings = after_first.withColumn(
         DefaultColumnNames.WARNINGS.value,
@@ -79,10 +91,10 @@ def test_merge_info_columns_called_twice_preserves_both(ws, spark):
     )
     assert with_warnings.columns == ["id", DefaultColumnNames.INFO.value, DefaultColumnNames.WARNINGS.value]
 
-    # Second pass: another info column; existing _dq_info must be merged in, not replaced
+    # Second pass: another info column (same struct shape so concat type matches); existing _dq_info must be merged in
     with_second_info = with_warnings.withColumn(
         "__dqx_info_b",
-        F.struct(F.lit("extra").alias("other")),
+        F.struct(F.struct(F.lit(0.5).alias("score")).alias("anomaly")),
     )
     after_second = merge_info_columns(
         DefaultColumnNames.INFO.value,
@@ -91,20 +103,21 @@ def test_merge_info_columns_called_twice_preserves_both(ws, spark):
     )
 
     assert set(after_second.columns) == {"id", DefaultColumnNames.WARNINGS.value, DefaultColumnNames.INFO.value}
-    # Merged struct must contain both anomaly (from first pass) and other (from second pass)
+    # Merged array must have two elements: first and second anomaly structs
     row = after_second.select(DefaultColumnNames.INFO.value).first()
     assert row is not None
-    info = row[0]
-    assert info.anomaly is not None and info.anomaly.score == 0.75
-    assert info.other == "extra"
+    arr = row[0]
+    assert len(arr) == 2
+    assert arr[0].anomaly is not None and arr[0].anomaly.score == 0.75
+    assert arr[1].anomaly is not None and arr[1].anomaly.score == 0.5
 
 
 def test_merge_info_columns_twice_each_with_valid_info_fields(ws, spark):
     """Run merge_info_columns twice; each call has a valid info column with fields; final _dq_info has both."""
-    # First pass: one info column with field "first"
+    # First pass: one info column with field "tag"
     df = spark.createDataFrame([(1,)], "id int").withColumn(
         "__dqx_info_first",
-        F.struct(F.lit("a").alias("first")),
+        F.struct(F.lit("a").alias("tag")),
     )
     after_first = merge_info_columns(
         DefaultColumnNames.INFO.value,
@@ -113,12 +126,15 @@ def test_merge_info_columns_twice_each_with_valid_info_fields(ws, spark):
     )
     assert DefaultColumnNames.INFO.value in after_first.columns
     row1 = after_first.select(DefaultColumnNames.INFO.value).first()
-    assert row1 is not None and row1[0].first == "a"
+    assert row1 is not None and len(row1[0]) == 1 and row1[0][0].tag == "a"
 
-    # Second pass: add another info column with field "second"; existing _dq_info must be merged in
+    # Select to avoid carrying references to dropped temp columns into the next merge
+    after_first = after_first.select("id", DefaultColumnNames.INFO.value)
+
+    # Second pass: add another info column with same struct shape (tag); existing _dq_info must be merged in
     with_second = after_first.withColumn(
         "__dqx_info_second",
-        F.struct(F.lit("b").alias("second")),
+        F.struct(F.lit("b").alias("tag")),
     )
     after_second = merge_info_columns(
         DefaultColumnNames.INFO.value,
@@ -128,6 +144,7 @@ def test_merge_info_columns_twice_each_with_valid_info_fields(ws, spark):
     assert DefaultColumnNames.INFO.value in after_second.columns
     row2 = after_second.select(DefaultColumnNames.INFO.value).first()
     assert row2 is not None
-    info = row2[0]
-    assert info.first == "a"
-    assert info.second == "b"
+    arr = row2[0]
+    assert len(arr) == 2
+    assert arr[0].tag == "a"
+    assert arr[1].tag == "b"

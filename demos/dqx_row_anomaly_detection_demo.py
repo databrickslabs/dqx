@@ -431,7 +431,7 @@ print("   • Threshold is a percentile cutoff — tune it based on your data an
 # MAGIC
 # MAGIC This section is optional. Skip if you only want the quickstart.
 # MAGIC
-# MAGIC In the quarantine dataset we can find the regular `_error` and `_warnings` reporting columns, and `_dq_info` column  which contains additional information from row anomaly detection. The field `_dq_info.anomaly` includes:
+# MAGIC In the quarantine dataset we can find the regular `_error` and `_warnings` reporting columns, and `_dq_info` column (array of structs). The first check's info is at `_dq_info[0]`; `_dq_info[0].anomaly` includes:
 # MAGIC - `severity_percentile` (0–100): percentile of anomaly severity
 # MAGIC - `score`: raw model score (diagnostic only)
 # MAGIC - `contributions`: feature-level explanations
@@ -439,9 +439,11 @@ print("   • Threshold is a percentile cutoff — tune it based on your data an
 # COMMAND ----------
 # DBTITLE 1,Review Results
 
-df_quarantine = df_quarantine.filter(F.col("_dq_info.anomaly.is_anomaly") == True)
-score_col = F.col("_dq_info.anomaly.score")
-severity_col = F.col("_dq_info.anomaly.severity_percentile")
+df_quarantine = df_quarantine.filter(
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly") == True
+)
+score_col = F.col("_dq_info").getItem(0).getField("anomaly").getField("score")
+severity_col = F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile")
 percentile_band = (
     F.when(severity_col >= 98, F.lit("p98+ (top 2%)"))
     .when(severity_col >= 95, F.lit("p95-98 (top 5%)"))
@@ -465,7 +467,8 @@ print("   Higher percentile = more severe relative to training data.")
 df_scored = df_valid.unionByName(df_quarantine, allowMissingColumns=True)
 synthetic_total = df_scored.filter(F.col("is_synthetic_anomaly") == True).count()
 synthetic_caught = df_scored.filter(
-    (F.col("is_synthetic_anomaly") == True) & (F.col("_dq_info.anomaly.is_anomaly") == True)
+    (F.col("is_synthetic_anomaly") == True)
+    & (F.col("_dq_info").getItem(0).getField("anomaly").getField("is_anomaly") == True)
 ).count()
 if synthetic_total > 0:
     recall = synthetic_caught / synthetic_total * 100
@@ -478,10 +481,10 @@ display(df_quarantine.orderBy(severity_col.desc()).select(
     F.round(severity_col, 1).alias("severity_percentile"),
     F.round(score_col, 3).alias("anomaly_score"),
     percentile_band.alias("severity_band"),
-    F.col("_dq_info.anomaly.contributions").alias("why_anomalous")
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("why_anomalous")
 ).limit(10))
 
-print("   Use the existing 'why_anomalous' display column above (from _dq_info.anomaly.contributions) to understand anomaly drivers.")
+print("   Use the existing 'why_anomalous' display column above (from _dq_info[0].anomaly.contributions) to understand anomaly drivers.")
 
 # COMMAND ----------
 
@@ -634,10 +637,12 @@ print(f"   (Auto model found {df_quarantine.count()} anomalies)")
 print(f"\n🔝 Top 5 anomalies from manual model:\n")
 
 
-display(df_quarantine_manual.orderBy(F.col("_dq_info.anomaly.severity_percentile").desc()).select(
+_dq_info_severity = F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile")
+_dq_info_score = F.col("_dq_info").getItem(0).getField("anomaly").getField("score")
+display(df_quarantine_manual.orderBy(_dq_info_severity.desc()).select(
     "transaction_id", "amount", "quantity", "date",
-    F.round("_dq_info.anomaly.severity_percentile", 1).alias("severity_percentile"),
-    F.round("_dq_info.anomaly.score", 3).alias("score")
+    F.round(_dq_info_severity, 1).alias("severity_percentile"),
+    F.round(_dq_info_score, 3).alias("score")
 ).limit(5))
 
 print("\n💡 Different features → different anomalies. That’s expected.")
@@ -657,7 +662,7 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC
 # MAGIC **Scoring options (`has_no_row_anomalies`):**
 # MAGIC - `threshold` (float, 0–100): percentile cutoff (default 95)
-# MAGIC - `include_contributions` (bool): feature contributions in `_dq_info.anomaly`
+# MAGIC - `include_contributions` (bool): feature contributions in `_dq_info[0].anomaly`
 # MAGIC - `include_confidence` (bool): confidence estimate (std dev across ensemble)
 # MAGIC - `drift_threshold` (float): drift detection sensitivity
 # MAGIC - `row_filter` (str): SQL filter applied before scoring
@@ -698,16 +703,19 @@ print("\n🎯 Top Anomalies with Explanations:\n")
 # Filter by _errors column (standard DQX pattern) to get flagged anomalies
 anomalies_explained = df_with_contrib.filter(
     F.size(F.col("_errors")) > 0
-).orderBy(F.col("_dq_info.anomaly.severity_percentile").desc()).limit(5)
+).orderBy(F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").desc()).limit(5)
 
+_dq_severity = F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile")
+_dq_score = F.col("_dq_info").getItem(0).getField("anomaly").getField("score")
+_dq_contrib = F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions")
 display(anomalies_explained.select(
     "transaction_id",
     "amount",
     "quantity",
     F.date_format("date", "yyyy-MM-dd HH:mm").alias("date"),
-    F.round("_dq_info.anomaly.severity_percentile", 1).alias("severity_percentile"),
-    F.round("_dq_info.anomaly.score", 3).alias("score"),
-    F.col("_dq_info.anomaly.contributions").alias("contributions")
+    F.round(_dq_severity, 1).alias("severity_percentile"),
+    F.round(_dq_score, 3).alias("score"),
+    _dq_contrib.alias("contributions")
 ))
 
 print("\n💡 Contributions show which features most influenced the anomaly.")
@@ -725,9 +733,9 @@ anomalies_flattened = anomalies_explained.select(
     "amount",
     "quantity",
     "date",
-    F.col("_dq_info.anomaly.severity_percentile").alias("severity_percentile"),
-    F.col("_dq_info.anomaly.score").alias("score"),
-    F.col("_dq_info.anomaly.contributions").alias("contributions")
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").alias("severity_percentile"),
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("score").alias("score"),
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("contributions"),
 )
 
 top_anomaly = anomalies_flattened.first()

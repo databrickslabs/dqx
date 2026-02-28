@@ -217,7 +217,9 @@ def test_distributed_scoring_with_row_filter(
             include_contributions=False,
         )
         result = dq_engine.apply_checks(df, [check])
-        scores = result.select("amount", F.col("_dq_info.anomaly.score").alias("score")).collect()
+        scores = result.select(
+            "amount", F.col("_dq_info").getItem(0).getField("anomaly").getField("score").alias("score")
+        ).collect()
     finally:
         set_driver_only_for_tests(True)
 

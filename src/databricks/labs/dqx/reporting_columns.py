@@ -1,7 +1,5 @@
-from typing import cast
 from enum import Enum
 from pyspark.sql import DataFrame
-from pyspark.sql.types import StructType
 from pyspark.sql import functions as F
 
 
@@ -22,14 +20,15 @@ class ColumnArguments(Enum):
 
 
 def merge_info_columns(dest_name: str, df: DataFrame, info_col_names: list[str] | None = None) -> DataFrame:
-    """Dataset-level checks can optionally add an info column to the result DataFrame.
-    This function merges those info columns into a single struct column.
+    """Merge dataset-level info columns into a single column as an array of structs.
 
-    Each listed column must be a struct (e.g. with an "anomaly" field). Their top-level fields
-    are combined into one struct under dest_name. Columns in info_col_names that are missing
-    from the DataFrame are skipped.
+    Each source column must be a struct with the shared wide schema (e.g. fields like
+    ``anomaly``). Each such column becomes one element in the output array. Names in
+    info_col_names that are not present in the DataFrame are skipped.
 
-    If dest_name already exists, it is merged with the new info columns.
+    The result is ``array<struct<...>>``. Element order matches the order of info_col_names
+    (e.g. first anomaly check = dest_name[0], second = dest_name[1]). If dest_name already
+    exists, it must be an array of structs; new structs are appended via concat.
 
     Args:
         dest_name: Name of the output column (e.g. _dq_info).
@@ -37,18 +36,17 @@ def merge_info_columns(dest_name: str, df: DataFrame, info_col_names: list[str] 
         info_col_names: Names of the info columns to merge; None or empty means no merge.
 
     Returns:
-        DataFrame with the new merged column and the source info columns removed.
+        DataFrame with the merged column (array of structs) and source info columns dropped.
     """
     info_cols = [c for c in (info_col_names or []) if c in df.columns]
 
     if not info_cols and dest_name not in df.columns:
         return df
 
-    # Include existing dest + new info
-    cols_to_merge = ([dest_name] if dest_name in df.columns else []) + info_cols
-    field_exprs = [
-        F.col(col_name)[field.name].alias(field.name)
-        for col_name in cols_to_merge
-        for field in cast(StructType, df.schema[col_name].dataType).fields
-    ]
-    return df.withColumn(dest_name, F.struct(*field_exprs)).drop(*info_cols)
+    new_structs = F.array(*[F.col(c) for c in info_cols])
+    if dest_name in df.columns:
+        result_col = F.concat(F.col(dest_name), new_structs)
+    else:
+        result_col = new_structs
+
+    return df.withColumn(dest_name, result_col).drop(*info_cols)
