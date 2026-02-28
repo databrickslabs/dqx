@@ -107,32 +107,58 @@ test_apply_checks_by_metadata_distributed()
 # DBTITLE 1,test_apply_checks_distributed
 
 def test_apply_checks_distributed():
-    check = DQDatasetRule(
-        criticality="error",
-        check_func=has_no_row_anomalies,
-        check_func_kwargs={
-            "model_name": model_name,
-            "registry_table": registry_table,
-            "threshold": DEFAULT_SCORE_THRESHOLD,
-        },
-    )
-
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=has_no_row_anomalies,
+            check_func_kwargs={
+                "model_name": model_name,
+                "registry_table": registry_table,
+                "threshold": DEFAULT_SCORE_THRESHOLD,
+            },
+        ),
+        DQDatasetRule(
+            criticality="warn",
+            check_func=has_no_row_anomalies,
+            check_func_kwargs={
+                "model_name": model_name,
+                "registry_table": registry_table,
+                "threshold": DEFAULT_SCORE_THRESHOLD,
+            },
+        )
+    ]
     test_df = spark.createDataFrame(
         [(1, 100.5, 2.0), (2, 9999.0, 1.0)],
         "transaction_id int, amount double, quantity double",
     )
 
     dq_engine = DQEngine(ws, spark)
-    result_df = dq_engine.apply_checks(test_df, [check])
+    result_df = dq_engine.apply_checks(test_df, checks)
     rows = result_df.orderBy("transaction_id").collect()
     inlier_row = next(r for r in rows if r["transaction_id"] == 1)
     anomalous_row = next(r for r in rows if r["transaction_id"] == 2)
 
+    assert "_dq_info" in result_df.columns
+    assert "_errors" in result_df.columns
+    assert "_warnings" in result_df.columns
+    
     assert len(rows) == 2
+    assert len(inlier_row["_dq_info"]) == 2, "_dq_info should have 2 items (error check + warning check)"
+    assert len(anomalous_row["_dq_info"]) == 2
+
+    assert inlier_row["_dq_info"][0]["anomaly"] is not None
+    assert inlier_row["_dq_info"][1]["anomaly"] is not None
     assert inlier_row["_dq_info"][0]["anomaly"]["is_anomaly"] is False, "Inlier (transaction_id=1) should not be flagged"
-    anomaly_outlier = anomalous_row["_dq_info"][0]["anomaly"]
-    assert anomaly_outlier["check_name"] == "has_no_row_anomalies"
-    assert anomaly_outlier["model"] == model_name
-    assert anomaly_outlier["is_anomaly"] is True, "Anomalous row (transaction_id=2) should be flagged"
+    assert inlier_row["_dq_info"][1]["anomaly"]["is_anomaly"] is False
+
+    assert anomalous_row["_dq_info"][0]["anomaly"] is not None
+    assert anomalous_row["_dq_info"][1]["anomaly"] is not None
+    for i in (0, 1):
+        anomaly = anomalous_row["_dq_info"][i]["anomaly"]
+        assert anomaly["check_name"] == "has_no_row_anomalies"
+        assert anomaly["model"] == model_name
+        assert anomaly["is_anomaly"] is True, f"Anomalous row (transaction_id=2) _dq_info[{i}] should be flagged"
+    assert anomalous_row["_errors"] is not None, "Anomalous row should have _errors (error criticality)"
+    assert anomalous_row["_warnings"] is not None, "Anomalous row should have _warnings (warning criticality)"
 
 test_apply_checks_distributed()

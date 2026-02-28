@@ -41,7 +41,6 @@ jobs:
           python-version: '3.12'
 
       - name: Install hatch
-        # pin virtual env: https://github.com/pypa/hatch/issues/2193
         run: pip install hatch==1.16.5
 
       - name: Run unit tests and generate test coverage report
