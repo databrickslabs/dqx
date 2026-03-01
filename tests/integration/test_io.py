@@ -1,3 +1,6 @@
+import logging
+import os
+from contextlib import contextmanager
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
@@ -6,6 +9,30 @@ from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get_reference_dataframes
 
 from tests.conftest import TEST_CATALOG
+
+
+@contextmanager
+def set_env_var(key: str, value: str | None):
+    """Context manager to temporarily set or unset an environment variable and restore it afterwards.
+
+    This ensures proper cleanup even if tests run in parallel or if an exception occurs.
+
+    Args:
+        key: The environment variable name
+        value: The value to set, or None to unset/delete the variable
+    """
+    original_value = os.environ.get(key, None)
+    if value is not None:
+        os.environ[key] = value
+    elif key in os.environ:
+        del os.environ[key]
+    try:
+        yield
+    finally:
+        if original_value is not None:
+            os.environ[key] = original_value
+        elif key in os.environ:
+            del os.environ[key]
 
 
 def test_read_input_data_no_input_format(spark, make_schema, make_volume):
@@ -165,6 +192,40 @@ def test_save_dataframe_as_table(spark, make_schema, make_random):
     assert_df_equality(expected_df.sort("c"), result_df.sort("c"))
 
 
+def test_save_dataframe_as_table_with_partition_by(spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_config = OutputConfig(location=table_name, mode="overwrite", partition_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2], [1, 3]], data_schema)
+    save_dataframe_as_table(input_df, output_config)
+
+    result_df = spark.table(table_name)
+    assert_df_equality(input_df, result_df)
+
+    table_detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
+    assert table_detail["partitionColumns"] == ["a"]
+
+
+def test_save_dataframe_as_table_with_cluster_by(spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_config = OutputConfig(location=table_name, mode="overwrite", cluster_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2], [1, 3]], data_schema)
+    save_dataframe_as_table(input_df, output_config)
+
+    result_df = spark.table(table_name)
+    assert_df_equality(input_df, result_df)
+
+    table_detail = spark.sql(f"DESCRIBE DETAIL {table_name}").collect()[0]
+    assert table_detail["clusteringColumns"] == ["a"]
+
+
 def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make_volume):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
@@ -181,21 +242,198 @@ def test_save_streaming_dataframe_in_table(spark, make_schema, make_random, make
     input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
     streaming_input_df = spark.readStream.table(table_name)
 
-    save_dataframe_as_table(
-        streaming_input_df,
-        output_config,
-    ).awaitTermination()
+    save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)
 
-    save_dataframe_as_table(
-        streaming_input_df,
-        output_config,
-    ).awaitTermination()
+    save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
 
     result_df = spark.table(result_table_name)
     assert_df_equality(input_df, result_df)  # no new records
+
+
+def test_save_streaming_dataframe_in_table_with_partition_by(spark, make_schema, make_random, make_volume):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    random_name = make_random(10).lower()
+    result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+    options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
+    trigger = {"availableNow": True}
+    output_config = OutputConfig(location=result_table_name, options=options, trigger=trigger, partition_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
+    input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+    streaming_input_df = spark.readStream.table(table_name)
+
+    save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
+
+    result_df = spark.table(result_table_name)
+    assert_df_equality(input_df, result_df)
+
+    table_detail = spark.sql(f"DESCRIBE DETAIL {result_table_name}").collect()[0]
+    assert table_detail["partitionColumns"] == ["a"]
+
+
+def test_save_streaming_dataframe_in_table_with_cluster_by_missing_env_var(
+    spark,
+    make_schema,
+    make_random,
+    make_volume,
+    caplog,
+):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    random_name = make_random(10).lower()
+    result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+    options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
+    trigger = {"availableNow": True}
+    output_config = OutputConfig(location=result_table_name, options=options, trigger=trigger, cluster_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
+    input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+    streaming_input_df = spark.readStream.table(table_name)
+
+    # NOTE: Streaming writes with `cluster_by` will generate warnings via logger; Using caplog in this test to ensure
+    # that the generated logs and ensure the appropriate warnings are written
+    with caplog.at_level(logging.WARNING):
+        save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
+        assert any(
+            r.levelno == logging.WARNING
+            and "Ignoring 'cluster_by' for streaming writes; Missing 'DATABRICKS_RUNTIME_VERSION' in environment variables"
+            in r.message
+            for r in caplog.records
+        )
+
+    result_df = spark.table(result_table_name)
+    assert_df_equality(input_df, result_df)
+
+
+def test_save_streaming_dataframe_in_table_with_cluster_by_invalid_env_var(
+    spark,
+    make_schema,
+    make_random,
+    make_volume,
+    caplog,
+):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    random_name = make_random(10).lower()
+    result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+    options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
+    trigger = {"availableNow": True}
+    output_config = OutputConfig(location=result_table_name, options=options, trigger=trigger, cluster_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
+    input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+    streaming_input_df = spark.readStream.table(table_name)
+
+    env_version = "INVALID_DBR_VERSION"
+    with set_env_var("DATABRICKS_RUNTIME_VERSION", env_version):
+        # NOTE: Streaming writes with `cluster_by` will generate warnings via logger; Using caplog in this test to ensure
+        # that the generated logs and ensure the appropriate warnings are written
+        with caplog.at_level(logging.WARNING):
+            save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
+            assert any(
+                r.levelno == logging.WARNING
+                and f"Ignoring 'cluster_by' for streaming writes; Could not parse Databricks Runtime version '{env_version}'"
+                in r.message
+                for r in caplog.records
+            )
+
+        result_df = spark.table(result_table_name)
+        assert_df_equality(input_df, result_df)
+
+
+def test_save_streaming_dataframe_in_table_with_cluster_by_serverless_env(
+    spark,
+    make_schema,
+    make_random,
+    make_volume,
+    caplog,
+):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    random_name = make_random(10).lower()
+    result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+    options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
+    trigger = {"availableNow": True}
+    output_config = OutputConfig(location=result_table_name, options=options, trigger=trigger, cluster_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
+    input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+    streaming_input_df = spark.readStream.table(table_name)
+
+    # Use context manager to ensure proper cleanup even if tests run in parallel
+    # spark connect won't set this property when using serverless cluster
+    with set_env_var("IS_SERVERLESS", "TRUE"):
+        with set_env_var("DATABRICKS_RUNTIME_VERSION", "16.4"):  # runtime is not set when using spark connect
+            # NOTE: Streaming writes with `cluster_by` will generate warnings via logger; Using caplog in this test to ensure
+            # that the generated logs and ensure the appropriate warnings are written
+            with caplog.at_level(logging.WARNING):
+                save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
+                assert any(
+                    r.levelno == logging.WARNING
+                    and "Ignoring 'cluster_by' for streaming writes; Cluster on-write is not supported on serverless compute"
+                    in r.message
+                    for r in caplog.records
+                )
+
+            result_df = spark.table(result_table_name)
+            assert_df_equality(input_df, result_df)
+
+
+def test_save_streaming_dataframe_in_table_with_cluster_by_unsupported_env(
+    spark,
+    make_schema,
+    make_random,
+    make_volume,
+    caplog,
+):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    table_name = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    random_name = make_random(10).lower()
+    result_table_name = f"{catalog_name}.{schema.name}.{random_name}"
+    volume = make_volume(catalog_name=catalog_name, schema_name=schema.name)
+    options = {"checkpointLocation": f"/Volumes/{volume.catalog_name}/{volume.schema_name}/{volume.name}/{random_name}"}
+    trigger = {"availableNow": True}
+    output_config = OutputConfig(location=result_table_name, options=options, trigger=trigger, cluster_by=["a"])
+
+    data_schema = "a: int, b: int"
+    input_df = spark.createDataFrame([[1, 2]], data_schema)
+    input_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+    streaming_input_df = spark.readStream.table(table_name)
+
+    # Clear any environment variables that might interfere with this test
+    # (e.g., IS_SERVERLESS from previous tests) and set DATABRICKS_RUNTIME_VERSION
+    with set_env_var("IS_SERVERLESS", None):
+        with set_env_var("DATABRICKS_RUNTIME_VERSION", "15.4"):  # simulate older DBR version
+            # NOTE: Streaming writes with `cluster_by` will generate warnings via logger; Using caplog in this test to ensure
+            # that the generated logs and ensure the appropriate warnings are written
+            with caplog.at_level(logging.WARNING):
+                save_dataframe_as_table(streaming_input_df, output_config).awaitTermination()
+                assert any(
+                    r.levelno == logging.WARNING
+                    and "Ignoring 'cluster_by' for streaming writes; Cluster on-write is supported for streaming workloads with Databricks Runtime versions 16 or later"
+                    in r.message
+                    for r in caplog.records
+                )
+
+            result_df = spark.table(result_table_name)
+            assert_df_equality(input_df, result_df)
 
 
 def test_save_batch_dataframe_to_path(spark, make_schema, make_volume, make_random):
