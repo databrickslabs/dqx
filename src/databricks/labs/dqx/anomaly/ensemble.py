@@ -158,11 +158,7 @@ def train_ensemble(
     ensemble_size: int,
     model_name: str,
 ) -> tuple[list[str], dict[str, Any], dict[str, float], dict[str, float], SparkFeatureMetadata]:
-    """Train ensemble of models with different random seeds.
-
-    This function delegates to EnsembleTrainer for the actual implementation.
-    Kept for backward compatibility with existing code.
-    """
+    """Train ensemble of models with different random seeds."""
     trainer = EnsembleTrainer()
     result = trainer.train(train_df, val_df, columns, params, ensemble_size, model_name)
     return (

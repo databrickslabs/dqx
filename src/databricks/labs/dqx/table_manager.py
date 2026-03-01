@@ -273,9 +273,6 @@ class SparkTableDataProvider:
         """
         Execute a SQL query and return Spark DataFrame.
 
-        Note: Returns Spark DataFrame, not Pandas DataFrame, for compatibility
-        with existing code that calls toPandas() on the result.
-
         Args:
             query: SQL query string.
 
@@ -513,8 +510,7 @@ class TableManager:
 
     This class acts as a simplified interface (Facade pattern) that coordinates
     between the data repository and formatters. It delegates actual operations
-    to specialized components while maintaining backward compatibility with the
-    existing API.
+    to specialized components.
 
     Attributes:
         repository: Data provider for table operations (defaults to SparkTableDataProvider)

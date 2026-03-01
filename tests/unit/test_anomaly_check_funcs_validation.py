@@ -4,13 +4,11 @@ from unittest.mock import create_autospec, patch
 import pytest
 from pyspark.sql import DataFrame, SparkSession
 
-from databricks.labs.dqx.anomaly import check_funcs
-from databricks.labs.dqx.anomaly.check_funcs import (
-    ScoringConfig,
-    get_quantile_points_for_severity,
-    has_no_row_anomalies,
-    resolve_scoring_strategy,
-)
+from databricks.labs.dqx.anomaly import check_funcs, discovery, scoring_orchestrator
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+from databricks.labs.dqx.anomaly.discovery import get_quantile_points_for_severity
+from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
+from databricks.labs.dqx.anomaly.scoring_strategies import resolve_scoring_strategy
 from databricks.labs.dqx.anomaly.model_config import (
     AnomalyModelRecord,
     ModelIdentity,
@@ -134,18 +132,28 @@ def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
     registry_table = "catalog.schema.registry"
     model_name = "catalog.schema.my_model"
 
-    with patch.object(check_funcs, "AnomalyModelRegistry") as mock_registry_cls:
-        mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-        mock_registry.get_active_model.return_value = None
-        mock_registry.get_all_segment_models.return_value = []  # fallback returns None
-        mock_registry_cls.return_value = mock_registry
+    # Minimal record so discovery (fetch_model_columns_and_segments) succeeds.
+    record = create_autospec(AnomalyModelRecord, instance=True)
+    record.training = create_autospec(TrainingMetadata, instance=True)
+    record.training.columns = ["a", "b"]
+    record.segmentation = create_autospec(SegmentationConfig, instance=True)
+    record.segmentation.segment_by = None  # global model for discovery
 
-        _, apply_fn, _ = has_no_row_anomalies(
-            model_name=model_name,
-            registry_table=registry_table,
-        )
-        with pytest.raises(InvalidParameterError) as exc_info:
-            apply_fn(mock_df)
+    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
+    # Discovery calls get_active_model once -> return record; orchestrator calls it -> None.
+    mock_registry.get_active_model.side_effect = [record, None]
+    mock_registry.get_all_segment_models.return_value = []  # fallback returns None
+    with patch.object(discovery, "AnomalyModelRegistry") as mock_cls_disc:
+        with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
+            mock_cls_disc.return_value = mock_registry
+            mock_cls_orch.return_value = mock_registry
+
+            _, apply_fn, _ = has_no_row_anomalies(
+                model_name=model_name,
+                registry_table=registry_table,
+            )
+            with pytest.raises(InvalidParameterError) as exc_info:
+                apply_fn(mock_df)
 
     assert model_name in str(exc_info.value)
     assert registry_table in str(exc_info.value)
@@ -172,18 +180,21 @@ def test_load_segment_models_raises_when_no_segments():
     segment.segmentation = create_autospec(SegmentationConfig, instance=True)
     segment.segmentation.segment_by = ["region"]
 
-    with patch.object(check_funcs, "AnomalyModelRegistry") as mock_registry_cls:
-        mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
-        mock_registry.get_active_model.return_value = None
-        mock_registry.get_all_segment_models.side_effect = [[segment], []]
-        mock_registry_cls.return_value = mock_registry
+    # Discovery and orchestrator both create a registry; patch both so the same mock is used.
+    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
+    mock_registry.get_active_model.return_value = None
+    mock_registry.get_all_segment_models.side_effect = [[segment], []]
+    with patch.object(discovery, "AnomalyModelRegistry") as mock_cls_disc:
+        with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
+            mock_cls_disc.return_value = mock_registry
+            mock_cls_orch.return_value = mock_registry
 
-        _, apply_fn, _ = has_no_row_anomalies(
-            model_name=model_name,
-            registry_table=registry_table,
-        )
-        with pytest.raises(InvalidParameterError) as exc_info:
-            apply_fn(mock_df)
+            _, apply_fn, _ = has_no_row_anomalies(
+                model_name=model_name,
+                registry_table=registry_table,
+            )
+            with pytest.raises(InvalidParameterError) as exc_info:
+                apply_fn(mock_df)
 
     assert "No segment models found for base model" in str(exc_info.value)
     assert model_name in str(exc_info.value)

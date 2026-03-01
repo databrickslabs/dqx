@@ -24,18 +24,6 @@ from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.io import save_dataframe_as_table
 
 
-# Re-export record types for backward compatibility
-__all__ = [
-    "ANOMALY_MODEL_TABLE_SCHEMA",
-    "AnomalyModelRecord",
-    "AnomalyModelRegistry",
-    "FeatureEngineering",
-    "ModelIdentity",
-    "SegmentationConfig",
-    "TrainingMetadata",
-]
-
-
 ANOMALY_MODEL_TABLE_SCHEMA = (
     "identity struct<model_name:string, model_uri:string, algorithm:string, mlflow_run_id:string, status:string>, "
     "training struct<columns:array<string>, hyperparameters:map<string,string>, training_rows:bigint, "
