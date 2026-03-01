@@ -3068,7 +3068,7 @@ checks = [
 - `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
 - `drift_threshold`: Pass a float (for example 3.0) to enable drift detection; default `None` (disabled). When enabled, 3.0 means roughly 3-sigma deviation from training statistics. See the section below for more details.
-- `include_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `True`). See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
+- `include_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `False`). Set `True` for explainability; adds significant scoring cost. See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
 - `include_confidence`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
 
 **Notes**
@@ -3095,7 +3095,7 @@ ORDER BY training_time DESC
 
 **Feature Contributions (Explainability)**
 
-Contributions are enabled by default. For performance reasons, you may want to disable them:
+Contributions are disabled by default for performance. Set `include_contributions=True` to get per-feature SHAP contributions (adds significant cost):
 
 ```python
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
@@ -3105,12 +3105,12 @@ checks = [
     model_name="catalog.schema.orders_monitor",
     registry_table="catalog.schema.dqx_anomaly_models",
     threshold=95.0,
-    include_contributions=False,
+    include_contributions=True,  # Optional: per-feature contributions (slower)
   )
 ]
 ```
 
-When contributions are enabled (default), the `_dq_info` column includes `contributions` (per-feature contribution percentages). For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
+When `include_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages). For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
 
 Example: triage top anomalies and inspect contributions:
 ```python

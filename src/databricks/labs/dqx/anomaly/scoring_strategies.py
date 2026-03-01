@@ -6,8 +6,7 @@ from pyspark.sql import DataFrame
 
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
-from databricks.labs.dqx.anomaly.scoring_global import score_global_model
-from databricks.labs.dqx.anomaly.scoring_segmented import score_segmented
+from databricks.labs.dqx.anomaly.scoring_run import score_global_model, score_segmented
 from databricks.labs.dqx.errors import InvalidParameterError
 
 

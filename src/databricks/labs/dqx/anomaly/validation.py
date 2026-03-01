@@ -32,7 +32,7 @@ def validate_spark_version(spark: SparkSession) -> None:
 
 def validate_fully_qualified_name(value: str, *, label: str) -> None:
     """Validate that a name is in catalog.schema.table format (exactly three non-empty parts)."""
-    parts = value.split(".")
+    parts = [p.strip() for p in value.strip().split(".")]
     if len(parts) != 3 or not all(parts):
         raise InvalidParameterError(f"{label} must be fully qualified as catalog.schema.table, got: {value!r}.")
 

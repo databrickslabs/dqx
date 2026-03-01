@@ -288,7 +288,7 @@ def _select_segment_columns(
         null_count = null_counts.get(col_name, 0)
         if distinct_count is None:
             distinct_row = df.select(F.countDistinct(col_name)).first()
-            assert distinct_row is not None
+            assert distinct_row is not None  # to satisfy linter
             distinct_count = distinct_row[0]
         null_rate = null_count / total_count if total_count > 0 else 1.0
         is_id_column = id_pattern.search(col_name) is not None

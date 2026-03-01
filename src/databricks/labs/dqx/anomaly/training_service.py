@@ -14,6 +14,7 @@ from typing import Any
 
 import sklearn
 from pyspark.sql import DataFrame, SparkSession
+from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
 from databricks.labs.dqx.anomaly.core import (
@@ -125,7 +126,7 @@ class AnomalyTrainingService:
             client = MlflowClient()
             client.get_registered_model(model_name)
             return True
-        except Exception:
+        except MlflowException:
             return False
 
     @staticmethod
@@ -402,7 +403,7 @@ class AnomalyTrainingService:
 
                 model_uris.append(result.model_uri)
 
-            except Exception as e:
+            except (InvalidParameterError, MlflowException, ValueError, RuntimeError, OSError) as e:
                 failed_segments.append((segment_name, str(e)))
                 logger.error(f"Failed to train segment '{segment_name}': {e}")
 

@@ -21,9 +21,7 @@ from databricks.labs.dqx.anomaly.model_config import (
 )
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 from databricks.labs.dqx.config import OutputConfig
-from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.io import save_dataframe_as_table
-from databricks.labs.dqx.utils import is_sql_query_safe
 
 
 ANOMALY_MODEL_TABLE_SCHEMA = (
@@ -103,8 +101,6 @@ class AnomalyModelRegistry:
 
     def save_model(self, record: AnomalyModelRecord, table: str) -> None:
         """Archive previous active model with the same name and insert the new record."""
-        if not is_sql_query_safe(table) or not is_sql_query_safe(record.identity.model_name):
-            raise InvalidParameterError("Table and model_name must not contain SQL keywords or other unsafe content.")
         table_existed = self._table_exists(table)
         if not table_existed:
             self._create_table(table)
@@ -204,10 +200,18 @@ class AnomalyModelRegistry:
 
     def _archive_previous(self, table: str, model_name: str) -> None:
         """Call only when table is known to exist (e.g. from save_model)."""
-        if not is_sql_query_safe(table) or not is_sql_query_safe(model_name):
-            raise InvalidParameterError("Table and model_name must not contain SQL keywords or other unsafe content.")
-        # Use LOWER() for case-insensitive matching since Unity Catalog model names are case-insensitive
-        self.spark.sql(
-            f"UPDATE {table} SET identity.status = 'archived' "
-            f"WHERE LOWER(identity.model_name) = LOWER('{model_name}') AND identity.status = 'active'"
+        df = self.spark.table(table)
+        identity_col = F.col("identity")
+        match = (F.lower(identity_col.getField("model_name")) == model_name.lower()) & (
+            identity_col.getField("status") == "active"
         )
+        new_status = F.when(match, F.lit("archived")).otherwise(identity_col.getField("status"))
+        new_identity = F.struct(
+            identity_col.getField("model_name"),
+            identity_col.getField("model_uri"),
+            identity_col.getField("algorithm"),
+            identity_col.getField("mlflow_run_id"),
+            new_status.alias("status"),
+        )
+        updated = df.withColumn("identity", new_identity)
+        save_dataframe_as_table(updated, OutputConfig(location=table, mode="overwrite"))

@@ -689,7 +689,7 @@ checks_with_contrib = [
         check_func_kwargs={
             "model_name": model_name_manual,
             "threshold": 95.0,
-            "include_contributions": True,  # On by default; explicit here for clarity.
+            "include_contributions": True,
             "registry_table": registry_table
         }
     )

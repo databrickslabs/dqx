@@ -1,7 +1,7 @@
 """Load and validate sklearn anomaly models from MLflow."""
 
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 import warnings
 
@@ -93,7 +93,9 @@ def load_and_validate_model(model_uri: str, model_record: AnomalyModelRecord) ->
 def check_model_staleness(record: AnomalyModelRecord, model_name: str) -> None:
     """Check model training age and issue warning if stale (>30 days)."""
     if record.training.training_time:
-        age_days = (datetime.utcnow() - record.training.training_time).days
+        now = datetime.now(timezone.utc)
+        training_time = record.training.training_time.replace(tzinfo=timezone.utc)
+        age_days = (now - training_time).days
         if age_days > 30:
             warnings.warn(
                 f"Model '{model_name}' is {age_days} days old. Consider retraining.",

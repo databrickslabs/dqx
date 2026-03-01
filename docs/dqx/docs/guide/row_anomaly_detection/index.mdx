@@ -219,7 +219,7 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 1. **Feature engineering** (automatic): DQX detects column types and creates features (numerical standardized, categorical one-hot or frequency-encoded, temporal expanded to hour/day/month/weekend).
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains an ensemble of Isolation Forest models, and captures baseline statistics for drift detection.
 3. **Model registry**: Models and metadata live in MLflow and a Delta table; segmented models use deterministic names (for example `__seg_region=US_tier=gold`).
-4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile; SHAP contributions (which features drove each score) are enabled by default; set `include_contributions=False` for faster scoring.
+4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Set `include_contributions=True` for SHAP contributions (which features drove each score); default is `False` for faster scoring.
 
 ### Why Isolation Forest?
 
@@ -248,7 +248,7 @@ Each element is a **struct** with a shared “wide” schema. Currently, the onl
 | `threshold` | double | Severity percentile threshold used (e.g. 95.0). |
 | `model` | string | Full model name (e.g. Unity Catalog name). |
 | `segment` | map&lt;string, string&gt; | Segment key-value pairs for segmented models; `null` for global models. |
-| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). Present when `include_contributions=True` (default); `null` otherwise. |
+| `contributions` | map&lt;string, double&gt; | Per-feature contribution percentages (0–100). Present when `include_contributions=True`; `null` by default. |
 | `confidence_std` | double | Ensemble score standard deviation. Present when `include_confidence=True`; `null` otherwise. |
 
 **Access in PySpark:** use `F.element_at(F.col("_dq_info"), 1)` for the first element (1-based), then `.getField("anomaly").getField("severity_percentile")` etc. Alternatively `F.col("_dq_info").getItem(0)` for 0-based index (see [Troubleshooting](/docs/guide/row_anomaly_detection/troubleshooting) for Spark Connect–friendly patterns).

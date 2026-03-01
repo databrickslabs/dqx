@@ -5,7 +5,6 @@ import warnings
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
-import pytest
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
@@ -19,7 +18,6 @@ from databricks.labs.dqx.anomaly.model_registry import (
     TrainingMetadata,
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
-from databricks.labs.dqx.errors import InvalidParameterError
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.conftest import (
     get_standard_2d_training_data,
@@ -624,30 +622,3 @@ def test_registry_segment_lookup_uses_canonical_order(
     fetched = registry.get_segment_model(registry_table, base_name, {"tier": "gold", "region": "US"})
     assert fetched is not None
     assert fetched.identity.model_name == segment_name
-
-
-def test_save_model_raises_for_unsafe_table_name(
-    spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix
-):
-    """save_model raises InvalidParameterError for table names with SQL keywords (public API only)."""
-    registry = AnomalyModelRegistry(spark)
-    model_name = f"{anomaly_registry_prefix}.model_{make_random(4).lower()}"
-    record = AnomalyModelRecord(
-        identity=ModelIdentity(
-            model_name=model_name,
-            model_uri="models:/m/1",
-            algorithm="isolation_forest",
-            mlflow_run_id="run1",
-        ),
-        training=TrainingMetadata(
-            columns=["a"],
-            hyperparameters={},
-            training_rows=10,
-            training_time=datetime.utcnow(),
-        ),
-        features=FeatureEngineering(mode="spark"),
-        segmentation=SegmentationConfig(is_global_model=True, config_hash="h"),
-    )
-
-    with pytest.raises(InvalidParameterError, match="must not contain SQL keywords"):
-        registry.save_model(record, "catalog.schema.delete")

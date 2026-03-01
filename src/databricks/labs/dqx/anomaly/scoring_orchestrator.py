@@ -6,7 +6,7 @@ from databricks.labs.dqx.anomaly.model_discovery import select_segment_record
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
 from databricks.labs.dqx.anomaly.scoring_strategies import resolve_scoring_strategy
-from databricks.labs.dqx.anomaly.scoring_segmented import load_segment_models
+from databricks.labs.dqx.anomaly.scoring_run import load_segment_models
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
