@@ -220,6 +220,7 @@ For full parameter and schema details, see [Row Anomaly Detection in Quality Che
 2. **Smart sampling and training**: DQX samples your data (default 30%, capped at 1M rows), trains an ensemble of Isolation Forest models, and captures baseline statistics for drift detection.
 3. **Model registry**: Models and metadata live in MLflow and a Delta table; segmented models use deterministic names (for example `__seg_region=US_tier=gold`).
 4. **Scoring and explanation**: Raw scores are normalized to a 0–100 severity percentile. Set `enable_contributions=True` for SHAP contributions (which features drove each score); default is `False` for faster scoring.
+5. **Auto-discovery of columns and segments**: When you call `train()` without `columns` or `segment_by`, DQX automatically discovers both. It selects numeric columns with enough variance as features and may **auto-segment** when it finds suitable segment columns: categorical or low-cardinality columns with 2–50 distinct values, low null rate, and enough rows per segment (for example region, product category). If your auto-trained model is segmented, that is expected. To force a single global model, pass `segment_by=[]` (or omit segment columns from the data used for discovery) or set `columns` and `segment_by` explicitly.
 
 ### Why Isolation Forest?
 
@@ -291,6 +292,12 @@ See the **Training data requirements** tip under Quick start. In short: 1,000+ r
 - Stable data: Monthly or quarterly
 - Changing data: Weekly
 - High volatility: Daily (with automation)
+</details>
+
+<details>
+<summary><strong>Q: Why is my auto-trained model segmented?</strong></summary>
+
+When you train without specifying `columns` or `segment_by`, DQX auto-discovers both. If your data has columns that look like good segment dimensions (for example region, category) — low cardinality (2–50 distinct values), low null rate, and enough rows per segment — DQX will train **one model per segment**. That is intentional: segmented models often fit better when behavior differs by segment. To get a single global model instead, pass `segment_by=[]` or provide explicit `columns` (and no segment columns) when calling `train()`.
 </details>
 
 <details>
