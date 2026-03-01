@@ -7,7 +7,7 @@ from collections.abc import Callable
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.drift_detector import compute_drift_score
+from databricks.labs.dqx.anomaly.drift import compute_drift_score
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration_anomaly.constants import (
@@ -401,7 +401,7 @@ def test_drift_detection_handles_constant_columns_in_scoring(
     )
 
     # Score with data where ONE column has all identical values (std=0)
-    # This triggers lines 81-82 in drift_detector.py where current_std may be None
+    # This triggers lines 81-82 in drift.py where current_std may be None
     test_df = spark.createDataFrame(
         [(i, 100.0, 5.0) for i in range(1200)],  # amount is constant
         "transaction_id int, amount double, quantity double",
@@ -467,7 +467,7 @@ def test_drift_detection_handles_columns_with_all_nulls(
     )
 
     # Create test data where ONE column has all NULL values
-    # This triggers lines 79-80 in drift_detector.py where current_mean is None
+    # This triggers lines 79-80 in drift.py where current_mean is None
     test_df = spark.range(1200).select(
         F.col("id").cast("int").alias("transaction_id"),
         F.lit(None).cast("double").alias("amount"),  # All NULL

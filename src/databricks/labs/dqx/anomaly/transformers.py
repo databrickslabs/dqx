@@ -9,6 +9,7 @@ Spark Connect compatibility (no custom Python class serialization).
 import json
 import re
 import sys
+import threading
 from dataclasses import dataclass
 from io import StringIO
 from typing import Any
@@ -32,9 +33,12 @@ from pyspark.sql.functions import (
 )
 from pyspark.sql.types import DoubleType, TimestampType
 
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from databricks.labs.dqx.telemetry import get_tables_from_spark_plan
 from databricks.labs.dqx.utils import get_table_primary_keys
+
+# Serialize stdout capture so concurrent column analysis is thread-safe
+_EXPLAIN_CAPTURE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -86,12 +90,22 @@ class SparkFeatureMetadata:
         return cls(**data)
 
 
+def _spark_type_for_category(category: str) -> T.DataType:
+    """Return canonical Spark type for a column category. Keeps reconstructed infos consistent for scoring."""
+    return {
+        "numeric": T.DoubleType(),
+        "categorical": T.StringType(),
+        "datetime": T.TimestampType(),
+        "boolean": T.BooleanType(),
+    }.get(category, T.StringType())
+
+
 def reconstruct_column_infos(feature_metadata: SparkFeatureMetadata) -> list[ColumnTypeInfo]:
     """
     Reconstruct ColumnTypeInfo objects from SparkFeatureMetadata.
 
-    Helper function to avoid code duplication when reconstructing column information
-    for feature engineering during scoring.
+    Uses category to set spark_type so that any code (e.g. _classify_column or
+    isinstance checks) that runs on reconstructed infos during scoring behaves correctly.
 
     Args:
         feature_metadata: SparkFeatureMetadata with column information
@@ -102,8 +116,8 @@ def reconstruct_column_infos(feature_metadata: SparkFeatureMetadata) -> list[Col
     return [
         ColumnTypeInfo(
             name=info["name"],
-            spark_type=T.StringType(),  # Type not used in scoring
-            category=info["category"],
+            spark_type=_spark_type_for_category(info.get("category", "unsupported")),
+            category=info.get("category", "unsupported"),
             cardinality=info.get("cardinality"),
             null_count=info.get("null_count"),
         )
@@ -160,7 +174,8 @@ class ColumnTypeClassifier:
 
         null_exprs = [F.count(F.when(F.col(col_name).isNull(), 1)).alias(f"{col_name}__nulls") for col_name in columns]
         nulls_row = df.agg(*null_exprs).first()
-        assert nulls_row is not None
+        if nulls_row is None:
+            raise ComputationError("Failed to compute null counts for columns")
         null_counts = {col_name: nulls_row[f"{col_name}__nulls"] for col_name in columns}
 
         string_columns = [col_name for col_name in columns if isinstance(schema[col_name], T.StringType)]
@@ -171,7 +186,8 @@ class ColumnTypeClassifier:
                 for col_name in string_columns
             ]
             distinct_row = df.agg(*distinct_exprs).first()
-            assert distinct_row is not None
+            if distinct_row is None:
+                raise ComputationError("Failed to compute distinct counts for string columns")
             distinct_counts = {col_name: distinct_row[f"{col_name}__distinct"] for col_name in string_columns}
 
         for col_name in columns:
@@ -245,7 +261,8 @@ class ColumnTypeClassifier:
 
         # Handle string columns as categorical features (distinct_count is always set in analyze_columns for string columns)
         if isinstance(col_type, T.StringType):
-            assert distinct_count is not None
+            if distinct_count is None:
+                raise InvalidParameterError(f"distinct_count is required for string column {col_name}")
             cardinality = distinct_count
 
             # Determine encoding strategy based on cardinality
@@ -322,12 +339,15 @@ class ColumnTypeClassifier:
         return "\n".join(breakdown)
 
     def _capture_dataframe_explain(self, df: DataFrame) -> str:
-        """Capture DataFrame.explain() output as a string."""
-        old_stdout = sys.stdout
-        sys.stdout = buffer = StringIO()
-        df.explain(extended=True)
-        sys.stdout = old_stdout
-        return buffer.getvalue()
+        """Capture DataFrame.explain() output as a string. Thread-safe via module lock."""
+        with _EXPLAIN_CAPTURE_LOCK:
+            old_stdout = sys.stdout
+            sys.stdout = buffer = StringIO()
+            try:
+                df.explain(extended=True)
+                return buffer.getvalue()
+            finally:
+                sys.stdout = old_stdout
 
     def _get_primary_key_columns(self, df: DataFrame) -> set[str]:
         """
@@ -380,7 +400,8 @@ class ColumnTypeClassifier:
             agg_exprs.append(F.approx_count_distinct(col_name, rsd=0.05).alias(f"_distinct_{col_name}"))
 
         stats_row = df.agg(*agg_exprs).first()
-        assert stats_row is not None
+        if stats_row is None:
+            raise ComputationError("Failed to compute row and cardinality stats for ID check")
         total_rows = stats_row["_total_rows"]
         cardinality_stats = {col_name: stats_row[f"_distinct_{col_name}"] for col_name in numeric_columns}
 
@@ -522,7 +543,7 @@ def _apply_onehot_encoding(
     else:
         distinct_values = onehot_categories.get(col_name, [])
         if not distinct_values:
-            raise ValueError(
+            raise InvalidParameterError(
                 f"OneHot categories for column '{col_name}' not found in metadata. "
                 "Model may be from an older version without OneHot category storage."
             )

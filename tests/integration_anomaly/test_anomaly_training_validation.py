@@ -2,7 +2,7 @@
 
 import pytest
 
-from databricks.labs.dqx.anomaly.service import AnomalyTrainingService
+from databricks.labs.dqx.anomaly.training_service import AnomalyTrainingService
 from databricks.labs.dqx.config import AnomalyParams, FeatureEngineeringConfig, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
 from tests.constants import TEST_CATALOG

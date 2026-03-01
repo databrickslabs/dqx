@@ -11,7 +11,6 @@ import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
-from databricks.labs.dqx.anomaly import check_funcs as anomaly_check_funcs
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.config import AnomalyConfig, AnomalyParams, InputConfig, IsolationForestConfig
 from databricks.labs.dqx.rule import DQDatasetRule
@@ -42,16 +41,6 @@ logger = logging.getLogger(__name__)
 def anomaly_engine(ws, spark):
     """Provide an AnomalyEngine instance for anomaly integration tests."""
     return AnomalyEngine(ws, spark)
-
-
-@pytest.fixture(autouse=True)
-def enable_driver_only_scoring_for_anomaly_tests():
-    """Enable driver-only scoring for all anomaly tests to avoid cluster library requirements."""
-    anomaly_check_funcs.set_driver_only_for_tests(True)
-    try:
-        yield
-    finally:
-        anomaly_check_funcs.set_driver_only_for_tests(False)
 
 
 def _create_mlflow_experiment_for_session(ws, _tracking_uri: str, _registry_uri: str) -> tuple[str | None, str | None]:
@@ -463,11 +452,18 @@ def _normalize_anomaly_apply_fn(apply_fn, info_col: str):
     return normalized
 
 
-def _create_anomaly_apply_fn(model_name: str, registry_table: str, **check_kwargs):
-    """Create apply function from has_no_row_anomalies check."""
+def _create_anomaly_apply_fn(
+    model_name: str,
+    registry_table: str,
+    *,
+    driver_only: bool = True,
+    **check_kwargs,
+):
+    """Create apply function from has_no_row_anomalies check. Default driver_only=True for tests."""
     _, apply_fn, info_col = has_no_row_anomalies(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
+        driver_only=driver_only,
         **check_kwargs,
     )
     return _normalize_anomaly_apply_fn(apply_fn, info_col)
@@ -556,13 +552,16 @@ def create_anomaly_check_rule(
     registry_table: str,
     threshold: float = 60.0,
     criticality: str = "error",
+    *,
+    driver_only: bool = True,
     **kwargs: Any,
 ) -> DQDatasetRule:
-    """Create a standard DQDatasetRule for anomaly detection."""
+    """Create a standard DQDatasetRule for anomaly detection. Default driver_only=True for tests."""
     check_kwargs = {
         "model_name": qualify_model_name(model_name, registry_table),
         "registry_table": registry_table,
         "threshold": threshold,
+        "driver_only": driver_only,
     }
     check_kwargs.update(kwargs)
     return DQDatasetRule(
@@ -577,6 +576,8 @@ def apply_anomaly_check_direct(
     model_name: str,
     registry_table: str,
     threshold: float = 60.0,
+    *,
+    driver_only: bool = True,
     **kwargs: Any,
 ) -> Any:
     """Apply anomaly detection directly (without DQEngine) to get anomaly_score column."""
@@ -584,6 +585,7 @@ def apply_anomaly_check_direct(
         model_name=qualify_model_name(model_name, registry_table),
         registry_table=registry_table,
         threshold=threshold,
+        driver_only=driver_only,
         **kwargs,
     )
     result_df = apply_fn(test_df)
@@ -738,9 +740,11 @@ def create_anomaly_dataset_rule(
     registry_table: str,
     criticality: str = "error",
     threshold: float = 60.0,
+    *,
+    driver_only: bool = True,
     **kwargs: Any,
 ) -> DQDatasetRule:
-    """Create DQDatasetRule for anomaly detection."""
+    """Create DQDatasetRule for anomaly detection. Default driver_only=True for tests."""
     return DQDatasetRule(
         criticality=criticality,
         check_func=has_no_row_anomalies,
@@ -748,6 +752,7 @@ def create_anomaly_dataset_rule(
             "model_name": qualify_model_name(model_name, registry_table),
             "registry_table": registry_table,
             "threshold": threshold,
+            "driver_only": driver_only,
             **kwargs,
         },
     )

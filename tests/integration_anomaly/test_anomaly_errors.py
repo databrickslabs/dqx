@@ -13,6 +13,7 @@ import pytest
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+from databricks.labs.dqx.anomaly.core import compute_baseline_statistics
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
     FeatureEngineering,
@@ -21,7 +22,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     TrainingMetadata,
 )
 from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility
-from databricks.labs.dqx.anomaly.scoring import (
+from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
     add_severity_percentile_column,
     create_null_scored_dataframe,
@@ -29,7 +30,7 @@ from databricks.labs.dqx.anomaly.scoring import (
 )
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
 from tests.integration_anomaly.conftest import (
     create_anomaly_dataset_rule,
@@ -523,3 +524,10 @@ def test_add_severity_percentile_column_empty_quantile_points_returns_null_colum
     rows = result.orderBy("score").collect()
     assert rows[0]["severity_pct"] is None
     assert rows[1]["severity_pct"] is None
+
+
+def test_compute_baseline_statistics_raises_on_empty_dataframe(spark):
+    """Empty DataFrame causes failed stats or quantiles; raises ComputationError."""
+    empty_df = spark.createDataFrame([], "a double")
+    with pytest.raises(ComputationError, match="Failed to compute (stats|quantiles) for a"):
+        compute_baseline_statistics(empty_df, ["a"])

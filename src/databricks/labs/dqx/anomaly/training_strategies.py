@@ -19,7 +19,7 @@ from databricks.labs.dqx.anomaly.core import (
     fit_isolation_forest,
     prepare_engineered_pandas,
 )
-from databricks.labs.dqx.anomaly.ensemble import train_ensemble
+from databricks.labs.dqx.anomaly.ensemble_training import train_ensemble
 from databricks.labs.dqx.anomaly.mlflow_registry import ModelRegistryBase, get_default_registry
 from databricks.labs.dqx.anomaly.types import TrainingResult
 from databricks.labs.dqx.config import AnomalyParams

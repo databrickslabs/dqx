@@ -2,7 +2,6 @@
 
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
@@ -104,21 +103,18 @@ def test_ensemble_scoring_distributed_path(
 
     df = spark.createDataFrame([(1, 100.0, 2.0)], "transaction_id int, amount double, quantity double")
 
-    set_driver_only_for_tests(False)
-    try:
-        dq_engine = DQEngine(ws, spark)
-        check = create_anomaly_check_rule(
-            model_name=model_name,
-            registry_table=registry_table,
-            include_confidence=True,
-            include_contributions=False,
-        )
+    dq_engine = DQEngine(ws, spark)
+    check = create_anomaly_check_rule(
+        model_name=model_name,
+        registry_table=registry_table,
+        include_confidence=True,
+        include_contributions=False,
+        driver_only=False,
+    )
 
-        result = dq_engine.apply_checks(df, [check])
-        row = result.collect()[0]
-        assert row["_dq_info"][0]["anomaly"]["confidence_std"] is not None
-    finally:
-        set_driver_only_for_tests(True)
+    result = dq_engine.apply_checks(df, [check])
+    row = result.collect()[0]
+    assert row["_dq_info"][0]["anomaly"]["confidence_std"] is not None
 
 
 def test_ensemble_with_feature_contributions(

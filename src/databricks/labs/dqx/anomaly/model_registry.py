@@ -21,7 +21,9 @@ from databricks.labs.dqx.anomaly.model_config import (
 )
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 from databricks.labs.dqx.config import OutputConfig
+from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.io import save_dataframe_as_table
+from databricks.labs.dqx.utils import is_sql_query_safe
 
 
 ANOMALY_MODEL_TABLE_SCHEMA = (
@@ -101,6 +103,8 @@ class AnomalyModelRegistry:
 
     def save_model(self, record: AnomalyModelRecord, table: str) -> None:
         """Archive previous active model with the same name and insert the new record."""
+        if not is_sql_query_safe(table) or not is_sql_query_safe(record.identity.model_name):
+            raise InvalidParameterError("Table and model_name must not contain SQL keywords or other unsafe content.")
         table_existed = self._table_exists(table)
         if not table_existed:
             self._create_table(table)
@@ -165,6 +169,7 @@ class AnomalyModelRegistry:
         window = Window.partitionBy("identity.model_name").orderBy(F.col("training.training_time").desc())
         df_deduped = df.withColumn("row_num", F.row_number().over(window)).filter(F.col("row_num") == 1).drop("row_num")
 
+        # Warning is produced earlier, for 100+ segments this could be a memory concern
         rows = df_deduped.orderBy(F.col("training.training_time").desc()).collect()
 
         # Convert nested Row structures to dataclasses
@@ -181,8 +186,8 @@ class AnomalyModelRegistry:
     def _table_exists(self, table: str) -> bool:
         """
         Check if table exists (Unity Catalog compatible).
-        Since models are registered as part of the anomaly check function,
-        we neither have access to spark nor to workspace client.
+        Since models are registered as part of the anomaly check function which can run in the executors,
+        we neither have access to spark nor to workspace client available.
         """
         try:
             # Try to read table schema - more reliable than catalog.tableExists()
@@ -199,6 +204,8 @@ class AnomalyModelRegistry:
 
     def _archive_previous(self, table: str, model_name: str) -> None:
         """Call only when table is known to exist (e.g. from save_model)."""
+        if not is_sql_query_safe(table) or not is_sql_query_safe(model_name):
+            raise InvalidParameterError("Table and model_name must not contain SQL keywords or other unsafe content.")
         # Use LOWER() for case-insensitive matching since Unity Catalog model names are case-insensitive
         self.spark.sql(
             f"UPDATE {table} SET identity.status = 'archived' "

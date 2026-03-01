@@ -161,7 +161,7 @@ def test_apply_feature_engineering_missing_onehot_metadata_raises(spark):
     classifier = ColumnTypeClassifier(categorical_cardinality_threshold=5)
     infos, _warnings = classifier.analyze_columns(df, ["amount", "category"])
 
-    with pytest.raises(ValueError, match="OneHot categories"):
+    with pytest.raises(InvalidParameterError, match="OneHot categories"):
         apply_feature_engineering(
             df,
             infos,

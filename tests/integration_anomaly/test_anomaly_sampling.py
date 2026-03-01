@@ -6,7 +6,6 @@ from collections.abc import Callable
 import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration_anomaly.conftest import (
@@ -207,21 +206,18 @@ def test_distributed_scoring_with_row_filter(
         columns_schema="amount double, quantity double",
     )
 
-    set_driver_only_for_tests(False)
-    try:
-        dq_engine = DQEngine(ws, spark)
-        check = create_anomaly_check_rule(
-            model_name=model_name,
-            registry_table=registry_table,
-            row_filter="amount > 150",
-            include_contributions=False,
-        )
-        result = dq_engine.apply_checks(df, [check])
-        scores = result.select(
-            "amount", F.col("_dq_info").getItem(0).getField("anomaly").getField("score").alias("score")
-        ).collect()
-    finally:
-        set_driver_only_for_tests(True)
+    dq_engine = DQEngine(ws, spark)
+    check = create_anomaly_check_rule(
+        model_name=model_name,
+        registry_table=registry_table,
+        row_filter="amount > 150",
+        include_contributions=False,
+        driver_only=False,
+    )
+    result = dq_engine.apply_checks(df, [check])
+    scores = result.select(
+        "amount", F.col("_dq_info").getItem(0).getField("anomaly").getField("score").alias("score")
+    ).collect()
 
     scored = {row.amount: row.score for row in scores}
     assert scored[100.0] is None

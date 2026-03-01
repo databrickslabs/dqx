@@ -6,6 +6,8 @@ from pyspark.sql import DataFrame
 
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
+from databricks.labs.dqx.anomaly.scoring_global import score_global_model
+from databricks.labs.dqx.anomaly.scoring_segmented import score_segmented
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -38,8 +40,6 @@ class IsolationForestScoringStrategy(AnomalyScoringStrategy):
         return algorithm.startswith("IsolationForest")
 
     def score_global(self, df: DataFrame, record: AnomalyModelRecord, config: ScoringConfig) -> DataFrame:
-        from databricks.labs.dqx.anomaly.scoring_orchestrator import score_global_model
-
         return score_global_model(df, record, config)
 
     def score_segmented(
@@ -49,9 +49,7 @@ class IsolationForestScoringStrategy(AnomalyScoringStrategy):
         registry_client: AnomalyModelRegistry,
         all_segments: list[AnomalyModelRecord],
     ) -> DataFrame:
-        from databricks.labs.dqx.anomaly.segment_scoring import score_segmented as _score_segmented
-
-        return _score_segmented(df, config, registry_client, all_segments)
+        return score_segmented(df, config, registry_client, all_segments)
 
 
 _SCORING_STRATEGIES: list[AnomalyScoringStrategy] = [IsolationForestScoringStrategy()]

@@ -10,6 +10,7 @@ import mlflow
 import mlflow.sklearn
 
 from databricks.labs.dqx.anomaly.mlflow_registry import get_default_registry
+from databricks.labs.dqx.errors import ModelLoadError
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
 from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility
 
@@ -25,7 +26,7 @@ def load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomaly
         Loaded sklearn model
 
     Raises:
-        RuntimeError with actionable error message if loading fails
+        ModelLoadError with actionable error message if loading fails
     """
     get_default_registry().ensure_registry_configured()
 
@@ -37,7 +38,7 @@ def load_sklearn_model_with_error_handling(model_uri: str, model_record: Anomaly
         current_version = sklearn.__version__
         python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
 
-        raise RuntimeError(
+        raise ModelLoadError(
             f"\nFAILED TO LOAD ANOMALY DETECTION MODEL\n"
             f"\n"
             f"Model Information:\n"

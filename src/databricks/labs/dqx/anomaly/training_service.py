@@ -31,7 +31,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
     TrainingMetadata,
 )
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
-from databricks.labs.dqx.anomaly.strategies import AnomalyTrainingStrategy, IsolationForestTrainingStrategy
+from databricks.labs.dqx.anomaly.training_strategies import AnomalyTrainingStrategy, IsolationForestTrainingStrategy
 from databricks.labs.dqx.anomaly.transformers import (
     SparkFeatureMetadata,
     apply_feature_engineering,
@@ -65,27 +65,6 @@ class AnomalyTrainingService:
         """Initialize the training service."""
         self._spark = spark
         self._strategy = strategy or IsolationForestTrainingStrategy()
-
-    @staticmethod
-    def _process_exclude_columns(
-        df: DataFrame,
-        columns: list[str] | None,
-        exclude_columns: list[str] | None,
-    ) -> DataFrame:
-        """Process exclude_columns parameter and return filtered DataFrame."""
-        exclude_list = exclude_columns or []
-        if not exclude_list:
-            return df
-        df_columns = set(df.columns)
-        invalid_excludes = [c for c in exclude_list if c not in df_columns]
-        if invalid_excludes:
-            raise InvalidParameterError(f"exclude_columns contains columns not in DataFrame: {invalid_excludes}")
-        if columns is None:
-            remaining_columns = [c for c in df.columns if c not in exclude_list]
-            df_filtered = df.select(*remaining_columns)
-            logger.info(f"Excluding {len(exclude_list)} columns from auto-discovery: {exclude_list}")
-            return df_filtered
-        return df
 
     @staticmethod
     def _perform_auto_discovery(
@@ -204,6 +183,23 @@ class AnomalyTrainingService:
         """Convert dict values to strings."""
         return {str(k): str(v) for k, v in sorted(data.items(), key=lambda item: str(item[0])) if v is not None}
 
+    def _resolve_columns_and_filtered_df(
+        self,
+        df: DataFrame,
+        columns: list[str] | None,
+        exclude_list: list[str],
+    ) -> tuple[list[str] | None, DataFrame]:
+        """Apply exclude_columns and return (columns, df_filtered)."""
+        if columns is not None:
+            if exclude_list:
+                columns = [col for col in columns if col not in exclude_list]
+            return columns, df
+        if exclude_list:
+            remaining = [col for col in df.columns if col not in exclude_list]
+            logger.info(f"Excluding {len(exclude_list)} columns from auto-discovery: {exclude_list}")
+            return None, df.select(*remaining)
+        return None, df
+
     def build_context(
         self,
         df: DataFrame,
@@ -227,12 +223,14 @@ class AnomalyTrainingService:
             )
 
         exclude_list = exclude_columns or []
-        if columns is not None and exclude_list:
-            columns = [col for col in columns if col not in exclude_list]
+        if exclude_list:
+            df_columns = set(df.columns)
+            invalid = [col for col in exclude_list if col not in df_columns]
+            if invalid:
+                raise InvalidParameterError(f"exclude_columns contains columns not in DataFrame: {invalid}")
 
-        df_filtered = self._process_exclude_columns(df, columns, exclude_columns)
+        columns, df_filtered = self._resolve_columns_and_filtered_df(df, columns, exclude_list)
         auto_discovery_used = columns is None
-
         if columns is None:
             columns, segment_by = self._perform_auto_discovery(df_filtered, segment_by)
 
@@ -352,7 +350,8 @@ class AnomalyTrainingService:
 
     def _train_segmented(self, context: AnomalyTrainingContext) -> str:
         """Train separate models for each segment."""
-        assert context.segment_by is not None
+        if context.segment_by is None:
+            raise InvalidParameterError("segment_by is required for segmented training")
         segment_count, segment_iterator = self._get_and_validate_segments(context.df_filtered, context.segment_by)
         model_uris = []
         skipped_segments = []

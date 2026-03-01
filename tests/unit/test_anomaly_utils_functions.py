@@ -3,7 +3,7 @@
 import pytest
 from pyspark.sql import types as T
 
-from databricks.labs.dqx.anomaly.service import AnomalyTrainingService
+from databricks.labs.dqx.anomaly.training_service import AnomalyTrainingService
 from databricks.labs.dqx.anomaly.validation import validate_training_params
 from databricks.labs.dqx.anomaly.transformers import (
     ColumnTypeInfo,

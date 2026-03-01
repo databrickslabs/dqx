@@ -20,8 +20,8 @@ from databricks.labs.dqx.anomaly.feature_prep import (
 )
 from databricks.labs.dqx.anomaly.model_loader import load_and_validate_model
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord
-from databricks.labs.dqx.anomaly.scoring import create_udf_schema
-from databricks.labs.dqx.anomaly.shap_contributions import (
+from databricks.labs.dqx.anomaly.scoring_utils import create_udf_schema
+from databricks.labs.dqx.anomaly.explainability import (
     compute_shap_values,
     format_shap_contributions,
 )

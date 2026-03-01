@@ -5,7 +5,6 @@ import pyspark.sql.functions as F
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
-from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.engine import DQEngine
@@ -505,8 +504,6 @@ def test_try_segmented_fallback_when_global_missing(
         "transaction_id int, region string, amount double",
     )
 
-    # Keep driver-only scoring to avoid Spark Connect worker dependency issues.
-    set_driver_only_for_tests(True)
     dq_engine = DQEngine(ws, spark)
     check = create_anomaly_check_rule(
         model_name=model_name,

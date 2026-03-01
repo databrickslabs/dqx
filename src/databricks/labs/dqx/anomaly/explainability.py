@@ -1,9 +1,7 @@
-"""
-Explainability utilities for row anomaly detection.
+"""SHAP-based explainability for row anomaly detection.
 
-Provides TreeSHAP-based feature contribution analysis to understand which columns
-contribute most to anomaly scores for individual records.
-
+Provides contribution formatting and computation for scoring pipelines, plus
+TreeSHAP-based feature contribution analysis for reporting and messages.
 Requires the 'anomaly' extras: pip install databricks-labs-dqx[anomaly]
 """
 
@@ -14,7 +12,6 @@ import mlflow.sklearn as mlflow_sklearn
 import numpy as np
 import pandas as pd
 import pyspark.sql.functions as F
-import shap
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import pandas_udf
 from pyspark.sql.types import DoubleType, MapType, StringType, StructField, StructType
@@ -23,7 +20,70 @@ from sklearn.pipeline import Pipeline
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 
+try:
+    import shap as _shap  # type: ignore
+
+    SHAP = _shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP = None
+    SHAP_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
+
+
+def format_shap_contributions(
+    shap_values: np.ndarray,
+    valid_indices: np.ndarray,
+    num_rows: int,
+    engineered_feature_cols: list[str],
+) -> list[dict[str, float | None]]:
+    """Format SHAP values into contribution dictionaries."""
+    num_features = len(engineered_feature_cols)
+    contributions: list[dict[str, float | None]] = [{c: None for c in engineered_feature_cols} for _ in range(num_rows)]
+
+    if shap_values.size == 0:
+        return contributions
+
+    abs_shap = np.abs(shap_values)
+    totals = abs_shap.sum(axis=1, keepdims=True)
+    normalized = np.divide(abs_shap, totals, out=np.zeros_like(abs_shap), where=totals > 0)
+    if num_features > 0:
+        normalized[totals.squeeze(axis=1) == 0] = 1.0 / num_features
+
+    valid_row_idx = 0
+    for i in range(num_rows):
+        if valid_indices[i]:
+            contributions[i] = {
+                engineered_feature_cols[j]: round(float(normalized[valid_row_idx, j] * 100.0), 1)
+                for j in range(num_features)
+            }
+            valid_row_idx += 1
+
+    return contributions
+
+
+def compute_shap_values(
+    model_local: Any,
+    feature_matrix: pd.DataFrame,
+    engineered_feature_cols: list[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute SHAP values for a model and feature matrix."""
+    scaler = getattr(model_local, "named_steps", {}).get("scaler")
+    tree_model = getattr(model_local, "named_steps", {}).get("model", model_local)
+
+    shap_data = scaler.transform(feature_matrix) if scaler else feature_matrix.values
+    valid_indices = ~pd.isna(shap_data).any(axis=1)
+
+    shap_values = np.array([])
+    if valid_indices.any():
+        if len(engineered_feature_cols) == 1:
+            shap_values = np.ones((len(shap_data[valid_indices]), 1))
+        else:
+            explainer = SHAP.TreeExplainer(tree_model)
+            shap_values = explainer.shap_values(shap_data[valid_indices])
+
+    return shap_values, valid_indices
 
 
 def format_contributions_map(contributions_map: dict[str, float | None] | None, top_n: int) -> str:
@@ -57,7 +117,7 @@ def format_contributions_map(contributions_map: dict[str, float | None] | None, 
     return ", ".join(parts)
 
 
-def create_optimal_tree_explainer(tree_model: Any) -> shap.TreeExplainer:
+def create_optimal_tree_explainer(tree_model: Any) -> Any:
     """Create TreeSHAP explainer for the given tree model.
 
     Uses SHAP's TreeExplainer, which provides efficient SHAP value computation
@@ -69,7 +129,7 @@ def create_optimal_tree_explainer(tree_model: Any) -> shap.TreeExplainer:
     Returns:
         Configured SHAP TreeExplainer
     """
-    return shap.TreeExplainer(tree_model)
+    return SHAP.TreeExplainer(tree_model)
 
 
 def compute_contributions_for_matrix(
@@ -87,7 +147,7 @@ def compute_contributions_for_matrix(
         tree_model = model_local
         needs_scaling = False
 
-    explainer = shap.TreeExplainer(tree_model)
+    explainer = SHAP.TreeExplainer(tree_model)
 
     # Scale the data if the model uses a scaler
     if needs_scaling:

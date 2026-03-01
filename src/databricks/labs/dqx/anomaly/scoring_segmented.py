@@ -1,18 +1,19 @@
-"""Segment-based anomaly scoring."""
+"""Segmented (segment-based) anomaly scoring."""
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame
 
-from databricks.labs.dqx.anomaly.discovery import extract_quantile_points
-from databricks.labs.dqx.anomaly.drift_checks import check_segment_drift
+from databricks.labs.dqx.anomaly.model_discovery import extract_quantile_points
+from databricks.labs.dqx.anomaly.drift import check_segment_drift
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRecord, AnomalyModelRegistry
-from databricks.labs.dqx.anomaly.scoring import (
+from databricks.labs.dqx.anomaly.scoring_utils import (
     add_info_column,
     add_severity_percentile_column,
+    apply_row_filter,
     create_null_scored_dataframe,
+    join_filtered_results_back,
 )
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
-from databricks.labs.dqx.anomaly.scoring_helpers import apply_row_filter, join_filtered_results_back
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter
 from databricks.labs.dqx.anomaly.single_model_scorer import (
     score_with_sklearn_model,

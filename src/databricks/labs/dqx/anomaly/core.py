@@ -32,7 +32,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     reconstruct_column_infos,
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
-from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 
 logger = logging.getLogger(__name__)
 
@@ -261,8 +261,8 @@ def compute_validation_metrics(
     ).first()
 
     quantiles = scores_df.approxQuantile("score", [0.1, 0.25, 0.5, 0.75, 0.9], 0.01)
-
-    assert stats is not None, "Failed to compute validation statistics"
+    if stats is None:
+        raise ComputationError("Failed to compute validation statistics")
     metrics = {
         "validation_rows": val_count,
         "score_mean": stats["mean"] or 0.0,
@@ -339,7 +339,10 @@ def compute_baseline_statistics(train_df: DataFrame, columns: list[str]) -> dict
 
         quantiles = train_df.select(col_expr.alias(col_name)).approxQuantile(col_name, [0.25, 0.5, 0.75], 0.01)
 
-        assert col_stats is not None, f"Failed to compute stats for {col_name}"
+        if col_stats is None:
+            raise ComputationError(f"Failed to compute stats for {col_name}")
+        if len(quantiles) != 3:
+            raise ComputationError(f"Failed to compute quantiles for {col_name}")
         baseline_stats[col_name] = {
             "mean": col_stats["mean"],
             "std": col_stats["std"],
@@ -397,7 +400,7 @@ def prepare_engineered_pandas(train_df: DataFrame, feature_metadata: SparkFeatur
     engineered_train_df, _ = apply_feature_engineering(
         train_df,
         column_infos_reconstructed,
-        categorical_cardinality_threshold=20,
+        categorical_cardinality_threshold=feature_metadata.categorical_cardinality_threshold,
         frequency_maps=feature_metadata.categorical_frequency_maps,
         onehot_categories=feature_metadata.onehot_categories,
     )

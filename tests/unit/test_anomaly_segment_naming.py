@@ -7,9 +7,10 @@ These tests ensure that segment model names are consistent between training
 import pytest
 from pyspark.sql import types as T
 
-from databricks.labs.dqx.anomaly.validation import validate_fully_qualified_name
+from databricks.labs.dqx.anomaly import training_service as anomaly_training_service
 from databricks.labs.dqx.anomaly.transformers import ColumnTypeInfo
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
+from databricks.labs.dqx.anomaly.validation import validate_fully_qualified_name
 from databricks.labs.dqx.errors import InvalidParameterError
 
 
@@ -147,9 +148,7 @@ class TestValidateFullyQualifiedNameConsistency:
 
     def test_service_and_check_funcs_use_same_validation(self) -> None:
         """Verify validation module is the single source of truth for fully qualified names."""
-        from databricks.labs.dqx.anomaly import service as sv
-
-        assert sv.validate_fully_qualified_name is validate_fully_qualified_name
+        assert anomaly_training_service.validate_fully_qualified_name is validate_fully_qualified_name
 
     def test_validation_accepts_three_part_names(self) -> None:
         """Test validation accepts catalog.schema.name format."""

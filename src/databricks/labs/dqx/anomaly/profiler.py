@@ -72,25 +72,48 @@ def auto_discover_columns(df: DataFrame) -> AnomalyProfile:
     return _auto_discover_heuristic(df, warnings)
 
 
+def _compute_numeric_stats_batched(df: DataFrame, column_names: list[str]) -> dict[str, dict[str, float]]:
+    """Compute mean and stddev for all numeric columns in a single aggregation."""
+    if not column_names:
+        return {}
+    agg_exprs = []
+    for col_name in column_names:
+        agg_exprs.append(F.mean(F.col(col_name)).alias(f"{col_name}__mean"))
+        agg_exprs.append(F.stddev(F.col(col_name)).alias(f"{col_name}__std"))
+    row = df.agg(*agg_exprs).first()
+    if row is None:
+        return {}
+    return {
+        col_name: {"mean": row[f"{col_name}__mean"], "std": row[f"{col_name}__std"] or 0.0} for col_name in column_names
+    }
+
+
 def _analyze_numeric_column(
     df: DataFrame,
     col_name: str,
     null_rate: float,
+    numeric_stats: dict[str, dict[str, float]] | None = None,
 ) -> tuple[tuple[int, str, str, None, float] | None, dict | None]:
-    """Analyze a numeric column and return candidate tuple and stats."""
+    """Analyze a numeric column and return candidate tuple and stats. Uses numeric_stats if provided (batched)."""
     if null_rate >= 0.5:
         return None, None
 
-    stats_row = df.select(
-        F.mean(col_name).alias("mean"),
-        F.stddev(col_name).alias("std"),
-    ).first()
-    assert stats_row is not None
+    if numeric_stats and col_name in numeric_stats:
+        mean_std = numeric_stats[col_name]
+        std = mean_std.get("std") or 0.0
+    else:
+        stats_row = df.select(
+            F.mean(F.col(col_name)).alias("mean"),
+            F.stddev(F.col(col_name)).alias("std"),
+        ).first()
+        if stats_row is None:
+            return None, None
+        std = stats_row["std"] or 0.0
+        mean_std = {"mean": stats_row["mean"], "std": std}
 
-    std = stats_row["std"] or 0.0
     if std > 0:
         candidate = (1, col_name, 'numeric', None, null_rate)  # Priority 1
-        stats = {"mean": stats_row["mean"], "std": std}
+        stats = {"mean": mean_std.get("mean"), "std": std}
         return candidate, stats
 
     return None, None
@@ -324,9 +347,10 @@ def _analyze_and_add_numeric_column(
     null_rate: float,
     candidates: list[tuple[int, str, str, int | None, float]],
     column_stats: dict[str, dict[str, float]],
+    numeric_stats: dict[str, dict[str, float]] | None = None,
 ) -> None:
     """Analyze numeric column and add to candidates if suitable."""
-    candidate, stats = _analyze_numeric_column(df, col_name, null_rate)
+    candidate, stats = _analyze_numeric_column(df, col_name, null_rate, numeric_stats=numeric_stats)
     if candidate:
         candidates.append(candidate)
         if stats:
@@ -380,10 +404,11 @@ def _analyze_column_by_type(
     column_stats: dict[str, dict[str, float]],
     unsupported_columns: list[str],
     distinct_count: int | None = None,
+    numeric_stats: dict[str, dict[str, float]] | None = None,
 ) -> None:
     """Analyze a column based on its type and add to candidates if suitable."""
     if isinstance(col_type, (IntegerType, LongType, FloatType, DoubleType, DecimalType)):
-        _analyze_and_add_numeric_column(df, col_name, null_rate, candidates, column_stats)
+        _analyze_and_add_numeric_column(df, col_name, null_rate, candidates, column_stats, numeric_stats=numeric_stats)
     elif isinstance(col_type, BooleanType):
         _analyze_and_add_boolean_column(col_name, null_rate, candidates)
     elif isinstance(col_type, (DateType, TimestampType, TimestampNTZType)):
@@ -392,6 +417,22 @@ def _analyze_column_by_type(
         _analyze_and_add_string_column(col_name, null_rate, warnings, candidates, distinct_count=distinct_count)
     else:
         unsupported_columns.append(col_name)
+
+
+def _compute_discovery_stats(df: DataFrame) -> tuple[dict[str, int], dict[str, int], dict[str, dict[str, float]], int]:
+    """Compute null counts, distinct counts, numeric stats, and total count in one pass."""
+    total_count = df.count()
+    column_names = [f.name for f in df.schema.fields]
+    distinct_columns = [f.name for f in df.schema.fields if isinstance(f.dataType, (StringType, IntegerType))]
+    null_counts, distinct_counts = compute_null_and_distinct_counts(
+        df, column_names, distinct_columns, approx=True, rsd=0.05
+    )
+    if distinct_columns:
+        distinct_counts.update(compute_exact_distinct_counts(df, distinct_columns))
+    numeric_types = (IntegerType, LongType, FloatType, DoubleType, DecimalType)
+    numeric_columns = [f.name for f in df.schema.fields if isinstance(f.dataType, numeric_types)]
+    numeric_stats = _compute_numeric_stats_batched(df, numeric_columns)
+    return null_counts, distinct_counts, numeric_stats, total_count
 
 
 def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfile:
@@ -408,24 +449,9 @@ def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfi
     column_stats: dict[str, dict] = {}
     unsupported_columns: list[str] = []
     candidates: list[tuple[int, str, str, int | None, float]] = []
-
-    # Filter out ID/timestamp patterns
     id_pattern = re.compile(r"(?i)(id|key)$")
 
-    total_count = df.count()
-    column_names = [f.name for f in df.schema.fields]
-
-    categorical_fields = [f for f in df.schema.fields if isinstance(f.dataType, (StringType, IntegerType))]
-    distinct_columns = [f.name for f in categorical_fields]
-    null_counts, distinct_counts = compute_null_and_distinct_counts(
-        df,
-        column_names,
-        distinct_columns,
-        approx=True,
-        rsd=0.05,
-    )
-    if distinct_columns:
-        distinct_counts.update(compute_exact_distinct_counts(df, distinct_columns))
+    null_counts, distinct_counts, numeric_stats, total_count = _compute_discovery_stats(df)
 
     for field in df.schema.fields:
         col_name = field.name
@@ -449,6 +475,7 @@ def _auto_discover_heuristic(df: DataFrame, warnings: list[str]) -> AnomalyProfi
             column_stats,
             unsupported_columns,
             distinct_count=distinct_counts.get(col_name),
+            numeric_stats=numeric_stats,
         )
 
     # Select top columns

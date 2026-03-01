@@ -4,7 +4,7 @@ from unittest.mock import create_autospec
 import pytest
 from pyspark.sql import DataFrame
 
-from databricks.labs.dqx.anomaly.explainer import add_top_contributors_to_message
+from databricks.labs.dqx.anomaly.explainability import add_top_contributors_to_message
 from databricks.labs.dqx.errors import InvalidParameterError
 
 

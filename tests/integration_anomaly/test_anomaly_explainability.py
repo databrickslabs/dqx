@@ -17,13 +17,13 @@ from sklearn.ensemble import IsolationForest
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from databricks.labs.dqx.anomaly import explainer as explainer_mod
-from databricks.labs.dqx.anomaly.check_funcs import set_driver_only_for_tests
-from databricks.labs.dqx.anomaly.explainer import (
+from databricks.labs.dqx.anomaly import explainability as explainability_mod
+from databricks.labs.dqx.anomaly.explainability import (
     add_top_contributors_to_message,
+    compute_contributions_for_matrix,
     create_optimal_tree_explainer,
+    format_contributions_map,
 )
-from databricks.labs.dqx.anomaly.explainer import format_contributions_map
 from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
@@ -226,7 +226,7 @@ def test_add_top_contributors_handles_null_map():
 
 def test_create_optimal_tree_explainer():
     """TreeExplainer is created when SHAP is available, otherwise ImportError."""
-    if explainer_mod.shap is None:
+    if explainability_mod.SHAP is None:
         with pytest.raises(ImportError):
             create_optimal_tree_explainer(object())
         return
@@ -238,7 +238,7 @@ def test_create_optimal_tree_explainer():
 
 def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, test_df_factory, anomaly_scorer):
     """Compute SHAP contributions in driver-only mode (Spark Connect safe)."""
-    if explainer_mod.shap is None:
+    if explainability_mod.SHAP is None:
         pytest.skip("Explainability dependencies not available")
 
     model_name = shared_2d_model["model_name"]
@@ -251,32 +251,28 @@ def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, t
         columns_schema="amount double, quantity double",
     )
 
-    set_driver_only_for_tests(True)
-    try:
-        result_df = anomaly_scorer(
-            test_df,
-            model_name=model_name,
-            registry_table=registry_table,
-            threshold=DEFAULT_SCORE_THRESHOLD,
-            include_contributions=True,
-            extract_score=False,
-        )
-        row = result_df.collect()[0]
-        contribs = row["_dq_info"][0]["anomaly"]["contributions"]
-        assert contribs is not None
-        assert "amount" in contribs and "quantity" in contribs
-    finally:
-        set_driver_only_for_tests(False)
+    result_df = anomaly_scorer(
+        test_df,
+        model_name=model_name,
+        registry_table=registry_table,
+        threshold=DEFAULT_SCORE_THRESHOLD,
+        include_contributions=True,
+        extract_score=False,
+    )
+    row = result_df.collect()[0]
+    contribs = row["_dq_info"][0]["anomaly"]["contributions"]
+    assert contribs is not None
+    assert "amount" in contribs and "quantity" in contribs
 
 
 def test_compute_contributions_helper():
     """Compute contributions directly for a small matrix."""
-    if explainer_mod.shap is None or explainer_mod.np is None or explainer_mod.pd is None:
+    if explainability_mod.SHAP is None:
         pytest.skip("Explainability dependencies not available")
 
     model = IsolationForest(random_state=42).fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
     feature_matrix = np.array([[0.0, 0.1], [2.0, 2.1]])
-    contributions = explainer_mod.compute_contributions_for_matrix(model, feature_matrix, ["amount", "quantity"])
+    contributions = compute_contributions_for_matrix(model, feature_matrix, ["amount", "quantity"])
 
     assert len(contributions) == 2
     assert set(contributions[0].keys()) == {"amount", "quantity"}
@@ -284,7 +280,7 @@ def test_compute_contributions_helper():
 
 def test_compute_contributions_pipeline_and_nan():
     """Pipeline models and NaN rows are handled correctly."""
-    if explainer_mod.shap is None or explainer_mod.np is None or explainer_mod.pd is None:
+    if explainability_mod.SHAP is None:
         pytest.skip("Explainability dependencies not available")
 
     pipeline = Pipeline(
@@ -296,7 +292,7 @@ def test_compute_contributions_pipeline_and_nan():
     pipeline.fit(np.array([[0.0, 0.1], [1.0, 1.1], [2.0, 2.1]]))
 
     feature_matrix = np.array([[np.nan, 0.1], [2.0, 2.1]])
-    contributions = explainer_mod.compute_contributions_for_matrix(pipeline, feature_matrix, ["amount", "quantity"])
+    contributions = compute_contributions_for_matrix(pipeline, feature_matrix, ["amount", "quantity"])
 
     assert contributions[0] == {"amount": None, "quantity": None}
     assert set(contributions[1].keys()) == {"amount", "quantity"}

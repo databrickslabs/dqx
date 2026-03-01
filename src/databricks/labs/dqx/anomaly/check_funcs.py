@@ -10,17 +10,15 @@ from typing import Any
 import pyspark.sql.functions as F
 from pyspark.sql import Column, DataFrame
 
-from databricks.labs.dqx.anomaly.discovery import fetch_model_columns_and_segments
+from databricks.labs.dqx.anomaly.model_discovery import fetch_model_columns_and_segments
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
-from databricks.labs.dqx.anomaly.scoring_helpers import check_reserved_row_id_columns
+from databricks.labs.dqx.anomaly.scoring_utils import check_reserved_row_id_columns
 from databricks.labs.dqx.anomaly.scoring_orchestrator import run_anomaly_scoring
-from databricks.labs.dqx.anomaly.shap_contributions import SHAP_AVAILABLE
+from databricks.labs.dqx.anomaly.explainability import SHAP_AVAILABLE
 from databricks.labs.dqx.anomaly.validation import validate_fully_qualified_name
 from databricks.labs.dqx.check_funcs import make_condition
 from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.rule import register_rule
-
-_DRIVER_ONLY = {"value": False}
 
 
 @register_rule("dataset")
@@ -32,6 +30,8 @@ def has_no_row_anomalies(
     drift_threshold: float | None = None,
     include_contributions: bool = True,
     include_confidence: bool = False,
+    *,
+    driver_only: bool = False,
 ) -> tuple[Column, Any, str]:
     """Check that records are not anomalous according to a trained model(s).
 
@@ -71,6 +71,8 @@ def has_no_row_anomalies(
             Requires SHAP library. Performance-optimized with native batching.
         include_confidence: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
+        driver_only: If True, score on the driver (no UDF). Use for tests or Spark Connect when
+            worker UDF dependencies are not available. Default False for production.
 
     Returns:
         Tuple of condition expression, apply function and info column name.
@@ -111,7 +113,6 @@ def has_no_row_anomalies(
     contributions_col = f"__dq_anomaly_contributions_{uuid.uuid4().hex}"
     severity_col = f"__dq_severity_percentile_{uuid.uuid4().hex}"
     info_col = f"__dqx_info_{uuid.uuid4().hex}"
-    driver_only_local = _DRIVER_ONLY["value"]
 
     def apply(df: DataFrame) -> DataFrame:
         check_reserved_row_id_columns(df)
@@ -130,7 +131,7 @@ def has_no_row_anomalies(
             include_contributions=include_contributions,
             include_confidence=include_confidence,
             segment_by=segment_by,
-            driver_only=driver_only_local,
+            driver_only=driver_only,
             score_col=score_col,
             score_std_col=score_std_col,
             contributions_col=contributions_col,
@@ -149,8 +150,3 @@ def has_no_row_anomalies(
     )
     condition_expr = F.col(info_col).anomaly.is_anomaly
     return make_condition(condition_expr, message, "has_row_anomalies"), apply, info_col
-
-
-def set_driver_only_for_tests(enabled: bool) -> None:
-    """Toggle driver-only scoring for tests since we cannot use udfs requiring non-standard packages with spark connect."""
-    _DRIVER_ONLY["value"] = enabled

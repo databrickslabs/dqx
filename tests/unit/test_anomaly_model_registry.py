@@ -1,15 +1,21 @@
 """Unit tests for anomaly model registry functions."""
 
 from datetime import datetime
+from unittest.mock import create_autospec
+
+import pytest
+from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.anomaly.model_config import compute_config_hash
 from databricks.labs.dqx.anomaly.model_registry import (
     AnomalyModelRecord,
+    AnomalyModelRegistry,
     FeatureEngineering,
     ModelIdentity,
     SegmentationConfig,
     TrainingMetadata,
 )
+from databricks.labs.dqx.errors import InvalidParameterError
 
 
 # ============================================================================
@@ -222,3 +228,57 @@ def test_is_segmented_property() -> None:
     # Segmented model has segment_by and segment_values
     assert segment_record.segmentation.segment_by == ["region"]
     assert segment_record.segmentation.segment_values == {"region": "US"}
+
+
+# ============================================================================
+# save_model SQL safety tests (archive path)
+# ============================================================================
+
+
+def _minimal_record(model_name: str = "catalog.schema.model") -> AnomalyModelRecord:
+    """Minimal AnomalyModelRecord for save_model tests."""
+    return AnomalyModelRecord(
+        identity=ModelIdentity(
+            model_name=model_name,
+            model_uri="models:/catalog.schema.model/1",
+            algorithm="IsolationForest",
+            mlflow_run_id="run1",
+            status="active",
+        ),
+        training=TrainingMetadata(
+            columns=["col1"],
+            hyperparameters={},
+            training_rows=100,
+            training_time=datetime.now(),
+        ),
+        features=FeatureEngineering(
+            feature_metadata=None,
+            feature_importance=None,
+            temporal_config=None,
+        ),
+        segmentation=SegmentationConfig(segment_by=None, segment_values=None),
+    )
+
+
+def test_save_model_raises_when_table_contains_unsafe_sql() -> None:
+    """save_model raises InvalidParameterError when table contains forbidden SQL keywords."""
+    mock_spark = create_autospec(SparkSession, instance=True)
+    registry = AnomalyModelRegistry(mock_spark)
+    with pytest.raises(InvalidParameterError, match="must not contain SQL keywords"):
+        registry.save_model(_minimal_record(), "catalog.schema.delete")
+
+
+def test_save_model_raises_when_model_name_contains_unsafe_sql() -> None:
+    """save_model raises InvalidParameterError when record model_name contains forbidden SQL keywords."""
+    mock_spark = create_autospec(SparkSession, instance=True)
+    registry = AnomalyModelRegistry(mock_spark)
+    with pytest.raises(InvalidParameterError, match="must not contain SQL keywords"):
+        registry.save_model(_minimal_record("x'; DROP TABLE users; --"), "catalog.schema.registry")
+
+
+def test_save_model_raises_when_table_contains_update_keyword() -> None:
+    """save_model raises when table contains forbidden keyword as whole word."""
+    mock_spark = create_autospec(SparkSession, instance=True)
+    registry = AnomalyModelRegistry(mock_spark)
+    with pytest.raises(InvalidParameterError, match="must not contain SQL keywords"):
+        registry.save_model(_minimal_record(), "catalog.schema.update")

@@ -4,16 +4,18 @@ from unittest.mock import create_autospec, patch
 import pytest
 from pyspark.sql import DataFrame, SparkSession
 
-from databricks.labs.dqx.anomaly import check_funcs, discovery, scoring_orchestrator
+from databricks.labs.dqx.anomaly import check_funcs, model_discovery, scoring_orchestrator
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
-from databricks.labs.dqx.anomaly.discovery import get_quantile_points_for_severity
+from databricks.labs.dqx.anomaly.model_discovery import get_quantile_points_for_severity
 from databricks.labs.dqx.anomaly.scoring_config import ScoringConfig
 from databricks.labs.dqx.anomaly.scoring_strategies import resolve_scoring_strategy
 from databricks.labs.dqx.anomaly.model_config import (
     AnomalyModelRecord,
+    FeatureEngineering,
     ModelIdentity,
     SegmentationConfig,
     TrainingMetadata,
+    compute_config_hash,
 )
 from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.errors import InvalidParameterError
@@ -143,7 +145,7 @@ def test_run_anomaly_scoring_raises_when_model_not_found_and_no_fallback():
     # Discovery calls get_active_model once -> return record; orchestrator calls it -> None.
     mock_registry.get_active_model.side_effect = [record, None]
     mock_registry.get_all_segment_models.return_value = []  # fallback returns None
-    with patch.object(discovery, "AnomalyModelRegistry") as mock_cls_disc:
+    with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
         with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
             mock_cls_disc.return_value = mock_registry
             mock_cls_orch.return_value = mock_registry
@@ -184,7 +186,7 @@ def test_load_segment_models_raises_when_no_segments():
     mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
     mock_registry.get_active_model.return_value = None
     mock_registry.get_all_segment_models.side_effect = [[segment], []]
-    with patch.object(discovery, "AnomalyModelRegistry") as mock_cls_disc:
+    with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
         with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
             mock_cls_disc.return_value = mock_registry
             mock_cls_orch.return_value = mock_registry
@@ -253,3 +255,90 @@ def test_extract_quantile_points_raises_when_score_quantiles_empty():
 
     assert "missing score quantiles" in str(exc_info.value)
     assert "catalog.schema.other_model" in str(exc_info.value)
+
+
+def test_apply_fn_raises_when_global_model_has_no_feature_metadata():
+    """When registry returns a global model with feature_metadata None, apply_fn raises InvalidParameterError."""
+    mock_spark = create_autospec(SparkSession, instance=True)
+    mock_df = create_autospec(DataFrame, instance=True)
+    mock_df.sparkSession = mock_spark
+    mock_df.withColumn.return_value = mock_df
+    mock_df.columns = ["a", "b"]
+    mock_df.filter.return_value = mock_df
+
+    registry_table = "catalog.schema.registry"
+    model_name = "catalog.schema.my_model"
+    columns = ["a", "b"]
+    config_hash = compute_config_hash(columns, None)
+
+    record = create_autospec(AnomalyModelRecord, instance=True)
+    record.identity = create_autospec(ModelIdentity, instance=True)
+    record.identity.model_name = model_name
+    record.identity.model_uri = "models:/my_model/1"
+    record.identity.algorithm = "IsolationForestV1"
+    record.training = create_autospec(TrainingMetadata, instance=True)
+    record.training.columns = columns
+    record.training.training_time = datetime(2024, 1, 1)
+    record.features = FeatureEngineering(feature_metadata=None)
+    record.segmentation = create_autospec(SegmentationConfig, instance=True)
+    record.segmentation.segment_by = None
+    record.segmentation.config_hash = config_hash
+
+    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
+    mock_registry.get_active_model.return_value = record
+    mock_registry.get_all_segment_models.return_value = []
+
+    with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
+        with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
+            mock_cls_disc.return_value = mock_registry
+            mock_cls_orch.return_value = mock_registry
+
+            _, apply_fn, _ = has_no_row_anomalies(
+                model_name=model_name,
+                registry_table=registry_table,
+            )
+            with pytest.raises(InvalidParameterError) as exc_info:
+                apply_fn(mock_df)
+
+    assert "missing feature_metadata" in str(exc_info.value)
+    assert model_name in str(exc_info.value)
+
+
+def test_apply_fn_raises_when_segment_model_has_no_segment_by():
+    """When segment fallback returns a segment with segment_by None, apply_fn raises InvalidParameterError."""
+    mock_spark = create_autospec(SparkSession, instance=True)
+    mock_df = create_autospec(DataFrame, instance=True)
+    mock_df.sparkSession = mock_spark
+    mock_df.withColumn.return_value = mock_df
+    mock_df.columns = ["a", "b"]
+
+    registry_table = "catalog.schema.registry"
+    model_name = "catalog.schema.my_model"
+
+    segment = create_autospec(AnomalyModelRecord, instance=True)
+    segment.identity = create_autospec(ModelIdentity, instance=True)
+    segment.identity.model_name = model_name
+    segment.identity.algorithm = "IsolationForestV1"
+    segment.training = create_autospec(TrainingMetadata, instance=True)
+    segment.training.columns = ["a", "b"]
+    segment.training.training_time = datetime.min
+    segment.segmentation = create_autospec(SegmentationConfig, instance=True)
+    segment.segmentation.segment_by = None
+
+    mock_registry = create_autospec(AnomalyModelRegistry, instance=True)
+    mock_registry.get_active_model.return_value = None
+    mock_registry.get_all_segment_models.return_value = [segment]
+
+    with patch.object(model_discovery, "AnomalyModelRegistry") as mock_cls_disc:
+        with patch.object(scoring_orchestrator, "AnomalyModelRegistry") as mock_cls_orch:
+            mock_cls_disc.return_value = mock_registry
+            mock_cls_orch.return_value = mock_registry
+
+            _, apply_fn, _ = has_no_row_anomalies(
+                model_name=model_name,
+                registry_table=registry_table,
+            )
+            with pytest.raises(InvalidParameterError) as exc_info:
+                apply_fn(mock_df)
+
+    assert "Segment model must have segment_by" in str(exc_info.value)
