@@ -127,7 +127,7 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, request, spark, ws, make_
         _, apply_fn, _ = has_no_row_anomalies(
             model_name=model_name,
             registry_table=registry_table,
-            include_contributions=False,
+            enable_contributions=False,
         )
     except InvalidParameterError:
         schema = make_schema(catalog_name=TEST_CATALOG).name
@@ -144,7 +144,7 @@ def test_benchmark_anomaly_arrhythmia_score(benchmark, request, spark, ws, make_
         _, apply_fn, _ = has_no_row_anomalies(
             model_name=model_name,
             registry_table=registry_table,
-            include_contributions=False,
+            enable_contributions=False,
         )
 
     def run_score():

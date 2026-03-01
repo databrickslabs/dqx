@@ -243,8 +243,8 @@ def test_apply_anomaly_check_info_column_structure(ws, spark: SparkSession, shar
             model_name=model_name,
             registry_table=registry_table,
             threshold=60.0,
-            include_contributions=False,  # Test without optional fields
-            include_confidence=False,
+            enable_contributions=False,  # Test without optional fields
+            enable_confidence_std=False,
         )
     ]
 
@@ -310,7 +310,7 @@ def test_apply_anomaly_check_with_contributions(ws, spark: SparkSession, shared_
             model_name=model_name,
             registry_table=registry_table,
             threshold=60.0,
-            include_contributions=True,  # Request contributions
+            enable_contributions=True,  # Request contributions
         )
     ]
 

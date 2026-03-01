@@ -28,8 +28,8 @@ def has_no_row_anomalies(
     threshold: float = 95.0,
     row_filter: str | None = None,
     drift_threshold: float | None = None,
-    include_contributions: bool = False,
-    include_confidence: bool = False,
+    enable_contributions: bool = False,
+    enable_confidence_std: bool = False,
     *,
     driver_only: bool = False,
 ) -> tuple[Column, Any, str]:
@@ -67,10 +67,10 @@ def has_no_row_anomalies(
             this expression are scored; others are left in the output with null anomaly
             result. Auto-injected from the check filter.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
-        include_contributions: Include SHAP feature contributions for explainability (default False).
+        enable_contributions: Include SHAP feature contributions for explainability (default False).
             Set True to get per-feature contributions in _dq_info; adds significant scoring cost.
             Requires SHAP library when True.
-        include_confidence: Include ensemble confidence scores in _dq_info and top-level (default False).
+        enable_confidence_std: Include ensemble confidence scores in _dq_info and top-level (default False).
             Automatically available when training with ensemble_size > 1 (default is 3).
         driver_only: If True, score on the driver (no UDF). Use for tests or Spark Connect when
             worker UDF dependencies are not available. Default False for production.
@@ -102,9 +102,9 @@ def has_no_row_anomalies(
     if drift_threshold is not None and drift_threshold <= 0:
         raise InvalidParameterError("drift_threshold must be greater than 0 when provided.")
 
-    if include_contributions and not SHAP_AVAILABLE:
+    if enable_contributions and not SHAP_AVAILABLE:
         raise InvalidParameterError(
-            "include_contributions=True requires the 'shap' dependency. "
+            "enable_contributions=True requires the 'shap' dependency. "
             "Install anomaly extras: pip install databricks-labs-dqx[anomaly]"
         )
 
@@ -129,8 +129,8 @@ def has_no_row_anomalies(
             row_filter=row_filter,
             drift_threshold=drift_threshold,
             drift_threshold_value=drift_threshold if drift_threshold is not None else 3.0,
-            include_contributions=include_contributions,
-            include_confidence=include_confidence,
+            enable_contributions=enable_contributions,
+            enable_confidence_std=enable_confidence_std,
             segment_by=segment_by,
             driver_only=driver_only,
             score_col=score_col,

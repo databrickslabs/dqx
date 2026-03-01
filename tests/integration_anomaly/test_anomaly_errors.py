@@ -329,7 +329,7 @@ def test_row_filter_scores_only_matching_rows(
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
         row_filter="amount > 150",
-        include_contributions=False,
+        enable_contributions=False,
     )
     result = apply_fn(df).select("amount", F.col(f"{info_col}.anomaly.score").alias("score")).collect()
 
@@ -346,8 +346,8 @@ def test_create_null_scored_dataframe_updates_existing_info(spark: SparkSession)
     )
     result = create_null_scored_dataframe(
         df,
-        include_contributions=True,
-        include_confidence=True,
+        enable_contributions=True,
+        enable_confidence_std=True,
     )
     # Before merge, info column is a single struct<anomaly: ...>, not yet an array
     row = result.select(F.col("_dq_info").getField("anomaly").getField("score").alias("score")).first()
@@ -366,8 +366,8 @@ def test_add_info_column_preserves_existing_info(spark: SparkSession):
         model_name="catalog.schema.model",
         threshold=60.0,
         info_col_name="_dq_info",
-        include_contributions=False,
-        include_confidence=False,
+        enable_contributions=False,
+        enable_confidence_std=False,
     )
     # Before merge, info column is a single struct<anomaly: ...>, not yet an array
     row = result.select(F.col("_dq_info").getField("anomaly").getField("score").alias("score")).first()
@@ -377,8 +377,8 @@ def test_add_info_column_preserves_existing_info(spark: SparkSession):
 
 def test_create_udf_schema_includes_contributions():
     """Test UDF schema includes contributions field when requested."""
-    schema_without = create_udf_schema(include_contributions=False)
-    schema_with = create_udf_schema(include_contributions=True)
+    schema_without = create_udf_schema(enable_contributions=False)
+    schema_with = create_udf_schema(enable_contributions=True)
     assert [field.name for field in schema_without.fields] == ["anomaly_score"]
     assert [field.name for field in schema_with.fields] == ["anomaly_score", "anomaly_contributions"]
 

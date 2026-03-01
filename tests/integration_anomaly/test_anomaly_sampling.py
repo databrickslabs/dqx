@@ -211,7 +211,7 @@ def test_distributed_scoring_with_row_filter(
         model_name=model_name,
         registry_table=registry_table,
         row_filter="amount > 150",
-        include_contributions=False,
+        enable_contributions=False,
         driver_only=False,
     )
     result = dq_engine.apply_checks(df, [check])

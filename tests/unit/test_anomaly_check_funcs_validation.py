@@ -99,14 +99,14 @@ def test_has_no_row_anomalies_rejects_non_positive_drift_threshold():
         )
 
 
-def test_has_no_row_anomalies_include_contributions_requires_shap():
-    """include_contributions=True requires SHAP; raises when SHAP is not available."""
-    with pytest.raises(InvalidParameterError, match="include_contributions=True requires the 'shap' dependency"):
+def test_has_no_row_anomalies_enable_contributions_requires_shap():
+    """enable_contributions=True requires SHAP; raises when SHAP is not available."""
+    with pytest.raises(InvalidParameterError, match="enable_contributions=True requires the 'shap' dependency"):
         with patch.object(check_funcs, "SHAP_AVAILABLE", False):
             has_no_row_anomalies(
                 model_name="catalog.schema.model",
                 registry_table="catalog.schema.table",
-                include_contributions=True,
+                enable_contributions=True,
             )
 
 

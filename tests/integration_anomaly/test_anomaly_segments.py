@@ -454,8 +454,8 @@ def test_all_unknown_segments_yield_null_scores(
         check_func_kwargs={
             "model_name": model_name,
             "registry_table": registry_table,
-            "include_contributions": True,
-            "include_confidence": True,
+            "enable_contributions": True,
+            "enable_confidence_std": True,
         },
     )
 

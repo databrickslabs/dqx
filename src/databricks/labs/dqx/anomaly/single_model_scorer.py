@@ -79,7 +79,7 @@ def score_with_sklearn_model(
     feature_cols: list[str],
     feature_metadata_json: str,
     merge_columns: list[str],
-    include_contributions: bool = False,
+    enable_contributions: bool = False,
     *,
     model_record: AnomalyModelRecord,
 ) -> DataFrame:
@@ -93,8 +93,8 @@ def score_with_sklearn_model(
     engineered_feature_cols = feature_metadata.engineered_feature_names
     model_bytes = cloudpickle.dumps(sklearn_model)
 
-    schema = create_udf_schema(include_contributions)
-    if include_contributions:
+    schema = create_udf_schema(enable_contributions)
+    if enable_contributions:
         predict_udf = create_scoring_udf_with_contributions(model_bytes, engineered_feature_cols, schema)
     else:
         predict_udf = create_scoring_udf(model_bytes, engineered_feature_cols, schema)
@@ -102,7 +102,7 @@ def score_with_sklearn_model(
     scored_df = engineered_df.withColumn("_scores", predict_udf(*[col(c) for c in engineered_feature_cols]))
 
     cols_to_select = [*merge_columns, "_scores.anomaly_score"]
-    if include_contributions:
+    if enable_contributions:
         cols_to_select.append("_scores.anomaly_contributions")
 
     return df.join(scored_df.select(*cols_to_select), on=merge_columns, how="left")
@@ -114,7 +114,7 @@ def score_with_sklearn_model_local(
     feature_cols: list[str],
     feature_metadata_json: str,
     merge_columns: list[str],
-    include_contributions: bool = False,
+    enable_contributions: bool = False,
     *,
     model_record: AnomalyModelRecord,
 ) -> DataFrame:
@@ -134,7 +134,7 @@ def score_with_sklearn_model_local(
     result = {col_name: local_pdf[col_name] for col_name in merge_columns}
     result["anomaly_score"] = scores
 
-    if include_contributions:
+    if enable_contributions:
         shap_values, valid_indices = compute_shap_values(
             sklearn_model,
             feature_matrix,
@@ -151,7 +151,7 @@ def score_with_sklearn_model_local(
             StructField("anomaly_score", DoubleType(), True),
             *(
                 [StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)]
-                if include_contributions
+                if enable_contributions
                 else []
             ),
         ]

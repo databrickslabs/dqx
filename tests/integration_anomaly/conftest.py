@@ -715,7 +715,7 @@ def score_3d_with_contributions(
     registry_table: str,
     normal_rows: list[tuple[float, float, float]] | None = None,
     anomaly_rows: list[tuple[float, float, float]] | None = None,
-    include_confidence: bool = False,
+    enable_confidence_std: bool = False,
 ) -> DataFrame:
     """Score a 3D dataset with contributions enabled (optionally confidence)."""
     test_df = df_factory(
@@ -729,8 +729,8 @@ def score_3d_with_contributions(
         model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
-        include_contributions=True,
-        include_confidence=include_confidence,
+        enable_contributions=True,
+        enable_confidence_std=enable_confidence_std,
         extract_score=False,
     )
 

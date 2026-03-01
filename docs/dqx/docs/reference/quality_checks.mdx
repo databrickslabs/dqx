@@ -3024,7 +3024,7 @@ model_name = anomaly_engine.train(
 
 <Admonition type="tip" title="Quick Tuning Tips">
 - **Too many false positives?** Increase `threshold` (95 → 98) in scoring, or increase `ensemble_size` (3 → 5)
-- **Training too slow?** Decrease `sample_fraction`, `max_rows`, or `num_trees`; disable SHAP explainability with `include_contributions=False`
+- **Training too slow?** Decrease `sample_fraction`, `max_rows`, or `num_trees`; disable SHAP explainability with `enable_contributions=False`
 - **Missing real anomalies?** Decrease `threshold` (95 → 90) in scoring, or increase `expected_anomaly_rate`
 - **Reproducible results needed?** Set `random_seed` in `IsolationForestConfig`
 - **High-cardinality categoricals slow?** Increase `categorical_cardinality_threshold` to use Frequency encoding
@@ -3068,8 +3068,8 @@ checks = [
 - `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
 - `drift_threshold`: Pass a float (for example 3.0) to enable drift detection; default `None` (disabled). When enabled, 3.0 means roughly 3-sigma deviation from training statistics. See the section below for more details.
-- `include_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `False`). Set `True` for explainability; adds significant scoring cost. See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
-- `include_confidence`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
+- `enable_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `False`). Set `True` for explainability; adds significant scoring cost. See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
+- `enable_confidence_std`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
 
 **Notes**
 - For workflow training, `model_name` and `registry_table` are required and must be fully qualified. Both are stored in Unity Catalog.
@@ -3095,7 +3095,7 @@ ORDER BY training_time DESC
 
 **Feature Contributions (Explainability)**
 
-Contributions are disabled by default for performance. Set `include_contributions=True` to get per-feature SHAP contributions (adds significant cost):
+Contributions are disabled by default for performance. Set `enable_contributions=True` to get per-feature SHAP contributions (adds significant cost):
 
 ```python
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
@@ -3105,12 +3105,12 @@ checks = [
     model_name="catalog.schema.orders_monitor",
     registry_table="catalog.schema.dqx_anomaly_models",
     threshold=95.0,
-    include_contributions=True,  # Optional: per-feature contributions (slower)
+    enable_contributions=True,  # Optional: per-feature contributions (slower)
   )
 ]
 ```
 
-When `include_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages). For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
+When `enable_contributions=True`, the `_dq_info` column includes `contributions` (per-feature contribution percentages). For the full list of fields in `_dq_info` and the nested `anomaly` struct, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info).
 
 Example: triage top anomalies and inspect contributions:
 ```python

@@ -31,8 +31,8 @@ class ScoringConfig:
     row_filter: str | None = None
     drift_threshold: float | None = None
     drift_threshold_value: float = 3.0
-    include_contributions: bool = False
-    include_confidence: bool = False
+    enable_contributions: bool = False
+    enable_confidence_std: bool = False
     segment_by: list[str] | None = None
     driver_only: bool = False
     score_col: str = "anomaly_score"

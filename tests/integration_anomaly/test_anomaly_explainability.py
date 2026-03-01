@@ -75,13 +75,13 @@ def test_contribution_percentages_sum_to_hundred(spark: SparkSession, shared_3d_
         columns_schema="amount double, quantity double, discount double",
     )
 
-    # Use anomaly_scorer with include_contributions
+    # Use anomaly_scorer with enable_contributions
     result_df = anomaly_scorer(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
-        include_contributions=True,
+        enable_contributions=True,
         extract_score=False,
     )
     row = result_df.collect()[0]
@@ -110,13 +110,13 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
         columns_schema="amount double, quantity double, discount double, weight double",
     )
 
-    # Use anomaly_scorer with include_contributions
+    # Use anomaly_scorer with enable_contributions
     result_df = anomaly_scorer(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
-        include_contributions=True,
+        enable_contributions=True,
         extract_score=False,
     )
     row = result_df.collect()[0]
@@ -132,7 +132,7 @@ def test_multi_feature_contributions(spark: SparkSession, shared_4d_model, test_
 
 
 def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_model, test_df_factory, anomaly_scorer):
-    """Test that contributions are not added when include_contributions=False."""
+    """Test that contributions are not added when enable_contributions=False."""
     # Use shared pre-trained model (no training needed!)
     model_name = shared_2d_model["model_name"]
     registry_table = shared_2d_model["registry_table"]
@@ -145,13 +145,13 @@ def test_contributions_without_flag_not_added(spark: SparkSession, shared_2d_mod
         columns_schema="amount double, quantity double",
     )
 
-    # Use anomaly_scorer with include_contributions=False
+    # Use anomaly_scorer with enable_contributions=False
     result_df = anomaly_scorer(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
-        include_contributions=False,  # Explicitly False
+        enable_contributions=False,  # Explicitly False
         extract_score=False,
     )
 
@@ -173,13 +173,13 @@ def test_top_contributor_is_reasonable(spark: SparkSession, shared_3d_model, tes
         columns_schema="amount double, quantity double, discount double",
     )
 
-    # Use anomaly_scorer with include_contributions
+    # Use anomaly_scorer with enable_contributions
     result_df = anomaly_scorer(
         test_df,
         model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
-        include_contributions=True,
+        enable_contributions=True,
         extract_score=False,
     )
     row = result_df.collect()[0]
@@ -256,7 +256,7 @@ def test_driver_only_contributions_smoke(spark: SparkSession, shared_2d_model, t
         model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
-        include_contributions=True,
+        enable_contributions=True,
         extract_score=False,
     )
     row = result_df.collect()[0]

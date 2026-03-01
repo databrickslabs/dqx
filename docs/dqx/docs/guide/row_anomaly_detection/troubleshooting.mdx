@@ -187,14 +187,14 @@ Sampling doesn't hurt model quality if the sample is representative!
 has_no_row_anomalies(
   model_name=model_name,
   registry_table=registry_table,
-  include_contributions=False,  # 10x faster
+  enable_contributions=False,  # 10x faster, default is False
 )
 
 # Investigation: slower, with explanations
 has_no_row_anomalies(
   model_name=model_name,
   registry_table=registry_table,
-  include_contributions=True,  # Optional: for explainability (slower)
+  enable_contributions=True,  # Optional: for explainability (slower)
 )
 ```
 
@@ -306,7 +306,7 @@ anomaly_engine.train(
 
 **Best practices**:
 - Train model on historical batch data first
-- Disable contributions: `include_contributions=False` (recommended for performance)
+- Disable contributions (default) to improve performance
 
 **Example 1: DIY Approach** (you manage readStream/writeStream):
 ```python
@@ -324,7 +324,7 @@ checks = [
   has_no_row_anomalies(
     model_name=model_name,
     registry_table="catalog.schema.anomaly_registry",
-    include_contributions=False,  # Recommended: too slow for real-time
+    enable_contributions=False,  # Recommended: too slow for real-time
   )
 ]
 
@@ -375,10 +375,10 @@ Disable contributions for streaming workloads. SHAP is compute-intensive (5-10x 
 
 ### Q: Should I use contributions in streaming?
 
-**Not recommended**: SHAP explainability (`include_contributions=True`) works with streaming but is too slow for real-time processing (5-10x overhead).
+**Not recommended**: SHAP explainability (`enable_contributions=True`) works with streaming but is too slow for real-time processing (5-10x overhead).
 
 **Best practice**:
-- Use `include_contributions=False` for streaming workloads
+- Use `enable_contributions=False` for streaming workloads
 - For investigation, score a batch sample with contributions enabled
 
 ---

@@ -481,10 +481,7 @@ display(df_quarantine.orderBy(severity_col.desc()).select(
     F.round(severity_col, 1).alias("severity_percentile"),
     F.round(score_col, 3).alias("anomaly_score"),
     percentile_band.alias("severity_band"),
-    F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("why_anomalous")
 ).limit(10))
-
-print("   Use the existing 'why_anomalous' display column above (from _dq_info[0].anomaly.contributions) to understand anomaly drivers.")
 
 # COMMAND ----------
 
@@ -590,28 +587,6 @@ print(f"✅ Manual model trained!")
 print(f"   Model URI: {model_uri_manual}")
 print(f"\n💡 Manual selection is useful in production when you want strict feature control.")
 
-# Compare auto vs manual in the registry
-print(f"\n📊 Auto vs Manual Comparison:")
-print(f"   View both models side-by-side in the registry:\n")
-
-display(
-    spark.table(registry_table)
-    .filter(
-        (F.col("identity.model_name") == model_name_auto) |
-        (F.col("identity.model_name") == model_name_manual)
-    )
-    .select(
-        "identity.model_name",
-        "training.columns",
-        "segmentation.segment_by",
-        "training.training_rows",
-        "identity.status"
-    )
-    .orderBy("identity.model_name", "training.training_time")
-)
-
-print(f"\n💡 Auto vs manual: auto = fast exploration, manual = tight control.")
-
 # COMMAND ----------
 # DBTITLE 1,Manual Column Selection
 
@@ -656,14 +631,12 @@ print("\n💡 Different features → different anomalies. That’s expected.")
 # MAGIC
 # MAGIC Skip this if you only want the quickstart.
 # MAGIC
-# MAGIC Contributions are already shown in Section 5. This section provides a deeper look.
-# MAGIC
 # MAGIC ### Advanced Options (Reference)
 # MAGIC
 # MAGIC **Scoring options (`has_no_row_anomalies`):**
 # MAGIC - `threshold` (float, 0–100): percentile cutoff (default 95)
-# MAGIC - `include_contributions` (bool): feature contributions in `_dq_info[0].anomaly`
-# MAGIC - `include_confidence` (bool): confidence estimate (std dev across ensemble)
+# MAGIC - `enable_contributions` (bool): feature contributions in `_dq_info[0].anomaly`
+# MAGIC - `enable_confidence_std` (bool): confidence estimate (std dev across ensemble)
 # MAGIC - `drift_threshold` (float): drift detection sensitivity
 # MAGIC - `row_filter` (str): SQL filter applied before scoring
 # MAGIC
@@ -689,7 +662,7 @@ checks_with_contrib = [
         check_func_kwargs={
             "model_name": model_name_manual,
             "threshold": 95.0,
-            "include_contributions": True,
+            "enable_contributions": True,  # default is False
             "registry_table": registry_table
         }
     )
@@ -715,7 +688,7 @@ display(anomalies_explained.select(
     F.date_format("date", "yyyy-MM-dd HH:mm").alias("date"),
     F.round(_dq_severity, 1).alias("severity_percentile"),
     F.round(_dq_score, 3).alias("score"),
-    _dq_contrib.alias("contributions")
+    _dq_contrib.alias("contributions").alias("why_anomalous")
 ))
 
 print("\n💡 Contributions show which features most influenced the anomaly.")

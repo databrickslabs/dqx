@@ -73,7 +73,7 @@ def test_ensemble_scoring_with_confidence(
         model_name=model_name,
         registry_table=registry_table,
         threshold=DEFAULT_SCORE_THRESHOLD,
-        include_confidence=True,
+        enable_confidence_std=True,
         extract_score=False,
     )
 
@@ -107,8 +107,8 @@ def test_ensemble_scoring_distributed_path(
     check = create_anomaly_check_rule(
         model_name=model_name,
         registry_table=registry_table,
-        include_confidence=True,
-        include_contributions=False,
+        enable_confidence_std=True,
+        enable_contributions=False,
         driver_only=False,
     )
 
@@ -146,7 +146,7 @@ def test_ensemble_with_feature_contributions(
         model_name,
         registry_table,
         normal_rows=[(100.0, 2.0, 0.1)],
-        include_confidence=True,
+        enable_confidence_std=True,
     )
 
     # Check both confidence and contributions exist in _dq_info (array of structs; anomaly is first element)

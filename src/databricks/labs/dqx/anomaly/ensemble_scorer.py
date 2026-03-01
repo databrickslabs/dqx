@@ -39,13 +39,13 @@ def serialize_ensemble_models(
     return models_bytes
 
 
-def prepare_ensemble_scoring_schema(include_contributions: bool) -> StructType:
+def prepare_ensemble_scoring_schema(enable_contributions: bool) -> StructType:
     """Prepare schema for ensemble scoring UDF."""
     schema_fields = [
         StructField("anomaly_score", DoubleType(), True),
         StructField("anomaly_score_std", DoubleType(), True),
     ]
-    if include_contributions:
+    if enable_contributions:
         schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
     return StructType(schema_fields)
 
@@ -54,11 +54,11 @@ def join_ensemble_scores(
     df_filtered: DataFrame,
     scored_df: DataFrame,
     merge_columns: list[str],
-    include_contributions: bool,
+    enable_contributions: bool,
 ) -> DataFrame:
     """Join scores back to original DataFrame."""
     cols_to_select = [*merge_columns, "_scores.anomaly_score", "_scores.anomaly_score_std"]
-    if include_contributions:
+    if enable_contributions:
         cols_to_select.append("_scores.anomaly_contributions")
 
     return df_filtered.join(scored_df.select(*cols_to_select), on=merge_columns, how="left")
@@ -126,7 +126,7 @@ def score_ensemble_models(
     columns: list[str],
     feature_metadata_json: str,
     merge_columns: list[str],
-    include_contributions: bool,
+    enable_contributions: bool,
     *,
     model_record: AnomalyModelRecord,
 ) -> DataFrame:
@@ -139,8 +139,8 @@ def score_ensemble_models(
     )
     engineered_feature_cols = feature_metadata.engineered_feature_names
 
-    schema = prepare_ensemble_scoring_schema(include_contributions)
-    if include_contributions:
+    schema = prepare_ensemble_scoring_schema(enable_contributions)
+    if enable_contributions:
         ensemble_scoring_udf = create_ensemble_scoring_udf_with_contributions(
             models_bytes, engineered_feature_cols, schema
         )
@@ -150,7 +150,7 @@ def score_ensemble_models(
     input_cols = [col(c) for c in engineered_feature_cols]
     scored_df = engineered_df.withColumn("_scores", ensemble_scoring_udf(*input_cols))
 
-    return join_ensemble_scores(df_filtered, scored_df, merge_columns, include_contributions)
+    return join_ensemble_scores(df_filtered, scored_df, merge_columns, enable_contributions)
 
 
 def score_ensemble_models_local(
@@ -159,7 +159,7 @@ def score_ensemble_models_local(
     columns: list[str],
     feature_metadata_json: str,
     merge_columns: list[str],
-    include_contributions: bool,
+    enable_contributions: bool,
     *,
     model_record: AnomalyModelRecord,
 ) -> DataFrame:
@@ -179,7 +179,7 @@ def score_ensemble_models_local(
     result["anomaly_score"] = scores_matrix.mean(axis=0)
     result["anomaly_score_std"] = scores_matrix.std(axis=0, ddof=1)
 
-    if include_contributions:
+    if enable_contributions:
         shap_values, valid_indices = compute_shap_values(
             models[0],
             feature_matrix,
@@ -197,7 +197,7 @@ def score_ensemble_models_local(
             StructField("anomaly_score_std", DoubleType(), True),
             *(
                 [StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True)]
-                if include_contributions
+                if enable_contributions
                 else []
             ),
         ]

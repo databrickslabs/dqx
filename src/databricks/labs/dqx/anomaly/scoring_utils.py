@@ -24,8 +24,8 @@ register_dq_info_field("anomaly", anomaly_info_struct_schema)
 
 def create_null_scored_dataframe(
     df: DataFrame,
-    include_contributions: bool,
-    include_confidence: bool = False,
+    enable_contributions: bool,
+    enable_confidence_std: bool = False,
     score_col: str = "anomaly_score",
     score_std_col: str = "anomaly_score_std",
     contributions_col: str = "anomaly_contributions",
@@ -36,8 +36,8 @@ def create_null_scored_dataframe(
 
     Args:
         df: Input DataFrame
-        include_contributions: Whether to include null contributions column
-        include_confidence: Whether to include null confidence/std column
+        enable_contributions: Whether to include null contributions column
+        enable_confidence_std: Whether to include null confidence/std column
         score_col: Name for the score column
         score_std_col: Name for the standard deviation column
         contributions_col: Name for the contributions column
@@ -48,9 +48,9 @@ def create_null_scored_dataframe(
         DataFrame with null anomaly scores and properly structured info column
     """
     result = df.withColumn(score_col, F.lit(None).cast(DoubleType()))
-    if include_confidence:
+    if enable_confidence_std:
         result = result.withColumn(score_std_col, F.lit(None).cast(DoubleType()))
-    if include_contributions:
+    if enable_contributions:
         result = result.withColumn(contributions_col, F.lit(None).cast(MapType(StringType(), DoubleType())))
     result = result.withColumn(severity_col, F.lit(None).cast(DoubleType()))
 
@@ -65,8 +65,8 @@ def add_info_column(
     threshold: float,
     info_col_name: str,
     segment_values: dict[str, str] | None = None,
-    include_contributions: bool = False,
-    include_confidence: bool = False,
+    enable_contributions: bool = False,
+    enable_confidence_std: bool = False,
     score_col: str = "anomaly_score",
     score_std_col: str = "anomaly_score_std",
     contributions_col: str = "anomaly_contributions",
@@ -80,8 +80,8 @@ def add_info_column(
         threshold: Threshold used for row anomaly detection.
         info_col_name: Name for the info struct column (collision-safe UUID name expected).
         segment_values: Segment values if model is segmented (None for global models).
-        include_contributions: Whether anomaly_contributions are available (0–100 percent).
-        include_confidence: Whether anomaly_score_std is available.
+        enable_contributions: Whether anomaly_contributions are available (0–100 percent).
+        enable_confidence_std: Whether anomaly_score_std is available.
         score_col: Column name for anomaly scores (internal, collision-safe).
         score_std_col: Column name for ensemble std scores (internal, collision-safe).
         contributions_col: Column name for SHAP contributions (internal, collision-safe, 0–100 percent).
@@ -110,13 +110,13 @@ def add_info_column(
         anomaly_info_fields["segment"] = F.lit(None).cast(MapType(StringType(), StringType()))
 
     # Add contributions (null if not requested or not available)
-    if include_contributions and contributions_col in df.columns:
+    if enable_contributions and contributions_col in df.columns:
         anomaly_info_fields["contributions"] = F.col(contributions_col)
     else:
         anomaly_info_fields["contributions"] = F.lit(None).cast(MapType(StringType(), DoubleType()))
 
     # Add confidence_std (null if not requested or not available)
-    if include_confidence and score_std_col in df.columns:
+    if enable_confidence_std and score_std_col in df.columns:
         anomaly_info_fields["confidence_std"] = F.col(score_std_col)
     else:
         anomaly_info_fields["confidence_std"] = F.lit(None).cast(DoubleType())
@@ -173,14 +173,14 @@ def add_severity_percentile_column(
     return df.withColumn(severity_col, expr)
 
 
-def create_udf_schema(include_contributions: bool) -> StructType:
+def create_udf_schema(enable_contributions: bool) -> StructType:
     """Create schema for scoring UDF output.
 
     The anomaly_score is used internally for populating _dq_info (array of structs).
     After merge, first check's anomaly info is at _dq_info[0].anomaly; check _dq_info[0].anomaly.is_anomaly for status.
 
     Args:
-        include_contributions: Whether to include contributions field
+        enable_contributions: Whether to include contributions field
 
     Returns:
         StructType schema for the UDF output
@@ -188,7 +188,7 @@ def create_udf_schema(include_contributions: bool) -> StructType:
     schema_fields = [
         StructField("anomaly_score", DoubleType(), True),
     ]
-    if include_contributions:
+    if enable_contributions:
         schema_fields.append(StructField("anomaly_contributions", MapType(StringType(), DoubleType()), True))
     return StructType(schema_fields)
 

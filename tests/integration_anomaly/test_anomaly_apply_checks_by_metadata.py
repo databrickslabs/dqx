@@ -272,7 +272,7 @@ def test_apply_anomaly_check_by_metadata_with_custom_threshold(ws, spark: SparkS
 
 
 def test_apply_anomaly_check_by_metadata_with_contributions(ws, spark: SparkSession, shared_3d_model):
-    """Test YAML configuration with include_contributions flag."""
+    """Test YAML configuration with enable_contributions flag."""
     # Use shared pre-trained 3D model (no training needed!)
     model_name = shared_3d_model["model_name"]
     registry_table = shared_3d_model["registry_table"]
@@ -286,7 +286,7 @@ def test_apply_anomaly_check_by_metadata_with_contributions(ws, spark: SparkSess
           model_name: {model_name}
           registry_table: {registry_table}
           threshold: {DEFAULT_SCORE_THRESHOLD}
-          include_contributions: true
+          enable_contributions: true
           driver_only: true
     """
 

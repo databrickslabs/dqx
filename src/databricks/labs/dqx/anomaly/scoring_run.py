@@ -76,7 +76,7 @@ def score_global_model(
                 config.columns,
                 record.features.feature_metadata,
                 config.merge_columns,
-                config.include_contributions,
+                config.enable_contributions,
                 model_record=record,
             )
             if len(model_uris) > 1
@@ -86,7 +86,7 @@ def score_global_model(
                 config.columns,
                 record.features.feature_metadata,
                 config.merge_columns,
-                include_contributions=config.include_contributions,
+                enable_contributions=config.enable_contributions,
                 model_record=record,
             ).withColumn("anomaly_score_std", F.lit(0.0))
         )
@@ -98,7 +98,7 @@ def score_global_model(
                 config.columns,
                 record.features.feature_metadata,
                 config.merge_columns,
-                config.include_contributions,
+                config.enable_contributions,
                 model_record=record,
             )
             if len(model_uris) > 1
@@ -108,14 +108,14 @@ def score_global_model(
                 config.columns,
                 record.features.feature_metadata,
                 config.merge_columns,
-                include_contributions=config.include_contributions,
+                enable_contributions=config.enable_contributions,
                 model_record=record,
             ).withColumn("anomaly_score_std", F.lit(0.0))
         )
 
     scored_df = scored_df.withColumnRenamed("anomaly_score", config.score_col)
     scored_df = scored_df.withColumnRenamed("anomaly_score_std", config.score_std_col)
-    if config.include_contributions and "anomaly_contributions" in scored_df.columns:
+    if config.enable_contributions and "anomaly_contributions" in scored_df.columns:
         scored_df = scored_df.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
     quantile_points = extract_quantile_points(record)
@@ -132,8 +132,8 @@ def score_global_model(
         config.threshold,
         info_col_name=config.info_col,
         segment_values=None,
-        include_contributions=config.include_contributions,
-        include_confidence=config.include_confidence,
+        enable_contributions=config.enable_contributions,
+        enable_confidence_std=config.enable_confidence_std,
         score_col=config.score_col,
         score_std_col=config.score_std_col,
         contributions_col=config.contributions_col,
@@ -141,7 +141,7 @@ def score_global_model(
     )
 
     internal_to_remove = [config.score_std_col, config.severity_col]
-    if config.include_contributions:
+    if config.enable_contributions:
         internal_to_remove.append(config.contributions_col)
 
     if config.row_filter:
@@ -198,7 +198,7 @@ def score_single_segment(
             config.columns,
             segment_model.features.feature_metadata,
             config.merge_columns,
-            include_contributions=config.include_contributions,
+            enable_contributions=config.enable_contributions,
             model_record=segment_model,
         )
     else:
@@ -208,7 +208,7 @@ def score_single_segment(
             config.columns,
             segment_model.features.feature_metadata,
             config.merge_columns,
-            include_contributions=config.include_contributions,
+            enable_contributions=config.enable_contributions,
             model_record=segment_model,
         )
 
@@ -216,7 +216,7 @@ def score_single_segment(
     segment_scored = segment_scored.withColumnRenamed("anomaly_score", config.score_col)
     segment_scored = segment_scored.withColumnRenamed("anomaly_score_std", config.score_std_col)
 
-    if config.include_contributions and "anomaly_contributions" in segment_scored.columns:
+    if config.enable_contributions and "anomaly_contributions" in segment_scored.columns:
         segment_scored = segment_scored.withColumnRenamed("anomaly_contributions", config.contributions_col)
 
     quantile_points = extract_quantile_points(segment_model)
@@ -233,8 +233,8 @@ def score_single_segment(
         config.threshold,
         info_col_name=config.info_col,
         segment_values=segment_model.segmentation.segment_values,
-        include_contributions=config.include_contributions,
-        include_confidence=config.include_confidence,
+        enable_contributions=config.enable_contributions,
+        enable_confidence_std=config.enable_confidence_std,
         score_col=config.score_col,
         score_std_col=config.score_std_col,
         contributions_col=config.contributions_col,
@@ -277,8 +277,8 @@ def score_segmented(
     if not scored_dfs:
         result = create_null_scored_dataframe(
             df_to_score,
-            config.include_contributions,
-            config.include_confidence,
+            config.enable_contributions,
+            config.enable_confidence_std,
             score_col=config.score_col,
             score_std_col=config.score_std_col,
             contributions_col=config.contributions_col,
@@ -291,7 +291,7 @@ def score_segmented(
             result = result.union(sdf)
 
     internal_to_remove = [config.score_std_col, config.severity_col]
-    if config.include_contributions:
+    if config.enable_contributions:
         internal_to_remove.append(config.contributions_col)
     columns_to_keep = [c for c in result.columns if c not in internal_to_remove]
     result = result.select(*columns_to_keep)
