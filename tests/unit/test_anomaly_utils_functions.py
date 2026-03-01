@@ -19,6 +19,12 @@ from tests.unit.test_anomaly_test_helpers import STANDARD_REGION_PRODUCT_FEATURE
 # ============================================================================
 
 
+def test_apply_expected_anomaly_rate_with_none_params_uses_default_params():
+    """When params is None, method uses AnomalyParams() and applies expected_anomaly_rate."""
+    updated = AnomalyTrainingService.apply_expected_anomaly_rate_if_default_contamination(None, 0.02)
+    assert updated.algorithm_config.contamination == 0.02
+
+
 def test_expected_anomaly_rate_applies_when_contamination_unset():
     """expected_anomaly_rate should set contamination when unset (None)."""
     params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=None))

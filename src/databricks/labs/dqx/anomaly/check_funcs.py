@@ -232,7 +232,9 @@ def has_no_row_anomalies(
         threshold: Severity percentile threshold (0–100, default 95).
             Records with severity_percentile >= threshold are flagged as anomalous.
             Higher threshold = stricter detection (fewer anomalies).
-        row_filter: Optional SQL expression to filter rows before scoring. Auto-injected from the check filter.
+        row_filter: Optional SQL expression (e.g. \"region = 'US'\"). Only rows matching
+            this expression are scored; others are left in the output with null anomaly
+            result. Auto-injected from the check filter.
         drift_threshold: Drift detection threshold (default 3.0, None to disable).
         include_contributions: Include SHAP feature contributions for explainability (default True).
             Requires SHAP library. Performance-optimized with native batching.
@@ -282,6 +284,8 @@ def has_no_row_anomalies(
 
     def apply(df: DataFrame) -> DataFrame:
         _check_reserved_row_id_columns(df)
+        # Add a merge key so we can reattach scored rows to the full DataFrame when
+        # row_filter is used (filter -> score only matching rows -> left join back).
         df_to_score = df.withColumn(row_id_col, F.monotonically_increasing_id())
         columns, segment_by = _fetch_model_columns_and_segments(df_to_score, model_name, registry_table)
         config = ScoringConfig(
@@ -361,7 +365,11 @@ def _join_filtered_results_back(
     score_col: str,
     info_col: str,
 ) -> DataFrame:
-    """Join scored results back to original DataFrame (for row_filter case)."""
+    """Left-join scored result onto df so every input row is preserved.
+
+    Rows that were scored get score/info; rows that were not (e.g. filtered out by
+    row_filter) get null. merge_columns (e.g. row_id) must exist on both df and result.
+    """
     score_cols_to_join = [score_col, info_col]
 
     # Select only merge columns + score columns
@@ -379,7 +387,11 @@ def _join_filtered_results_back(
 
 
 def _apply_row_filter(df: DataFrame, row_filter: str | None) -> DataFrame:
-    """Prepare DataFrame for scoring by applying optional row filter."""
+    """Return only rows that match row_filter for scoring; if no filter, return df unchanged.
+
+    row_filter is a SQL expression (e.g. \"region = 'US'\"). Only these rows are run
+    through anomaly detection; elsewhere we join results back so output has same row count.
+    """
     return df.filter(F.expr(row_filter)) if row_filter else df
 
 
@@ -487,7 +499,7 @@ def _score_segmented(
             "Train segmented models first using anomaly.train(...)."
         )
 
-    # Filter rows if row_filter is provided
+    # Score only rows matching row_filter (if set); then join back to full df below
     df_to_score = _apply_row_filter(df, config.row_filter)
 
     scored_dfs: list[DataFrame] = []
@@ -528,15 +540,10 @@ def _score_segmented(
     columns_to_keep = [c for c in result.columns if c not in internal_to_remove]
     result = result.select(*columns_to_keep)
 
-    # Always join back to original DataFrame to include unscored rows
-    # (rows with segment combinations not seen during training will have null scores)
-    if config.row_filter:
-        result = _join_filtered_results_back(df, result, config.merge_columns, config.score_col, config.info_col)
-    else:
-        # Even without row_filter, join back to include all rows (including unscored segments)
-        result = _join_filtered_results_back(
-            df_to_score, result, config.merge_columns, config.score_col, config.info_col
-        )
+    # Join back: use full df when row_filter was applied (so filtered-out rows are in output);
+    # otherwise df_to_score is the full input (no filter).
+    df_to_join = df if config.row_filter else df_to_score
+    result = _join_filtered_results_back(df_to_join, result, config.merge_columns, config.score_col, config.info_col)
 
     # Drop internal anomaly_score column
     result = result.drop(config.score_col)
@@ -1299,7 +1306,7 @@ def _score_global_model(
 
     _check_model_staleness(record, config.model_name)
 
-    # Prepare data: filter then drift check (order covered by integration tests with row_filter)
+    # Score only rows matching row_filter (if set); join back to full df at the end if needed
     df_filtered = _apply_row_filter(df, config.row_filter)
     _check_and_warn_drift(
         df_filtered,

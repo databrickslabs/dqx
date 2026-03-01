@@ -257,6 +257,21 @@ def test_segment_drift_warns_per_segment(
         assert any("segment" in str(warning.message).lower() for warning in drift_warnings)
 
 
+def test_drift_detector_no_columns_in_baseline_returns_ok(spark):
+    """When no requested columns are in baseline_stats, returns DriftResult with recommendation='ok'."""
+    df = spark.createDataFrame(
+        [(100.0 + i, 2.0) for i in range(1200)],
+        "amount double, quantity double",
+    )
+    result = compute_drift_score(df, ["amount", "quantity"], baseline_stats={}, threshold=3.0)
+    assert not result.drift_detected
+    assert result.drift_score == 0.0
+    assert not result.drifted_columns
+    assert not result.column_scores
+    assert result.recommendation == "ok"
+    assert result.sample_size == 1200
+
+
 def test_drift_detector_no_drift_when_distributions_match(spark):
     """Test that drift is not detected when distributions are identical."""
     # Need >= 1000 rows for drift check to run

@@ -83,8 +83,6 @@ class SparkFeatureMetadata:
     def from_json(cls, json_str: str) -> "SparkFeatureMetadata":
         """Deserialize from JSON."""
         data = json.loads(json_str)
-        if "categorical_cardinality_threshold" not in data:
-            data["categorical_cardinality_threshold"] = 20
         return cls(**data)
 
 
@@ -153,13 +151,16 @@ class ColumnTypeClassifier:
             )
 
         schema = {f.name: f.dataType for f in df.schema.fields}
+        missing = [c for c in columns if c not in schema]
+        if missing:
+            raise InvalidParameterError(f"Column(s) not found in DataFrame: {missing}")
+
         column_infos = []
         unsupported_cols = []
 
         null_exprs = [F.count(F.when(F.col(col_name).isNull(), 1)).alias(f"{col_name}__nulls") for col_name in columns]
         nulls_row = df.agg(*null_exprs).first()
-        if nulls_row is None:
-            raise InvalidParameterError("Failed to compute null counts.")
+        assert nulls_row is not None
         null_counts = {col_name: nulls_row[f"{col_name}__nulls"] for col_name in columns}
 
         string_columns = [col_name for col_name in columns if isinstance(schema[col_name], T.StringType)]
@@ -170,14 +171,10 @@ class ColumnTypeClassifier:
                 for col_name in string_columns
             ]
             distinct_row = df.agg(*distinct_exprs).first()
-            if distinct_row is None:
-                raise InvalidParameterError("Failed to compute distinct counts.")
+            assert distinct_row is not None
             distinct_counts = {col_name: distinct_row[f"{col_name}__distinct"] for col_name in string_columns}
 
         for col_name in columns:
-            if col_name not in schema:
-                raise InvalidParameterError(f"Column '{col_name}' not found in DataFrame")
-
             col_type = schema[col_name]
             info = self._classify_column(
                 col_name,
@@ -246,10 +243,9 @@ class ColumnTypeClassifier:
                 encoding_strategy='cyclical',
             )
 
-        # Handle string columns as categorical features
+        # Handle string columns as categorical features (distinct_count is always set in analyze_columns for string columns)
         if isinstance(col_type, T.StringType):
-            if distinct_count is None:
-                raise InvalidParameterError(f"Missing distinct count for string column '{col_name}'")
+            assert distinct_count is not None
             cardinality = distinct_count
 
             # Determine encoding strategy based on cardinality
@@ -384,10 +380,7 @@ class ColumnTypeClassifier:
             agg_exprs.append(F.approx_count_distinct(col_name, rsd=0.05).alias(f"_distinct_{col_name}"))
 
         stats_row = df.agg(*agg_exprs).first()
-        if stats_row is None:
-            # Empty DataFrame or aggregation failed
-            return 0, {col: 0 for col in numeric_columns}
-
+        assert stats_row is not None
         total_rows = stats_row["_total_rows"]
         cardinality_stats = {col_name: stats_row[f"_distinct_{col_name}"] for col_name in numeric_columns}
 

@@ -85,9 +85,7 @@ def _analyze_numeric_column(
         F.mean(col_name).alias("mean"),
         F.stddev(col_name).alias("std"),
     ).first()
-
-    if not stats_row:
-        return None, None
+    assert stats_row is not None
 
     std = stats_row["std"] or 0.0
     if std > 0:
@@ -119,19 +117,12 @@ def _analyze_datetime_column(
 
 
 def _analyze_string_column(
-    df: DataFrame,
     col_name: str,
     null_rate: float,
     warnings: list[str],
-    distinct_count: int | None = None,
+    distinct_count: int,
 ) -> tuple[int, str, str, int, float] | None:
-    """Analyze a string (categorical) column and return candidate tuple."""
-    if distinct_count is None:
-        cardinality_row = df.select(F.countDistinct(col_name)).first()
-        if not cardinality_row:
-            return None
-        distinct_count = cardinality_row[0]
-
+    """Analyze a string (categorical) column and return candidate tuple. distinct_count is always set by callers."""
     if distinct_count <= 20 and null_rate < 0.5:
         # Low cardinality categorical
         return (3, col_name, 'categorical', distinct_count, null_rate)  # Priority 3
@@ -189,15 +180,13 @@ def _validate_and_add_segment_column(
 ) -> bool:
     """Validate minimum segment size and add warnings if needed. Returns True if column should be added."""
     min_segment_size_row = df.groupBy(col_name).count().select(F.min("count").alias("min_count")).first()
-    if min_segment_size_row:
-        min_segment_size = min_segment_size_row["min_count"]
-        if min_segment_size < 1000:
-            warnings.append(
-                f"Segment column '{col_name}' has segments with <1000 rows (min: {min_segment_size}), "
-                "models may be unreliable."
-            )
-        return True
-    return False
+    min_segment_size = min_segment_size_row["min_count"] if min_segment_size_row else None
+    if min_segment_size is not None and min_segment_size < 1000:
+        warnings.append(
+            f"Segment column '{col_name}' has segments with <1000 rows (min: {min_segment_size}), "
+            "models may be unreliable."
+        )
+    return True
 
 
 def _check_high_cardinality_warning(
@@ -215,12 +204,11 @@ def _check_high_cardinality_warning(
 
 
 def _calculate_total_segments(
-    df: DataFrame,
     recommended_segments: list[str],
     warnings: list[str],
     *,
     total_count: int,
-    distinct_counts: dict[str, int] | None = None,
+    distinct_counts: dict[str, int],
 ) -> int:
     """Calculate total segment combinations and add warning if too many."""
     if not recommended_segments:
@@ -228,10 +216,7 @@ def _calculate_total_segments(
 
     segment_count = 1
     for col in recommended_segments:
-        if distinct_counts is not None and col in distinct_counts:
-            distinct_count = distinct_counts[col]
-        else:
-            distinct_count = df.select(col).distinct().count()
+        distinct_count = distinct_counts[col]
         segment_count *= distinct_count
 
     # Warn if segments are too granular relative to data size
@@ -280,7 +265,7 @@ def _select_segment_columns(
         null_count = null_counts.get(col_name, 0)
         if distinct_count is None:
             distinct_row = df.select(F.countDistinct(col_name)).first()
-            assert distinct_row is not None, "Failed to compute distinct count"
+            assert distinct_row is not None
             distinct_count = distinct_row[0]
         null_rate = null_count / total_count if total_count > 0 else 1.0
         is_id_column = id_pattern.search(col_name) is not None
@@ -328,7 +313,7 @@ def _select_segment_columns(
 
     # Calculate total segment combinations
     segment_count = _calculate_total_segments(
-        df, recommended_segments, warnings, total_count=total_count, distinct_counts=distinct_counts
+        recommended_segments, warnings, total_count=total_count, distinct_counts=distinct_counts
     )
     return recommended_segments, segment_count
 
@@ -371,7 +356,6 @@ def _analyze_and_add_datetime_column(
 
 
 def _analyze_and_add_string_column(
-    df: DataFrame,
     col_name: str,
     null_rate: float,
     warnings: list[str],
@@ -379,7 +363,9 @@ def _analyze_and_add_string_column(
     distinct_count: int | None = None,
 ) -> None:
     """Analyze string column and add to candidates if suitable."""
-    candidate = _analyze_string_column(df, col_name, null_rate, warnings, distinct_count=distinct_count)
+    if distinct_count is None:
+        return
+    candidate = _analyze_string_column(col_name, null_rate, warnings, distinct_count)
     if candidate:
         candidates.append(candidate)
 
@@ -403,7 +389,7 @@ def _analyze_column_by_type(
     elif isinstance(col_type, (DateType, TimestampType, TimestampNTZType)):
         _analyze_and_add_datetime_column(col_name, null_rate, candidates)
     elif isinstance(col_type, StringType):
-        _analyze_and_add_string_column(df, col_name, null_rate, warnings, candidates, distinct_count=distinct_count)
+        _analyze_and_add_string_column(col_name, null_rate, warnings, candidates, distinct_count=distinct_count)
     else:
         unsupported_columns.append(col_name)
 

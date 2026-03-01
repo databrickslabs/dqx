@@ -14,6 +14,41 @@ from databricks.labs.dqx.anomaly.transformers import (
     apply_feature_engineering,
     reconstruct_column_infos,
 )
+from databricks.labs.dqx.errors import InvalidParameterError
+from tests.constants import TEST_CATALOG
+
+
+def test_analyze_columns_raises_when_column_not_in_dataframe(spark):
+    """analyze_columns raises InvalidParameterError when columns list contains names not in the DataFrame."""
+    df = spark.createDataFrame([(1.0, 2.0)], "a double, b double")
+    classifier = ColumnTypeClassifier()
+    with pytest.raises(InvalidParameterError, match="Column\\(s\\) not found in DataFrame"):
+        classifier.analyze_columns(df, ["a", "c"])
+
+
+def test_analyze_columns_warns_when_column_is_primary_key_in_uc(spark, make_schema, make_random):
+    """When DataFrame is from a UC table with PK, analyze_columns warns for PK columns."""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    table_name = f"{TEST_CATALOG}.{schema.name}.pk_test_{make_random(8).lower()}"
+
+    spark.sql(
+        f"""
+        CREATE TABLE {table_name} (
+            id BIGINT NOT NULL,
+            amount DOUBLE
+        ) USING DELTA
+        """
+    )
+    spark.sql(f"ALTER TABLE {table_name} SET TBLPROPERTIES ('custom.primary_key' = 'id')")
+    spark.createDataFrame([(1, 100.0), (2, 200.0)], "id long, amount double").write.insertInto(table_name)
+
+    df = spark.table(table_name)
+    classifier = ColumnTypeClassifier()
+    _infos, warnings = classifier.analyze_columns(df, ["id", "amount"])
+
+    warnings_text = " ".join(warnings)
+    assert "primary key" in warnings_text.lower()
+    assert "Unity Catalog" in warnings_text
 
 
 def test_column_type_classifier_encodings(spark):
@@ -246,6 +281,24 @@ def test_numeric_columns_with_null_handling(spark):
     assert result[0]["col2"] == 0.0  # Was None, imputed to 0.0
     assert result[1]["col3"] == 0.0  # Was None, imputed to 0.0
     assert result[2]["col1"] == 0.0  # Was None, imputed to 0.0
+
+
+def test_feature_breakdown_includes_frequency_categorical(spark):
+    """_get_feature_breakdown counts frequency-encoded categorical as 1 feature."""
+    data = [(f"u_{i}", 100.0 + i) for i in range(100)]
+    df = spark.createDataFrame(data, "user_id string, amount double")
+    classifier = ColumnTypeClassifier(max_engineered_features=1)
+    _infos, warnings = classifier.analyze_columns(df, ["user_id", "amount"])
+    assert any("categorical → 1 features" in w for w in warnings), warnings
+
+
+def test_feature_breakdown_includes_null_indicators(spark):
+    """_get_feature_breakdown counts columns with nulls as null indicators."""
+    data = [(100.0 + i if i % 5 != 0 else None, 2.0) for i in range(30)]
+    df = spark.createDataFrame(data, "amount double, quantity double")
+    classifier = ColumnTypeClassifier(max_engineered_features=1)
+    _infos, warnings = classifier.analyze_columns(df, ["amount", "quantity"])
+    assert any("null indicators" in w for w in warnings), warnings
 
 
 def test_categorical_onehot_vs_frequency_encoding(spark):

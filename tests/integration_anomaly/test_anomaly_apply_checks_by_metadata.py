@@ -427,10 +427,13 @@ def test_apply_anomaly_check_by_metadata_with_filter_segmented(ws, spark: SparkS
     rows = result_df.orderBy("transaction_id").collect()
     assert len(rows) == 3
     # US rows should have anomaly info (filter matched); EU row should still be present (join back) with null or info
-    assert rows[0]["_dq_info"] is not None
-    assert rows[2]["_dq_info"] is not None
-    # Anomalous US row should have errors
-    assert len(rows[2]["_errors"]) > 0
+    row_us_inlier = next(r for r in rows if r["transaction_id"] == 1)
+    row_us_anomaly = next(r for r in rows if r["transaction_id"] == 3)
+    assert row_us_inlier["_dq_info"] is not None
+    assert row_us_anomaly["_dq_info"] is not None
+    # Anomalous US row (transaction_id=3) should have errors; guard against None for len()
+    assert row_us_anomaly["_errors"] is not None, "Anomalous US row should have _errors"
+    assert len(row_us_anomaly["_errors"]) > 0
 
 
 def test_apply_anomaly_check_by_metadata_parsing_validation(ws, spark: SparkSession):

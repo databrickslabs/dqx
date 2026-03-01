@@ -113,10 +113,11 @@ class AnomalyModelRegistry:
 
     def save_model(self, record: AnomalyModelRecord, table: str) -> None:
         """Archive previous active model with the same name and insert the new record."""
-        if not self._table_exists(table):
+        table_existed = self._table_exists(table)
+        if not table_existed:
             self._create_table(table)
-
-        self._archive_previous(table, record.identity.model_name)
+        else:
+            self._archive_previous(table, record.identity.model_name)
 
         df = self.build_model_df(self.spark, record)
         save_dataframe_as_table(df, OutputConfig(location=table, mode="append"))
@@ -209,8 +210,7 @@ class AnomalyModelRegistry:
         save_dataframe_as_table(empty_df, OutputConfig(location=table, mode="overwrite"))
 
     def _archive_previous(self, table: str, model_name: str) -> None:
-        if not self._table_exists(table):
-            return
+        """Call only when table is known to exist (e.g. from save_model)."""
         # Use LOWER() for case-insensitive matching since Unity Catalog model names are case-insensitive
         self.spark.sql(
             f"UPDATE {table} SET identity.status = 'archived' "

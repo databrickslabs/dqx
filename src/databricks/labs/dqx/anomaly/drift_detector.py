@@ -147,9 +147,9 @@ def compute_drift_score(
             sample_size=row_count,
         )
 
-    # Single Spark action for all columns
+    # Single Spark action for all columns (global aggregation returns one row)
     stats_row = df.select(*agg_exprs).first()
-    assert stats_row is not None, "Failed to compute statistics"
+    assert stats_row is not None
 
     # Compute drift scores for each column
     column_scores = {}

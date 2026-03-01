@@ -23,6 +23,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
 from databricks.labs.dqx.anomaly.validation import validate_sklearn_compatibility
 from databricks.labs.dqx.anomaly.scoring import (
     add_info_column,
+    add_severity_percentile_column,
     create_null_scored_dataframe,
     create_udf_schema,
 )
@@ -507,3 +508,18 @@ def test_unknown_algorithm_raises(
 
     with pytest.raises(InvalidParameterError, match="Unsupported model algorithm"):
         dq_engine.apply_checks(df, [check]).collect()
+
+
+def test_add_severity_percentile_column_empty_quantile_points_returns_null_column(spark):
+    """When quantile_points is empty, severity column is added with all nulls."""
+    df = spark.createDataFrame([(0.5,), (0.9,)], "score double")
+    result = add_severity_percentile_column(
+        df,
+        score_col="score",
+        severity_col="severity_pct",
+        quantile_points=[],
+    )
+    assert "severity_pct" in result.columns
+    rows = result.orderBy("score").collect()
+    assert rows[0]["severity_pct"] is None
+    assert rows[1]["severity_pct"] is None

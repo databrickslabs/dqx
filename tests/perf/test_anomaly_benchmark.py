@@ -1,4 +1,8 @@
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
+
+import mlflow
+from mlflow.tracking import MlflowClient
 
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
@@ -11,6 +15,26 @@ from tests.integration_anomaly.synthetic_generators import (
 )
 
 _TRAINED_MODEL: dict[str, str] = {}
+
+
+def _cleanup_anomaly_mlflow(model_name: str, registry_table: str, spark: SparkSession) -> None:
+    """Delete the MLflow run and UC registered model; no-op if missing. Ignores errors."""
+    if not model_name or not registry_table:
+        return
+    registry = AnomalyModelRegistry(spark)
+    record = registry.get_active_model(registry_table, model_name)
+    if not record:
+        return
+    run_id = record.identity.mlflow_run_id
+    if run_id:
+        try:
+            mlflow.delete_run(run_id)
+        except Exception:
+            pass
+    try:
+        MlflowClient().delete_registered_model(model_name)
+    except Exception:
+        pass
 
 
 def _prepare_synthetic_data(
@@ -65,8 +89,17 @@ def test_benchmark_anomaly_arrhythmia_train(benchmark, spark, ws, make_schema, m
     _TRAINED_MODEL["registry_table"] = registry_table
 
 
-def test_benchmark_anomaly_arrhythmia_score(benchmark, spark, ws, make_schema, make_random):
+def test_benchmark_anomaly_arrhythmia_score(benchmark, request, spark, ws, make_schema, make_random):
     feature_cols, train_df, test_df = _prepare_synthetic_data(spark)
+
+    def _cleanup():
+        _cleanup_anomaly_mlflow(
+            _TRAINED_MODEL.get("model_name"),
+            _TRAINED_MODEL.get("registry_table"),
+            spark,
+        )
+
+    request.addfinalizer(_cleanup)
 
     engine = AnomalyEngine(workspace_client=ws, spark=spark)
     model_name = _TRAINED_MODEL.get("model_name")

@@ -510,6 +510,39 @@ def test_registry_active_model_and_archiving(
     assert archived_count == 1
 
 
+def test_save_model_when_table_does_not_exist_creates_table_no_archive(
+    spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix
+):
+    """First save to a non-existent table creates the table and skips archive (nothing to archive)."""
+    unique_id = make_random(8).lower()
+    registry_table = f"{anomaly_registry_prefix}.{unique_id}_registry"
+    model_name = f"{anomaly_registry_prefix}.first_save_{make_random(4).lower()}"
+
+    registry = AnomalyModelRegistry(spark)
+    record = AnomalyModelRecord(
+        identity=ModelIdentity(
+            model_name=model_name,
+            model_uri="models:/first/1",
+            algorithm="isolation_forest",
+            mlflow_run_id="run_first",
+        ),
+        training=TrainingMetadata(
+            columns=["amount", "quantity"],
+            hyperparameters={},
+            training_rows=50,
+            training_time=datetime.utcnow(),
+        ),
+        features=FeatureEngineering(mode="spark"),
+        segmentation=SegmentationConfig(is_global_model=True, config_hash="h"),
+    )
+
+    registry.save_model(record, registry_table)
+
+    rows = spark.table(registry_table).collect()
+    assert len(rows) == 1
+    assert rows[0]["identity"]["status"] == "active"
+
+
 def test_registry_segment_lookup(spark: SparkSession, make_random: Callable[[int], str], anomaly_registry_prefix):
     """Test segment model lookup and listing."""
     unique_id = make_random(8).lower()

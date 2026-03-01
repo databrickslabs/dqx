@@ -10,13 +10,18 @@ dbutils.library.restartPython()
 
 # COMMAND ----------
 
+import os
+import uuid
 import yaml
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+from databricks.labs.dqx.anomaly.model_registry import AnomalyModelRegistry
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQDatasetRule
+import mlflow
+from mlflow.tracking import MlflowClient
 
 # COMMAND ----------
 # DBTITLE 1,Setup: catalog, schema (from params), train model
@@ -29,7 +34,15 @@ test_schema = dbutils.widgets.get("test_schema")
 
 DEFAULT_SCORE_THRESHOLD = 80.0
 
+# Use a dedicated experiment for this e2e run so we can delete it in cleanup
 ws = WorkspaceClient()
+user_name = ws.current_user.me().user_name
+e2e_experiment_path = f"/Users/{user_name}/e2e_anomaly_{test_schema}_{uuid.uuid4().hex[:8]}"
+if mlflow.get_experiment_by_name(e2e_experiment_path) is None:
+    mlflow.create_experiment(e2e_experiment_path)
+mlflow.set_experiment(e2e_experiment_path)
+os.environ["MLFLOW_EXPERIMENT_NAME"] = e2e_experiment_path
+
 registry_table = f"{test_catalog}.{test_schema}.reg_distributed"
 model_name = f"{test_catalog}.{test_schema}.test_distributed"
 
@@ -101,8 +114,6 @@ def test_apply_checks_by_metadata_distributed():
     assert anomaly_outlier["severity_percentile"] >= DEFAULT_SCORE_THRESHOLD
 
 
-test_apply_checks_by_metadata_distributed()
-
 # COMMAND ----------
 # DBTITLE 1,test_apply_checks_distributed
 
@@ -161,4 +172,36 @@ def test_apply_checks_distributed():
     assert anomalous_row["_errors"] is not None, "Anomalous row should have _errors (error criticality)"
     assert anomalous_row["_warnings"] is not None, "Anomalous row should have _warnings (warning criticality)"
 
-test_apply_checks_distributed()
+
+# COMMAND ----------
+# DBTITLE 1,Run tests and cleanup (cleanup always runs)
+
+def _e2e_cleanup_mlflow(model_name: str, registry_table: str, experiment_path: str) -> None:
+    """Delete the MLflow run, UC registered model, and e2e experiment created by this notebook."""
+    registry = AnomalyModelRegistry(spark)
+    record = registry.get_active_model(registry_table, model_name)
+    if record:
+        run_id = record.identity.mlflow_run_id
+        if run_id:
+            try:
+                mlflow.delete_run(run_id)
+            except Exception:
+                pass
+        try:
+            MlflowClient().delete_registered_model(model_name)
+        except Exception:
+            pass
+    if experiment_path:
+        try:
+            exp = mlflow.get_experiment_by_name(experiment_path)
+            if exp is not None and getattr(exp, "experiment_id", None):
+                mlflow.delete_experiment(exp.experiment_id)
+        except Exception:
+            pass
+
+
+try:
+    test_apply_checks_by_metadata_distributed()
+    test_apply_checks_distributed()
+finally:
+    _e2e_cleanup_mlflow(model_name, registry_table, e2e_experiment_path)

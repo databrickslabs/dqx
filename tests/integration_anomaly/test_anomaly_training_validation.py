@@ -200,3 +200,25 @@ def test_build_context_excludes_columns_from_auto_discovery(spark, make_schema, 
     )
     assert ctx.df_filtered.columns == ["a", "c"]
     assert ctx.auto_discovery_used is True
+
+
+def test_build_context_raises_when_exclude_columns_not_in_dataframe(spark, make_schema, make_random):
+    """build_context raises when exclude_columns lists columns not in the DataFrame."""
+    schema = make_schema(catalog_name=TEST_CATALOG).name
+    model_name = f"{TEST_CATALOG}.{schema}.exclude_invalid_{make_random(4).lower()}"
+    registry_table = f"{TEST_CATALOG}.{schema}.exclude_invalid_reg_{make_random(4).lower()}"
+
+    df = spark.createDataFrame([(1.0, 2.0)], "a double, b double")
+    service = AnomalyTrainingService(spark)
+
+    with pytest.raises(InvalidParameterError, match="exclude_columns contains columns not in DataFrame"):
+        service.build_context(
+            df,
+            model_name=model_name,
+            registry_table=registry_table,
+            columns=["a", "b"],
+            segment_by=None,
+            params=None,
+            exclude_columns=["c"],
+            expected_anomaly_rate=0.02,
+        )

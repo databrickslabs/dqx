@@ -71,13 +71,18 @@ def _configure_mlflow_impl(ws, tracking_uri: str, registry_uri: str, session_sta
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_registry_uri(registry_uri)
     existing_id = session_state.get("experiment_id")
-    if existing_id is not None:
+    existing_path = session_state.get("experiment_path")
+    if existing_id is not None and existing_path is not None:
         os.environ["MLFLOW_EXPERIMENT_ID"] = existing_id
+        os.environ["MLFLOW_EXPERIMENT_NAME"] = existing_path
         return
     experiment_id, experiment_path = _create_mlflow_experiment_for_session(ws, tracking_uri, registry_uri)
     if experiment_id:
         session_state["experiment_id"] = experiment_id
         os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
+    if experiment_path:
+        session_state["experiment_path"] = experiment_path
+        os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_path
     msg = f"MLflow configured: tracking_uri={tracking_uri} " f"registry_uri={registry_uri} experiment={experiment_path}"
     logger.info(msg)
 
@@ -93,20 +98,38 @@ def _delete_mlflow_experiment(experiment_id: str) -> None:
         logger.warning(msg)
 
 
+def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
+    """Resolve experiment by name and delete; log and ignore errors."""
+    try:
+        exp = mlflow.get_experiment_by_name(experiment_path)
+        if exp is not None and getattr(exp, "experiment_id", None):
+            mlflow.delete_experiment(exp.experiment_id)
+            msg = f"Deleted MLflow experiment {experiment_path} (id={exp.experiment_id})"
+            logger.debug(msg)
+    except Exception as e:
+        msg = f"Could not delete MLflow experiment by name {experiment_path}: {e}"
+        logger.warning(msg)
+
+
 @pytest.fixture(scope="session")
 def _mlflow_session_state():
-    """Hold MLflow session experiment id for configure and cleanup. One dict per session."""
-    return {"experiment_id": None}
+    """Hold MLflow session experiment id and path for configure and cleanup. One dict per session."""
+    return {"experiment_id": None, "experiment_path": None}
 
 
 @pytest.fixture(autouse=True, scope="session")
 def _cleanup_mlflow_experiment(_mlflow_session_state):
     """Delete the session MLflow experiment after all anomaly integration tests finish."""
     yield
+    os.environ.pop("MLFLOW_EXPERIMENT_NAME", None)
     experiment_id = _mlflow_session_state.get("experiment_id")
+    experiment_path = _mlflow_session_state.get("experiment_path")
     if experiment_id:
         _delete_mlflow_experiment(experiment_id)
-        _mlflow_session_state["experiment_id"] = None
+    elif experiment_path:
+        _delete_mlflow_experiment_by_name(experiment_path)
+    _mlflow_session_state["experiment_id"] = None
+    _mlflow_session_state["experiment_path"] = None
 
 
 @pytest.fixture(autouse=True)
