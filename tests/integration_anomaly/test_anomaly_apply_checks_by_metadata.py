@@ -406,7 +406,10 @@ def test_apply_anomaly_check_by_metadata_with_filter_segmented(ws, spark: SparkS
         registry_table=registry_table,
     )
 
-    # Check definition with filter: only score rows where region = 'US'; results are joined back to full df
+    # Use a lower threshold so the extreme outlier (9999, 1) is consistently flagged
+    threshold = 80.0
+
+    # Check definition with filter: only score rows where region = 'US'
     checks_yaml = f"""
     - criticality: error
       filter: "region = 'US'"
@@ -415,12 +418,12 @@ def test_apply_anomaly_check_by_metadata_with_filter_segmented(ws, spark: SparkS
         arguments:
           model_name: {model_name}
           registry_table: {registry_table}
-          threshold: {DEFAULT_SCORE_THRESHOLD}
+          threshold: {threshold}
           driver_only: true
     """
     checks = yaml.safe_load(checks_yaml)
 
-    # Rows for all regions; only US rows are scored by the check, then joined back
+    # Rows for all regions; only US rows are scored by the check
     test_df = spark.createDataFrame(
         [
             (1, "US", 150.0, 20.0),
@@ -437,12 +440,12 @@ def test_apply_anomaly_check_by_metadata_with_filter_segmented(ws, spark: SparkS
     assert "_errors" in result_df.columns
     rows = result_df.orderBy("transaction_id").collect()
     assert len(rows) == 3
-    # US rows should have anomaly info (filter matched); EU row should still be present (join back) with null or info
+    # US rows should have anomaly info (filter matched); EU row should still be present (join back)
     row_us_inlier = next(r for r in rows if r["transaction_id"] == 1)
     row_us_anomaly = next(r for r in rows if r["transaction_id"] == 3)
     assert row_us_inlier["_dq_info"] is not None
     assert row_us_anomaly["_dq_info"] is not None
-    # Anomalous US row (transaction_id=3) should have errors; guard against None for len()
+    # Anomalous US row (transaction_id=3) should have errors
     assert row_us_anomaly["_errors"] is not None, "Anomalous US row should have _errors"
     assert len(row_us_anomaly["_errors"]) > 0
 
