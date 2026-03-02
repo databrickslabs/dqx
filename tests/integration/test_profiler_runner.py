@@ -51,8 +51,9 @@ def test_profiler_runner_raise_error_when_profile_summary_stats_file_missing(ws,
     ), f"Profile summary stats not uploaded to {install_folder}/{profile_summary_stats_file}."
 
 
-def test_profiler_workflow_class(ws, spark, setup_workflows):
+def test_profiler_workflow_class(ws, spark_keep_alive, setup_workflows):
     installation_ctx, run_config = setup_workflows()
+    spark = spark_keep_alive.spark
 
     sys.modules["pyspark.sql.session"] = spark
     ctx = installation_ctx.replace(run_config_name=run_config.name)
@@ -69,8 +70,9 @@ def test_profiler_workflow_class(ws, spark, setup_workflows):
     assert checks, "Checks were not loaded correctly"
 
 
-def test_profiler_workflow_class_serverless(ws, spark, setup_serverless_workflows):
+def test_profiler_workflow_class_serverless(ws, spark_keep_alive, setup_serverless_workflows):
     installation_ctx, run_config = setup_serverless_workflows()
+    spark = spark_keep_alive.spark
 
     sys.modules["pyspark.sql.session"] = spark
     ctx = installation_ctx.replace(run_config_name=run_config.name)

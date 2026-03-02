@@ -1,5 +1,5 @@
 ---
-sidebar_position: 310
+sidebar_position: 312
 ---
 
 import Admonition from '@theme/Admonition';
@@ -85,8 +85,14 @@ override the values set in the engine.
 
 ## Customizing result columns
 
-By default, DQX appends `_error` and `_warning` result columns to the output DataFrame or Table to flag quality issues.
+By default, DQX appends `_errors`, `_warnings`, and `_dq_info` (only if certain checks are used) result columns to the output DataFrame or Table to flag quality issues.
 You can customize the names of these result columns by specifying extra parameters when creating the engine.
+
+| Default Column | Purpose | Customization Key |
+|----------------|---------|-------------------|
+| `_errors` | Array of critical quality check failures | `errors` |
+| `_warnings` | Array of warning-level quality check issues | `warnings` |
+| `_dq_info` | Structured metadata produced by certain dataset-level checks (e.g., row anomaly detection) | `info` |
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -95,7 +101,11 @@ You can customize the names of these result columns by specifying extra paramete
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.config import ExtraParams
 
-    custom_column_names = {"errors": "dq_errors", "warnings": "dq_warnings"}
+    custom_column_names = {
+      "errors": "dq_errors",
+      "warnings": "dq_warnings",
+      "info": "dq_info"  # used for some checks only, e.g. row anomaly detection
+    }
 
     # use ExtraParams to configure one or more optional parameters
     extra_parameters = ExtraParams(result_column_names=custom_column_names)
@@ -108,9 +118,14 @@ You can customize the names of these result columns by specifying extra paramete
     You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to customize the result columns when using DQX workflows:
     ```yaml
     extra_params:
-        result_column_names:
-            errors: dq_errors
-            warnings: dq_warnings
+      result_column_names:
+        errors: dq_errors
+        warnings: dq_warnings
+        info: dq_info
     ```
   </TabItem>
 </Tabs>
+
+<Admonition type="info" title="Info column usage">
+The `_dq_info` reporting column is an **array of structs**: one element per dataset-level check that produces info (e.g. one per `has_no_row_anomalies`). Each element has a shared schema; for row anomaly detection the populated field is `anomaly`, with fields such as `score`, `severity_percentile`, `is_anomaly`, `threshold`, `model`, `contributions`, and `confidence_std`. For the full field list and types, see [Schema of the info column (_dq_info)](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) in the Row Anomaly Detection guide.
+</Admonition>
