@@ -1,42 +1,66 @@
+import json
+import logging
 import os
+import re
+from collections.abc import Callable, Generator
+from pathlib import Path
+from dataclasses import dataclass, replace
 from datetime import timedelta
+from functools import cached_property
 from io import BytesIO
 from typing import Any
-import re
-import logging
-from collections.abc import Callable, Generator
-from dataclasses import replace, dataclass
-from functools import cached_property
+
+# Apply numba/coverage patches before any other imports that might trigger numba
+# This must be imported early (before third-party imports) to patch coverage types
+# See pyproject.toml per-file-ignores for ignored checks (wrong-import-order, unused-import)
+import tests.compat  # noqa: F401
 
 import pytest
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
-from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
-from databricks.sdk.retries import retried
+from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 from databricks.labs.blueprint.installation import Installation, MockInstallation
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
+from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.__about__ import __version__
-from databricks.labs.dqx.config import WorkspaceConfig, RunConfig
+from databricks.labs.dqx.config import RunConfig, WorkspaceConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
+from databricks.labs.dqx.installer.install import InstallationService, WorkspaceInstaller
 from databricks.labs.dqx.installer.warehouse_installer import WarehouseInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment
 from databricks.labs.dqx.installer.workflow_task import Task
-from databricks.labs.dqx.installer.install import WorkspaceInstaller, InstallationService
 from databricks.labs.dqx.workflows_runner import WorkflowsRunner
-from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import BadRequest, NotFound, RequestLimitExceeded, TooManyRequests
+from databricks.sdk.retries import retried
+from databricks.sdk.service.database import DatabaseCatalog, DatabaseInstance
 from databricks.sdk.service.workspace import ImportFormat
-from databricks.sdk.service.database import DatabaseInstance, DatabaseCatalog
 
 logger = logging.getLogger(__name__)
-
-
-TEST_CATALOG = "dqx"
 
 
 @pytest.fixture(scope="session")
 def debug_env_name():
     return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+
+
+@pytest.fixture
+def debug_env(monkeypatch, debug_env_name):
+    """
+    Load env from ~/.databricks/debug-env.json so it works when running tests from terminal or IDEs (Cursor, VS Code, PyCharm etc.).
+    Overrides pytester's debug_env which only loads the file when is_in_debug is True (PyCharm/IntelliJ).
+    In CI we do not load from the file.
+    """
+    if os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true":
+        return os.environ
+
+    conf_file = Path.home() / ".databricks" / "debug-env.json"
+    if conf_file.exists():
+        with conf_file.open("r") as f:
+            conf = json.load(f)
+            if debug_env_name in conf:
+                for env_key, value in conf[debug_env_name].items():
+                    monkeypatch.setenv(env_key, str(value))
+    return os.environ
 
 
 @pytest.fixture
@@ -111,7 +135,7 @@ def skip_if_runtime_not_geo_compatible(ws, debug_env):
     if not match:
         raise ValueError(f"Invalid runtime version format: {runtime_version}")
 
-    major, minor = [int(x) for x in match.groups()]
+    major, minor = (int(x) for x in match.groups())
     valid = major > 17 or (major == 17 and minor >= 1)
 
     if not valid:
@@ -547,7 +571,7 @@ def make_invalid_local_check_file_as_json(checks_json_invalid_content, make_rand
 @pytest.fixture
 def make_check_file_as_yaml(ws, make_directory, checks_yaml_content):
     def create(**kwargs):
-        if "install_dir" in kwargs and kwargs["install_dir"]:
+        if kwargs.get("install_dir"):
             workspace_file_path = kwargs["install_dir"] + "/checks.yml"
         else:
             folder = make_directory()
@@ -734,28 +758,23 @@ class LakebaseInstance:
     database_name: str
 
 
-@pytest.fixture
-def make_lakebase_instance(ws, make_random):
-    def create() -> LakebaseInstance:
-        run_id = os.getenv("GITHUB_RUN_ID", "local")
-        instance_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
-        database_name = "dqx"  # does not need to be random
-        catalog_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
-        capacity = "CU_1"
+@retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=20))
+def _lakebase_create_database_instance(workspace: WorkspaceClient, instance_name: str, capacity: str) -> None:
+    """Create database instance; retries on quota/rate limits."""
+    workspace.database.create_database_instance_and_wait(
+        database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
+    )
 
-        # Retry logic handles BadRequest exceptions when database instance creation fails due to workspace quota limits.
-        # Retries are performed until the timeout is reached.
-        @retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=20))
-        def _create_database_instance():
-            ws.database.create_database_instance_and_wait(
-                database_instance=DatabaseInstance(name=instance_name, capacity=capacity)
-            )
 
-        _create_database_instance()
-
-        logger.info(f"Successfully created database instance: {instance_name}")
-
-        ws.database.create_database_catalog(
+def _lakebase_create_catalog(
+    workspace: WorkspaceClient,
+    catalog_name: str,
+    database_name: str,
+    instance_name: str,
+) -> None:
+    """Create catalog; on failure delete instance and re-raise."""
+    try:
+        workspace.database.create_database_catalog(
             DatabaseCatalog(
                 name=catalog_name,
                 database_name=database_name,
@@ -764,29 +783,52 @@ def make_lakebase_instance(ws, make_random):
             )
         )
         logger.info(f"Successfully created database catalog: {catalog_name}")
+    except Exception:
+        logger.warning(f"Failed to create catalog {catalog_name}, cleaning up instance {instance_name}")
+        try:
+            workspace.database.delete_database_instance(name=instance_name)
+        except Exception as delete_error:
+            logger.warning(f"Failed to delete instance {instance_name} during cleanup: {delete_error}")
+        raise
 
+
+@retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+def _lakebase_delete_catalog(workspace: WorkspaceClient, catalog_name: str) -> None:
+    """Delete database catalog; retries on rate limits."""
+    try:
+        workspace.database.delete_database_catalog(name=catalog_name)
+        logger.info(f"Successfully deleted database catalog: {catalog_name}")
+    except NotFound:
+        logger.info(f"Database catalog {catalog_name} not found (already deleted)")
+
+
+@retried(on=[BadRequest, TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
+def _lakebase_delete_database_instance(workspace: WorkspaceClient, instance_name: str) -> None:
+    """Delete database instance; retries on rate limits."""
+    try:
+        workspace.database.delete_database_instance(name=instance_name)
+        logger.info(f"Successfully deleted database instance: {instance_name}")
+    except NotFound:
+        logger.info(f"Database instance {instance_name} not found (already deleted)")
+
+
+@pytest.fixture
+def make_lakebase_instance(ws, make_random):
+    def create() -> LakebaseInstance:
+        run_id = os.getenv("GITHUB_RUN_ID", "local")
+        instance_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
+        database_name = "dqx"
+        catalog_name = f"dqx-test-{run_id}-{make_random(10).lower()}"
+        capacity = "CU_1"
+
+        _lakebase_create_database_instance(ws, instance_name, capacity)
+        logger.info(f"Successfully created database instance: {instance_name}")
+        _lakebase_create_catalog(ws, catalog_name, database_name, instance_name)
         return LakebaseInstance(name=instance_name, catalog_name=catalog_name, database_name=database_name)
 
     def delete(instance: LakebaseInstance) -> None:
-        # Delete catalog first, then instance.
-        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
-        def _delete_catalog():
-            try:
-                ws.database.delete_database_catalog(name=instance.catalog_name)
-                logger.info(f"Successfully deleted database catalog: {instance.catalog_name}")
-            except NotFound:
-                logger.info(f"Database catalog {instance.catalog_name} not found (already deleted)")
-
-        @retried(on=[TooManyRequests, RequestLimitExceeded], timeout=timedelta(minutes=2))
-        def _delete_instance():
-            try:
-                ws.database.delete_database_instance(name=instance.name)
-                logger.info(f"Successfully deleted database instance: {instance.name}")
-            except NotFound:
-                logger.info(f"Database instance {instance.name} not found (already deleted)")
-
-        _delete_catalog()
-        _delete_instance()
+        _lakebase_delete_catalog(ws, instance.catalog_name)
+        _lakebase_delete_database_instance(ws, instance.name)
 
     yield from factory("lakebase", create, delete)
 
@@ -806,7 +848,7 @@ def compare_checks(result: list[dict[str, Any]], expected: list[dict[str, Any]])
     assert len(result) == len(expected), f"Expected {len(expected)} checks, got {len(result)}"
     sorted_result = sorted(result, key=_sort_key)
     sorted_expected = sorted(expected, key=_sort_key)
-    for res, exp in zip(sorted_result, sorted_expected):
+    for res, exp in zip(sorted_result, sorted_expected, strict=False):
         for key in exp:
             assert res.get(key) == exp[key], f"Mismatch for key '{key}': {res.get(key)} != {exp[key]}"
 

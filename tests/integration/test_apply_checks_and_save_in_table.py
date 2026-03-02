@@ -17,7 +17,7 @@ from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, RUN_ID, REPORTING_COLUMNS
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_random):
