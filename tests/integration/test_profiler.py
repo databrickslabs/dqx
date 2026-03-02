@@ -8,7 +8,7 @@ from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.profiler.profiler import DQProfiler, DQProfile
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_profiler(spark, ws):

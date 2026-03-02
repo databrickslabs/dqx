@@ -1,5 +1,5 @@
 ---
-sidebar_position: 311
+sidebar_position: 313
 ---
 
 import Admonition from '@theme/Admonition';
@@ -70,7 +70,7 @@ See more in [Quality Checks](/docs/reference/quality_checks/).
 DQX supports different categories of quality checks. Use them appropriately:
 * Rule-based checks: deterministic rules that use built-in or custom checks rule functions.
 * AI-assisted checks: leverage probabilistic LLM-driven suggestions for creating rule-based business or technical checks using natural language as input.
-* Anomaly detection: useful for identifying outliers that are not covered by explicit rule-based checks.
+* Row anomaly detection: useful for identifying outliers that are not covered by explicit rule-based checks.
 * Profiler-generated checks: use profiling to bootstrap an initial set of deterministic rule-based checks.
 
 See more in [Quality Checks](/docs/reference/quality_checks/).
@@ -140,7 +140,7 @@ For optimal performance and scalability, apply all relevant quality checks for a
 Avoid multiple sequential quality runs on the same dataset unless strictly required.
 * Quality checks are executed in a distributed manner across the Spark cluster, so grouping them minimizes redundant scans.
 * Running checks together reduces compute cost and improves overall pipeline efficiency.
-* You can group different types of checks (row-level + dataset-level + anomaly detection) and apply them at once for maximum efficiency.
+* You can group different types of checks (row-level + dataset-level + row anomaly detection) and apply them at once for maximum efficiency.
 
 Example:
 ```python
