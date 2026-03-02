@@ -9,7 +9,7 @@ which is used to run integration tests, does not support setting the Spark prope
 import logging
 from pathlib import Path
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 from tests.e2e.conftest import new_classic_job_cluster, run_notebook_job
 
 
