@@ -192,6 +192,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.io import read_input_data
+from databricks.labs.dqx.checks_serializer import ChecksNormalizer
 from databricks.sdk import WorkspaceClient
 
 
@@ -218,7 +219,7 @@ print(profiles)
 # generate DQX quality rules/checks
 generator = DQGenerator(ws)
 checks = generator.generate_dq_rules(profiles)  # with default level "error"
-print(yaml.safe_dump(checks))
+print(yaml.safe_dump(ChecksNormalizer.normalize(checks)))
 
 # save generated checks to location specified in the default run configuration inside workspace installation folder
 dq_engine.save_checks(checks, config=InstallationChecksStorageConfig(

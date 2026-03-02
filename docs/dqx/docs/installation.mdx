@@ -85,7 +85,7 @@ See the [Data Contract Quality Rules Generation Guide](/docs/guide/data_contract
 
 ### Installing DQX with company-hosted PyPI mirror
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.12.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" pip install databricks-labs-dqx
@@ -227,6 +227,11 @@ e2e_override_clusters:              # <- optional dictionary mapping job cluster
 e2e_spark_conf:                     # <- optional spark configuration to use for the end to end workflow
     spark.sql.ansi.enabled: true    # <- example setting
 
+anomaly_override_clusters:          # <- optional dictionary mapping job cluster names to existing cluster IDs (anomaly-trainer workflow)
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
+anomaly_spark_conf:                 # <- optional spark configuration to use for the anomaly-trainer workflow
+  spark.sql.ansi.enabled: true      # <- example setting
+
 extra_params:                       # <- optional extra parameters to pass to the workflows
     result_column_names:
         errors: dq_errors           # <- default is "_errors"
@@ -278,6 +283,12 @@ run_configs:                        # <- list of run configurations, each run co
     mode: append
 
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
+
+  anomaly_config:                          # <- optional row anomaly detection configuration (model training via workflow)
+    columns: [amount, quantity]            # <- optional, omit to use all supported columns
+    model_name: main.iot.orders_monitor    # <- required when using anomaly config, fully qualified
+    registry_table: main.iot.dqx_anomaly_models  # <- required when using anomaly config, fully qualified
+    # for the full parameter anomaly specification, see the Row Anomaly Detection documentation
 
   # if wanting to store checks in lakebase table
   # checks_location: dqx.config.checks                        # <- fully qualified Lakebase table for storing quality rules (checks)
@@ -371,7 +382,7 @@ resources:
 
 ### Installing DQX with company-hosted PyPI mirror
 
-Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.12.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
+Some enterprises block the public PyPI index and host a company-controlled PyPI mirror. To install DQX while using a company-hosted PyPI mirror for finding its dependencies, add all DQX dependencies to the company-hosted PyPI mirror (see "dependencies" in [`pyproject.toml`](https://github.com/databrickslabs/dqx/blob/v0.13.0/pyproject.toml)) and set the environment variable `PIP_INDEX_URL` to the company-hosted PyPI mirror URL while installing DQX:
 
 ```commandline
 PIP_INDEX_URL="https://url-to-company-hosted-pypi.internal" databricks labs install dqx
@@ -423,7 +434,7 @@ You have two options to set up the dashboard:
 
 ### Option 1: Import directly in the workspace
 
-You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.12.0/src/databricks/labs/dqx/dashboards/). To import it:
+You can import the dashboard directly from a file. The dashboard file (`DQX_Dashboard.lvdash.json`) is available in the [GitHub repository](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/dashboards/). To import it:
 1. Navigate to **Dashboards** in the Databricks UI
 2. Click **Import dashboard from file**
 3. Select the `.lvdash.json` file

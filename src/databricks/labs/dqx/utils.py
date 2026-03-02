@@ -21,6 +21,7 @@ import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
@@ -461,6 +462,56 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     if is_array:
         return F.transform(col_expr, F.lower)
     return F.lower(col_expr)
+
+
+def table_exists(spark: Any, table: str) -> bool:
+    """
+    Check if a table exists (Unity Catalog compatible).
+
+    Uses the catalog API only (no Spark job). Requires Spark 3.4+ for
+    fully qualified table names (e.g. catalog.schema.table).
+
+    Args:
+        spark: SparkSession instance.
+        table: Fully qualified table name (e.g. "catalog.schema.table").
+
+    Returns:
+        True if the table exists, False otherwise.
+    """
+    return spark.catalog.tableExists(table)
+
+
+def get_table_primary_keys(table: str, spark: Any) -> set[str]:
+    """
+    Retrieve primary key columns from Unity Catalog table metadata.
+
+    Uses SparkTableDataProvider (table_manager) to read table properties and
+    parses the primary key constraint into a set of column names.
+
+    Args:
+        table: Fully qualified table name (e.g., "catalog.schema.table")
+        spark: SparkSession instance
+
+    Returns:
+        Set of column names that are primary keys. Returns empty set if:
+        - Table doesn't exist
+        - No primary key is defined
+        - Metadata is not accessible
+
+    Examples:
+        >>> pk_cols = get_table_primary_keys("main.default.users", spark)
+        >>> if "user_id" in pk_cols:
+        ...     print("user_id is a primary key")
+    """
+    try:
+        provider = SparkTableDataProvider(spark)
+        pk_str = provider.get_existing_primary_key(table)
+        if pk_str is None:
+            return set()
+        return {c.strip() for c in pk_str.split(",")}
+    except Exception:
+        # Silently handle errors (table not found, permissions, etc.)
+        return set()
 
 
 def missing_required_packages(packages: list[str]) -> bool:

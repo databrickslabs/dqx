@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import importlib.metadata
 import logging
 import os.path
@@ -12,6 +10,10 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+from requests.exceptions import ConnectionError as RequestsConnectionError
+from requests.exceptions import ReadTimeout as RequestsReadTimeout
+
+import databricks
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.parallel import ManyError
@@ -43,8 +45,7 @@ from databricks.sdk.retries import retried
 from databricks.sdk.service import compute, jobs
 from databricks.sdk.service.jobs import Run
 from databricks.sdk.service.workspace import ObjectType
-
-import databricks
+from databricks.sdk.service.iam import AccessControlRequest, PermissionLevel
 from databricks.labs.dqx.config import WorkspaceConfig
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.labs.dqx.installer.mixins import InstallationMixin
@@ -217,8 +218,13 @@ class DeployedWorkflows:
             if '.log' not in object_info.path:
                 continue
             task_name = os.path.basename(object_info.path).split('.')[0]
-            with self._ws.workspace.download(object_info.path) as raw_file:
-                text_io = StringIO(raw_file.read().decode())
+            try:
+                with self._ws.workspace.download(object_info.path) as raw_file:
+                    text_io = StringIO(raw_file.read().decode())
+            except (RequestsConnectionError, RequestsReadTimeout, TimeoutError) as e:
+                msg = f"Could not fetch workflow log {object_info.path} " f"(workflow run already completed): {e}"
+                logger.warning(msg)
+                continue
             for record in parse_logs(text_io):
                 yield replace(record, component=f'{record.component}:{task_name}')
 
@@ -385,7 +391,7 @@ class WorkflowDeployment(InstallationMixin):
             remote_wheels_with_extras = remote_wheels
             if use_serverless:
                 # installing extras from a file is only possible with serverless
-                remote_wheels_with_extras = [f"{wheel}[llm,pii]" for wheel in remote_wheels]
+                remote_wheels_with_extras = [f"{wheel}[llm,pii,anomaly]" for wheel in remote_wheels]
             settings = self._job_settings(task.workflow, remote_wheels_with_extras, use_serverless, task.spark_conf)
             if task.override_clusters:
                 settings = self._apply_cluster_overrides(
@@ -475,8 +481,25 @@ class WorkflowDeployment(InstallationMixin):
         logger.info(f"Creating new job configuration for step={step_name}")
         new_job = self._ws.jobs.create(**settings)
         assert new_job.job_id is not None
-        self._install_state.jobs[step_name] = str(new_job.job_id)
+
+        job_id_str = str(new_job.job_id)
+        self._install_state.jobs[step_name] = job_id_str
+        self._update_job_permissions(job_id_str)
         return None
+
+    def _update_job_permissions(self, job_id: str):
+        if self._is_testing():
+            # ensure test jobs are viewable by all users in test env to facilitate debugging
+            self._ws.permissions.update(
+                request_object_type="jobs",
+                request_object_id=job_id,
+                access_control_list=[
+                    AccessControlRequest(
+                        group_name="users",  # all account users
+                        permission_level=PermissionLevel.CAN_VIEW,
+                    )
+                ],
+            )
 
     @staticmethod
     def _library_dep_order(library: str):
@@ -767,7 +790,7 @@ class WorkflowDeployment(InstallationMixin):
 
 class MaxedStreamHandler(logging.StreamHandler):
     MAX_STREAM_SIZE = 2**20 - 2**6  # 1 Mb minus some buffer
-    _installed_handlers: dict[str, tuple[logging.Logger, MaxedStreamHandler]] = {}
+    _installed_handlers: dict[str, tuple[logging.Logger, "MaxedStreamHandler"]] = {}
     _sent_bytes = 0
 
     @classmethod

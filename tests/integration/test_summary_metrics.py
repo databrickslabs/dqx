@@ -6,14 +6,14 @@ import pytest
 
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
+from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.io import save_dataframe_as_table
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
-from databricks.labs.dqx.rule import ColumnArguments
+from databricks.labs.dqx.reporting_columns import ColumnArguments
 from tests.integration.conftest import EXTRA_PARAMS
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 # Test constants
 TEST_SCHEMA = StructType(
@@ -238,7 +238,8 @@ def test_engine_without_observer_no_metrics_saved(ws, spark, make_schema, make_r
     else:
         raise ValueError("Invalid 'apply_checks_method' used for testing observable metrics.")
 
-    assert not spark.catalog.tableExists(metrics_table_name)
+    with pytest.raises(NotFound):
+        ws.tables.get(full_name=metrics_table_name)
 
 
 def test_save_summary_metrics(ws, spark, make_schema, make_random):
@@ -1446,9 +1447,6 @@ def test_save_results_in_table_streaming_with_metrics(
     )
     metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
-    _ = save_dataframe_as_table(output_df, output_config)
-    _ = save_dataframe_as_table(quarantine_df, quarantine_config)
-
     dq_engine.save_results_in_table(
         output_df=output_df,
         quarantine_df=quarantine_df,
@@ -2027,8 +2025,9 @@ def test_streaming_observer_metrics_output_with_empty_checks(
     [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
 )
 def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
-    apply_checks_method, spark, ws, make_schema, make_volume, make_random
+    apply_checks_method, spark_keep_alive, ws, make_schema, make_volume, make_random
 ):
+    spark = spark_keep_alive.spark
     schema_name = make_schema(catalog_name=TEST_CATALOG).name
     volume_name = make_volume(catalog_name=TEST_CATALOG, schema_name=schema_name).name
 
@@ -2184,12 +2183,12 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
         },
     ]
 
-    expected_metrics_df = (
-        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
+    assert_df_equality(
+        spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA)
+        .drop("run_time")
+        .orderBy("metric_name"),
+        spark.table(metrics_table_name).drop("run_time").orderBy("metric_name"),
     )
-    actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
-
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 4
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
