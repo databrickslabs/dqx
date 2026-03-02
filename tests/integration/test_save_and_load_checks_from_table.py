@@ -16,7 +16,7 @@ from databricks.sdk.errors import NotFound
 
 from databricks.labs.dqx.checks_serializer import CHECKS_TABLE_SCHEMA
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 INPUT_CHECKS = [

@@ -1,4 +1,4 @@
-from databricks.labs.dqx.utils import missing_required_packages
+from databricks.labs.dqx.package_utils import missing_required_packages
 
 # Check only core libraries at import-time. Model packages are loaded when pii detection is invoked.
 required_specs = [
