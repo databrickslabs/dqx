@@ -36,10 +36,9 @@ from databricks.labs.dqx.config import (
     ExtraParams,
 )
 from databricks.labs.dqx.manager import DQRuleManager
+from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
-    ColumnArguments,
-    DefaultColumnNames,
     DQRule,
     CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
@@ -85,6 +84,9 @@ class DQEngineCore(DQEngineCoreBase):
             ColumnArguments.WARNINGS: extra_params.result_column_names.get(
                 ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
             ),
+            ColumnArguments.INFO: extra_params.result_column_names.get(
+                ColumnArguments.INFO.value, DefaultColumnNames.INFO.value
+            ),
         }
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
@@ -126,6 +128,8 @@ class DQEngineCore(DQEngineCoreBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
+        self._validate_result_column_collisions(df)
+
         if not checks:
             observed_result = self._observe_metrics(self._append_empty_checks(df))
             if isinstance(observed_result, tuple):
@@ -145,10 +149,21 @@ class DQEngineCore(DQEngineCoreBase):
         rule_set_fp = compute_rule_set_fingerprint(all_check_dicts)
 
         result_df = self._create_results_array(
-            df, error_checks, self._result_column_names[ColumnArguments.ERRORS], ref_dfs, rule_set_fp
+            df,
+            error_checks,
+            self._result_column_names[ColumnArguments.ERRORS],
+            self._result_column_names[ColumnArguments.INFO],
+            ref_dfs,
+            rule_set_fingerprint=rule_set_fp,
+
         )
         result_df = self._create_results_array(
-            result_df, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs, rule_set_fp
+            result_df,
+            warning_checks,
+            self._result_column_names[ColumnArguments.WARNINGS],
+            self._result_column_names[ColumnArguments.INFO],
+            ref_dfs,
+            rule_set_fingerprint=rule_set_fp,
         )
         observed_result = self._observe_metrics(result_df)
 
@@ -157,6 +172,20 @@ class DQEngineCore(DQEngineCoreBase):
             return observed_df, observation
 
         return observed_result
+
+    def _validate_result_column_collisions(self, df: DataFrame) -> None:
+        df_columns = set(df.columns)
+        errors_col = self._result_column_names[ColumnArguments.ERRORS]
+        warnings_col = self._result_column_names[ColumnArguments.WARNINGS]
+        info_col = self._result_column_names[ColumnArguments.INFO]
+
+        result_collisions = [col for col in (errors_col, warnings_col, info_col) if col in df_columns]
+        if result_collisions:
+            collisions_str = ", ".join(result_collisions)
+            raise InvalidParameterError(
+                "Input DataFrame contains reserved DQX result columns: "
+                f"{collisions_str}. Rename input columns or configure extra params in 'DQEngine' for 'result_column_names'."
+            )
 
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
@@ -405,6 +434,7 @@ class DQEngineCore(DQEngineCoreBase):
         df: DataFrame,
         checks: list[DQRule],
         dest_col: str,
+        dest_info_col: str,
         ref_dfs: dict[str, DataFrame] | None = None,
         rule_set_fingerprint: str | None = None,
     ) -> DataFrame:
@@ -420,6 +450,7 @@ class DQEngineCore(DQEngineCoreBase):
             df: The input DataFrame to which checks are applied.
             checks: List of DQRule instances representing the checks to apply.
             dest_col: Name of the output column where the check results map will be stored.
+            dest_info_col: Name of the output column where the check info struct will be stored.
             ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
             rule_set_fingerprint: Fingerprint of the rule set
 
@@ -432,7 +463,9 @@ class DQEngineCore(DQEngineCoreBase):
             return df.select("*", empty_result)
 
         check_conditions = []
+        info_col_names: list[str] = []
         current_df = df
+        original_columns = set(df.columns)
 
         for check in checks:
             # each check pass may add new columns to the df and certain checks require original columns
@@ -451,6 +484,9 @@ class DQEngineCore(DQEngineCoreBase):
             log_telemetry(self.ws, "check", check.check_func.__name__)
             result = manager.process()
             check_conditions.append(result.condition)
+            if result.info_column_name:
+                # dataset-level checks can optionally add an info column to the result DataFrame
+                info_col_names.append(result.info_column_name)
             # The DataFrame should contain any new columns added by the dataset-level checks
             # to satisfy the check condition.
             current_df = result.check_df
@@ -466,8 +502,22 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
-        # Ensure the result DataFrame has the same columns as the input DataFrame + the new result column
-        return result_df.select(*df.columns, dest_col)
+        result_df = merge_info_columns(dest_info_col, result_df, info_col_names=info_col_names)
+
+        # Drop temporary columns used to build check conditions, while preserving result columns.
+        columns_to_drop = [
+            col
+            for col in result_df.columns
+            if col not in original_columns
+            and col != dest_col
+            and col != dest_info_col
+            and col != self._result_column_names[ColumnArguments.ERRORS]
+            and col != self._result_column_names[ColumnArguments.WARNINGS]
+        ]
+        if columns_to_drop:
+            result_df = result_df.drop(*columns_to_drop)
+
+        return result_df
 
     def _observe_metrics(self, df: DataFrame) -> DataFrame | tuple[DataFrame, Observation]:
         """

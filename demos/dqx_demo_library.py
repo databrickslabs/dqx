@@ -695,7 +695,7 @@ display(valid_and_quarantine_df)
 # MAGIC ### Extended Aggregate Functions for Data Quality Checks
 # MAGIC
 # MAGIC DQX now supports 20 curated aggregate functions for advanced data quality monitoring:
-# MAGIC - **Statistical functions**: `stddev`, `variance`, `median`, `mode`, `skewness`, `kurtosis` for anomaly detection
+# MAGIC - **Statistical functions**: `stddev`, `variance`, `median`, `mode`, `skewness`, `kurtosis` for outlier detection
 # MAGIC - **Percentile functions**: `percentile`, `approx_percentile` for SLA monitoring
 # MAGIC - **Cardinality functions**: `count_distinct`, `approx_count_distinct` (uses HyperLogLog++)
 # MAGIC - **Any Databricks built-in aggregate**: Supported with runtime validation
@@ -703,7 +703,7 @@ display(valid_and_quarantine_df)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC #### Example 1: Statistical Functions - Anomaly Detection with Standard Deviation
+# MAGIC #### Example 1: Statistical Functions with Standard Deviation
 # MAGIC
 # MAGIC Detect unusual variance in sensor readings per machine. High standard deviation indicates unstable sensors that may need calibration.
 

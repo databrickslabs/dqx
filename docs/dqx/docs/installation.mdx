@@ -227,6 +227,11 @@ e2e_override_clusters:              # <- optional dictionary mapping job cluster
 e2e_spark_conf:                     # <- optional spark configuration to use for the end to end workflow
     spark.sql.ansi.enabled: true    # <- example setting
 
+anomaly_override_clusters:          # <- optional dictionary mapping job cluster names to existing cluster IDs (anomaly-trainer workflow)
+  default: 0709-132523-cnhxf2p6     # <- existing cluster Id to use
+anomaly_spark_conf:                 # <- optional spark configuration to use for the anomaly-trainer workflow
+  spark.sql.ansi.enabled: true      # <- example setting
+
 extra_params:                       # <- optional extra parameters to pass to the workflows
     result_column_names:
         errors: dq_errors           # <- default is "_errors"
@@ -278,6 +283,12 @@ run_configs:                        # <- list of run configurations, each run co
     mode: append
 
   checks_location: iot_checks.yml        # <- Quality rules (checks) can be stored in a table or defined in JSON or YAML files, located at absolute or relative path within the installation folder or volume file path.
+
+  anomaly_config:                          # <- optional row anomaly detection configuration (model training via workflow)
+    columns: [amount, quantity]            # <- optional, omit to use all supported columns
+    model_name: main.iot.orders_monitor    # <- required when using anomaly config, fully qualified
+    registry_table: main.iot.dqx_anomaly_models  # <- required when using anomaly config, fully qualified
+    # for the full parameter anomaly specification, see the Row Anomaly Detection documentation
 
   # if wanting to store checks in lakebase table
   # checks_location: dqx.config.checks                        # <- fully qualified Lakebase table for storing quality rules (checks)

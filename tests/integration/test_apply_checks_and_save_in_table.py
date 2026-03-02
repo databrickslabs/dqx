@@ -22,7 +22,7 @@ from tests.integration.conftest import (
     assert_df_equality_ignore_fingerprints as assert_df_equality,
 )
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 def test_apply_checks_and_save_in_single_table(ws, spark, make_schema, make_random):

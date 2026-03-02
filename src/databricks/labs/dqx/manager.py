@@ -138,7 +138,9 @@ class DQRuleManager:
     def _wrap_result(self, raw_result: DQCheckResult) -> DQCheckResult:
         result_struct = self._build_result_struct(raw_result.condition)
         check_result = F.when(self.filter_condition & raw_result.condition.isNotNull(), result_struct)
-        return DQCheckResult(condition=check_result, check_df=raw_result.check_df)
+        return DQCheckResult(
+            condition=check_result, check_df=raw_result.check_df, info_column_name=raw_result.info_column_name
+        )
 
     def _build_result_struct(self, condition: Column) -> Column:
         # Use current_timestamp() to make sure streaming gets per-micro-batch timestamps,

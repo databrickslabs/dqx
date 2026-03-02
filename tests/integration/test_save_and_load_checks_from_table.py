@@ -15,7 +15,7 @@ from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.sdk.errors import NotFound
 
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 TEST_CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
