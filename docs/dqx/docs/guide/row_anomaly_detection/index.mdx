@@ -144,7 +144,7 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
         check_func_kwargs={
           "model_name": "catalog.schema.orders_monitor",
           "registry_table": "catalog.schema.dqx_anomaly_models",
-          # "threshold": 98,  # default 95, now stricter (only extreme anomalies)
+          # "threshold": 98,
         }
       ),
       # you can define other checks as well

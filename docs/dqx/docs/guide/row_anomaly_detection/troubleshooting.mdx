@@ -142,21 +142,25 @@ if missing:
 
 **Option 1: Sample during training** (recommended)
 ```python
+from databricks.labs.dqx.config import AnomalyParams
+
 anomaly_engine.train(
   df=df,
-  sample_fraction=0.1,  # Train on 10% of data
   model_name=model_name,
   registry_table=registry_table,
+  params=AnomalyParams(sample_fraction=0.1),
 )
 ```
 
 **Option 2: Cap maximum rows**
 ```python
+from databricks.labs.dqx.config import AnomalyParams
+
 anomaly_engine.train(
   df=df,
-  max_rows=100000,  # Use at most 100K rows
   model_name=model_name,
   registry_table=registry_table,
+  params=AnomalyParams(max_rows=100000),
 )
 ```
 
@@ -214,7 +218,7 @@ has_no_row_anomalies(
 has_no_row_anomalies(
   model_name=model_name,
   registry_table=registry_table,
-  threshold=98,  # Was 95 (default), now stricter
+  threshold=98,
 )
 ```
 
@@ -251,7 +255,7 @@ anomaly_engine.train(df=clean_data, ...)
 has_no_row_anomalies(
   model_name=model_name,
   registry_table=registry_table,
-  threshold=90,  # Was 95, now more sensitive
+  threshold=90,
 )
 ```
 
@@ -320,11 +324,18 @@ model_name = anomaly_engine.train(
 # 2. Apply to streaming DataFrame
 streaming_df = spark.readStream.table("catalog.schema.orders_stream")
 
+from databricks.labs.dqx.rule import DQDatasetRule
+from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
+
 checks = [
-  has_no_row_anomalies(
-    model_name=model_name,
-    registry_table="catalog.schema.anomaly_registry",
-    enable_contributions=False,  # Recommended: too slow for real-time
+  DQDatasetRule(
+    criticality="error",
+    check_func=has_no_row_anomalies,
+    check_func_kwargs={
+      "model_name": model_name,
+      "registry_table": "catalog.schema.anomaly_registry",
+      "enable_contributions": False, # Recommended: too slow for real-time
+    }
   )
 ]
 
