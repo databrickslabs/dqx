@@ -464,6 +464,23 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     return F.lower(col_expr)
 
 
+def table_exists(spark: Any, table: str) -> bool:
+    """
+    Check if a table exists (Unity Catalog compatible).
+
+    Uses the catalog API only (no Spark job). Requires Spark 3.4+ for
+    fully qualified table names (e.g. catalog.schema.table).
+
+    Args:
+        spark: SparkSession instance.
+        table: Fully qualified table name (e.g. "catalog.schema.table").
+
+    Returns:
+        True if the table exists, False otherwise.
+    """
+    return spark.catalog.tableExists(table)
+
+
 def get_table_primary_keys(table: str, spark: Any) -> set[str]:
     """
     Retrieve primary key columns from Unity Catalog table metadata.

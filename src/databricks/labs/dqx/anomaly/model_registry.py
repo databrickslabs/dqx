@@ -8,7 +8,6 @@ from decimal import Decimal
 from typing import Any
 
 import pyspark.sql.functions as F
-from pyspark.errors import AnalysisException
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.window import Window
 
@@ -22,6 +21,7 @@ from databricks.labs.dqx.anomaly.model_config import (
 from databricks.labs.dqx.anomaly.segment_utils import build_segment_name
 from databricks.labs.dqx.config import OutputConfig
 from databricks.labs.dqx.io import save_dataframe_as_table
+from databricks.labs.dqx.utils import table_exists
 
 
 ANOMALY_MODEL_TABLE_SCHEMA = (
@@ -101,7 +101,7 @@ class AnomalyModelRegistry:
 
     def save_model(self, record: AnomalyModelRecord, table: str) -> None:
         """Archive previous active model with the same name and insert the new record."""
-        table_existed = self._table_exists(table)
+        table_existed = table_exists(self.spark, table)
         if not table_existed:
             self._create_table(table)
         else:
@@ -112,7 +112,7 @@ class AnomalyModelRegistry:
 
     def get_active_model(self, table: str, model_name: str) -> AnomalyModelRecord | None:
         """Fetch the active model for a given name."""
-        if not self._table_exists(table):
+        if not table_exists(self.spark, table):
             return None
 
         row = (
@@ -140,7 +140,7 @@ class AnomalyModelRegistry:
         self, table: str, base_model_name: str, segment_values: dict[str, str]
     ) -> AnomalyModelRecord | None:
         """Fetch model for specific segment combination."""
-        if not self._table_exists(table):
+        if not table_exists(self.spark, table):
             return None
 
         # Build segment name matching the training logic
@@ -151,7 +151,7 @@ class AnomalyModelRegistry:
 
     def get_all_segment_models(self, table: str, base_model_name: str) -> list[AnomalyModelRecord]:
         """Fetch all segment models for a base name."""
-        if not self._table_exists(table):
+        if not table_exists(self.spark, table):
             return []
 
         # Get all active models that start with base_model_name__seg_
@@ -178,21 +178,6 @@ class AnomalyModelRegistry:
             )
             for row in rows
         ]
-
-    def _table_exists(self, table: str) -> bool:
-        """
-        Check if table exists (Unity Catalog compatible).
-        Since models are registered as part of the anomaly check function which can run in the executors,
-        we neither have access to spark nor to workspace client available.
-        """
-        try:
-            # Try to read table schema - more reliable than catalog.tableExists()
-            # and compatible with Unity Catalog
-            self.spark.table(table).limit(0).count()
-            return True
-        except AnalysisException:
-            # Table doesn't exist or no permissions
-            return False
 
     def _create_table(self, table: str) -> None:
         empty_df = self.spark.createDataFrame([], schema=ANOMALY_MODEL_TABLE_SCHEMA)

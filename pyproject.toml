@@ -673,7 +673,9 @@ disable = [
     # Test fixtures may use closure to capture spark from outer scope
     "no-spark-argument-in-function",
     # PySpark Column objects support ~ operator but pylint type inference doesn't recognize it
-    "invalid-unary-operand-type"
+    "invalid-unary-operand-type",
+    # spark.catalog.tableExists() is UC-compatible from Spark 3.4+ (FQ names)
+    "incompatible-with-uc"
 ]
 
 # Enable the message, report, category or checker with the given id(s). You can
