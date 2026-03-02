@@ -705,6 +705,7 @@ llm = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cloudpickle", marker = "extra == 'anomaly'", specifier = ">=2.0" },
     { name = "databricks-connect", marker = "extra == 'cli'", specifier = "~=15.4" },
     { name = "databricks-labs-blueprint", specifier = ">=0.9.1,<0.10" },
     { name = "databricks-langchain", marker = "extra == 'llm'", specifier = ">=0.1.0" },
@@ -712,13 +713,16 @@ requires-dist = [
     { name = "datacontract-cli", marker = "extra == 'datacontract'", specifier = ">=0.11.1" },
     { name = "dspy", marker = "extra == 'llm'", specifier = "~=3.0.3" },
     { name = "langchain-core", marker = "extra == 'llm'", specifier = ">=0.1.0" },
+    { name = "mlflow", extras = ["databricks"], marker = "extra == 'anomaly'", specifier = ">=2.19.1" },
     { name = "numpy", marker = "extra == 'pii'", specifier = ">=1.20,<2.0" },
     { name = "presidio-analyzer", marker = "extra == 'pii'", specifier = "~=2.2.359" },
     { name = "pyyaml", specifier = "~=6.0.3" },
+    { name = "scikit-learn", marker = "extra == 'anomaly'", specifier = ">=1.0" },
+    { name = "shap", marker = "extra == 'anomaly'", specifier = ">=0.42.0,<0.50" },
     { name = "spacy", marker = "extra == 'pii'", specifier = "~=3.8" },
     { name = "sqlalchemy", specifier = ">=2.0,<3.0" },
 ]
-provides-extras = ["cli", "datacontract", "llm", "pii"]
+provides-extras = ["anomaly", "cli", "datacontract", "llm", "pii"]
 
 [[package]]
 name = "databricks-labs-dqx-app"

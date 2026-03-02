@@ -11,8 +11,8 @@ from databricks.labs.dqx.llm.llm_pk_detector import LLMPrimaryKeyDetector
 from databricks.labs.dqx.llm.llm_utils import (
     get_required_check_functions_definitions,
     get_required_summary_stats,
-    TableManager,
 )
+from databricks.labs.dqx.table_manager import TableManager
 
 logger = logging.getLogger(__name__)
 
