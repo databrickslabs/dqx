@@ -32,7 +32,7 @@ perf:
 	hatch run perf
 
 coverage:
-	hatch run coverage; open htmlcov/index.html
+	hatch run test_coverage; open htmlcov/index.html
 
 docs-build:
 	hatch run docs:pydoc-markdown
