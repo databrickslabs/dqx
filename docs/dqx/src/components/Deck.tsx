@@ -50,7 +50,7 @@ export default function Deck({ children }: DeckProps) {
     const el = slideRef.current;
     if (!el) return;
 
-    let raf: number;
+    let raf = 0;
     let cancelled = false;
 
     const stopAutoScroll = () => { cancelled = true; cancelAnimationFrame(raf); };
