@@ -8,11 +8,13 @@ from databricks.labs.blueprint.installation import Installation
 from databricks.labs.blueprint.installer import InstallState
 from databricks.labs.blueprint.tui import MockPrompts
 from databricks.labs.blueprint.wheels import ProductInfo, WheelsV2
+
 from databricks.labs.dqx.config import WorkspaceConfig, InputConfig, OutputConfig, ProfilerConfig
 from databricks.labs.dqx.installer.install import WorkspaceInstaller
 from databricks.labs.dqx.installer.workflow_installer import WorkflowDeployment, DeployedWorkflows
 from databricks.labs.dqx.installer.workflow_task import Task
 from databricks.sdk.service.jobs import RunResultState
+from tests.constants import TEST_CATALOG
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +115,7 @@ def test_workflow_deployment_uploads_dependencies(ws, installation_with_upload_d
         patch.object(wheels, 'upload_wheel_dependencies') as mock_upload_deps,
         patch.object(wheels, 'upload_to_wsfs') as mock_upload_main,
         patch.object(ws.jobs, 'create') as mock_create_job,
+        patch.object(ws.permissions, 'update'),
     ):
         mock_upload_deps.return_value = [
             "/foo/bar/databricks_sdk-0.71.0-py3-none-any.whl",
@@ -189,6 +192,7 @@ def test_dependency_discovery_includes_extras(ws, installation_with_upload_deps)
         patch.object(wheels, 'upload_wheel_dependencies') as mock_upload_deps,
         patch.object(wheels, 'upload_to_wsfs') as mock_upload_main,
         patch.object(ws.jobs, 'create') as mock_create_job,
+        patch.object(ws.permissions, 'update'),
     ):
         mock_upload_deps.return_value = ["/foo/bar/dep.whl"]
         mock_upload_main.return_value = "/foo/bar/dqx.whl"
@@ -238,7 +242,7 @@ def test_end_to_end_installation_and_workflow_with_upload_dependencies(ws, make_
     product_info = ProductInfo.for_testing(WorkspaceConfig)
 
     # Prepare test data
-    catalog_name = "main"
+    catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = make_table(
         catalog_name=catalog_name,

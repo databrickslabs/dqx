@@ -277,6 +277,34 @@ def e2e(
 
 
 @dqx.command
+def train_anomaly(
+    w: WorkspaceClient,
+    *,
+    run_config: str = "",
+    timeout_minutes: int = 60,
+    install_folder: str = "",
+    ctx: WorkspaceContext | None = None,
+) -> None:
+    """
+    Train anomaly detection model using the anomaly-trainer workflow.
+
+    Args:
+        w: The WorkspaceClient instance to use for accessing the workspace.
+        run_config: The name of the run configuration to use. If not provided, run it for all run configs.
+        timeout_minutes: The timeout for the workflow run in minutes (default is 60).
+        install_folder: Optional custom installation folder path.
+        ctx: The WorkspaceContext instance to use for accessing the workspace.
+    """
+    timeout = timedelta(minutes=timeout_minutes)
+    ctx = ctx or WorkspaceContext(w, install_folder=install_folder or None)
+    ctx.deployed_workflows.run_workflow(
+        workflow="anomaly-trainer",
+        run_config_name=run_config,
+        max_wait=timeout,
+    )
+
+
+@dqx.command
 def workflows(w: WorkspaceClient, *, ctx: WorkspaceContext | None = None, install_folder: str = ""):
     """
     Show deployed workflows and their state

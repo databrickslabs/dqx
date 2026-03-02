@@ -32,3 +32,11 @@ class CheckDownloadError(InvalidCheckError):
 
 class ODCSContractError(DQXError):
     """Raised when there is an error related to ODCS data contracts."""
+
+
+class ComputationError(DQXError):
+    """Raised when an internal computation fails (e.g. aggregation returned no result, empty data)."""
+
+
+class ModelLoadError(DQXError):
+    """Raised when a model cannot be loaded (e.g. version mismatch, corrupted artifact)."""

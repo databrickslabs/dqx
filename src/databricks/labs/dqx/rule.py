@@ -14,8 +14,24 @@ from databricks.labs.dqx.errors import InvalidCheckError
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "CHECK_FUNC_REGISTRY",
+    "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
+    "Criticality",
+    "DQDatasetRule",
+    "DQForEachColRule",
+    "DQRule",
+    "DQRowRule",
+    "MultipleColumnsMixin",
+    "SingleColumnMixin",
+    "normalize_bound_args",
+    "register_for_original_columns_preselection",
+    "register_rule",
+]
+
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
+CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
 
 
 def register_rule(rule_type: str) -> Callable:
@@ -26,25 +42,19 @@ def register_rule(rule_type: str) -> Callable:
     return wrapper
 
 
+def register_for_original_columns_preselection() -> Callable:
+    def wrapper(func: Callable) -> Callable:
+        CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION.add(func.__name__)
+        return func
+
+    return wrapper
+
+
 class Criticality(Enum):
     """Enum class to represent criticality of the check."""
 
     WARN = "warn"
     ERROR = "error"
-
-
-class DefaultColumnNames(Enum):
-    """Enum class to represent columns in the dataframe that will be used for error and warning reporting."""
-
-    ERRORS = "_errors"
-    WARNINGS = "_warnings"
-
-
-class ColumnArguments(Enum):
-    """Enum class that is used as input parsing for custom column naming."""
-
-    ERRORS = "errors"
-    WARNINGS = "warnings"
 
 
 class SingleColumnMixin:
@@ -297,7 +307,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         else:
             kwargs.pop("columns", None)  # Ensure required args aren't duplicated in kwargs
 
-        # Push down filter if supported
+        # Push down check filter as row_filter if supported by the check function
         if self.filter and "row_filter" in sig.parameters:
             kwargs["row_filter"] = self.filter
 
@@ -358,14 +368,19 @@ class DQDatasetRule(DQRule):
         Returns:
             The Spark Column representing the check condition.
         """
-        check_condition, _ = self.check  # lazy evaluation of check function parameters
+        check_condition, _, _ = self.check  # lazy evaluation of check function parameters
         return check_condition
 
     @ft.cached_property
-    def check(self) -> tuple[Column, Callable]:
+    def check(self) -> tuple[Column, Callable, str | None]:
+        """Return (condition, apply_func, and optionally info_column_name)."""
         args, kwargs = self.prepare_check_func_args_and_kwargs()
-        condition, apply_func = self.check_func(*args, **kwargs)
-        return condition, apply_func
+        result = self.check_func(*args, **kwargs)
+        if len(result) == 3:
+            condition, apply_func, info_column_name = result[0], result[1], result[2]
+            return condition, apply_func, info_column_name
+        condition, apply_func = result[0], result[1]
+        return condition, apply_func, None
 
 
 @dataclass(frozen=True)

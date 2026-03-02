@@ -1,12 +1,12 @@
-from __future__ import annotations
-
 import logging
 import datetime
 import json
+from decimal import Decimal
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 from pyspark.sql import SparkSession
-from databricks.sdk import WorkspaceClient
 
+from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
@@ -27,11 +27,13 @@ except ImportError:
 # Conditional imports for data contract support
 try:
     from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
-    from datacontract.data_contract import DataContract  # type: ignore
 
     DATACONTRACT_ENABLED = True
 except ImportError:
     DATACONTRACT_ENABLED = False
+
+if TYPE_CHECKING:
+    from datacontract.data_contract import DataContract
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +155,7 @@ class DQGenerator(DQEngineBase):
     @telemetry_logger("generator", "generate_rules_from_contract")
     def generate_rules_from_contract(
         self,
-        contract: DataContract | None = None,
+        contract: "DataContract | None" = None,
         contract_file: str | None = None,
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
@@ -253,7 +255,7 @@ class DQGenerator(DQEngineBase):
             return None
 
         def _is_num(value):
-            return isinstance(value, (int, float))
+            return isinstance(value, (int, float, Decimal))
 
         def _is_temporal(value):
             return isinstance(value, (datetime.date, datetime.datetime))

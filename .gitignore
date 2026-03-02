@@ -30,6 +30,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.app-installed
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -57,6 +58,15 @@ coverage-integration.xml
 .hypothesis/
 .pytest_cache/
 cover/
+
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-*
+
+# Test output logs
+test_*.log
 
 # Translations
 *.mo
@@ -165,12 +175,13 @@ dev/cleanup.py
 # Cursor IDE specific files
 .cursorrules
 .cursor/
-
+.claude/
 
 # docgen
 docs/dqx/docs/reference/api
 !docs/dqx/docs/reference/api/index.mdx
 
 .databricks
-databricks.yml
 
+# app specific - unignore the lib folder
+!app/src/databricks_labs_dqx_app/ui/lib/

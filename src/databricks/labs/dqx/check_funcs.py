@@ -3,6 +3,7 @@ import re
 import warnings
 import ipaddress
 import uuid
+from decimal import Decimal
 from collections.abc import Callable, Sequence
 from enum import Enum
 from itertools import zip_longest
@@ -13,7 +14,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -136,16 +137,19 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
 
 
 @register_rule("row")
-def is_not_empty(column: str | Column) -> Column:
+def is_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     """Checks whether the values in the input column are not empty (but may be null).
 
     Args:
         column: column to check; can be a string column name or a column expression
+        trim_strings: boolean flag to trim spaces from strings
 
     Returns:
         Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if trim_strings:
+        col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.cast("string") == F.lit("")
     return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
 
@@ -162,6 +166,62 @@ def is_not_null(column: str | Column) -> Column:
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
+
+
+@register_rule("row")
+def is_null(column: str | Column) -> Column:
+    """Checks whether the values in the input column are null.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    return make_condition(
+        col_expr.isNotNull(), f"Column '{col_expr_str}' value is not null", f"{col_str_norm}_is_not_null"
+    )
+
+
+@register_rule("row")
+def is_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+    """Checks whether the values in the input column are empty (but may be null).
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        trim_strings: boolean flag to trim spaces from strings
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if trim_strings:
+        col_expr = F.trim(col_expr).alias(col_str_norm)
+    condition = col_expr.cast("string") != F.lit("")
+    return make_condition(condition, f"Column '{col_expr_str}' value is not empty", f"{col_str_norm}_is_not_empty")
+
+
+@register_rule("row")
+def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+    """Checks whether the values in the input column are either null or empty.
+
+    Args:
+        column: column to check; can be a string column name or a column expression
+        trim_strings: boolean flag to trim spaces from strings
+
+    Returns:
+        Column object for condition
+    """
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    if trim_strings:
+        col_expr = F.trim(col_expr).alias(col_str_norm)
+    condition = col_expr.isNotNull() & (col_expr.cast("string").isNotNull() & (col_expr.cast("string") != F.lit("")))
+    return make_condition(
+        condition,
+        f"Column '{col_expr_str}' value is not null and not empty",
+        f"{col_str_norm}_is_not_null_and_not_empty",
+    )
 
 
 @register_rule("row")
@@ -549,21 +609,51 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
 
 @register_rule("row")
 def is_equal_to(
-    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+    column: str | Column,
+    value: int | float | Decimal | str | datetime.date | datetime.datetime | Column | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> Column:
     """Check whether the values in the input column are equal to the given value.
 
     Args:
         column (str | Column): Column to check. Can be a string column name or a column expression.
-        value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
-            The value to compare with. Can be a literal or a Spark Column. Defaults to None.
-
+        value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
+        abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
+                Example: abs(a - b) <= tolerance
+                With tolerance=0.01:
+                    2.001 and 2.0099 → equal (diff = 0.0089)
+                    2.001 and 2.02 → not equal (diff = 0.019)
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
+                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+                With tolerance=0.01 (1%):
+                    100 vs 101 → equal (diff = 1, tolerance = 1)
+                    100 vs 102 → not equal (diff = 2, tolerance = 1)
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
+
+    Raises:
+        InvalidParameterError: If absolute or relative tolerances are negative.
+
+    Note:
+        If both tolerances are provided, the value is considered equal if it meets either tolerance condition.
     """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
-    condition = col_expr != value_expr
+
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float, Decimal)):
+        # Use tolerance-based comparison for numeric columns
+        tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
+        condition = ~tolerance_match
+    else:
+        # Exact equality comparison
+        condition = col_expr != value_expr
 
     return make_condition(
         condition,
@@ -580,21 +670,52 @@ def is_equal_to(
 
 @register_rule("row")
 def is_not_equal_to(
-    column: str | Column, value: int | float | str | datetime.date | datetime.datetime | Column | None = None
+    column: str | Column,
+    value: int | float | Decimal | str | datetime.date | datetime.datetime | Column | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> Column:
     """Check whether the values in the input column are not equal to the given value.
 
     Args:
         column (str | Column): Column to check. Can be a string column name or a column expression.
-        value (int | float | str | datetime.date | datetime.datetime | Column | None, optional):
-            The value to compare with. Can be a literal or a Spark Column. Defaults to None.
+        value: The value to compare with. Can be a number, date, timestamp literal or a Spark Column. Defaults to None.
+        abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
+                Example: abs(a - b) <= tolerance
+                With tolerance=0.01:
+                    2.001 and 2.0099 → equal (diff = 0.0089)
+                    2.001 and 2.02 → not equal (diff = 0.019)
+        rel_tolerance: Relative tolerance for numeric comparisons. Differences within this relative tolerance are ignored. Useful if numbers vary in scale.
+                Example: abs(a - b) <= rel_tolerance * max(abs(a), abs(b))
+                With tolerance=0.01 (1%):
+                    100 vs 101 → equal (diff = 1, tolerance = 1)
+                    100 vs 102 → not equal (diff = 2, tolerance = 1)
 
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
+
+    Raises:
+        InvalidParameterError: If absolute or relative tolerances are negative.
+
+    Note:
+        If both tolerances are provided, the value is considered equal if it meets either tolerance condition.
     """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     value_expr = get_limit_expr(value)
-    condition = col_expr == value_expr
+
+    if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and isinstance(value, (int, float, Decimal)):
+        # Use tolerance-based comparison for numeric columns
+        tolerance_match = _match_values_with_tolerance(col_expr, value_expr, abs_tolerance, rel_tolerance)
+        condition = tolerance_match
+    else:
+        # Exact equality comparison (backwards compatible)
+        condition = col_expr == value_expr
 
     return make_condition(
         condition,
@@ -611,7 +732,7 @@ def is_not_equal_to(
 
 @register_rule("row")
 def is_not_less_than(
-    column: str | Column, limit: int | float | datetime.date | datetime.datetime | str | Column | None = None
+    column: str | Column, limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
 
@@ -641,7 +762,7 @@ def is_not_less_than(
 
 @register_rule("row")
 def is_not_greater_than(
-    column: str | Column, limit: int | float | datetime.date | datetime.datetime | str | Column | None = None
+    column: str | Column, limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None
 ) -> Column:
     """Checks whether the values in the input column are not greater than the provided limit.
 
@@ -672,8 +793,8 @@ def is_not_greater_than(
 @register_rule("row")
 def is_in_range(
     column: str | Column,
-    min_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
-    max_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are in the provided limits (inclusive of both boundaries).
 
@@ -710,8 +831,8 @@ def is_in_range(
 @register_rule("row")
 def is_not_in_range(
     column: str | Column,
-    min_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
-    max_limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    max_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """Checks whether the values in the input column are outside the provided limits (inclusive of both boundaries).
 
@@ -1046,7 +1167,7 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
 
     Args:
         column: column to check; can be a string column name or a column expression
-        row_filter: Optional SQL expression for filtering rows before checking for outliers.
+        row_filter: Optional SQL expression for filtering rows before checking for outliers. Auto-injected from the check filter.
 
 
     Returns:
@@ -1132,8 +1253,7 @@ def is_unique(
     Args:
         columns: List of column names (str) or Spark Column expressions to validate for uniqueness.
         nulls_distinct: Whether NULLs are treated as distinct (default: True).
-        row_filter: Optional SQL expression for filtering rows before checking uniqueness.
-            Auto-injected from the check filter.
+        row_filter: Optional SQL expression for filtering rows before checking uniqueness. Auto-injected from the check filter.
 
     Returns:
         A tuple of:
@@ -1234,8 +1354,7 @@ def foreign_key(
         ref_columns: List of column names (str) or Column expressions in the reference dataset.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table (used when reading from catalog).
-        row_filter: Optional SQL expression for filtering rows before checking the foreign key.
-            Auto-injected from the check filter.
+        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
         negate: If True, the condition is negated (i.e., the check fails when the foreign key values exist in the
             reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
 
@@ -1360,8 +1479,7 @@ def sql_query(
         negate: If True, the condition is negated (i.e., the check fails when the condition is False).
         input_placeholder: Name to be used in the sql query as `{{ input_placeholder }}` to refer to the
             input DataFrame on which the checks are applied.
-        row_filter: Optional SQL expression for filtering rows before checking the foreign key.
-            Auto-injected from the check filter.
+        row_filter: Optional SQL expression used to filter input rows before running the SQL validation. Auto-injected from the check filter.
 
     Returns:
         Tuple (condition column, apply function).
@@ -1463,7 +1581,7 @@ def sql_query(
 @register_rule("dataset")
 def is_aggr_not_greater_than(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -1508,7 +1626,7 @@ def is_aggr_not_greater_than(
 @register_rule("dataset")
 def is_aggr_not_less_than(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
@@ -1553,11 +1671,13 @@ def is_aggr_not_less_than(
 @register_rule("dataset")
 def is_aggr_equal(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     aggr_params: dict[str, Any] | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1576,6 +1696,8 @@ def is_aggr_equal(
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
+        abs_tolerance: Optional absolute tolerance for equality comparison of numeric aggregations.
+        rel_tolerance: Optional relative tolerance for equality comparison of numeric aggregations.
 
     Returns:
         A tuple of:
@@ -1592,17 +1714,21 @@ def is_aggr_equal(
         compare_op=py_operator.ne,
         compare_op_label="not equal to",
         compare_op_name="not_equal_to",
+        abs_tolerance=abs_tolerance,
+        rel_tolerance=rel_tolerance,
     )
 
 
 @register_rule("dataset")
 def is_aggr_not_equal(
     column: str | Column,
-    limit: int | float | str | Column,
+    limit: int | float | Decimal | str | Column,
     aggr_type: str = "count",
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     aggr_params: dict[str, Any] | None = None,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1621,6 +1747,8 @@ def is_aggr_not_equal(
         aggr_params: Optional dict of parameters for aggregates requiring them (e.g., percentile value for
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
+        abs_tolerance: Optional absolute tolerance for equality comparison of numeric aggregations.
+        rel_tolerance: Optional relative tolerance for equality comparison of numeric aggregations.
 
     Returns:
         A tuple of:
@@ -1637,6 +1765,8 @@ def is_aggr_not_equal(
         compare_op=py_operator.eq,
         compare_op_label="equal to",
         compare_op_name="equal_to",
+        abs_tolerance=abs_tolerance,
+        rel_tolerance=rel_tolerance,
     )
 
 
@@ -1699,8 +1829,7 @@ def compare_datasets(
       null_safe_row_matching: If True, treats nulls as equal when matching rows.
       null_safe_column_value_matching: If True, treats nulls as equal when matching column values.
         If enabled, (NULL, NULL) column values are equal and matching.
-      row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected
-        from the check filter.
+      row_filter: Optional SQL expression to filter rows in the input DataFrame. Auto-injected from the check filter.
       abs_tolerance: Values are considered equal if the absolute difference is less than or equal to the tolerance. This is applicable to numeric columns.
             Example: abs(a - b) <= tolerance
             With tolerance=0.01:
@@ -1833,7 +1962,7 @@ def is_data_fresh_per_time_window(
         lookback_windows: Optional number of time windows to look back from *curr_timestamp*.
             This filters records to include only those within the specified number of time windows from *curr_timestamp*.
             If no lookback is provided, the check is applied to the entire dataset.
-        row_filter: Optional SQL expression to filter rows before checking.
+        row_filter: Optional SQL expression to filter rows before checking. Auto-injected from the check filter.
         curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
 
     Returns:
@@ -1925,12 +2054,14 @@ def is_data_fresh_per_time_window(
 
 
 @register_rule("dataset")
+@register_for_original_columns_preselection()
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
     ref_df_name: str | None = None,
     ref_table: str | None = None,
     columns: list[str | Column] | None = None,
     strict: bool = False,
+    exclude_columns: list[str | Column] | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a schema compatibility check condition and closure for dataset-level validation.
@@ -1940,6 +2071,8 @@ def has_valid_schema(
     In strict mode, validates that the schema matches exactly (same columns, same order, same types)
     for the columns specified in columns or for all columns if columns is not specified.
 
+    All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.
+
     Args:
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
@@ -1948,6 +2081,8 @@ def has_valid_schema(
         strict: Whether to perform strict schema validation (default: False).
             - False: Validates that all expected columns exist with compatible types (allows extra columns)
             - True: Validates exact schema match (same columns, same order, same types)
+        exclude_columns: Optional list of columns in the checked DataFrame schema to
+            ignore for validation.
 
     Returns:
         A tuple of:
@@ -1976,6 +2111,12 @@ def has_valid_schema(
     if columns:
         column_names = [get_column_name_or_alias(col) if not isinstance(col, str) else col for col in columns]
 
+    exclude_column_names: list[str] | None = None
+    if exclude_columns:
+        exclude_column_names = [
+            get_column_name_or_alias(col) if not isinstance(col, str) else col for col in exclude_columns
+        ]
+
     expected_schema = _get_schema(expected_schema or types.StructType(), column_names)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -2003,7 +2144,11 @@ def has_valid_schema(
         else:
             _expected_schema = expected_schema
 
-        actual_schema = df.select(*columns).schema if columns else df.schema
+        selected_column_names = column_names if column_names else df.columns
+        if exclude_column_names:
+            ignore_set = set(exclude_column_names)
+            selected_column_names = [col for col in selected_column_names if col not in ignore_set]
+        actual_schema = df.select(*selected_column_names).schema
 
         if strict:
             errors = _get_strict_schema_comparison(actual_schema, _expected_schema)
@@ -2548,6 +2693,53 @@ def _add_numeric_tolerance_condition(
 
 
 def _match_values_with_tolerance(df_col: Column, ref_col: Column, abs_tolerance: float, rel_tolerance: float) -> Column:
+    """
+    Check if two numeric column values match within specified absolute and/or relative tolerance.
+
+    This function implements a flexible tolerance-based comparison that supports both absolute
+    and relative tolerance thresholds. When both tolerances are provided, values are considered
+    matching if EITHER tolerance condition is satisfied (OR logic), making the comparison more
+    permissive and accommodating different scales of values.
+
+    Args:
+        df_col: First column to compare (typically the data column).
+        ref_col: Second column to compare (typically the reference/limit column).
+        abs_tolerance: Absolute tolerance threshold. Values match if abs(a - b) <= abs_tolerance.
+            Use 0.0 to disable absolute tolerance checking.
+        rel_tolerance: Relative tolerance threshold. Values match if
+            abs(a - b) <= rel_tolerance * max(abs(a), abs(b)).
+            Use 0.0 to disable relative tolerance checking.
+
+    Returns:
+        A Spark Column expression that evaluates to True if the values match within tolerance,
+        False otherwise.
+
+    Tolerance Logic:
+        - **Absolute tolerance**: Checks if the absolute difference is within a fixed threshold
+        - **Relative tolerance**: Checks if the difference is within a percentage of the larger
+        - **Combined (OR logic)**: When both are specified, values match if EITHER condition passes
+
+    Examples:
+        With abs_tolerance=0.01, rel_tolerance=0.0:
+            - 100 vs 100.005 -> True (diff=0.005 <= 0.01)
+            - 100.02 vs 100.0 -> False (diff=0.02 > 0.01)
+
+        With abs_tolerance=0.0, rel_tolerance=0.01 (1%):
+            - 100 vs 101 -> True (diff=1, rel_tolerance=1.01, 1 <= 1.01)
+            - 100 vs 105 -> False (diff=5, rel_tolerance=1.05, 5 > 1.05)
+
+        With abs_tolerance=0.5, rel_tolerance=0.01 (both specified -- OR logic):
+            - 100 vs 100.3 -> True (abs: 0.3 <= 0.5 ✓, rel: 0.3 <= 1.0 ✓)
+            - 100 vs 101 -> True (abs: 1 > 0.5 ✗, rel: 1 <= 1.01 ✓) -- passes via relative
+            - 1 vs 1.4 -> True (abs: 0.4 <= 0.5 ✓, rel: 0.4 > 0.014 ✗) -- passes via absolute
+            - 100 vs 105 -> False (abs: 5 > 0.5 ✗, rel: 5 > 1.05 ✗) -- fails both
+
+    Note:
+        The OR logic means that when both tolerances are specified, the comparison is more
+        lenient than if only one tolerance were used.
+        - Relative tolerance is scaled by the maximum absolute value of the two numbers,
+        making it suitable for comparing values of different magnitudes
+    """
     abs_diff = F.abs(df_col - ref_col)
     tolerance_val_relative = rel_tolerance * F.greatest(F.abs(df_col), F.abs(ref_col))
     return (abs_diff <= F.lit(abs_tolerance)) | (abs_diff <= tolerance_val_relative)
@@ -2584,7 +2776,6 @@ def _add_column_diffs(
     """
     columns_changed = []
     if compare_columns:
-
         for col_name in compare_columns:
             is_numeric = isinstance(df.schema[col_name].dataType, types.NumericType)
 
@@ -2753,59 +2944,26 @@ def _validate_aggregate_return_type(
         )
 
 
-def _is_aggr_compare(
-    column: str | Column,
-    limit: int | float | str | Column,
+def _build_aggregate_check_metadata(
+    aggr_col_str_norm: str,
     aggr_type: str,
-    aggr_params: dict[str, Any] | None,
     group_by: list[str | Column] | None,
-    row_filter: str | None,
-    compare_op: Callable[[Column, Column], Column],
-    compare_op_label: str,
     compare_op_name: str,
-) -> tuple[Column, Callable]:
+) -> tuple[str, str | None]:
     """
-    Helper to build aggregation comparison checks with a given operator.
-
-    Constructs a condition and closure that verify whether an aggregation on a column
-    (or groups of columns) satisfies a comparison against a limit (e.g., greater than).
+    Build metadata for aggregation comparison checks.
 
     Args:
-        column: Column name (str) or Column expression to aggregate.
-        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
-        aggr_type: Aggregation type. Curated functions include 'count', 'sum', 'avg', 'min', 'max',
-            'count_distinct', 'stddev', 'percentile', and more. Any Databricks built-in aggregate
-            function is supported (will trigger a warning for non-curated functions).
-        aggr_params: Optional dictionary of parameters for aggregate functions that require them
-            (e.g., percentile functions need {"percentile": 0.95}).
+        aggr_col_str_norm: Normalized string representation of the aggregation column.
+        aggr_type: Type of aggregation (e.g., 'sum', 'avg').
         group_by: Optional list of columns or Column expressions to group by.
-        row_filter: Optional SQL expression to filter rows before aggregation.
-        compare_op: Comparison operator (e.g., operator.gt, operator.lt).
-        compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
 
     Returns:
         A tuple of:
-            - A Spark Column representing the condition for the aggregation check.
-            - A closure that applies the aggregation check logic.
-
-    Raises:
-        InvalidParameterError: If an aggregate returns non-numeric types or is not found.
-        MissingParameterError: If required parameters for specific aggregates are not provided.
+            - A unique name for the aggregation comparison check.
+            - A string representation of the group by columns, or None if not applicable.
     """
-    # Warn if using non-curated aggregate function
-    is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
-    if not is_curated:
-        warnings.warn(
-            f"Using non-curated aggregate function '{aggr_type}'. "
-            f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
-            f"Non-curated aggregates must return a single numeric value per group.",
-            UserWarning,
-            stacklevel=3,
-        )
-
-    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
-
     group_by_list_str = (
         ", ".join(col if isinstance(col, str) else get_column_name_or_alias(col) for col in group_by)
         if group_by
@@ -2823,6 +2981,72 @@ def _is_aggr_compare(
         else f"{aggr_col_str_norm}_{aggr_type.lower()}_{compare_op_name}_limit".lstrip("_")
     )
 
+    return name, group_by_list_str
+
+
+def _is_aggr_compare(
+    column: str | Column,
+    limit: int | float | Decimal | str | Column,
+    aggr_type: str,
+    aggr_params: dict[str, Any] | None,
+    group_by: list[str | Column] | None,
+    row_filter: str | None,
+    compare_op: Callable[[Column, Column], Column],
+    compare_op_label: str,
+    compare_op_name: str,
+    abs_tolerance: float | None = None,
+    rel_tolerance: float | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Helper to build aggregation comparison checks with a given operator.
+
+    Constructs a condition and closure that verify whether an aggregation on a column
+    (or groups of columns) satisfies a comparison against a limit (e.g., greater than).
+
+    Args:
+        column: Column name (str) or Column expression to aggregate.
+        limit: Numeric value, column name, or SQL expression for the limit. String literals must be single quoted, e.g. 'string_value'.
+        aggr_type: Aggregation type. Curated functions include 'count', 'sum', 'avg', 'min', 'max',
+            'count_distinct', 'stddev', 'percentile', and more. Any Databricks built-in aggregate
+            function is supported (will trigger a warning for non-curated functions).
+        aggr_params: Optional dictionary of parameters for aggregate functions that require them
+            (e.g., percentile functions need {"percentile": 0.95}).
+        group_by: Optional list of columns or Column expressions to group by.
+        row_filter: Optional SQL expression to filter rows before aggregation. Auto-injected from the check filter.
+        compare_op: Comparison operator (e.g., operator.gt, operator.lt).
+        compare_op_label: Human-readable label for the comparison (e.g., 'greater than').
+        compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
+        abs_tolerance: Optional absolute tolerance for numeric comparisons.
+        rel_tolerance: Optional relative tolerance for numeric comparisons.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for the aggregation check.
+            - A closure that applies the aggregation check logic.
+
+    Raises:
+        InvalidParameterError: If an aggregate returns non-numeric types or is not found, or if tolerances are negative.
+        MissingParameterError: If required parameters for specific aggregates are not provided.
+    """
+    # Validate tolerance parameters
+    abs_tolerance = 0.0 if abs_tolerance is None else abs_tolerance
+    rel_tolerance = 0.0 if rel_tolerance is None else rel_tolerance
+    if abs_tolerance < 0 or rel_tolerance < 0:
+        raise InvalidParameterError("Absolute and/or relative tolerances if provided must be non-negative")
+
+    # Warn if using non-curated aggregate function
+    is_curated = aggr_type in CURATED_AGGR_FUNCTIONS
+    if not is_curated:
+        warnings.warn(
+            f"Using non-curated aggregate function '{aggr_type}'. "
+            f"Curated functions: {', '.join(sorted(CURATED_AGGR_FUNCTIONS))}. "
+            f"Non-curated aggregates must return a single numeric value per group.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+    aggr_col_str_norm, aggr_col_str, aggr_col_expr = get_normalized_column_and_expr(column)
+    name, group_by_list_str = _build_aggregate_check_metadata(aggr_col_str_norm, aggr_type, group_by, compare_op_name)
     limit_expr = get_limit_expr(limit)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
@@ -2886,7 +3110,22 @@ def _is_aggr_compare(
 
             df = df.crossJoin(agg_df)  # bring the metric across all rows
 
-        df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
+        # Apply tolerance-based comparison for equality checks
+        if (abs_tolerance > 0.0 or rel_tolerance > 0.0) and compare_op in (py_operator.ne, py_operator.eq):
+            tolerance_match = _match_values_with_tolerance(F.col(metric_col), limit_expr, abs_tolerance, rel_tolerance)
+
+            # Adjust based on compare_op:
+            if compare_op == py_operator.ne:
+                # is_aggr_equal case: fail when values don't match within tolerance
+                condition_result = ~tolerance_match
+            else:  # compare_op == py_operator.eq
+                # is_aggr_not_equal case: fail when values match within tolerance
+                condition_result = tolerance_match
+
+            df = df.withColumn(condition_col, condition_result)
+        else:
+            # Exact comparison or non-equality operators
+            df = df.withColumn(condition_col, compare_op(F.col(metric_col), limit_expr))
 
         return df
 
@@ -2974,7 +3213,7 @@ def _cleanup_alias_name(column: str) -> str:
 
 
 def get_limit_expr(
-    limit: int | float | datetime.date | datetime.datetime | str | Column | None = None,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
 ) -> Column:
     """
     Generate a Spark Column expression for a limit value.
@@ -2996,6 +3235,22 @@ def get_limit_expr(
         raise MissingParameterError("Limit is not provided.")
 
     if isinstance(limit, str):
+        if limit.isdigit():
+            return F.expr(limit)
+
+        try:
+            parsed_dt = datetime.datetime.fromisoformat(limit)
+
+            # Check if the string contains time component
+            has_time = ":" in limit
+
+            if has_time:
+                return F.to_timestamp(F.lit(parsed_dt))
+            return F.to_date(F.lit(parsed_dt.date()))
+        except ValueError:
+            # If parsing fails, treat as an expression
+            pass
+
         return F.expr(limit)
     if isinstance(limit, Column):
         return limit
@@ -3301,7 +3556,7 @@ def _apply_dataset_level_sql_check(
         query_resolved: The resolved SQL query (with placeholders replaced).
         condition_column: Name of the condition column in the query result.
         unique_condition_column: Unique name for the condition column in the output.
-        row_filter: Optional SQL expression for filtering which rows receive the check result.
+        row_filter: Optional SQL expression for filtering which rows receive the check result. Auto-injected from the check filter.
 
     Returns:
         DataFrame with the condition column added.

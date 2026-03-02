@@ -1,5 +1,5 @@
 ---
-sidebar_position: 4
+sidebar_position: 504
 ---
 
 import Admonition from '@theme/Admonition';
@@ -55,30 +55,9 @@ Below is an example test.
   </TabItem>
 </Tabs>
 
-### Setting up Databricks Workspace Client authentication in a terminal
-
-If you want to run the tests from your local machine in the terminal, you need to set up the following environment variables:
-```shell
-export DATABRICKS_HOST=<workspace-url>
-export DATABRICKS_CLUSTER_ID=<cluster-id>
-
-# Authenticate to Databricks using OAuth generated for a service principal (recommended)
-export DATABRICKS_CLIENT_ID=<oauth-client-id>
-export DATABRICKS_CLIENT_SECRET=<oauth-client-secret>
-
-# Specify Default Warehouse HTTP path for local testing of dbt demo 
-export TEST_DEFAULT_WAREHOUSE_HTTP_PATH=/sql/1.0/warehouses/<warehouse-id>
-
-# Optionally enable serverless compute to be used for the tests
-export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
-```
-
-We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
-Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by setting the `DATABRICKS_TOKEN` environment variable. However, we do not recommend this method, as it is less secure than OAuth.
-
 ### Setting up Databricks Workspace Client authentication in an IDE
 
-If you want to run the tests from your IDE, you must setup `.env` or `~/.databricks/debug-env.json` file
+If you want to run the tests from your IDE, you must setup `~/.databricks/debug-env.json` file
 (see [instructions](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture)).
 The name of the debug environment that you must define is `ws` (see `debug_env_name` fixture in the example above).
 
@@ -100,6 +79,27 @@ You must provide an existing cluster. It will auto-start for you as part of the 
 
 We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
 Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by providing the `DATABRICKS_TOKEN` field. However, we do not recommend this method, as it is less secure than OAuth.
+
+### Setting up Databricks Workspace Client authentication in a terminal
+
+If you want to run the tests from your local machine in the terminal, you can setup the `~/.databricks/debug-env.json` file as described above or the following environment variables:
+```shell
+export DATABRICKS_HOST=<workspace-url>
+export DATABRICKS_CLUSTER_ID=<cluster-id>
+
+# Authenticate to Databricks using OAuth generated for a service principal (recommended)
+export DATABRICKS_CLIENT_ID=<oauth-client-id>
+export DATABRICKS_CLIENT_SECRET=<oauth-client-secret>
+
+# Specify Default Warehouse HTTP path for local testing of dbt demo 
+export TEST_DEFAULT_WAREHOUSE_HTTP_PATH=/sql/1.0/warehouses/<warehouse-id>
+
+# Optionally enable serverless compute to be used for the tests
+export DATABRICKS_SERVERLESS_COMPUTE_ID=auto
+```
+
+We recommend using [OAuth access token](https://docs.databricks.com/en/dev-tools/auth/oauth-m2m.html) generated for a service principal to authenticate with Databricks as presented above.
+Alternatively, you can authenticate using [PAT token](https://docs.databricks.com/en/dev-tools/auth/pat.html) by setting the `DATABRICKS_TOKEN` environment variable. However, we do not recommend this method, as it is less secure than OAuth.
 
 #### Running Tests on Serverless Compute
 

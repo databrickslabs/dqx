@@ -1,6 +1,7 @@
 import textwrap
 
 import pytest
+from databricks.labs import dqx
 from databricks.labs.dqx.checks_resolver import resolve_check_function, resolve_custom_check_functions_from_path
 from databricks.labs.dqx.errors import InvalidCheckError
 
@@ -101,3 +102,22 @@ def test_resolve_custom_check_functions_from_path_with_dependency(tmp_path):
 
     func = resolve_custom_check_functions_from_path({"main_func": str(main_path)})["main_func"]
     assert func() == "dependency ok"
+
+
+def test_optional_module_import_failure():
+    """Test that optional check modules can be unavailable without breaking core resolution."""
+    resolver = dqx.checks_resolver
+    optional_modules = getattr(resolver, "_OPTIONAL_CHECK_MODULES")
+    original_cache = dict(getattr(resolver, "_optional_modules_cache"))
+
+    try:
+        for module_path in optional_modules:
+            getattr(resolver, "_optional_modules_cache")[module_path] = None
+
+        func = resolver.resolve_check_function("is_not_null")
+        assert func is not None
+
+        func = resolver.resolve_check_function("some_missing_func", fail_on_missing=False)
+        assert func is None
+    finally:
+        setattr(resolver, "_optional_modules_cache", original_cache)

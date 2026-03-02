@@ -25,7 +25,7 @@ from databricks.labs.dqx.check_funcs import (
 from databricks.labs.dqx.utils import get_column_name_or_alias
 from databricks.labs.dqx.errors import InvalidParameterError, MissingParameterError
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 SCHEMA = "a: string, b: int"
@@ -472,9 +472,10 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
         is_aggr_not_greater_than("a", limit=F.lit(0), aggr_type="count", row_filter="b is not null", group_by=["a"]),
         is_aggr_not_greater_than(F.col("b"), limit=F.lit(0), aggr_type="count", group_by=[F.col("b")]),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="avg"),
-        is_aggr_not_greater_than("b", limit=0.0, aggr_type="sum"),
+        is_aggr_not_greater_than("b", limit=Decimal("0.0"), aggr_type="sum"),
         is_aggr_not_greater_than("b", limit=0.0, aggr_type="min"),
-        is_aggr_not_greater_than("b", limit=0.0, aggr_type="max"),
+        is_aggr_not_greater_than("b", limit=Decimal("0.0"), aggr_type="max"),
+        is_aggr_not_greater_than("b", limit="2.0", aggr_type="avg"),
     ]
 
     actual = _apply_checks(test_df, checks)
@@ -487,7 +488,8 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
         "b_avg_greater_than_limit STRING, "
         "b_sum_greater_than_limit STRING, "
         "b_min_greater_than_limit STRING, "
-        "b_max_greater_than_limit STRING"
+        "b_max_greater_than_limit STRING, "
+        "b_avg_greater_than_limit STRING"
     )
 
     expected = spark.createDataFrame(
@@ -504,6 +506,7 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
+                None,
             ],
             [
                 "a",
@@ -516,6 +519,7 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
+                None,
             ],
             [
                 "b",
@@ -528,6 +532,7 @@ def test_is_aggr_not_greater_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is greater than limit: 0.0",
                 "Min value 1 in column 'b' is greater than limit: 0.0",
                 "Max value 3 in column 'b' is greater than limit: 0.0",
+                None,
             ],
         ],
         expected_schema,
@@ -554,9 +559,10 @@ def test_is_aggr_not_less_than(spark: SparkSession):
         ),
         is_aggr_not_less_than(F.col("b"), limit=F.lit(2), aggr_type="count", group_by=["b"]),
         is_aggr_not_less_than("b", limit=3.0, aggr_type="avg"),
-        is_aggr_not_less_than("b", limit=5.0, aggr_type="sum"),
+        is_aggr_not_less_than("b", limit=Decimal("5.0"), aggr_type="sum"),
         is_aggr_not_less_than("b", limit=2.0, aggr_type="min"),
-        is_aggr_not_less_than("b", limit=4.0, aggr_type="max"),
+        is_aggr_not_less_than("b", limit=Decimal("4.0"), aggr_type="max"),
+        is_aggr_not_less_than("b", limit="1.0", aggr_type="avg"),
     ]
     actual = _apply_checks(test_df, checks)
 
@@ -568,7 +574,8 @@ def test_is_aggr_not_less_than(spark: SparkSession):
         "b_avg_less_than_limit STRING, "
         "b_sum_less_than_limit STRING, "
         "b_min_less_than_limit STRING, "
-        "b_max_less_than_limit STRING"
+        "b_max_less_than_limit STRING, "
+        "b_avg_less_than_limit STRING"
     )
 
     expected = spark.createDataFrame(
@@ -584,6 +591,7 @@ def test_is_aggr_not_less_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
+                None,
             ],
             [
                 "a",
@@ -596,6 +604,7 @@ def test_is_aggr_not_less_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
+                None,
             ],
             [
                 "b",
@@ -608,6 +617,7 @@ def test_is_aggr_not_less_than(spark: SparkSession):
                 "Sum value 4 in column 'b' is less than limit: 5.0",
                 "Min value 1 in column 'b' is less than limit: 2.0",
                 "Max value 3 in column 'b' is less than limit: 4.0",
+                None,
             ],
         ],
         expected_schema,
@@ -655,9 +665,10 @@ def test_is_aggr_equal(spark: SparkSession):
         is_aggr_equal("a", limit=F.lit(1), aggr_type="count", row_filter="b is not null", group_by=["a"]),
         is_aggr_equal(F.col("b"), limit=F.lit(2), aggr_type="count", group_by=[F.col("b")]),
         is_aggr_equal("b", limit=2.0, aggr_type="avg"),
-        is_aggr_equal("b", limit=10.0, aggr_type="sum"),
+        is_aggr_equal("b", limit=Decimal("10.0"), aggr_type="sum"),
         is_aggr_equal("b", limit=1.0, aggr_type="min"),
-        is_aggr_equal("b", limit=5.0, aggr_type="max"),
+        is_aggr_equal("b", limit=Decimal("5.0"), aggr_type="max"),
+        is_aggr_equal("b", limit="2.0", aggr_type="avg"),
     ]
 
     actual = _apply_checks(test_df, checks)
@@ -670,7 +681,8 @@ def test_is_aggr_equal(spark: SparkSession):
         "b_avg_not_equal_to_limit STRING, "
         "b_sum_not_equal_to_limit STRING, "
         "b_min_not_equal_to_limit STRING, "
-        "b_max_not_equal_to_limit STRING"
+        "b_max_not_equal_to_limit STRING, "
+        "b_avg_not_equal_to_limit STRING"
     )
 
     expected = spark.createDataFrame(
@@ -686,6 +698,7 @@ def test_is_aggr_equal(spark: SparkSession):
                 "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
+                None,
             ],
             [
                 "a",
@@ -698,6 +711,7 @@ def test_is_aggr_equal(spark: SparkSession):
                 "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
+                None,
             ],
             [
                 "b",
@@ -710,12 +724,183 @@ def test_is_aggr_equal(spark: SparkSession):
                 "Sum value 4 in column 'b' is not equal to limit: 10.0",
                 None,
                 "Max value 3 in column 'b' is not equal to limit: 5.0",
+                None,
             ],
         ],
         expected_schema,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_aggr_equal_with_tolerance(spark: SparkSession):
+    """Test is_aggr_equal with absolute and relative tolerance parameters, including edge cases with null values and float types."""
+    # Test with null values in column
+    test_df_with_nulls = spark.createDataFrame(
+        [
+            ["a", 100],
+            ["b", 100],
+            ["c", None],  # null value - should be ignored in aggregations
+            ["d", 1],
+        ],
+        SCHEMA,
+    )
+
+    # Test with float values
+    test_df_with_floats = spark.createDataFrame(
+        [
+            ["x", 10.5],
+            ["y", 20.7],
+            ["z", 15.3],
+        ],
+        "a: string, b: double",
+    )
+
+    # Tests with null values - avg ignores nulls: (100+100+1)/3 = 67.0, sum = 201
+    checks_with_nulls = [
+        # Test 1: Absolute tolerance - avg(b) = 67.0, limit = 67.05, abs_tol = 0.1 -> PASS (diff = 0.05 <= 0.1)
+        is_aggr_equal("b", limit=67.05, aggr_type="avg", abs_tolerance=0.1),
+        # Test 2: Absolute tolerance - sum(b) = 201, limit = 201.5, abs_tol = 0.1 -> FAIL (diff = 0.5 > 0.1)
+        is_aggr_equal("b", limit=201.5, aggr_type="sum", abs_tolerance=0.1),
+        # Test 3: Relative tolerance - avg(b) = 67.0, limit = 68, rel_tol = 0.02 (2%) -> PASS (diff = 1, rel_tol = 1.36, 1 <= 1.36)
+        is_aggr_equal("b", limit=68, aggr_type="avg", rel_tolerance=0.02),
+        # Test 4: Relative tolerance - max(b) = 100, limit = 105, rel_tol = 0.01 (1%) -> FAIL (diff = 5, rel_tol = 1.05, 5 > 1.05)
+        is_aggr_equal("b", limit=105, aggr_type="max", rel_tolerance=0.01),
+        # Test 5: Both tolerances (OR logic) - min(b) = 1, limit = 1.4, abs_tol = 0.5, rel_tol = 0.01 -> PASS via abs (diff = 0.4 <= 0.5)
+        is_aggr_equal("b", limit=1.4, aggr_type="min", abs_tolerance=0.5, rel_tolerance=0.01),
+        # Test 6: Both tolerances (OR logic) - count(a) = 4, limit = 5, abs_tol = 0.5, rel_tol = 0.3 -> PASS via rel (diff = 1, rel_tol = 1.5, 1 <= 1.5)
+        is_aggr_equal("a", limit=5, aggr_type="count", abs_tolerance=0.5, rel_tolerance=0.3),
+        # Test 7: Both tolerances fail - sum(b) = 201, limit = 210, abs_tol = 0.5, rel_tol = 0.01 -> FAIL both (diff = 9 > 0.5 AND 9 > 2.1)
+        is_aggr_equal("b", limit=210, aggr_type="sum", abs_tolerance=0.5, rel_tolerance=0.01),
+        # Test 8: Exact match with zero tolerance - count(a) = 4, limit = 4, abs_tol = 0.0 -> PASS
+        is_aggr_equal("a", limit=4, aggr_type="count", abs_tolerance=0.0),
+    ]
+
+    # Tests with float values - avg = 15.5, sum = 46.5
+    checks_with_floats = [
+        # Test 9: Float avg with absolute tolerance - avg(b) = 15.5, limit = 15.6, abs_tol = 0.15 -> PASS (diff = 0.1 <= 0.15)
+        is_aggr_equal("b", limit=15.6, aggr_type="avg", abs_tolerance=0.15),
+        # Test 10: Float sum with relative tolerance - sum(b) = 46.5, limit = 46.6, rel_tol = 0.01 -> PASS (diff = 0.1, rel_tol = 0.466, 0.1 <= 0.466)
+        is_aggr_equal("b", limit=46.6, aggr_type="sum", rel_tolerance=0.01),
+        # Test 11: Float max with both tolerances - max(b) = 20.7, limit = 21.0, abs_tol = 0.2, rel_tol = 0.01 -> FAIL both (diff = 0.3 > 0.2 AND 0.3 > 0.21)
+        is_aggr_equal("b", limit=21.0, aggr_type="max", abs_tolerance=0.2, rel_tolerance=0.01),
+        # Test 12: Float min with absolute tolerance - min(b) = 10.5, limit = 10.45, abs_tol = 0.1 -> PASS (diff = 0.05 <= 0.1)
+        is_aggr_equal("b", limit=10.45, aggr_type="min", abs_tolerance=0.1),
+    ]
+
+    # Test with nulls
+    actual_nulls = _apply_checks(test_df_with_nulls, checks_with_nulls)
+
+    expected_schema_nulls = (
+        f"{SCHEMA}, "
+        "b_avg_not_equal_to_limit STRING, "
+        "b_sum_not_equal_to_limit STRING, "
+        "b_avg_not_equal_to_limit STRING, "
+        "b_max_not_equal_to_limit STRING, "
+        "b_min_not_equal_to_limit STRING, "
+        "a_count_not_equal_to_limit STRING, "
+        "b_sum_not_equal_to_limit STRING, "
+        "a_count_not_equal_to_limit STRING"
+    )
+
+    expected_nulls = spark.createDataFrame(
+        [
+            [
+                "a",
+                100,
+                None,  # Test 1: avg passes with abs tolerance
+                "Sum value 201 in column 'b' is not equal to limit: 201.5",  # Test 2: sum fails abs tolerance
+                None,  # Test 3: avg passes with rel tolerance
+                "Max value 100 in column 'b' is not equal to limit: 105",  # Test 4: max fails rel tolerance
+                None,  # Test 5: min passes via abs tolerance (OR logic)
+                None,  # Test 6: count passes via rel tolerance (OR logic)
+                "Sum value 201 in column 'b' is not equal to limit: 210",  # Test 7: sum fails both tolerances
+                None,  # Test 8: exact match passes
+            ],
+            [
+                "b",
+                100,
+                None,
+                "Sum value 201 in column 'b' is not equal to limit: 201.5",
+                None,
+                "Max value 100 in column 'b' is not equal to limit: 105",
+                None,
+                None,
+                "Sum value 201 in column 'b' is not equal to limit: 210",
+                None,
+            ],
+            [
+                "c",
+                None,
+                None,
+                "Sum value 201 in column 'b' is not equal to limit: 201.5",
+                None,
+                "Max value 100 in column 'b' is not equal to limit: 105",
+                None,
+                None,
+                "Sum value 201 in column 'b' is not equal to limit: 210",
+                None,
+            ],
+            [
+                "d",
+                1,
+                None,
+                "Sum value 201 in column 'b' is not equal to limit: 201.5",
+                None,
+                "Max value 100 in column 'b' is not equal to limit: 105",
+                None,
+                None,
+                "Sum value 201 in column 'b' is not equal to limit: 210",
+                None,
+            ],
+        ],
+        expected_schema_nulls,
+    )
+
+    assert_df_equality(actual_nulls, expected_nulls, ignore_nullable=True)
+
+    # Test with floats
+    actual_floats = _apply_checks(test_df_with_floats, checks_with_floats)
+
+    expected_schema_floats = (
+        "a: string, b: double, "
+        "b_avg_not_equal_to_limit STRING, "
+        "b_sum_not_equal_to_limit STRING, "
+        "b_max_not_equal_to_limit STRING, "
+        "b_min_not_equal_to_limit STRING"
+    )
+
+    expected_floats = spark.createDataFrame(
+        [
+            [
+                "x",
+                10.5,
+                None,  # Test 9: avg passes with abs tolerance
+                None,  # Test 10: sum passes with rel tolerance
+                "Max value 20.7 in column 'b' is not equal to limit: 21.0",  # Test 11: max fails both tolerances
+                None,  # Test 12: min passes with abs tolerance
+            ],
+            [
+                "y",
+                20.7,
+                None,
+                None,
+                "Max value 20.7 in column 'b' is not equal to limit: 21.0",
+                None,
+            ],
+            [
+                "z",
+                15.3,
+                None,
+                None,
+                "Max value 20.7 in column 'b' is not equal to limit: 21.0",
+                None,
+            ],
+        ],
+        expected_schema_floats,
+    )
+
+    assert_df_equality(actual_floats, expected_floats, ignore_nullable=True)
 
 
 def test_is_aggr_not_equal(spark: SparkSession):
@@ -734,9 +919,10 @@ def test_is_aggr_not_equal(spark: SparkSession):
         is_aggr_not_equal("a", limit=F.lit(1), aggr_type="count", row_filter="b is not null", group_by=["a"]),
         is_aggr_not_equal(F.col("b"), limit=F.lit(2), aggr_type="count", group_by=[F.col("b")]),
         is_aggr_not_equal("b", limit=2.0, aggr_type="avg"),
-        is_aggr_not_equal("b", limit=10.0, aggr_type="sum"),
+        is_aggr_not_equal("b", limit=Decimal("10.0"), aggr_type="sum"),
         is_aggr_not_equal("b", limit=1.0, aggr_type="min"),
-        is_aggr_not_equal("b", limit=5.0, aggr_type="max"),
+        is_aggr_not_equal("b", limit=Decimal("5.0"), aggr_type="max"),
+        is_aggr_not_equal("b", limit="2.0", aggr_type="avg"),
     ]
 
     actual = _apply_checks(test_df, checks)
@@ -749,7 +935,8 @@ def test_is_aggr_not_equal(spark: SparkSession):
         "b_avg_equal_to_limit STRING, "
         "b_sum_equal_to_limit STRING, "
         "b_min_equal_to_limit STRING, "
-        "b_max_equal_to_limit STRING"
+        "b_max_equal_to_limit STRING, "
+        "b_avg_equal_to_limit STRING"
     )
 
     expected = spark.createDataFrame(
@@ -765,6 +952,7 @@ def test_is_aggr_not_equal(spark: SparkSession):
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
             ],
             [
                 "a",
@@ -777,6 +965,7 @@ def test_is_aggr_not_equal(spark: SparkSession):
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
             ],
             [
                 "b",
@@ -789,12 +978,183 @@ def test_is_aggr_not_equal(spark: SparkSession):
                 None,
                 "Min value 1 in column 'b' is equal to limit: 1.0",
                 None,
+                "Average value 2.0 in column 'b' is equal to limit: 2.0",
             ],
         ],
         expected_schema,
     )
 
     assert_df_equality(actual, expected, ignore_nullable=True)
+
+
+def test_is_aggr_not_equal_with_tolerance(spark: SparkSession):
+    """Test is_aggr_not_equal with absolute and relative tolerance parameters, including edge cases with null values and float types."""
+    # Test with null values in column
+    test_df_with_nulls = spark.createDataFrame(
+        [
+            ["a", 100],
+            ["b", 100],
+            ["c", None],  # null value - should be ignored in aggregations
+            ["d", 1],
+        ],
+        SCHEMA,
+    )
+
+    # Test with float values
+    test_df_with_floats = spark.createDataFrame(
+        [
+            ["x", 10.5],
+            ["y", 20.7],
+            ["z", 15.3],
+        ],
+        "a: string, b: double",
+    )
+
+    # Tests with null values - avg ignores nulls: (100+100+1)/3 = 67.0, sum = 201
+    checks_with_nulls = [
+        # Test 1: Absolute tolerance - avg(b) = 67.0, limit = 67.05, abs_tol = 0.1 -> FAIL (diff = 0.05 <= 0.1, values are equal within tolerance)
+        is_aggr_not_equal("b", limit=67.05, aggr_type="avg", abs_tolerance=0.1),
+        # Test 2: Absolute tolerance - sum(b) = 201, limit = 201.5, abs_tol = 0.1 -> PASS (diff = 0.5 > 0.1, values are not equal)
+        is_aggr_not_equal("b", limit=201.5, aggr_type="sum", abs_tolerance=0.1),
+        # Test 3: Relative tolerance - avg(b) = 67.0, limit = 68, rel_tol = 0.02 (2%) -> FAIL (diff = 1, rel_tol = 1.36, 1 <= 1.36, values are equal within tolerance)
+        is_aggr_not_equal("b", limit=68, aggr_type="avg", rel_tolerance=0.02),
+        # Test 4: Relative tolerance - max(b) = 100, limit = 105, rel_tol = 0.01 (1%) -> PASS (diff = 5, rel_tol = 1.05, 5 > 1.05, values are not equal)
+        is_aggr_not_equal("b", limit=105, aggr_type="max", rel_tolerance=0.01),
+        # Test 5: Both tolerances (OR logic) - min(b) = 1, limit = 1.4, abs_tol = 0.5, rel_tol = 0.01 -> FAIL via abs (diff = 0.4 <= 0.5, values are equal within tolerance)
+        is_aggr_not_equal("b", limit=1.4, aggr_type="min", abs_tolerance=0.5, rel_tolerance=0.01),
+        # Test 6: Both tolerances (OR logic) - count(a) = 4, limit = 5, abs_tol = 0.5, rel_tol = 0.3 -> FAIL via rel (diff = 1, rel_tol = 1.5, 1 <= 1.5, values are equal within tolerance)
+        is_aggr_not_equal("a", limit=5, aggr_type="count", abs_tolerance=0.5, rel_tolerance=0.3),
+        # Test 7: Both tolerances fail - sum(b) = 201, limit = 210, abs_tol = 0.5, rel_tol = 0.01 -> PASS both (diff = 9 > 0.5 AND 9 > 2.1, values are not equal)
+        is_aggr_not_equal("b", limit=210, aggr_type="sum", abs_tolerance=0.5, rel_tolerance=0.01),
+        # Test 8: Exact match with zero tolerance - count(a) = 4, limit = 4, abs_tol = 0.0 -> FAIL (exact match, values are equal)
+        is_aggr_not_equal("a", limit=4, aggr_type="count", abs_tolerance=0.0),
+    ]
+
+    # Tests with float values - avg = 15.5, sum = 46.5
+    checks_with_floats = [
+        # Test 9: Float avg with absolute tolerance - avg(b) = 15.5, limit = 15.6, abs_tol = 0.15 -> FAIL (diff = 0.1 <= 0.15, values are equal within tolerance)
+        is_aggr_not_equal("b", limit=15.6, aggr_type="avg", abs_tolerance=0.15),
+        # Test 10: Float sum with relative tolerance - sum(b) = 46.5, limit = 46.6, rel_tol = 0.01 -> FAIL (diff = 0.1, rel_tol = 0.466, 0.1 <= 0.466, values are equal within tolerance)
+        is_aggr_not_equal("b", limit=46.6, aggr_type="sum", rel_tolerance=0.01),
+        # Test 11: Float max with both tolerances - max(b) = 20.7, limit = 21.0, abs_tol = 0.2, rel_tol = 0.01 -> PASS both (diff = 0.3 > 0.2 AND 0.3 > 0.21, values are not equal)
+        is_aggr_not_equal("b", limit=21.0, aggr_type="max", abs_tolerance=0.2, rel_tolerance=0.01),
+        # Test 12: Float min with absolute tolerance - min(b) = 10.5, limit = 10.45, abs_tol = 0.1 -> FAIL (diff = 0.05 <= 0.1, values are equal within tolerance)
+        is_aggr_not_equal("b", limit=10.45, aggr_type="min", abs_tolerance=0.1),
+    ]
+
+    # Test with nulls
+    actual_nulls = _apply_checks(test_df_with_nulls, checks_with_nulls)
+
+    expected_schema_nulls = (
+        f"{SCHEMA}, "
+        "b_avg_equal_to_limit STRING, "
+        "b_sum_equal_to_limit STRING, "
+        "b_avg_equal_to_limit STRING, "
+        "b_max_equal_to_limit STRING, "
+        "b_min_equal_to_limit STRING, "
+        "a_count_equal_to_limit STRING, "
+        "b_sum_equal_to_limit STRING, "
+        "a_count_equal_to_limit STRING"
+    )
+
+    expected_nulls = spark.createDataFrame(
+        [
+            [
+                "a",
+                100,
+                "Average value 67.0 in column 'b' is equal to limit: 67.05",  # Test 1: avg fails - equal within abs tolerance
+                None,  # Test 2: sum passes - not equal
+                "Average value 67.0 in column 'b' is equal to limit: 68",  # Test 3: avg fails - equal within rel tolerance
+                None,  # Test 4: max passes - not equal
+                "Min value 1 in column 'b' is equal to limit: 1.4",  # Test 5: min fails - equal within abs tolerance (OR logic)
+                "Count value 4 in column 'a' is equal to limit: 5",  # Test 6: count fails - equal within rel tolerance (OR logic)
+                None,  # Test 7: sum passes - not equal (both tolerances fail)
+                "Count value 4 in column 'a' is equal to limit: 4",  # Test 8: exact match fails
+            ],
+            [
+                "b",
+                100,
+                "Average value 67.0 in column 'b' is equal to limit: 67.05",
+                None,
+                "Average value 67.0 in column 'b' is equal to limit: 68",
+                None,
+                "Min value 1 in column 'b' is equal to limit: 1.4",
+                "Count value 4 in column 'a' is equal to limit: 5",
+                None,
+                "Count value 4 in column 'a' is equal to limit: 4",
+            ],
+            [
+                "c",
+                None,  # null value
+                "Average value 67.0 in column 'b' is equal to limit: 67.05",
+                None,
+                "Average value 67.0 in column 'b' is equal to limit: 68",
+                None,
+                "Min value 1 in column 'b' is equal to limit: 1.4",
+                "Count value 4 in column 'a' is equal to limit: 5",
+                None,
+                "Count value 4 in column 'a' is equal to limit: 4",
+            ],
+            [
+                "d",
+                1,
+                "Average value 67.0 in column 'b' is equal to limit: 67.05",
+                None,
+                "Average value 67.0 in column 'b' is equal to limit: 68",
+                None,
+                "Min value 1 in column 'b' is equal to limit: 1.4",
+                "Count value 4 in column 'a' is equal to limit: 5",
+                None,
+                "Count value 4 in column 'a' is equal to limit: 4",
+            ],
+        ],
+        expected_schema_nulls,
+    )
+
+    assert_df_equality(actual_nulls, expected_nulls, ignore_nullable=True)
+
+    # Test with floats
+    actual_floats = _apply_checks(test_df_with_floats, checks_with_floats)
+
+    expected_schema_floats = (
+        "a: string, b: double, "
+        "b_avg_equal_to_limit STRING, "
+        "b_sum_equal_to_limit STRING, "
+        "b_max_equal_to_limit STRING, "
+        "b_min_equal_to_limit STRING"
+    )
+
+    expected_floats = spark.createDataFrame(
+        [
+            [
+                "x",
+                10.5,
+                "Average value 15.5 in column 'b' is equal to limit: 15.6",  # Test 9: avg fails - equal within abs tolerance
+                "Sum value 46.5 in column 'b' is equal to limit: 46.6",  # Test 10: sum fails - equal within rel tolerance
+                None,  # Test 11: max passes - not equal (both tolerances fail)
+                "Min value 10.5 in column 'b' is equal to limit: 10.45",  # Test 12: min fails - equal within abs tolerance
+            ],
+            [
+                "y",
+                20.7,
+                "Average value 15.5 in column 'b' is equal to limit: 15.6",
+                "Sum value 46.5 in column 'b' is equal to limit: 46.6",
+                None,
+                "Min value 10.5 in column 'b' is equal to limit: 10.45",
+            ],
+            [
+                "z",
+                15.3,
+                "Average value 15.5 in column 'b' is equal to limit: 15.6",
+                "Sum value 46.5 in column 'b' is equal to limit: 46.6",
+                None,
+                "Min value 10.5 in column 'b' is equal to limit: 10.45",
+            ],
+        ],
+        expected_schema_floats,
+    )
+
+    assert_df_equality(actual_floats, expected_floats, ignore_nullable=True)
 
 
 def test_is_aggr_with_count_distinct(spark: SparkSession):
@@ -2772,5 +3132,53 @@ def test_has_valid_schema_with_ref_df_name(spark: SparkSession):
             ],
         ],
         "a string, b string, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_with_exclude_columns(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra"],
+            ["str2", 2, 200.0, "data"],
+        ],
+        "a string, b int, c double, d string",
+    )
+
+    expected_schema = "a string, b int, c double"
+    condition, apply_method = has_valid_schema(expected_schema, exclude_columns=["d"], strict=True)
+    actual_apply_df = apply_method(test_df, spark, {})
+    actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra", None],
+            ["str2", 2, 200.0, "data", None],
+        ],
+        "a string, b int, c double, d string, has_invalid_schema string",
+    )
+    assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)
+
+
+def test_has_valid_schema_with_exclude_columns_as_expression(spark: SparkSession):
+    test_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra"],
+            ["str2", 2, 200.0, "data"],
+        ],
+        "a string, b int, c double, d string",
+    )
+
+    expected_schema = "a string, b int, c double"
+    condition, apply_method = has_valid_schema(expected_schema, exclude_columns=[F.col("d")], strict=True)
+    actual_apply_df = apply_method(test_df, spark, {})
+    actual_condition_df = actual_apply_df.select("a", "b", "c", "d", condition)
+
+    expected_condition_df = spark.createDataFrame(
+        [
+            ["str1", 1, 100.0, "extra", None],
+            ["str2", 2, 200.0, "data", None],
+        ],
+        "a string, b int, c double, d string, has_invalid_schema string",
     )
     assert_df_equality(actual_condition_df, expected_condition_df, ignore_nullable=True)

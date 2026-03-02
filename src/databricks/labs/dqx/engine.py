@@ -1,14 +1,15 @@
 import copy
-import os
+import inspect
 import logging
+import os
 from concurrent import futures
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from functools import cached_property
 from typing import Any
 from uuid import uuid4
 
-import pyspark
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, Observation, SparkSession
 from pyspark.sql.streaming import StreamingQuery
@@ -32,11 +33,11 @@ from databricks.labs.dqx.config import (
     ExtraParams,
 )
 from databricks.labs.dqx.manager import DQRuleManager
+from databricks.labs.dqx.reporting_columns import ColumnArguments, DefaultColumnNames, merge_info_columns
 from databricks.labs.dqx.rule import (
     Criticality,
-    ColumnArguments,
-    DefaultColumnNames,
     DQRule,
+    CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION,
 )
 from databricks.labs.dqx.checks_validator import ChecksValidator, ChecksValidationStatus
 from databricks.labs.dqx.schema import dq_result_schema
@@ -80,6 +81,9 @@ class DQEngineCore(DQEngineCoreBase):
             ColumnArguments.WARNINGS: extra_params.result_column_names.get(
                 ColumnArguments.WARNINGS.value, DefaultColumnNames.WARNINGS.value
             ),
+            ColumnArguments.INFO: extra_params.result_column_names.get(
+                ColumnArguments.INFO.value, DefaultColumnNames.INFO.value
+            ),
         }
 
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
@@ -121,6 +125,8 @@ class DQEngineCore(DQEngineCoreBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
+        self._validate_result_column_collisions(df)
+
         if not checks:
             observed_result = self._observe_metrics(self._append_empty_checks(df))
             if isinstance(observed_result, tuple):
@@ -137,10 +143,18 @@ class DQEngineCore(DQEngineCoreBase):
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
         result_df = self._create_results_array(
-            df, error_checks, self._result_column_names[ColumnArguments.ERRORS], ref_dfs
+            df,
+            error_checks,
+            self._result_column_names[ColumnArguments.ERRORS],
+            self._result_column_names[ColumnArguments.INFO],
+            ref_dfs,
         )
         result_df = self._create_results_array(
-            result_df, warning_checks, self._result_column_names[ColumnArguments.WARNINGS], ref_dfs
+            result_df,
+            warning_checks,
+            self._result_column_names[ColumnArguments.WARNINGS],
+            self._result_column_names[ColumnArguments.INFO],
+            ref_dfs,
         )
         observed_result = self._observe_metrics(result_df)
 
@@ -149,6 +163,20 @@ class DQEngineCore(DQEngineCoreBase):
             return observed_df, observation
 
         return observed_result
+
+    def _validate_result_column_collisions(self, df: DataFrame) -> None:
+        df_columns = set(df.columns)
+        errors_col = self._result_column_names[ColumnArguments.ERRORS]
+        warnings_col = self._result_column_names[ColumnArguments.WARNINGS]
+        info_col = self._result_column_names[ColumnArguments.INFO]
+
+        result_collisions = [col for col in (errors_col, warnings_col, info_col) if col in df_columns]
+        if result_collisions:
+            collisions_str = ", ".join(result_collisions)
+            raise InvalidParameterError(
+                "Input DataFrame contains reserved DQX result columns: "
+                f"{collisions_str}. Rename input columns or configure extra params in 'DQEngine' for 'result_column_names'."
+            )
 
     def apply_checks_and_split(
         self, df: DataFrame, checks: list[DQRule], ref_dfs: dict[str, DataFrame] | None = None
@@ -345,6 +373,38 @@ class DQEngineCore(DQEngineCoreBase):
         """Check if all elements in the checks list are instances of DQRule."""
         return all(isinstance(check, DQRule) for check in checks)
 
+    def _preselect_original_columns(self, df: DataFrame, check: DQRule) -> DQRule:
+        """
+        Certain data quality checks (such as has_valid_schema) require access to the DataFrame's original schema—before
+        any DQX metadata columns, e.g.
+         * DQX result columns (e.g. '_warnings' and '_errors')
+         * Internal columns added by dataset-level checks
+        To enable this, check functions that need the original schema must be registered with
+        the register_for_original_columns_preselection decorator.
+
+        Args:
+            df: Input DataFrame
+            check: Updated DQRule
+        """
+        # check func does not require original columns
+        if check.check_func.__name__ not in CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION:
+            return check
+
+        # columns already provided in the check func kwargs
+        if check.check_func_kwargs.get("columns"):
+            return check
+
+        # columns already provided in the check func args
+        if check.check_func_args:
+            check_func_signature = inspect.signature(check.check_func)
+            if check_func_signature.parameters.get("columns"):
+                return check
+
+        # preselect original columns
+        rule_kwargs = check.check_func_kwargs.copy()
+        rule_kwargs["columns"] = [col for col in df.columns if col not in set(self._result_column_names.values())]
+        return replace(check, check_func_kwargs=rule_kwargs)
+
     def _append_empty_checks(self, df: DataFrame) -> DataFrame:
         """Append empty checks at the end of DataFrame.
 
@@ -361,7 +421,12 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     def _create_results_array(
-        self, df: DataFrame, checks: list[DQRule], dest_col: str, ref_dfs: dict[str, DataFrame] | None = None
+        self,
+        df: DataFrame,
+        checks: list[DQRule],
+        dest_col: str,
+        dest_info_col: str,
+        ref_dfs: dict[str, DataFrame] | None = None,
     ) -> DataFrame:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
@@ -375,6 +440,7 @@ class DQEngineCore(DQEngineCoreBase):
             df: The input DataFrame to which checks are applied.
             checks: List of DQRule instances representing the checks to apply.
             dest_col: Name of the output column where the check results map will be stored.
+            dest_info_col: Name of the output column where the check info struct will be stored.
             ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
 
         Returns:
@@ -386,11 +452,15 @@ class DQEngineCore(DQEngineCoreBase):
             return df.select("*", empty_result)
 
         check_conditions = []
+        info_col_names: list[str] = []
         current_df = df
+        original_columns = set(df.columns)
 
         for check in checks:
+            # each check pass may add new columns to the df and certain checks require original columns
+            normalized_check = self._preselect_original_columns(df, check)
             manager = DQRuleManager(
-                check=check,
+                check=normalized_check,
                 df=current_df,
                 spark=self.spark,
                 run_id=self.run_id,
@@ -401,6 +471,9 @@ class DQEngineCore(DQEngineCoreBase):
             log_telemetry(self.ws, "check", check.check_func.__name__)
             result = manager.process()
             check_conditions.append(result.condition)
+            if result.info_column_name:
+                # dataset-level checks can optionally add an info column to the result DataFrame
+                info_col_names.append(result.info_column_name)
             # The DataFrame should contain any new columns added by the dataset-level checks
             # to satisfy the check condition.
             current_df = result.check_df
@@ -416,8 +489,22 @@ class DQEngineCore(DQEngineCoreBase):
             ),
         )
 
-        # Ensure the result DataFrame has the same columns as the input DataFrame + the new result column
-        return result_df.select(*df.columns, dest_col)
+        result_df = merge_info_columns(dest_info_col, result_df, info_col_names=info_col_names)
+
+        # Drop temporary columns used to build check conditions, while preserving result columns.
+        columns_to_drop = [
+            col
+            for col in result_df.columns
+            if col not in original_columns
+            and col != dest_col
+            and col != dest_info_col
+            and col != self._result_column_names[ColumnArguments.ERRORS]
+            and col != self._result_column_names[ColumnArguments.WARNINGS]
+        ]
+        if columns_to_drop:
+            result_df = result_df.drop(*columns_to_drop)
+
+        return result_df
 
     def _observe_metrics(self, df: DataFrame) -> DataFrame | tuple[DataFrame, Observation]:
         """
@@ -1103,7 +1190,6 @@ class DQEngine(DQEngineBase):
             For streaming use spark.streams.addListener(get_streaming_metrics_listener(..))
         """
         if self._engine.observer:
-            self._validate_session_for_metrics()
             metrics_observation = DQMetricsObservation(
                 run_id=self._engine.run_id,
                 run_name=self._engine.observer.name,
@@ -1160,6 +1246,7 @@ class DQEngine(DQEngineBase):
         metrics_observation = DQMetricsObservation(
             run_id=self._engine.run_id,
             run_name=self._engine.observer.name,
+            run_time_overwrite=self._engine.run_time_overwrite,
             error_column_name=self._engine.result_column_names[ColumnArguments.ERRORS],
             warning_column_name=self._engine.result_column_names[ColumnArguments.WARNINGS],
             input_location=input_config.location if input_config else None,
@@ -1211,18 +1298,6 @@ class DQEngine(DQEngineBase):
             ref_dfs=ref_dfs,
             checks_location=storage_config.location,
         )
-
-    def _validate_session_for_metrics(self) -> None:
-        """
-        Validates the session for metrics collection.
-
-        Raises:
-            TypeError: If the session is a SparkConnect session.
-        """
-        if isinstance(self.spark, pyspark.sql.connect.session.SparkSession):
-            raise TypeError(
-                "Metrics collection is not supported for SparkConnect sessions. Use a Spark cluster with Dedicated access mode to collect metrics."
-            )
 
     @staticmethod
     def _wait_for_one_time_trigger_streaming_queries(

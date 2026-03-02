@@ -3,9 +3,11 @@ import json
 import datetime
 import logging
 import re
+from decimal import Decimal
 from importlib.util import find_spec
 from typing import Any
 from fnmatch import fnmatch
+from pathlib import Path
 
 from pyspark.sql import Column
 
@@ -19,13 +21,14 @@ import pyspark.sql.functions as F
 from databricks.sdk import WorkspaceClient
 from databricks.labs.blueprint.limiter import rate_limited
 from databricks.labs.dqx.errors import InvalidParameterError
+from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
 
 
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
-COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$")
+COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$", re.DOTALL)
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
 
 
@@ -125,8 +128,11 @@ def normalize_bound_args(val: Any) -> Any:
     """
     Normalize a value or collection of values for consistent processing.
 
-    Handles primitives, dates, and column-like objects. Lists, tuples, and sets are
+    Handles primitives, dates, Decimal, and column-like objects. Lists, tuples, and sets are
     recursively normalized with type preserved.
+
+    For Decimal values, uses a special JSON-serializable format to preserve type information
+    for round-trip deserialization.
 
     Args:
         val: Value or collection of values to normalize.
@@ -137,6 +143,9 @@ def normalize_bound_args(val: Any) -> Any:
     Raises:
         TypeError: If a column type is unsupported.
     """
+    if val is None:
+        return None
+
     if isinstance(val, (list, tuple, set)):
         normalized = [normalize_bound_args(v) for v in val]
         return normalized
@@ -146,6 +155,10 @@ def normalize_bound_args(val: Any) -> Any:
 
     if isinstance(val, (datetime.date, datetime.datetime)):
         return str(val)
+
+    if isinstance(val, Decimal):
+        # Use a special format to preserve Decimal type information for round-trip
+        return {"__decimal__": str(val)}
 
     if ConnectColumn is not None:
         column_types: tuple[type[Any], ...] = (Column, ConnectColumn)
@@ -210,7 +223,7 @@ def safe_json_load(value: str):
         value: The value to parse as JSON.
     """
     try:
-        return json.loads(value)  # load as json if possible
+        return json.loads(value)
     except json.JSONDecodeError:
         return value
 
@@ -451,6 +464,56 @@ def to_lowercase(col_expr: Column, is_array: bool = False) -> Column:
     return F.lower(col_expr)
 
 
+def table_exists(spark: Any, table: str) -> bool:
+    """
+    Check if a table exists (Unity Catalog compatible).
+
+    Uses the catalog API only (no Spark job). Requires Spark 3.4+ for
+    fully qualified table names (e.g. catalog.schema.table).
+
+    Args:
+        spark: SparkSession instance.
+        table: Fully qualified table name (e.g. "catalog.schema.table").
+
+    Returns:
+        True if the table exists, False otherwise.
+    """
+    return spark.catalog.tableExists(table)
+
+
+def get_table_primary_keys(table: str, spark: Any) -> set[str]:
+    """
+    Retrieve primary key columns from Unity Catalog table metadata.
+
+    Uses SparkTableDataProvider (table_manager) to read table properties and
+    parses the primary key constraint into a set of column names.
+
+    Args:
+        table: Fully qualified table name (e.g., "catalog.schema.table")
+        spark: SparkSession instance
+
+    Returns:
+        Set of column names that are primary keys. Returns empty set if:
+        - Table doesn't exist
+        - No primary key is defined
+        - Metadata is not accessible
+
+    Examples:
+        >>> pk_cols = get_table_primary_keys("main.default.users", spark)
+        >>> if "user_id" in pk_cols:
+        ...     print("user_id is a primary key")
+    """
+    try:
+        provider = SparkTableDataProvider(spark)
+        pk_str = provider.get_existing_primary_key(table)
+        if pk_str is None:
+            return set()
+        return {c.strip() for c in pk_str.split(",")}
+    except Exception:
+        # Silently handle errors (table not found, permissions, etc.)
+        return set()
+
+
 def missing_required_packages(packages: list[str]) -> bool:
     """
     Checks if any of the required packages are missing.
@@ -462,3 +525,16 @@ def missing_required_packages(packages: list[str]) -> bool:
         True if any package is missing, False otherwise.
     """
     return not all(find_spec(spec) for spec in packages)
+
+
+def get_file_extension(file_path: str | os.PathLike) -> str:
+    """
+    Extract file extension from a file path.
+
+    Args:
+        file_path: File path as string or path-like object.
+
+    Returns:
+        File extension (e.g., ".json", ".yaml", ".yml") or empty string if no extension.
+    """
+    return Path(file_path).suffix
