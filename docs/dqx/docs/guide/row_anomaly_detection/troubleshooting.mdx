@@ -22,7 +22,7 @@ This guide helps you resolve common issues when using DQX row anomaly detection.
 # Explicitly specify behavioral columns
 anomaly_engine.train(
   df=df,
-  columns=["amount", "quantity", "discount"],  # specify selected columns
+  columns=["amount", "quantity"],  # specify selected columns
   model_name=model_name,  # must be fully qualified Unity Catalog name: catalog.schema.model
   registry_table=registry_table,
 )

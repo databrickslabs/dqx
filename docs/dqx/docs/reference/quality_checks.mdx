@@ -2913,9 +2913,9 @@ anomaly_engine = AnomalyEngine(WorkspaceClient())
 
 model_name = anomaly_engine.train(
   df=spark.table("catalog.schema.orders"),
-  model_name="catalog.schema.orders_monitor",
-  columns=["amount", "quantity", "shipping_cost"],  # optional; omit to use all supported columns
-  registry_table="catalog.schema.dqx_anomaly_models",
+  model_name="catalog.schema.orders_monitor",  # fully qualified UC name
+  columns=["amount", "quantity"],  # optional; omit to use all supported columns
+  registry_table="catalog.schema.dqx_anomaly_models",  # fully qualified UC name
 )
 ```
 
@@ -2931,7 +2931,7 @@ run_configs:
   input_config:
     location: catalog.schema.orders
   anomaly_config:
-    columns: [amount, quantity, shipping_cost]   # optional; omit to use all supported columns
+    columns: [amount, quantity]   # optional; omit to use all supported columns
     model_name: catalog.schema.orders_monitor
     registry_table: catalog.schema.dqx_anomaly_models
 ```
@@ -3037,13 +3037,18 @@ Use the model name returned by training.
 
 **Python**
 ```python
+from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
-  has_no_row_anomalies(
-    model_name="catalog.schema.orders_monitor",
-    registry_table="catalog.schema.dqx_anomaly_models",
-    threshold=95.0,  # percentile cutoff (0-100); higher = fewer anomalies
+  DQDatasetRule(
+    criticality="error",
+    check_func=has_no_row_anomalies,
+    check_func_kwargs={
+      "model_name": "catalog.schema.orders_monitor",  # fully qualified name
+      "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
+      "threshold": 95.0, # percentile cutoff (0-100); higher = fewer anomalies
+   }
   )
 ]
 ```
@@ -3065,15 +3070,15 @@ checks = [
 
 **Parameters**
 - `model_name`: Model name (required, the model is stored in Unity Catalog, therefore fully qualified name must be provided: `catalog.schema.table`).
-- `registry_table`: Registry table (required, fully qualified table name: `catalog.schema.table`).
+- `registry_table`: Registry table (required, fully qualified Unity Catalog table name: `catalog.schema.table`).
 - `threshold`: Severity percentile threshold (0–100, default 95).
 - `row_filter`: Optional SQL expression to filter rows before scoring.
-- `drift_threshold`: Pass a float (for example 3.0) to enable drift detection; default `None` (disabled). When enabled, 3.0 means roughly 3-sigma deviation from training statistics. See the section below for more details.
+- `drift_threshold`: Optional float (e.g. 3.0) to enable drift detection; default None (disabled). When set, a warning is emitted if the scoring distribution at check time deviates from training. A value of 3.0 corresponds to roughly 3-sigma deviation from training statistics. See the section below for more details.
 - `enable_contributions`: Include per-feature contributions in `_dq_info[0].anomaly.contributions` (default `False`). Set `True` for explainability; adds significant scoring cost. See the section below and [Schema of _dq_info](/docs/guide/row_anomaly_detection#schema-of-the-info-column-_dq_info) for field details.
 - `enable_confidence_std`: Include `confidence_std` for ensembles (default `False`). Useful when using ensemble training.
 
 **Notes**
-- For workflow training, `model_name` and `registry_table` are required and must be fully qualified. Both are stored in Unity Catalog.
+- For workflow training, `model_name` and `registry_table` are required and must be fully qualified names. Both are stored in Unity Catalog.
 - Scoring uses the columns the model was trained on.
 - Rows with nulls in anomaly columns are skipped (not flagged).
 - When `row_filter` is used, all original rows are preserved; non-filtered rows have `null` scores.
@@ -3099,14 +3104,19 @@ ORDER BY training_time DESC
 Contributions are disabled by default for performance. Set `enable_contributions=True` to get per-feature SHAP contributions (adds significant cost):
 
 ```python
+from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
-  has_no_row_anomalies(
-    model_name="catalog.schema.orders_monitor",
-    registry_table="catalog.schema.dqx_anomaly_models",
-    threshold=95.0,
-    enable_contributions=True,  # Optional: per-feature contributions (slower)
+  DQDatasetRule(
+    criticality="error",
+    check_func=has_no_row_anomalies,
+    check_func_kwargs={
+      "model_name": "catalog.schema.orders_monitor",  # fully qualified name
+      "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
+      "threshold": 95.0, # percentile cutoff (0-100); higher = fewer anomalies
+      "enable_contributions": True,  # Optional: per-feature contributions (slower)
+   }
   )
 ]
 ```
@@ -3120,11 +3130,14 @@ import pyspark.sql.functions as F
 top = scored_df.orderBy(
   F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").desc()
 ).limit(20)
-display(top.select(
-  "order_id",
-  F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").alias("severity_percentile"),
-  F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("contributions"),
-))
+
+display(
+  top.select(
+    "transaction_id", "date", "amount", "quantity",
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").alias("severity_percentile"),
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("contributions"),
+  )
+)
 ```
 
 **Drift Detection**
@@ -3132,13 +3145,18 @@ display(top.select(
 Automatically detects when current data distribution differs significantly from training data:
 
 ```python
+from databricks.labs.dqx.rule import DQDatasetRule
 from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
 
 checks = [
-  has_no_row_anomalies(
-    model_name="catalog.schema.orders_monitor",
-    registry_table="catalog.schema.dqx_anomaly_models",
-    drift_threshold=3.0,  # Enable drift detection; 3.0 = ~3-sigma deviation
+  DQDatasetRule(
+    criticality="error",
+    check_func=has_no_row_anomalies,
+    check_func_kwargs={
+      "model_name": "catalog.schema.orders_monitor",  # fully qualified name
+      "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
+      "drift_threshold": 3.0,  # Enable drift detection; 3.0 = ~3-sigma deviation
+   }
   )
 ]
 ```

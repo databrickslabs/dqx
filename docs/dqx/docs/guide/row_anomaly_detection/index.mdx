@@ -111,7 +111,9 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
+    import yaml
     from databricks.labs.dqx.anomaly.anomaly_engine import AnomalyEngine
+    from databricks.labs.dqx.rule import DQDatasetRule
     from databricks.labs.dqx.anomaly.check_funcs import has_no_row_anomalies
     from databricks.labs.dqx.engine import DQEngine
     from databricks.sdk import WorkspaceClient
@@ -119,27 +121,54 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
     ws = WorkspaceClient()
     anomaly_engine = AnomalyEngine(ws)
 
+    # ----------------------------------------
+    # Train row anomaly detection model
+    # ----------------------------------------
+
     model_name = anomaly_engine.train(
       df=spark.table("catalog.schema.orders_training"),
-      model_name="catalog.schema.orders_monitor",  # stored in Unity Catalog and must be fully qualified table name
-      columns=["amount", "quantity", "discount"],  # optional; omit to use all supported columns
-      registry_table="catalog.schema.dqx_anomaly_models",  # always use fully qualified table name
+      model_name="catalog.schema.orders_monitor",  # stored in Unity Catalog and must be fully qualified name
+      columns=["amount", "quantity"],  # optional; omit to use all supported columns
+      registry_table="catalog.schema.dqx_anomaly_models",  # stored in Unity Catalog and must be fully qualified name
     )
 
-    # Define checks
+    # ----------------------------------------
+    # Define using classes and apply checks
+    # ----------------------------------------
+
     # Note that columns are not specified in the check; Scoring uses the columns the model was trained on
     checks = [
-      has_no_row_anomalies(
-        model_name=model_name,
-        registry_table="catalog.schema.dqx_anomaly_models",
-        # threshold=98,  # default 95, now stricter (only extreme anomalies)
-      )
-      # you can define other checks together with row anomaly detection
-      # ...
+      DQDatasetRule(
+        criticality="error",
+        check_func=has_no_row_anomalies,
+        check_func_kwargs={
+          "model_name": "catalog.schema.orders_monitor",
+          "registry_table": "catalog.schema.dqx_anomaly_models",
+          # "threshold": 98,  # default 95, now stricter (only extreme anomalies)
+        }
+      ),
+      # you can define other checks as well
     ]
 
     dq_engine = DQEngine(ws, spark)
     scored_df = dq_engine.apply_checks(spark.table("catalog.schema.orders"), checks)
+
+    # ----------------------------------------
+    # Define using metadata and apply checks
+    # ----------------------------------------
+
+    checks = yaml.safe_load("""
+      - criticality: error
+        check:
+          function: has_no_row_anomalies
+          arguments:
+            model_name: catalog.schema.orders_monitor
+            registry_table: catalog.schema.dqx_anomaly_models
+            threshold: 98.0  # optional
+      """)
+
+    dq_engine = DQEngine(ws, spark)
+    scored_df = dq_engine.apply_checks_by_metadata(spark.table("catalog.schema.orders"), checks)
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
@@ -151,7 +180,7 @@ Avoid ID-like columns (for example, `order_id`, `user_id`) in anomaly training. 
       input_config:
         location: catalog.schema.orders
         anomaly_config:
-          columns: [amount, quantity, discount]  # optional; omit to use all supported columns
+          columns: [amount, quantity]  # optional; omit to use all supported columns
           model_name: catalog.schema.orders_monitor
           registry_table: catalog.schema.dqx_anomaly_models
     ```
@@ -179,17 +208,21 @@ However, when you run a row anomaly detection check, DQX also adds a `_dq_info` 
 
 The info column is an array of structs, with one element per anomaly detection check that was applied.
 
-Feature contributions are disabled by default for faster scoring. You can enable them:
+Feature contributions are disabled by default for faster scoring. You can enable with `enable_contributions` parameter:
 
 ```python
-has_no_row_anomalies(
-  model_name=model_name,
-  registry_table="catalog.schema.dqx_anomaly_models",
-  enable_contributions=True,
+DQDatasetRule(
+  criticality="error",
+  check_func=has_no_row_anomalies,
+  check_func_kwargs={
+    "model_name": "catalog.schema.orders_monitor",  # fully qualified name
+    "registry_table": "catalog.schema.dqx_anomaly_models",   # fully qualified name
+    "enable_contributions": True,
+  }
 )
 ```
 
-To review the most unusual rows:
+To review the top 20 unusual rows:
 
 ```python
 import pyspark.sql.functions as F
@@ -197,11 +230,14 @@ import pyspark.sql.functions as F
 top = scored_df.orderBy(
   F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").desc()
 ).limit(20)
-display(top.select(
-  "order_id",
-  F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").alias("severity_percentile"),
-  F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("contributions"),
-))
+
+display(
+  top.select(
+    "transaction_id", "date", "amount", "quantity",
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("severity_percentile").alias("severity_percentile"),
+    F.col("_dq_info").getItem(0).getField("anomaly").getField("contributions").alias("contributions"),
+  )
+)
 ```
 
 Scores are normalized into `severity_percentile` (0–100). The anomaly threshold is a percentile cutoff (default 95) that you should tune to your data.
