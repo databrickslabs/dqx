@@ -22,7 +22,7 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     to_lowercase,
 )
-from databricks.labs.dqx.schema import dq_result_schema
+from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
@@ -2148,11 +2148,9 @@ def has_valid_schema(
             _expected_schema = expected_schema
 
         selected_column_names = column_names if column_names else df.columns
-        if not column_names:
-            dq_meta_cols = {field.name for field in df.schema.fields if field.dataType == dq_result_schema}
-            selected_column_names = [
-                col for col in selected_column_names if col not in dq_meta_cols and not col.startswith("__")
-            ]
+        if column_names is None:
+            dqx_column_names = {col_name.value for col_name in DefaultColumnNames}
+            selected_column_names = [col for col in selected_column_names if col not in dqx_column_names]
 
         if exclude_column_names:
             ignore_set = set(exclude_column_names)
