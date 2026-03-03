@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
-
+from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
@@ -276,7 +276,7 @@ def test_save_and_load_checks_from_lakebase_with_rule_set_fingerprint(
         location=lakebase_location,
         client_id=lakebase_client_id,
         instance_name=instance.name,
-        rule_set_fingerprint="139d1737f0f14a1571bf5fcfaea10abca2a119bb94f4fd1eb2ac09d09c13cfb3",
+        rule_set_fingerprint=compute_rule_set_fingerprint(TEST_CHECKS[0:2]),
     )
     checks = dq_engine.load_checks(config=config_load)
 

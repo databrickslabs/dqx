@@ -142,10 +142,14 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         Raises:
             InvalidCheckError: If any check is invalid or unsupported.
         """
+        
+        if not checks:
+            logger.info("No checks to save to table.")
+            return
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
         rules_df = DataFrameConverter.to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
-        first_row = rules_df.select("rule_set_fingerprint").first()
-        rule_set_fingerprint = first_row[0] if first_row else None
+        first_row = rules_df.first()
+        rule_set_fingerprint = first_row["rule_set_fingerprint"]
 
         try:
             # to be handled by the sdk: https://github.com/databricks/databricks-sdk-py/issues/1266
@@ -331,6 +335,9 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         Raises:
             OperationalError: If connecting to the database fails.
         """
+        if not checks:
+            logger.info("No checks to save to Lakebase.")
+            return
         try:
             with engine.connect() as conn:
                 pass
@@ -356,6 +363,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             logger.info("Rule version columns exist or added.")          
 
             normalized_checks = self._normalize_checks(checks, config)
+
             rule_set_fingerprint = normalized_checks[0].get("rule_set_fingerprint")
             exists_rule_set = (
                 select(table.c.rule_set_fingerprint)

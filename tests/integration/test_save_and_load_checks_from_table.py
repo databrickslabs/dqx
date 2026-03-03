@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
+from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
@@ -533,7 +534,7 @@ def test_save_and_load_checks_from_delta_table_with_rule_set_fingerprint(ws, mak
 
     config_load = TableChecksStorageConfig(
         location=table_name,
-        rule_set_fingerprint="e27b1748e670c8bceeb8449ac494f22bd80a934a30a3c86919547de56790bc00",
+        rule_set_fingerprint=compute_rule_set_fingerprint(INPUT_CHECKS[:1]),
     )
     checks = engine.load_checks(config=config_load)
 
