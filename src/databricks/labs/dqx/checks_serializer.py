@@ -384,7 +384,16 @@ class DataFrameConverter:
                 filtered_df = filtered_df.where((F.col("rule_set_fingerprint") == rule_set_fingerprint)&(F.col("run_config_name") == run_config_name))
                     
             else:
-                rule_set_fingerprint=filtered_df.select(F.col("rule_set_fingerprint")).where(F.col("run_config_name") == run_config_name).orderBy(F.col("created_at").desc()).limit(1).collect()[0][0]
+                result = (
+                    filtered_df
+                    .select(F.col("rule_set_fingerprint"))
+                    .orderBy(F.col("created_at").desc())
+                    .limit(1)
+                    .collect()
+                )
+                if not result:
+                    return []
+                rule_set_fingerprint = result[0][0]
                 filtered_df = filtered_df.where((F.col("rule_set_fingerprint") == rule_set_fingerprint)&(F.col("run_config_name") == run_config_name))
 
         check_rows = filtered_df.collect()
@@ -542,6 +551,7 @@ def compute_rule_fingerprint(check_dict: dict) -> str:
         "function": check_dict.get("check", {}).get("function"),
         "arguments": check_dict.get("check", {}).get("arguments"),
         "filter": check_dict.get("filter"),
+        "for_each_column": check_dict.get("check", {}).get("for_each_column"),
     }
 
     canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
