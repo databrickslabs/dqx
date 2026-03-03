@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Highlight, themes } from 'prism-react-renderer';
+import type { Token, RenderProps } from 'prism-react-renderer';
 
 export type VisualKey =
   | 'title' | 'known-unknowns' | 'dqx-rules' | 'trucks-dqm'
@@ -53,13 +54,13 @@ from databricks.labs.dqx.check_funcs import is_not_null, is_in_range, is_in_list
 
 # One banana: check size, colour, flavour
 rules = [
-    DQRowRule(check_func=is_not_null, check_func_kwargs={"column": "banana"}),
-    DQRowRule(check_func=is_in_range, check_func_kwargs={
-        "column": "size_cm", "min_limit": 15, "max_limit": 25}),
-    DQRowRule(check_func=is_in_list, check_func_kwargs={
-        "column": "colour", "allowed": ["yellow", "green"]}),
-    DQRowRule(check_func=is_in_list, check_func_kwargs={
-        "column": "flavour", "allowed": ["sweet", "ripe"]}),
+    DQRowRule(check_func=is_not_null, column="banana"),
+    DQRowRule(check_func=is_in_range, column="size_cm",
+        check_func_kwargs={"min_limit": 15, "max_limit": 25}),
+    DQRowRule(check_func=is_in_list, column="colour",
+        check_func_kwargs={"allowed": ["yellow", "green"]}),
+    DQRowRule(check_func=is_in_list, column="flavour",
+        check_func_kwargs={"allowed": ["sweet", "ripe"]}),
 ]`;
 
 const FEATURE_VECTOR_ROWS = [
@@ -227,7 +228,7 @@ function KnownUnknowns() {
 
 const DQX_LINE_STAGGER_S = 0.78;
 
-function HighlightedLine({ line, getTokenProps }: { line: any[]; getTokenProps: any }) {
+function HighlightedLine({ line, getTokenProps }: { line: Token[]; getTokenProps: RenderProps['getTokenProps'] }) {
   return (
     <>
       {line.map((token, key) => (

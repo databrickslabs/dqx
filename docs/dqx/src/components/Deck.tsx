@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import SlideVisuals, { type VisualKey } from './SlideVisuals';
 
 interface DeckProps {
@@ -27,22 +27,18 @@ export default function Deck({ children }: DeckProps) {
   const isLast = slideIndex === totalSlides - 1;
   const isFirst = slideIndex === 0;
 
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === ' ') {
-        e.preventDefault();
-        setSlideIndex((s) => Math.min(s + 1, totalSlides - 1));
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        setSlideIndex((s) => Math.max(s - 1, 0));
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [totalSlides]);
+  const goNext = useCallback(() => setSlideIndex((s) => Math.min(s + 1, totalSlides - 1)), [totalSlides]);
+  const goPrev = useCallback(() => setSlideIndex((s) => Math.max(s - 1, 0)), [totalSlides]);
 
-  const goNext = () => setSlideIndex((s) => Math.min(s + 1, totalSlides - 1));
-  const goPrev = () => setSlideIndex((s) => Math.max(s - 1, 0));
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowRight' || e.key === ' ') {
+      e.preventDefault();
+      goNext();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      goPrev();
+    }
+  };
 
   const slideRef = useRef<HTMLDivElement>(null);
 
@@ -87,7 +83,7 @@ export default function Deck({ children }: DeckProps) {
   const { title, visual, children: slideChildren } = (current?.props || {}) as SlideProps;
 
   return (
-    <div className="banana-deck margin-vert--lg">
+    <div className="banana-deck margin-vert--lg" tabIndex={0} onKeyDown={handleKeyDown}>
       <div
         className="banana-deck__card"
         role="region"
