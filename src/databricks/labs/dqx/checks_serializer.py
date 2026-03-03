@@ -373,10 +373,7 @@ class DataFrameConverter:
                 List of data quality check specifications as a Python dictionary
         """
         filtered_df = df.where(f"run_config_name = '{run_config_name}'")
-        if filtered_df.isEmpty():
-            logger.info(f"No checks found for run_config_name '{run_config_name}'.")
-            return []
-
+       
         # Filter by fingerprint or to the latest batch by created_at
         has_versioning_columns = all(
             col in df.columns for col in ("created_at", "rule_fingerprint", "rule_set_fingerprint")
