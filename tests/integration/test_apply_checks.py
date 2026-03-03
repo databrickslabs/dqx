@@ -22,8 +22,6 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.reporting_columns import ColumnArguments
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
-
-from tests.conftest import TEST_CATALOG
 from tests.integration.conftest import (
     REPORTING_COLUMNS,
     RUN_TIME,
@@ -36,7 +34,6 @@ from tests.integration.conftest import (
     get_rule_set_fingerprint_from_checks,
 )
 from tests.constants import TEST_CATALOG
-
 
 
 SCHEMA = "a: int, b: int, c: int"

@@ -155,7 +155,6 @@ class DQEngineCore(DQEngineCoreBase):
             self._result_column_names[ColumnArguments.INFO],
             ref_dfs,
             rule_set_fingerprint=rule_set_fp,
-
         )
         result_df = self._create_results_array(
             result_df,

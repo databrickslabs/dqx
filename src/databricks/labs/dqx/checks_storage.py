@@ -31,7 +31,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, IntegrityError
 
 import yaml
-from pyspark.sql import SparkSession,functions as F
+from pyspark.sql import SparkSession, functions as F
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 
@@ -142,7 +142,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         Raises:
             InvalidCheckError: If any check is invalid or unsupported.
         """
-        
+
         if not checks:
             logger.info("No checks to save to table.")
             return
@@ -158,9 +158,18 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         except NotFound as e:
             raise NotFound(f"Checks table '{config.location}' does not exist in the workspace") from e
 
-        if rule_set_fingerprint is not None and not self.spark.read.table(config.location).filter((
-                    F.col("run_config_name") == config.run_config_name) & (F.col("rule_set_fingerprint") == rule_set_fingerprint)).isEmpty():
-            logger.info(f"Checks with rule_set_fingerprint '{rule_set_fingerprint}' already exist in table '{config.location}'")
+        if (
+            rule_set_fingerprint is not None
+            and not self.spark.read.table(config.location)
+            .filter(
+                (F.col("run_config_name") == config.run_config_name)
+                & (F.col("rule_set_fingerprint") == rule_set_fingerprint)
+            )
+            .isEmpty()
+        ):
+            logger.info(
+                f"Checks with rule_set_fingerprint '{rule_set_fingerprint}' already exist in table '{config.location}'"
+            )
             return
 
         writer = rules_df.write.option("mergeSchema", "true")
@@ -360,7 +369,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                 f"Successfully created or verified table '{config.database_name}.{config.schema_name}.{config.table_name}'."
             )
             self._ensure_rule_version_columns_exist(conn, config)
-            logger.info("Rule version columns exist or added.")          
+            logger.info("Rule version columns exist or added.")
 
             normalized_checks = self._normalize_checks(checks, config)
 
@@ -376,13 +385,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             if conn.execute(exists_rule_set).first():
                 logger.info(f"Checks with rule_set_fingerprint {rule_set_fingerprint} already exist — skipping")
                 return
-            
+
             if config.mode == "overwrite":
                 delete_stmt = delete(table).where(table.c.run_config_name == config.run_config_name)
                 result = conn.execute(delete_stmt)
                 logger.info(f"Deleted {result.rowcount} existing checks for run_config_name '{config.run_config_name}'")
-            
-            
+
             insert_stmt = insert(table)
             conn.execute(insert_stmt, normalized_checks)
             logger.info(
@@ -441,7 +449,10 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                     .limit(1)
                     .scalar_subquery()
                 )
-                stmt = select(table).where(table.c.rule_set_fingerprint == latest_rule_set_fingerprint, table.c.run_config_name == config.run_config_name)
+                stmt = select(table).where(
+                    table.c.rule_set_fingerprint == latest_rule_set_fingerprint,
+                    table.c.run_config_name == config.run_config_name,
+                )
 
         with engine.connect() as conn:
             result = conn.execute(stmt)
