@@ -49,6 +49,8 @@ const config: Config = {
     'docusaurus-plugin-image-zoom',
     'docusaurus-lunr-search',
     [
+      // TODO: pinned to pre-release alpha; revisit when a stable 2.0.0 is published
+      // https://www.npmjs.com/package/@signalwire/docusaurus-plugin-llms-txt
       '@signalwire/docusaurus-plugin-llms-txt',
       {
         // Markdown file generation with hierarchical structure
@@ -85,6 +87,9 @@ const config: Config = {
               name: 'Getting Started',
               description: 'Installation and motivation for using DQX',
               position: 1,
+              // Intentionally hardcoded: installation and motivation live at the
+              // top-level docs/ path, not under a getting-started/ subdirectory.
+              // If a new getting-started page is added, include it explicitly here.
               routes: [
                 { route: '/dqx/docs/installation' },
                 { route: '/dqx/docs/motivation' }
@@ -123,7 +128,8 @@ const config: Config = {
               description: 'Example implementations and demos',
               position: 5,
               routes: [
-                { route: '/dqx/docs/demos' }
+                { route: '/dqx/docs/demos' },
+                { route: '/dqx/docs/demos/**' }
               ],
             },
             {
