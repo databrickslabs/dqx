@@ -73,7 +73,7 @@ Never import these unconditionally in `engine.py`, `check_funcs.py`, or any non-
 
 ### 3. Never instantiate `DQRule` directly
 
-`DQRule` is abstract. Use `DQRowRule`, `DQDatasetRule`, or `DQForEachColRule`.
+`DQRule` is abstract. Use `DQRowRule` for row-level rules and `DQDatasetRule` for dataset-level rules. If wanting to apply the same rule to multiple columns at once use `DQForEachColRule`.
 
 ### 4. Never modify `ExtraParams` in-place
 
