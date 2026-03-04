@@ -293,6 +293,31 @@ checked_df = engine.apply_checks(df, rules)
 valid_df, invalid_df = engine.apply_checks_and_split(df, rules)
 ```
 
+### Apply checks to a DataFrame (define checks declaratively)
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
+
+engine = DQEngine(WorkspaceClient())
+
+checks = yaml.safe_load("""
+    - criticality: error
+      check:
+        function: is_not_null
+        arguments:
+          column: id
+    - criticality: warn
+      check:
+        function: is_not_null_and_not_empty
+        arguments:
+          column: name
+""")
+
+checked_df = engine.apply_checks_by_metadata(df, checks)
+
+# Or split into valid / invalid (quarantine)
+valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks)
 ### Load checks from file and apply
 
 ```python
