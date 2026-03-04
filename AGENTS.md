@@ -328,7 +328,7 @@ checked_df = engine.apply_checks_by_metadata(df, checks_list)
 
 ### Add a new built-in check function
 
-1. Add to `src/databricks/labs/dqx/check_funcs.py` with `@register_rule("raw")` or `@register_rule("dataset")`
+1. Add to `src/databricks/labs/dqx/check_funcs.py` with `@register_rule("row")` or `@register_rule("dataset")`
 2. Return a PySpark `Column`
 3. Add to `__all__` if public
 4. Add unit tests in `tests/unit/test_check_funcs_<category>.py`
