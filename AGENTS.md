@@ -121,6 +121,9 @@ Rules:
 
 ### Rule Construction
 
+Rules can be defined programmatically (DQX classes) or declaratively (dict metadata/YAML/JSON). Both are equivalent — choose based on context.
+
+**Programmatic API — use when building rules in code using DQX classes:**
 ```python
 from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule, Criticality
 from databricks.labs.dqx import check_funcs as checks
