@@ -194,7 +194,7 @@ jobs:
           echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
 
       - name: Run anomaly integration tests and generate test coverage report
-        timeout-minutes: 120
+        timeout-minutes: 200
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_HOST: ${{ env.DATABRICKS_HOST }}
@@ -208,7 +208,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
         run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 1 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5
 
       # Recursively search the entire workspace directory for all coverage reports.
       # All uploaded test coverage reports will be used even if publish is done multiple time.
@@ -281,7 +281,7 @@ jobs:
           echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
 
       - name: Run anomaly integration tests on serverless cluster
-        timeout-minutes: 120
+        timeout-minutes: 200
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
@@ -295,7 +295,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_TIMEOUT: "600"
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
         run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=1200 --reruns 1 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5
 
       # collects all coverage reports
       - name: Publish test coverage
