@@ -41,7 +41,7 @@ src/databricks/labs/dqx/
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
   ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError - use instead of built-in Python exceptions
   ├── telemetry.py         # telemetry_logger, log_telemetry, log_dataframe_telemetry
-  ├── utils.py             # get_normalized_column_and_expr, make_condition, and other helpers
+  ├── utils.py             # shared helpers (column name resolution, SQL safety checks, etc.)
   ├── executor.py / io.py / table_manager.py / workflows_runner.py
   ├── metrics_listener.py / metrics_observer.py / reporting_columns.py
   ├── profiler/            # Data profiling, rule generation, DLT pipeline generation
@@ -156,7 +156,7 @@ def not_ends_with(column, suffix: str):
 Rules:
 1. Decorate with `@register_rule("row")` (row-level) or `@register_rule("dataset")` (group of rows)
 2. Return a PySpark `Column` — **never** a `DataFrame`
-3. Use `make_condition(condition, message, name)` from `utils.py` to build the return value.
+3. Use `make_condition(condition, message, name)` from `check_funcs.py` to build the return value.
 
 ### Rule Construction
 
