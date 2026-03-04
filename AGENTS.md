@@ -55,6 +55,40 @@ tests/
 
 ---
 
+## Production Code & Testing Standards
+
+### Code Quality Principles
+
+- Apply the **DRY principle**: avoid duplicating logic, validation, or configuration. Extract shared utilities only when the same logic appears in three or more places.
+- Apply **dependency injection**: pass `WorkspaceClient`, `SparkSession`, and other external dependencies as constructor or function arguments rather than constructing them inside classes.
+- Maintain **separation of concerns**: keep business logic decoupled from I/O, persistence, or framework details.
+- Prefer **composition over inheritance** for new code. Where the existing mixin hierarchy (e.g. `DQRuleTypeMixin`) already provides the right extension point, use it — do not introduce additional inheritance layers on top.
+
+### Pure Functions & Side Effects
+
+- Write **pure functions** wherever possible: no hidden state, no side effects, deterministic outputs. All check functions in `check_funcs.py` must be pure — they receive column references and return a `Column` expression only.
+- Encapsulate side effects (workspace API calls, file I/O, network) at well-defined boundaries, not inside check logic or rule construction.
+
+### Testing Requirements
+
+- **Cover all changes with tests.** New check functions and rule logic → unit tests. Workspace interactions → integration tests. Bug fixes → regression tests.
+- **Unit tests** (`tests/unit/`) run without Spark or a live workspace and must stay fast.
+- **Integration tests** (`tests/integration/`) require a real workspace and spark session; do not add workspace API calls to unit tests.
+- Test **behaviour, not implementation details**: assert on outputs and observable state, not on private methods or internal data structures.
+- Use **dependency injection to enable testing**: construct dependencies with `create_autospec` rather than patching internal module state.
+- Use **pytest fixtures** (`conftest.py`) to share setup and teardown logic across tests. Unit-level fixtures live in `tests/unit/conftest.py`; integration-level fixtures in `tests/integration/conftest.py`. Do not duplicate fixture logic inline in individual tests.
+- For workspace resource creation and cleanup in integration tests, use the pytester `factory` helper — see [### Testing](#testing) for the established patterns.
+- If a test requires a real `SparkSession`, it is an **integration test** — place it in `tests/integration/`, not `tests/unit/`. Unit tests must never start or depend on a Spark session; use `create_autospec(SparkSession)` for any unit-level Spark dependency.
+- Avoid `unittest.mock.patch` and `pytest.monkeypatch` unless the target is a module-level constant or a third-party boundary with no injectable seam. Patching internal symbols couples tests to implementation details.
+- Tests must be **deterministic and isolated**: no timing dependencies, randomness, shared mutable state, or real network calls in unit tests.
+
+### Agent Behaviour
+
+- Keep responses **concise and practical**.
+- Provide **production-grade solutions**, not prototype or demo code.
+- Avoid speculative or unrequested changes.
+- Align with the project's coding conventions and testing standards above.
+
 ## Critical Rules
 
 ### 1. Never skip `@register_rule` on check functions
