@@ -10,8 +10,9 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { AICheckGenerator } from "@/components/AICheckGenerator";
+import type { GenerateChecksOut } from "@/lib/api";
 
-interface RunContext {
+export interface RunContext {
   runName: string;
   yaml: string;
 }
@@ -58,7 +59,7 @@ export function AIAssistantProvider({ children }: { children: ReactNode }) {
         ? `Given this existing run configuration:\n\`\`\`yaml\n${contextYaml}\n\`\`\`\n\n${userInput}`
         : userInput;
 
-      const response = await axios.post<{ yaml_output: string; checks: any[] }>(
+      const response = await axios.post<GenerateChecksOut>(
         "/api/ai-generate-checks",
         { user_input: prompt },
         { withCredentials: true }

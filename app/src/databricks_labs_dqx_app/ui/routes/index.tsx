@@ -40,7 +40,6 @@ function Index() {
       toast.success("Configuration created successfully");
       navigate({ to: "/config" });
     } catch (error) {
-      console.error("Failed to create config:", error);
       toast.error("Failed to create configuration. Please try again.");
     } finally {
       setIsCreating(false);

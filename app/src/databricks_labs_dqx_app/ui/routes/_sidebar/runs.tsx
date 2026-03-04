@@ -465,8 +465,9 @@ function RunEditorContainer({
     } else {
       setRunContext(null);
     }
-    return () => setRunContext(null);
   }, [currentRunName, yamlContent, setRunContext]);
+
+  useEffect(() => () => setRunContext(null), [setRunContext]);
 
   const handleSave = async () => {
     if (!currentRunName) return;

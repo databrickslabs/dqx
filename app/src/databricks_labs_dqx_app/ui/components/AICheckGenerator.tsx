@@ -6,14 +6,11 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, ArrowRight, Copy, Sparkles, Check, FileCode } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
-
-interface RunContext {
-  runName: string;
-  yaml: string;
-}
+import type { RunContext } from "@/components/AIAssistantProvider";
+import type { GenerateChecksOut } from "@/lib/api";
 
 interface AICheckGeneratorProps {
-  onGenerate: (userInput: string, contextYaml?: string) => Promise<{ yaml_output: string; checks: any[] }>;
+  onGenerate: (userInput: string, contextYaml?: string) => Promise<GenerateChecksOut>;
   isGenerating: boolean;
   runContext?: RunContext | null;
 }
@@ -34,7 +31,6 @@ export function AICheckGenerator({ onGenerate, isGenerating, runContext }: AIChe
       setGeneratedYaml(result.yaml_output);
       toast.success("Checks generated successfully!");
     } catch (error) {
-      console.error("Failed to generate checks:", error);
       toast.error("Failed to generate checks. Please try again.");
     }
   };
