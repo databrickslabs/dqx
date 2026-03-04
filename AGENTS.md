@@ -104,7 +104,7 @@ from databricks.labs.dqx.rule import register_rule
 from pyspark.sql import Column
 import pyspark.sql.functions as F
 
-@register_rule("raw")                          # "raw" = row-level, "dataset" = aggregate
+@register_rule("row")                          # "row" = row-level, "dataset" = group of rows
 def is_not_empty(column: str | Column) -> Column:
     col = F.col(column) if isinstance(column, str) else column
     return col.isNotNull() & (F.trim(col) != "")
