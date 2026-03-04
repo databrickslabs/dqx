@@ -271,7 +271,7 @@ Auto-provided fixtures (from pytester, no need to define): `ws` (`WorkspaceClien
 
 ## Common Tasks
 
-### Apply checks to a DataFrame
+### Apply checks to a DataFrame (define checks programmatically)
 
 ```python
 from databricks.sdk import WorkspaceClient
