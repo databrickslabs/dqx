@@ -14,6 +14,9 @@ make help           # All available targets
 
 .venv/bin/pytest tests/unit/test_build_rules.py -v          # single file
 .venv/bin/pytest tests/unit/test_check_funcs.py::test_foo   # single test
+
+git config --global commit.gpgsign true  # GPG-sign all commits (required)
+git verify-commit <hash>   # verify after first commit
 ```
 
 ---
@@ -33,13 +36,20 @@ src/databricks/labs/dqx/
   ├── manager.py           # DQRuleManager — build/manage rule collections
   ├── config.py            # WorkspaceConfig, RunConfig, AnomalyParams, LLMModelConfig, ExtraParams
   ├── checks_storage.py    # WorkspaceFileChecksStorageHandler, VolumeFileChecksStorageHandler
-  ├── checks_serializer.py / checks_resolver.py / checks_validator.py
+  ├── checks_serializer.py / checks_resolver.py / checks_validator.py / checks_formats.py
+  ├── config_serializer.py # ConfigSerializer — use instead of dataclasses.asdict()
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
+  ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError - use instead of built-in Python exceptions
+  ├── telemetry.py         # telemetry_logger, log_telemetry, log_dataframe_telemetry
+  ├── utils.py             # get_normalized_column_and_expr, make_condition, and other helpers
+  ├── executor.py / io.py / table_manager.py / workflows_runner.py
+  ├── metrics_listener.py / metrics_observer.py / reporting_columns.py
   ├── profiler/            # Data profiling, rule generation, DLT pipeline generation
   ├── anomaly/             # ML row-level anomaly detection (MLflow, ensemble, drift, explainability)
   ├── llm/                 # LLM-based rule generation via DSPy (DQLLMEngine)
   ├── pii/                 # PII detection — optional dep: presidio + spaCy
   ├── geo/                 # Geospatial check functions
+  ├── datacontract/        # Data contract rule generation
   ├── schema/              # DQ result and info schemas
   ├── installer/           # Workspace install/uninstall, workflow & dashboard installer
   ├── quality_checker/     # E2E workflow runner
@@ -107,7 +117,7 @@ Never import these unconditionally in `engine.py`, `check_funcs.py`, or any non-
 
 ### 3. Never instantiate `DQRule` directly
 
-`DQRule` is abstract. Use `DQRowRule` for row-level rules and `DQDatasetRule` for dataset-level rules. If wanting to apply the same rule to multiple columns at once use `DQForEachColRule`.
+`DQRule` is abstract. Use `DQRowRule` for row-level rules and `DQDatasetRule` for dataset-level rules. To apply the same rule to multiple columns at once, use `DQForEachColRule` — note that `DQForEachColRule` does **not** inherit from `DQRule`; it is a factory that produces `DQRule` instances via `get_rules()`.
 
 ### 4. Never modify `ExtraParams` in-place
 
@@ -117,13 +127,6 @@ Never import these unconditionally in `engine.py`, `check_funcs.py`, or any non-
 
 Use `ConfigSerializer` — it preserves nested types. `dataclasses.asdict()` loses them.
 
-### 6. GPG-sign all commits
-
-```bash
-git config --global commit.gpgsign true
-git verify-commit <hash>   # verify after first commit
-```
-
 ---
 
 ## Coding Guidelines
@@ -132,24 +135,28 @@ git verify-commit <hash>   # verify after first commit
 
 ```python
 # ✅ correct
-from databricks.labs.dqx.rule import register_rule
-from pyspark.sql import Column
 import pyspark.sql.functions as F
+from pyspark.sql import Column
+from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.rule import register_rule
 
-@register_rule("row")                          # "row" = row-level, "dataset" = group of rows
-def is_not_empty(column: str | Column) -> Column:
-    col = F.col(column) if isinstance(column, str) else column
-    return col.isNotNull() & (F.trim(col) != "")
+@register_rule("row")
+def not_ends_with(column: str, suffix: str) -> Column:
+    col_expr = F.col(column)
+    return make_condition(
+        col_expr.endswith(suffix), f"Column {column} ends with {suffix}",
+        f"{column}_ends_with_{suffix}"
+    )
 
-# ❌ wrong — missing decorator, missing return type, returns DataFrame
-def is_not_empty(column):
+# ❌ wrong — missing decorator, missing return type, returns DataFrame, bypasses make_condition
+def not_ends_with(column, suffix: str):
     return df.filter(...)
 ```
 
 Rules:
 1. Decorate with `@register_rule("row")` (row-level) or `@register_rule("dataset")` (group of rows)
 2. Return a PySpark `Column` — **never** a `DataFrame`
-3. Use `SingleColumnMixin` / `MultipleColumnsMixin` for column resolution
+3. Use `make_condition(condition, message, name)` from `utils.py` to build the return value.
 
 ### Rule Construction
 
@@ -168,7 +175,7 @@ DQForEachColRule(check_func=checks.is_not_null, columns=["id", "name", "date"])
 DQRule(check_func=checks.is_not_null, ...)
 ```
 
-**Metadata API — build rules declaratively using list[dict] or YAML/JSON:
+**Metadata API — build rules declaratively using list[dict] or YAML/JSON:**
 
 ```yaml
 - criticality: error
@@ -182,6 +189,7 @@ DQRule(check_func=checks.is_not_null, ...)
     - id
     - name
     - date
+```
 
 ### Type Hints
 
@@ -365,6 +373,8 @@ checked_df = engine.apply_checks_by_metadata(df, checks)
 
 # Or split into valid / invalid (quarantine)
 valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks)
+```
+
 ### Load checks from file and apply
 
 ```python
