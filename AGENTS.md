@@ -115,7 +115,7 @@ def is_not_empty(column):
 ```
 
 Rules:
-1. Decorate with `@register_rule("raw")` (row-level) or `@register_rule("dataset")` (aggregate)
+1. Decorate with `@register_rule("row")` (row-level) or `@register_rule("dataset")` (group of rows)
 2. Return a PySpark `Column` — **never** a `DataFrame`
 3. Use `SingleColumnMixin` / `MultipleColumnsMixin` for column resolution
 
