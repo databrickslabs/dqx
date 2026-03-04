@@ -148,34 +148,46 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             return
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
         rules_df = DataFrameConverter.to_dataframe(self.spark, checks, run_config_name=config.run_config_name)
-        first_row = rules_df.first()
-        rule_set_fingerprint = first_row["rule_set_fingerprint"]
+        first_row = rules_df.select("rule_set_fingerprint").first()
+        rule_set_fingerprint = first_row[0] if first_row else None
 
-        try:
-            # to be handled by the sdk: https://github.com/databricks/databricks-sdk-py/issues/1266
-            url_safe_table_name = urllib.parse.quote(config.location.replace("`", ""))
-            self.ws.tables.get(full_name=url_safe_table_name)
-        except NotFound as e:
-            raise NotFound(f"Checks table '{config.location}' does not exist in the workspace") from e
-
-        if (
-            rule_set_fingerprint is not None
-            and not self.spark.read.table(config.location)
-            .filter(
-                (F.col("run_config_name") == config.run_config_name)
-                & (F.col("rule_set_fingerprint") == rule_set_fingerprint)
-            )
-            .isEmpty()
-        ):
-            logger.info(
-                f"Checks with rule_set_fingerprint '{rule_set_fingerprint}' already exist in table '{config.location}'"
-            )
-            return
+        # Skip save if rule_set_fingerprint already exists in existing table
+        if self._table_exists(config.location):
+            if (
+                rule_set_fingerprint is not None
+                and not self.spark.read.table(config.location)
+                .filter(
+                    (F.col("run_config_name") == config.run_config_name)
+                    & (F.col("rule_set_fingerprint") == rule_set_fingerprint)
+                )
+                .isEmpty()
+            ):
+                logger.info(
+                    f"Checks with rule_set_fingerprint '{rule_set_fingerprint}' already exist in table '{config.location}'"
+                )
+                return
 
         writer = rules_df.write.option("mergeSchema", "true")
         if config.mode == "overwrite":
             writer = writer.option("replaceWhere", f"run_config_name = '{config.run_config_name}'")
         writer.saveAsTable(config.location, mode=config.mode)
+
+    def _table_exists(self, location: str) -> bool:
+        """Check if a Delta table exists in the workspace.
+
+        Args:
+            location: Full table name (e.g., "schema.table" or "`schema`.`table`")
+
+        Returns:
+            True if the table exists, False otherwise.
+        """
+        try:
+            # to be handled by the sdk: https://github.com/databricks/databricks-sdk-py/issues/1266
+            url_safe_table_name = urllib.parse.quote(location.replace("`", ""))
+            self.ws.tables.get(full_name=url_safe_table_name)
+            return True
+        except NotFound:
+            return False
 
 
 class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):

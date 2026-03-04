@@ -380,13 +380,7 @@ class DataFrameConverter:
         )
 
         if has_versioning_columns:
-            if rule_set_fingerprint:
-                filtered_df = filtered_df.where(
-                    (F.col("rule_set_fingerprint") == rule_set_fingerprint)
-                    & (F.col("run_config_name") == run_config_name)
-                )
-
-            else:
+            if not rule_set_fingerprint:
                 result = (
                     filtered_df.select(F.col("rule_set_fingerprint"))
                     .orderBy(F.col("created_at").desc())
@@ -396,10 +390,8 @@ class DataFrameConverter:
                 if not result:
                     return []
                 rule_set_fingerprint = result[0][0]
-                filtered_df = filtered_df.where(
-                    (F.col("rule_set_fingerprint") == rule_set_fingerprint)
-                    & (F.col("run_config_name") == run_config_name)
-                )
+
+            filtered_df = filtered_df.where((F.col("rule_set_fingerprint") == rule_set_fingerprint))
 
         check_rows = filtered_df.collect()
         collect_limit = 500
