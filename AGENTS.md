@@ -136,6 +136,20 @@ DQForEachColRule(check_func=checks.is_not_null, columns=["id", "name", "date"])
 DQRule(check_func=checks.is_not_null, ...)
 ```
 
+**Metadata API — build rules declaratively using list[dict] or YAML/JSON:
+
+```yaml
+- criticality: error
+   check:
+       function: is_not_null
+       arguments:
+           column: id
+- check:
+       function: is_not_null
+       for_each_column:
+       - id
+       - name
+       - date
 ### Type Hints
 
 Every parameter and return value must be annotated. Enforced by mypy (`make lint`).
