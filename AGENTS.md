@@ -142,14 +142,17 @@ from databricks.labs.dqx.rule import register_rule
 
 
 @register_rule("row")
-def is_null(column: str | Column) -> Column:
+def is_not_null(column: str | Column) -> Column:
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     return make_condition(
-        col_expr.isNotNull(), f"Column '{col_expr_str}' value is not null", f"{col_str_norm}_is_not_null"
+      col_expr.isNull(), 
+      f"Column '{col_expr_str}' value is null", 
+      f"{col_str_norm}_is_null"
     )
 
+
 # ❌ wrong — missing decorator, missing return type, returns DataFrame, bypasses make_condition
-def is_null(column):
+def is_not_null(column):
     return df.filter(...)
 ```
 
