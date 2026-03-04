@@ -27,7 +27,7 @@ metadata-path = "src/databricks_labs_dqx_app/_metadata.py"
 
 
 [tool.uv.sources]
-databricks-labs-dqx = { path = "../", editable = true }
+databricks-labs-dqx = { git = "https://github.com/databrickslabs/dqx.git", branch = "feature/app-no-spark" }
 apx = { git = "https://github.com/databricks-solutions/apx.git" }  # PyPi package not available yet
 
 [build-system]
