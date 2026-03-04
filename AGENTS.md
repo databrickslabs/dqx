@@ -87,7 +87,7 @@ tests/
 - Test **behaviour, not implementation details**: assert on outputs and observable state, not on private methods or internal data structures.
 - Use **dependency injection to enable testing**: construct dependencies with `create_autospec` rather than patching internal module state.
 - Use **pytest fixtures** (`conftest.py`) to share setup and teardown logic across tests. Unit-level fixtures live in `tests/unit/conftest.py`; integration-level fixtures in `tests/integration/conftest.py`. Do not duplicate fixture logic inline in individual tests.
-- For workspace resource creation and cleanup in integration tests, use the pytester `factory` helper — see [### Testing](#testing) for the established patterns.
+- For workspace resource creation and cleanup in integration tests, use the pytester `factory` helper — see [## Testing](#testing) for the established patterns.
 - If a test requires a real `SparkSession`, it is an **integration test** — place it in `tests/integration/`, not `tests/unit/`. Unit tests must never start or depend on a Spark session; use `create_autospec(SparkSession)` for any unit-level Spark dependency.
 - Avoid `unittest.mock.patch` and `pytest.monkeypatch` unless the target is a module-level constant or a third-party boundary with no injectable seam. Patching internal symbols couples tests to implementation details.
 - Tests must be **deterministic and isolated**: no timing dependencies, randomness, shared mutable state, or real network calls in unit tests.
@@ -137,19 +137,19 @@ Use `ConfigSerializer` — it preserves nested types. `dataclasses.asdict()` los
 # ✅ correct
 import pyspark.sql.functions as F
 from pyspark.sql import Column
-from databricks.labs.dqx.check_funcs import make_condition
+from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr
 from databricks.labs.dqx.rule import register_rule
 
+
 @register_rule("row")
-def not_ends_with(column: str, suffix: str) -> Column:
-    col_expr = F.col(column)
+def is_null(column: str | Column) -> Column:
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     return make_condition(
-        col_expr.endswith(suffix), f"Column {column} ends with {suffix}",
-        f"{column}_ends_with_{suffix}"
+        col_expr.isNotNull(), f"Column '{col_expr_str}' value is not null", f"{col_str_norm}_is_not_null"
     )
 
 # ❌ wrong — missing decorator, missing return type, returns DataFrame, bypasses make_condition
-def not_ends_with(column, suffix: str):
+def is_null(column):
     return df.filter(...)
 ```
 
