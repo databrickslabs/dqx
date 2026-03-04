@@ -24,8 +24,13 @@ resources:
       # alternatively, you can find it by running: `databricks account custom-app-integration list`
 
       # use all-apis scope for full functionality instead of the limited scopes below
-      #user_api_scopes:
-      #  - files.files
+      user_api_scopes:
+        - files.files
+        - sql
+        - catalog.catalogs:read
+        - catalog.schemas:read
+        - catalog.tables:read
+
 
 targets:
   dev:

@@ -12,6 +12,7 @@ from databricks.labs.dqx.config import LLMModelConfig, InputConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.profiler.common import val_maybe_to_str
 from databricks.labs.dqx.profiler.profiler import DQProfile
+from databricks.labs.dqx.table_manager import TableManager
 from databricks.labs.dqx.telemetry import telemetry_logger
 from databricks.labs.dqx.errors import MissingParameterError
 
@@ -45,24 +46,39 @@ class DQGenerator(DQEngineBase):
         spark: SparkSession | None = None,
         llm_model_config: LLMModelConfig | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
+        table_manager: TableManager | None = None,
     ):
         """
         Initializes the DQGenerator with optional Spark session and LLM model configuration.
 
         Args:
             workspace_client: Databricks WorkspaceClient instance.
-            spark: Optional SparkSession instance. If not provided, a new session will be created.
+            spark: Optional SparkSession instance. If not provided, a new session will be created
+                   unless table_manager is supplied.
             llm_model_config: Optional LLM model configuration for AI-assisted rule generation.
             custom_check_functions: Optional dictionary of custom check functions.
+            table_manager: Optional TableManager instance. When provided, spark is not required
+                           and no Spark session is created — enabling Spark-free operation via
+                           SDKTableDataProvider. generate_dq_rules_ai_assisted will raise if
+                           input_config is also provided (schema lookup still requires spark).
         """
         super().__init__(workspace_client=workspace_client)
-        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+
+        if table_manager is None:
+            self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
+        else:
+            self.spark = spark  # May be None; only used when input_config is provided
 
         self.custom_check_functions = custom_check_functions
 
         llm_model_config = llm_model_config or LLMModelConfig()
         self.llm_engine = (
-            DQLLMEngine(model_config=llm_model_config, spark=self.spark, custom_check_functions=custom_check_functions)
+            DQLLMEngine(
+                model_config=llm_model_config,
+                spark=self.spark,
+                table_manager=table_manager,
+                custom_check_functions=custom_check_functions,
+            )
             if LLM_ENABLED
             else None
         )
@@ -133,7 +149,15 @@ class DQGenerator(DQEngineBase):
             )
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
-        schema_info = get_column_metadata(self.spark, input_config) if input_config else ""
+        if input_config:
+            if self.spark is None:
+                raise MissingParameterError(
+                    "spark is required when input_config is provided for schema lookup. "
+                    "Either pass a SparkSession or omit input_config."
+                )
+            schema_info = get_column_metadata(self.spark, input_config)
+        else:
+            schema_info = ""
 
         # Generate rules using pre-initialized LLM compiler
         prediction = self.llm_engine.detect_business_rules_with_llm(

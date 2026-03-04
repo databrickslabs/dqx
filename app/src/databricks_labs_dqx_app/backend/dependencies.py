@@ -2,13 +2,12 @@ import os
 from contextlib import contextmanager
 from typing import Annotated
 
-from databricks.connect import DatabricksSession
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.table_manager import TableManager, SDKTableDataProvider
 from databricks.sdk import WorkspaceClient
 from fastapi import Depends, Header, HTTPException, status
-from pyspark.sql import SparkSession
 
 from .logger import logger
 
@@ -82,111 +81,50 @@ def get_obo_ws(
     return WorkspaceClient(token=token, auth_type="pat")  # set pat explicitly to avoid issues with SP client
 
 
-def get_spark(
-    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
-) -> SparkSession:
-    """
-    Create a Databricks Spark Connect session with OBO authentication on serverless compute.
-
-    This follows the Databricks Apps pattern for using OBO tokens with serverless compute.
-    Works in both production (Databricks Apps) and local development environments.
-
-    Args:
-        token: User's access token from the X-Forwarded-Access-Token header.
-               Automatically provided by Databricks when the app runs on the platform.
-
-    Returns:
-        SparkSession: A Databricks Spark Connect session configured with OBO token.
-
-    Raises:
-        HTTPException: 401 Unauthorized if the X-Forwarded-Access-Token header is not present.
-    """
-    if not token:
-        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token for Spark session")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please refresh the page or contact your administrator.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Get Databricks host from environment
-    host = os.environ.get("DATABRICKS_HOST")
-    if not host:
-        logger.info("DATABRICKS_HOST not set, using default configuration for local development")
-        return DatabricksSession.builder.token(token).getOrCreate()
-
-    # Temporarily remove OAuth env vars to avoid multi-auth conflicts
-    with _without_oauth_env_vars():
-        logger.info(f"Creating Spark session with OBO token on serverless compute for host: {host}")
-        session = (
-            DatabricksSession.builder.host(host)
-            .token(token)  # Use the forwarded OBO access token
-            .serverless()
-            .getOrCreate()
-        )
-    return session
-
 
 def get_engine(
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)], spark: Annotated[SparkSession, Depends(get_spark)]
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DQEngine:
     """
-    Create a DQEngine instance with OBO authentication and Spark session.
+    Create a DQEngine instance with OBO authentication.
 
-    This dependency combines:
-    - WorkspaceClient with user's identity (via get_obo_ws)
-    - SparkSession for Spark operations (via get_spark)
-
-    The DQEngine can then execute data quality checks and operations
-    on behalf of the logged-in user.
+    Used for checks load/save operations against workspace files. These operations
+    use the Databricks SDK (WorkspaceClient) and do not require an active Spark session.
+    DQEngine will create a Spark session lazily only if a Spark-backed storage config
+    (e.g. TableChecksStorageConfig) is used.
 
     Args:
         obo_ws: WorkspaceClient with OBO authentication (injected by FastAPI).
-        spark: SparkSession for data operations (injected by FastAPI).
 
     Returns:
         DQEngine: Configured for data quality operations with user context.
-
-    Example usage:
-        @router.post("/run-quality-check")
-        def run_check(engine: Annotated[DQEngine, Depends(get_engine)]):
-            result = engine.run_checks(...)
-            return {"status": "success", "results": result}
     """
-    return DQEngine(workspace_client=obo_ws, spark=spark)
+    return DQEngine(workspace_client=obo_ws)
 
 
 def get_generator(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    spark: Annotated[SparkSession, Depends(get_spark)],
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> DQGenerator:
     """
-    Create a DQGenerator instance with OBO authentication and Spark session.
+    Create a DQGenerator instance using SDK-based table access (no Spark required).
 
-    This dependency provides an AI-assisted data quality rules generator that
-    can create checks from natural language descriptions on behalf of the
-    logged-in user. The Spark session is used for data profiling and analysis.
+    Uses SDKTableDataProvider backed by WorkspaceClient.tables.get() instead of
+    Spark Connect, removing the need for serverless compute and the associated
+    OAuth scopes for AI-assisted check generation.
 
     The LLM model is configured to use the OBO token for authentication, ensuring
-    that LLM API calls also run with the user's identity.
+    LLM API calls run with the user's identity.
 
     Args:
         obo_ws: WorkspaceClient with OBO authentication (injected by FastAPI).
-        spark: SparkSession for data operations (injected by FastAPI).
         token: User's OBO token for LLM authentication (injected by FastAPI).
 
     Returns:
         DQGenerator: Configured for AI-assisted rules generation with user context.
-
-    Example usage:
-        @router.post("/generate-checks")
-        def generate_checks(generator: Annotated[DQGenerator, Depends(get_generator)], user_input: str):
-            checks = generator.generate_dq_rules_ai_assisted(user_input=user_input)
-            return {"checks": checks}
     """
     if not token:
-        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token for Spark session")
+        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Please refresh the page or contact your administrator.",
@@ -195,11 +133,10 @@ def get_generator(
 
     host = os.environ.get("DATABRICKS_HOST", "")
     if host:  # DBX App
-        llm_model_config = LLMModelConfig(
-            api_key=token,  # Configure LLM to use OBO token for authentication
-        )
+        llm_model_config = LLMModelConfig(api_key=token)
     else:  # Local development
-        logger.info("DATABRICKS_HOST not set, using default configuration for LLM")
+        logger.info("DATABRICKS_HOST not set, using default LLM configuration")
         llm_model_config = LLMModelConfig()
 
-    return DQGenerator(workspace_client=obo_ws, spark=spark, llm_model_config=llm_model_config)
+    table_manager = TableManager(repository=SDKTableDataProvider(workspace_client=obo_ws))
+    return DQGenerator(workspace_client=obo_ws, llm_model_config=llm_model_config, table_manager=table_manager)
