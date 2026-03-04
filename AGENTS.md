@@ -90,8 +90,6 @@ git config --global commit.gpgsign true
 git verify-commit <hash>   # verify after first commit
 ```
 
-See `CONTRIBUTING.md` for key setup.
-
 ---
 
 ## Coding Guidelines
@@ -140,16 +138,17 @@ DQRule(check_func=checks.is_not_null, ...)
 
 ```yaml
 - criticality: error
-   check:
-       function: is_not_null
-       arguments:
-           column: id
+  check:
+    function: is_not_null
+    arguments:
+      column: id
 - check:
-       function: is_not_null
-       for_each_column:
-       - id
-       - name
-       - date
+    function: is_not_null
+    for_each_column:
+    - id
+    - name
+    - date
+
 ### Type Hints
 
 Every parameter and return value must be annotated. Enforced by mypy (`make lint`).
@@ -357,9 +356,8 @@ checked_df = engine.apply_checks_by_metadata(df, checks_list)
 
 ## Documentation
 
-- **[README.md](./README.md)** — Quick-start
-- **[docs/](./docs/)** — Full site (Docusaurus): [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)
-- **[CONTRIBUTING.md](./CONTRIBUTING.md)** — Developer setup, GPG signing, contribution workflow
+- **[README.md](./README.md)** — Project description
+- **[docs/](./docs/)** — Full site including contribution workflow (Docusaurus): [https://databrickslabs.github.io/dqx/](https://databrickslabs.github.io/dqx/)
 - **[CHANGELOG.md](./CHANGELOG.md)** — Release history
 
 ---
