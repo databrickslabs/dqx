@@ -14,7 +14,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
+from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -22,6 +22,7 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     to_lowercase,
 )
+from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
@@ -2054,7 +2055,6 @@ def is_data_fresh_per_time_window(
 
 
 @register_rule("dataset")
-@register_for_original_columns_preselection()
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
     ref_df_name: str | None = None,
@@ -2077,10 +2077,13 @@ def has_valid_schema(
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table to load the schema from (e.g. "catalog.schema.table")
-        columns: Optional list of columns to validate (default: all columns are considered)
+        columns: Optional list of columns to validate (default: all columns are considered).
+            When strict=False, the expected_schema is the subset of expected columns after
+            filtering using this parameter. When strict=True, the expected_schema is the full
+            expected schema, either from the expected_schema, ref_df_name, or ref_table.
         strict: Whether to perform strict schema validation (default: False).
-            - False: Validates that all expected columns exist with compatible types (allows extra columns)
-            - True: Validates exact schema match (same columns, same order, same types)
+            - False: Validates that all expected columns exist with compatible types (allows extra columns).
+            - True: Validates exact schema match against the full expected schema (same columns, same order, same types).
         exclude_columns: Optional list of columns in the checked DataFrame schema to
             ignore for validation.
 
@@ -2117,7 +2120,7 @@ def has_valid_schema(
             get_column_name_or_alias(col) if not isinstance(col, str) else col for col in exclude_columns
         ]
 
-    expected_schema = _get_schema(expected_schema or types.StructType(), column_names)
+    expected_schema = _get_schema(expected_schema or types.StructType(), column_names if not strict else None)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__schema_condition_{unique_str}"
@@ -2140,11 +2143,15 @@ def has_valid_schema(
 
         if ref_df_name or ref_table:
             ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
-            _expected_schema = _get_schema(ref_df.schema, column_names)
+            _expected_schema = _get_schema(ref_df.schema, column_names if not strict else None)
         else:
             _expected_schema = expected_schema
 
         selected_column_names = column_names if column_names else df.columns
+        if column_names is None:
+            dqx_column_names = {col_name.value for col_name in DefaultColumnNames}
+            selected_column_names = [col for col in selected_column_names if col not in dqx_column_names]
+
         if exclude_column_names:
             ignore_set = set(exclude_column_names)
             selected_column_names = [col for col in selected_column_names if col not in ignore_set]
