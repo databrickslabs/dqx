@@ -389,7 +389,7 @@ def test_table_config_defaults():
     config = TableChecksStorageConfig(location="catalog.schema.table")
     assert config.location == "catalog.schema.table"
     assert config.run_config_name == "default"
-    assert config.mode == "overwrite"
+    assert config.mode == "append"
 
 
 def test_table_config_custom_values():
@@ -465,3 +465,63 @@ def test_run_config_with_input_output():
     assert config.name == "test_run"
     assert config.input_config == input_cfg
     assert config.output_config == output_cfg
+
+
+# Test TableChecksStorageConfig with rule_set_fingerprint
+def test_table_checks_storage_config_default_fingerprint_is_none():
+    config = TableChecksStorageConfig(location="catalog.schema.table")
+    assert config.location == "catalog.schema.table"
+    assert config.run_config_name == "default"
+    assert config.mode == "append"
+    assert config.rule_set_fingerprint is None
+
+
+def test_table_checks_storage_config_with_fingerprint():
+    rule_set_fingerprint = "abc123def456789"
+    config = TableChecksStorageConfig(location="catalog.schema.table", rule_set_fingerprint=rule_set_fingerprint)
+    assert config.location == "catalog.schema.table"
+    assert config.run_config_name == "default"
+    assert config.rule_set_fingerprint == rule_set_fingerprint
+
+
+def test_table_checks_storage_config_with_custom_run_config_and_fingerprint():
+    rule_set_fingerprint = "abc123def456789"
+    config = TableChecksStorageConfig(
+        location="catalog.schema.table", run_config_name="prod", rule_set_fingerprint=rule_set_fingerprint
+    )
+    assert config.location == "catalog.schema.table"
+    assert config.run_config_name == "prod"
+    assert config.rule_set_fingerprint == rule_set_fingerprint
+
+
+# Test LakebaseChecksStorageConfig with rule_set_fingerprint
+def test_lakebase_checks_storage_config_default_fingerprint_is_none():
+    config = LakebaseChecksStorageConfig(location="db.schema.table", instance_name="my_instance")
+    assert config.location == "db.schema.table"
+    assert config.instance_name == "my_instance"
+    assert config.run_config_name == "default"
+    assert config.rule_set_fingerprint is None
+
+
+def test_lakebase_checks_storage_config_with_fingerprint():
+    rule_set_fingerprint = "abc123def456789"
+    config = LakebaseChecksStorageConfig(
+        location="db.schema.table", instance_name="my_instance", rule_set_fingerprint=rule_set_fingerprint
+    )
+    assert config.location == "db.schema.table"
+    assert config.instance_name == "my_instance"
+    assert config.rule_set_fingerprint == rule_set_fingerprint
+
+
+def test_lakebase_checks_storage_config_with_custom_run_config_and_fingerprint():
+    rule_set_fingerprint = "abc123def456789"
+    config = LakebaseChecksStorageConfig(
+        location="db.schema.table",
+        instance_name="my_instance",
+        run_config_name="prod",
+        rule_set_fingerprint=rule_set_fingerprint,
+    )
+    assert config.location == "db.schema.table"
+    assert config.instance_name == "my_instance"
+    assert config.run_config_name == "prod"
+    assert config.rule_set_fingerprint == rule_set_fingerprint

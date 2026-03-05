@@ -1,5 +1,7 @@
 import abc
+import hashlib
 import inspect
+import json
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -216,6 +218,25 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         kwargs = self._build_kwargs(sig)
 
         return args, kwargs
+
+    @ft.cached_property
+    def rule_fingerprint(self) -> str:
+        """Compute a deterministic SHA-256 hash of a single rule definition.
+
+        Returns:
+            A hex-encoded SHA-256 hash string.
+        """
+        check_dict = self.to_dict()
+        fingerprint_data = {
+            "name": check_dict.get("name"),
+            "criticality": check_dict.get("criticality", "error"),
+            "function": check_dict.get("check", {}).get("function"),
+            "arguments": check_dict.get("check", {}).get("arguments"),
+            "filter": check_dict.get("filter"),
+        }
+
+        canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
     def to_dict(self) -> dict:
         """

@@ -8,8 +8,6 @@ import yaml
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-
 import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
 from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.check_funcs import sql_query
@@ -24,9 +22,18 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.reporting_columns import ColumnArguments
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
-
+from tests.integration.conftest import (
+    REPORTING_COLUMNS,
+    RUN_TIME,
+    EXTRA_PARAMS,
+    RUN_ID,
+    build_quality_violation,
+    assert_df_equality_ignore_fingerprints as assert_df_equality,
+    generate_checks_with_rule_and_set_fingerprint,
+    get_rule_fingerprint_from_checks,
+    get_rule_set_fingerprint_from_checks,
+)
 from tests.constants import TEST_CATALOG
-from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID, build_quality_violation
 
 
 SCHEMA = "a: int, b: int, c: int"
@@ -7097,13 +7104,13 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
             filter="b = 1",
         ),
     ]
-
+    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint(checks)
     checked = dq_engine.apply_checks(test_df, checks)
 
     result_errors = checked.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
     result_warnings = checked.select(F.explode(F.col("_warnings")).alias("dq")).select(F.expr("dq.*"))
 
-    expected = spark.createDataFrame(
+    expected_errors = spark.createDataFrame(
         [
             [
                 "a_is_null_or_empty",
@@ -7114,6 +7121,8 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 RUN_TIME,
                 RUN_ID,
                 user_metadata,
+                get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null_or_empty", "error"),
+                get_rule_set_fingerprint_from_checks(versioning_rules_checks),
             ],
             [
                 "a_is_null",
@@ -7124,13 +7133,45 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 RUN_TIME,
                 RUN_ID,
                 user_metadata,
+                get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null", "error"),
+                get_rule_set_fingerprint_from_checks(versioning_rules_checks),
             ],
         ],
         dq_result_schema.elementType,
     )
 
-    assert_df_equality(result_errors, expected, ignore_nullable=True)
-    assert_df_equality(result_warnings, expected, ignore_nullable=True)
+    expected_warnings = spark.createDataFrame(
+        [
+            [
+                "a_is_null_or_empty",
+                "Column 'a' value is null or empty",
+                ["a"],
+                None,
+                "is_not_null_and_not_empty",
+                RUN_TIME,
+                RUN_ID,
+                user_metadata,
+                get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null_or_empty", "warn"),
+                get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+            ],
+            [
+                "a_is_null",
+                "Column 'a' value is null",
+                ["a"],
+                "b = 1",
+                "is_not_null",
+                RUN_TIME,
+                RUN_ID,
+                user_metadata,
+                get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null", "warn"),
+                get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+            ],
+        ],
+        dq_result_schema.elementType,
+    )
+
+    assert_df_equality(result_errors, expected_errors, ignore_nullable=True)
+    assert_df_equality(result_warnings, expected_warnings, ignore_nullable=True)
 
 
 def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):

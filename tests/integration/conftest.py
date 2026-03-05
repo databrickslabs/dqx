@@ -5,17 +5,24 @@ from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
 from unittest.mock import patch
+from pyspark.sql import DataFrame, functions as F
+from pyspark.sql.types import ArrayType, StructType
+from chispa import assert_df_equality as _chispa_assert_df_equality  # type: ignore
 
-from chispa import assert_df_equality  # type: ignore
-from pyspark.sql import DataFrame
 import pytest
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
+from databricks.labs.dqx.checks_serializer import (
+    compute_rule_fingerprint,
+    compute_rule_set_fingerprint,
+    serialize_checks,
+)
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.installer.mixins import InstallationMixin
+from databricks.labs.dqx.rule import DQRule
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 
@@ -34,12 +41,80 @@ RUN_ID = "2f9120cf-e9f2-446a-8278-12d508b00639"
 EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID)
 
 
+FINGERPRINT_FIELDS = ["rule_fingerprint", "rule_set_fingerprint"]
+
+
+def _strip_fingerprints_from_result_column(df: DataFrame, col_name: str) -> DataFrame:
+    """Remove fingerprint fields from a result array column (_errors or _warnings)."""
+
+    schema = df.schema
+    if col_name not in df.columns:
+        return df
+
+    field = schema[col_name]
+    if not isinstance(field.dataType, ArrayType) or not isinstance(field.dataType.elementType, StructType):
+        return df
+
+    struct_fields = field.dataType.elementType.fieldNames()
+    keep_fields = [f for f in struct_fields if f not in FINGERPRINT_FIELDS]
+
+    return df.withColumn(
+        col_name,
+        F.when(
+            F.col(col_name).isNotNull(),
+            F.transform(
+                F.col(col_name),
+                lambda x: F.struct(*[x[f].alias(f) for f in keep_fields]),
+            ),
+        ),
+    )
+
+
+def assert_df_equality_ignore_fingerprints(
+    df1: DataFrame,
+    df2: DataFrame,
+    **kwargs,
+):
+    """Assert DataFrame equality after stripping fingerprint fields from result columns."""
+    df1_clean = df1
+    for col in ("_errors", "dq_errors"):
+        df1_clean = _strip_fingerprints_from_result_column(df1_clean, col)
+    for col in ("_warnings", "dq_warnings"):
+        df1_clean = _strip_fingerprints_from_result_column(df1_clean, col)
+
+    df2_clean = df2
+    for col in ("_errors", "dq_errors"):
+        df2_clean = _strip_fingerprints_from_result_column(df2_clean, col)
+    for col in ("_warnings", "dq_warnings"):
+        df2_clean = _strip_fingerprints_from_result_column(df2_clean, col)
+
+    _chispa_assert_df_equality(df1_clean, df2_clean, **kwargs)
+
+
+def compute_fingerprints(checks: list[DQRule]) -> tuple[dict[str, str], str]:
+    """Compute fingerprints from a list of DQRule checks.
+
+    Args:
+        checks: List of DQRule instances.
+
+    Returns:
+        A tuple of (rule_fingerprints_by_name, rule_set_fingerprint) where
+        rule_fingerprints_by_name maps check name to its fingerprint.
+    """
+    check_dicts = [c.to_dict() for c in checks]
+    rule_set_fp = compute_rule_set_fingerprint(check_dicts)
+    rule_fps = {c.name: compute_rule_fingerprint(c.to_dict()) for c in checks}
+    return rule_fps, rule_set_fp
+
+
 def build_quality_violation(
     name: str,
     message: str,
     columns: list[str] | None,
     *,
     function: str = "is_not_null_and_not_empty",
+    rule_fingerprint: str | None = None,
+    rule_set_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Helper for constructing expected violation entries with shared metadata."""
 
@@ -52,6 +127,8 @@ def build_quality_violation(
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
         "user_metadata": {},
+        "rule_fingerprint": rule_fingerprint,
+        "rule_set_fingerprint": rule_set_fingerprint,
     }
 
 
@@ -499,12 +576,58 @@ def assert_quarantine_and_output_dfs(ws, spark, expected_output, output_config, 
     expected_quarantine_df = dq_engine.get_invalid(expected_output)
 
     output_df = spark.table(output_config.location)
-    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(output_df, expected_output_df, ignore_nullable=True)
 
     quarantine_df = spark.table(quarantine_config.location)
-    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(quarantine_df, expected_quarantine_df, ignore_nullable=True)
 
 
 def assert_output_df(spark, expected_output, output_config):
     checked_df = spark.table(output_config.location)
-    assert_df_equality(checked_df, expected_output, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(checked_df, expected_output, ignore_nullable=True)
+
+
+def generate_checks_with_rule_and_set_fingerprint(rules: list) -> list[dict]:
+    if all(isinstance(rule, DQRule) for rule in rules):
+        checks_dict = serialize_checks(rules)
+    else:
+        checks_dict = rules
+    rule_set_fingerprint = compute_rule_set_fingerprint(checks_dict)
+    for check in checks_dict:
+        check["rule_fingerprint"] = compute_rule_fingerprint(check)
+        check["rule_set_fingerprint"] = rule_set_fingerprint
+
+    return checks_dict
+
+
+def get_rule_fingerprint_from_checks(
+    versioning_rules_checks: list[dict] | None, check_name: str, criticality: str
+) -> str | None:
+    """
+    Helper function to extract the rule_fingerprint from the versioning rules checks
+    based on the check name, function, criticality and column (if applicable).
+    versioning_rules_checks: list of versioning rules checks
+    check_name: name of the check
+    criticality: criticality of the check (e.g. "error", "warning")
+
+    """
+    rule_dict = {}
+    if not versioning_rules_checks:
+        return None
+    for check in versioning_rules_checks:
+        if check.get("name") == check_name and check.get("criticality") == criticality:
+            rule_dict = check
+    return rule_dict.get("rule_fingerprint", None)
+
+
+def get_rule_set_fingerprint_from_checks(versioning_rules_checks: list[dict] | None) -> str | None:
+    """
+    Helper function to extract the rule_set_fingerprint from the versioning rules checks
+    based on the check name, function, criticality and column (if applicable).
+    versioning_rules_checks: list of versioning rules checks
+    check_name: name of the check
+    """
+
+    if not versioning_rules_checks:
+        return None
+    return versioning_rules_checks[0].get("rule_set_fingerprint", None)

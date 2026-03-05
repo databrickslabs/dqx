@@ -16,7 +16,10 @@ from pyspark.sql.streaming import StreamingQuery
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
-from databricks.labs.dqx.checks_serializer import deserialize_checks
+from databricks.labs.dqx.checks_serializer import (
+    deserialize_checks,
+    compute_rule_set_fingerprint,
+)
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
@@ -142,12 +145,16 @@ class DQEngineCore(DQEngineCoreBase):
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
+        all_check_dicts = [c.to_dict() for c in checks]
+        rule_set_fp = compute_rule_set_fingerprint(all_check_dicts)
+
         result_df = self._create_results_array(
             df,
             error_checks,
             self._result_column_names[ColumnArguments.ERRORS],
             self._result_column_names[ColumnArguments.INFO],
             ref_dfs,
+            rule_set_fingerprint=rule_set_fp,
         )
         result_df = self._create_results_array(
             result_df,
@@ -155,6 +162,7 @@ class DQEngineCore(DQEngineCoreBase):
             self._result_column_names[ColumnArguments.WARNINGS],
             self._result_column_names[ColumnArguments.INFO],
             ref_dfs,
+            rule_set_fingerprint=rule_set_fp,
         )
         observed_result = self._observe_metrics(result_df)
 
@@ -427,6 +435,7 @@ class DQEngineCore(DQEngineCoreBase):
         dest_col: str,
         dest_info_col: str,
         ref_dfs: dict[str, DataFrame] | None = None,
+        rule_set_fingerprint: str | None = None,
     ) -> DataFrame:
         """
         Apply a list of data quality checks to a DataFrame and assemble their results into an array column.
@@ -442,6 +451,7 @@ class DQEngineCore(DQEngineCoreBase):
             dest_col: Name of the output column where the check results map will be stored.
             dest_info_col: Name of the output column where the check info struct will be stored.
             ref_dfs: Optional dictionary of reference DataFrames, keyed by name, for use by dataset-level checks.
+            rule_set_fingerprint: Fingerprint of the rule set
 
         Returns:
             DataFrame with an added array column (*dest_col*) containing the results of the applied checks.
@@ -467,6 +477,8 @@ class DQEngineCore(DQEngineCoreBase):
                 engine_user_metadata=self.engine_user_metadata,
                 run_time_overwrite=self.run_time_overwrite,
                 ref_dfs=ref_dfs,
+                rule_fingerprint=check.rule_fingerprint,
+                rule_set_fingerprint=rule_set_fingerprint,
             )
             log_telemetry(self.ws, "check", check.check_func.__name__)
             result = manager.process()
