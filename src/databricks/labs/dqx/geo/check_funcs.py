@@ -1,8 +1,10 @@
 from collections.abc import Callable
 import operator as py_operator
+import uuid
 
-from pyspark.sql import Column
+from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
+from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.rule import register_rule
 from databricks.labs.dqx.check_funcs import make_condition, get_normalized_column_and_expr, get_limit_expr
@@ -821,3 +823,108 @@ def _compare_spatial_sql_function_result(
         F.when(is_valid_cond, is_valid_message).otherwise(compare_message),
         f"{col_str_norm}_{spatial_quantity_name}_{compare_op_name}_limit",
     )
+
+
+@register_rule("dataset")
+def are_polygons_mutually_disjoint(
+    column: str | Column,
+    row_filter: str | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Checks if the polygons in a geometry column are mutually disjoint. By default,
+    native Spark spatial intersections are used.
+
+    Args:
+    column: Column to check; can be a string column name or a column expression
+    row_filter: Optional SQL expression to filter rows before checking for intersections.
+
+    Returns:
+    Column object and a callable to apply the check to a DataFrame.
+
+    Note:
+    This function requires Databricks runtime 17.1 or above.
+    Photon activation is suggested to use optimized spatial computation.
+    Non-conformant geometries values are ignored.
+    """
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__intersect_condition_{col_str_norm}_{unique_str}"
+    row_id_col = f"__row_id_{unique_str}"
+    geom_temp_col = f"__geom_temp_{unique_str}"
+    intersect_id_col = f"__intersect_id_{unique_str}"
+
+    def apply(df: DataFrame, _spark: SparkSession, _ref_dfs: dict[str, DataFrame]) -> DataFrame:
+        """Identify rows whose polygon intersects with at least one other polygon.
+
+        Assigns a unique row ID, parses geometries, performs an optimized self-join
+        using strict ID ordering to halve comparisons, and flags both sides of each
+        intersecting pair. The original DataFrame is returned with all rows preserved
+        and a boolean condition column indicating violations.
+
+        Args:
+        df: Input DataFrame containing the geometry column to check.
+        _spark: Active SparkSession (required by the dqx rule contract, unused).
+        _ref_dfs: Reference DataFrames dictionary (required by the dqx rule contract, unused).
+
+        Returns:
+        DataFrame with an additional boolean column marking rows whose polygon
+        intersects with at least one other polygon in the dataset.
+        """
+        # 1. Prepare data with unique IDs and geometry types
+        df_with_id = df.withColumn(row_id_col, F.monotonically_increasing_id())
+
+        prep_df = (
+            df_with_id.filter(col_expr.isNotNull())
+            .withColumn(geom_temp_col, F.expr(f"try_to_geometry({col_str_norm})"))
+            .filter(F.col(geom_temp_col).isNotNull())
+        )
+
+        if row_filter:
+            prep_df = prep_df.filter(row_filter)
+
+        # 2. Select only necessary columns for the right side
+        df_right = prep_df.select(
+            F.col(row_id_col).alias(f"{row_id_col}_right"),
+            F.col(geom_temp_col).alias(f"{geom_temp_col}_right"),
+        )
+
+        # 3. Use strict ordering (<) to halve comparisons
+        intersect_cond = (F.col(row_id_col) < F.col(f"{row_id_col}_right")) & F.expr(
+            f"st_intersects({geom_temp_col}, {geom_temp_col}_right)"
+        )
+
+        # 4. Find violating pairs, then collect both sides to flag all offenders
+        intersecting_pairs = prep_df.join(df_right, on=intersect_cond, how="inner").select(
+            F.col(row_id_col),
+            F.col(f"{row_id_col}_right"),
+        )
+
+        intersecting_ids_df = (
+            intersecting_pairs.select(F.col(row_id_col).alias(intersect_id_col))
+            .union(intersecting_pairs.select(F.col(f"{row_id_col}_right").alias(intersect_id_col)))
+            .distinct()
+            .withColumn(condition_col, F.lit(True))
+        )
+
+        # 5. Join violations back and clean up temp columns
+        result_df = df_with_id.join(
+            intersecting_ids_df,
+            on=df_with_id[row_id_col] == intersecting_ids_df[intersect_id_col],
+            how="left",
+        ).drop(row_id_col, intersect_id_col, geom_temp_col)
+
+        return result_df.na.fill(False, subset=[condition_col])
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("value `"),
+            col_expr.cast("string"),
+            F.lit(f"` in column `{col_expr_str}` intersects with at least one other polygon"),
+        ),
+        alias=f"{col_str_norm}_not_mutually_disjoint",
+    )
+
+    return condition, apply
