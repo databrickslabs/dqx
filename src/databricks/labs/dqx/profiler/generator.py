@@ -165,8 +165,9 @@ class DQGenerator(DQEngineBase):
         """
         Generate DQX quality rules from a data contract specification.
 
-        Parses a data contract (currently supporting ODCS v3.0.x) and generates rules based on
+        Parses a data contract (ODCS v3.x; any apiVersion accepted by the library, e.g. v3.0.2, v3.1.0) and generates rules based on
         schema properties, explicit quality definitions, and text-based expectations.
+        When the contract defines a schema, one dataset-level has_valid_schema rule per schema is always generated.
 
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:

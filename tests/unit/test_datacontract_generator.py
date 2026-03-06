@@ -13,10 +13,17 @@ from datacontract.lint.resolve import resolve_data_contract
 from databricks.sdk.errors import NotFound
 import databricks.labs.dqx.profiler.generator as generator_module
 from databricks.labs.dqx.check_funcs import make_condition, register_rule
+import databricks.labs.dqx.datacontract.contract_rules_generator as contract_rules_generator_module
 from databricks.labs.dqx.datacontract.contract_rules_generator import DataContractRulesGenerator
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import ODCSContractError, ParameterError, MissingParameterError
+from databricks.labs.dqx.errors import (
+    InvalidPhysicalTypeError,
+    ODCSContractError,
+    ParameterError,
+    MissingParameterError,
+)
 from databricks.labs.dqx.profiler.generator import DQGenerator
+from tests.conftest import get_schema_validation_rules
 
 
 class DataContractGeneratorTestBase:
@@ -34,6 +41,30 @@ class DataContractGeneratorTestBase:
         Must match the rules generated from resources/sample_datacontract.yaml.
         """
         return [
+            {
+                'check': {
+                    'function': 'has_valid_schema',
+                    'arguments': {
+                        'expected_schema': (
+                            'sensor_id STRING, machine_id STRING, reading_timestamp TIMESTAMP, '
+                            'calibration_date DATE, temperature_celsius DECIMAL(5,2), humidity_percentage DECIMAL(5,2), '
+                            'pressure_bar DECIMAL(4,2), vibration_level INT, sensor_status STRING, alert_level STRING, '
+                            'location STRING, device_model STRING, notes STRING, technician_id STRING, '
+                            'is_anomaly BOOLEAN, alert_email STRING'
+                        ),
+                        'strict': True,
+                    },
+                },
+                'name': 'sensor_readings_schema_validation',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'sensor_readings',
+                    'rule_type': 'schema_validation',
+                },
+            },
             {
                 'check': {'function': 'is_not_null', 'arguments': {'column': 'sensor_id'}},
                 'name': 'sensor_id_is_null',
@@ -623,6 +654,31 @@ class DataContractGeneratorTestBase:
                 },
                 'filter': 'alert_level in (\'high\', \'critical\')',
             },
+            {
+                'check': {
+                    'function': 'has_valid_schema',
+                    'arguments': {
+                        'expected_schema': (
+                            'col_string STRING, col_varchar STRING, col_char STRING, col_int INT, col_integer INT, '
+                            'col_smallint SMALLINT, col_tinyint TINYINT, col_long BIGINT, col_bigint BIGINT, '
+                            'col_float FLOAT, col_double DOUBLE, col_number DOUBLE, col_decimal DECIMAL(10,2), '
+                            'col_decimal_precision DECIMAL(12,4), col_numeric DECIMAL(8,2), col_boolean BOOLEAN, '
+                            'col_bool BOOLEAN, col_date DATE, col_timestamp TIMESTAMP, col_datetime TIMESTAMP, '
+                            'col_binary BINARY, col_object BINARY, col_array ARRAY<STRING>'
+                        ),
+                        'strict': True,
+                    },
+                },
+                'name': 'all_data_types_schema_validation',
+                'criticality': 'error',
+                'user_metadata': {
+                    'contract_id': 'urn:datacontract:sensors:iot_sensor_data',
+                    'contract_version': '2.1.0',
+                    'odcs_version': 'v3.0.2',
+                    'schema': 'all_data_types',
+                    'rule_type': 'schema_validation',
+                },
+            },
         ]
 
     def create_basic_contract(
@@ -651,7 +707,7 @@ class DataContractGeneratorTestBase:
             An ODCS v3.x contract dictionary.
         """
         if properties is None:
-            properties = [{"name": "user_id", "logicalType": "string", "required": True}]
+            properties = [{"name": "user_id", "physicalType": "STRING", "required": True}]
 
         return {
             "kind": "DataContract",
@@ -692,9 +748,13 @@ class DataContractGeneratorTestBase:
         Returns:
             An ODCS v3.x contract dictionary with quality checks.
         """
-        # All quality checks should already be in ODCS v3.x format
-        property_def = {"name": property_name, "logicalType": logical_type, "quality": quality_checks}
-
+        # All quality checks should already be in ODCS v3.x format. physicalType required for schema validation.
+        property_def = {
+            "name": property_name,
+            "logicalType": logical_type,
+            "physicalType": "STRING",
+            "quality": quality_checks,
+        }
         return self.create_basic_contract(schema_name=schema_name, properties=[property_def])
 
     def create_test_contract_file(
@@ -724,21 +784,24 @@ class DataContractGeneratorTestBase:
             if status_values is None:
                 status_values = ["active", "inactive"]
 
-            # Create ODCS v3.x properties directly
+            # Create ODCS v3.x properties directly. physicalType required (Unity Catalog).
             properties: list[dict] = [
                 {
                     "name": "user_id",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "required": True,
                     "logicalTypeOptions": {"pattern": user_id_pattern},
                 },
                 {
                     "name": "age",
+                    "physicalType": "INT",
                     "logicalType": "integer",
                     "logicalTypeOptions": {"minimum": age_min, "maximum": age_max},
                 },
                 {
                     "name": "status",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "logicalTypeOptions": {"pattern": f"^({'|'.join(status_values)})$"},  # enum as pattern
                 },
@@ -749,6 +812,34 @@ class DataContractGeneratorTestBase:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.safe_dump(contract_dict, f)
             return f.name
+
+    def _generate_rules_and_get_schema_ddl(
+        self, generator, temp_path, generate_predefined_rules=True, process_text_rules=False
+    ):
+        """Generate rules from temp contract file and return (schema_rules, expected_schema_ddl)."""
+        rules = generator.generate_rules_from_contract(
+            contract_file=temp_path,
+            generate_predefined_rules=generate_predefined_rules,
+            process_text_rules=process_text_rules,
+        )
+        schema_rules = get_schema_validation_rules(rules)
+        ddl = schema_rules[0]["check"]["arguments"]["expected_schema"] if schema_rules else None
+        return schema_rules, ddl
+
+    def _assert_unity_ddl_contains(self, ddl, expected_substrings):
+        """Assert that each expected substring appears in the DDL string."""
+        assert ddl is not None, "Expected non-empty DDL"
+        for substring in expected_substrings:
+            assert substring in ddl, f"Expected DDL to contain {substring!r}, got: {ddl!r}"
+
+    def _assert_special_column_escapes_in_ddl(self, schema_rules, ddl):
+        """Assert DDL backtick-escapes special/digit-starting column names (Databricks/ANSI)."""
+        assert len(schema_rules) == 1
+        assert ddl is not None
+        assert "`col-name` STRING" in ddl
+        assert "`col name` STRING" in ddl
+        assert "`123col` STRING" in ddl, "Identifiers starting with digit must be backtick-escaped"
+        assert "normal_col STRING" in ddl
 
 
 class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
@@ -785,6 +876,12 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
         with pytest.raises(ParameterError, match="Contract format 'unknown' not supported"):
             generator.generate_rules_from_contract(contract_file=sample_contract_path, contract_format="unknown")
 
+    def test_init_raises_when_llm_engine_provided_but_llm_extras_missing(self, mock_workspace_client, monkeypatch):
+        """Test that DataContractRulesGenerator raises ImportError when llm_engine given but LLM deps missing."""
+        monkeypatch.setattr(contract_rules_generator_module, "missing_required_packages", lambda _: True)
+        with pytest.raises(ImportError, match="pip install databricks-labs-dqx\\[llm\\]"):
+            DataContractRulesGenerator(workspace_client=mock_workspace_client, llm_engine=Mock())
+
     def test_explicit_rule_with_criticality_warn(self, generator):
         """Test that explicit DQX rules preserve 'warn' criticality from contract."""
         contract_dict = self.create_contract_with_quality(
@@ -812,12 +909,15 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
             )
 
-            assert len(rules) == 1
-            assert rules[0]["criticality"] == "warn"  # Should preserve 'warn' from contract
-            assert rules[0]["check"]["function"] == "regex_match"
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1
+            assert explicit[0]["criticality"] == "warn"  # Should preserve 'warn' from contract
+            assert explicit[0]["check"]["function"] == "regex_match"
         finally:
             os.unlink(temp_path)
 
@@ -845,12 +945,15 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
             )
 
-            assert len(rules) == 1
-            assert rules[0]["criticality"] == "error"  # Should preserve 'error' from contract
-            assert rules[0]["check"]["function"] == "is_not_null_and_not_empty"
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1
+            assert explicit[0]["criticality"] == "error"  # Should preserve 'error' from contract
+            assert explicit[0]["check"]["function"] == "is_not_null_and_not_empty"
         finally:
             os.unlink(temp_path)
 
@@ -878,21 +981,24 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
             )
 
-            assert len(rules) == 1
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1
             # When criticality is not specified in contract, it won't be in the rule
             # DQX engine will use its default 'error' when applying the rule
-            assert "criticality" not in rules[0] or rules[0].get("criticality") == "error"
-            assert rules[0]["check"]["function"] == "is_not_null"
+            assert "criticality" not in explicit[0] or explicit[0].get("criticality") == "error"
+            assert explicit[0]["check"]["function"] == "is_not_null"
         finally:
             os.unlink(temp_path)
 
     def test_predefined_rules_use_default_criticality(self, generator):
         """Test that predefined rules use the default_criticality parameter."""
         contract_dict = self.create_basic_contract(
-            properties=[{"name": "user_id", "logicalType": "string", "required": True}]
+            properties=[{"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True}]
         )
 
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
@@ -906,9 +1012,149 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                 default_criticality="warn",
             )
 
-            assert len(rules) == 1
-            assert rules[0]["criticality"] == "warn"  # Predefined rule should use default_criticality
-            assert rules[0]["check"]["function"] == "is_not_null"
+            predefined = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"]
+            assert len(predefined) == 1
+            assert predefined[0]["criticality"] == "warn"  # Predefined rule should use default_criticality
+            assert predefined[0]["check"]["function"] == "is_not_null"
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_raises_when_physical_type_missing(self, generator):
+        """When a property has no physicalType, InvalidPhysicalTypeError is raised."""
+        # Build contract manually so "b" has no physicalType (create_basic_contract would inject it).
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:missing_pt",
+            "name": "Missing PT",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "missing_pt",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "a", "physicalType": "STRING"},
+                        {"name": "b", "logicalType": "integer"},
+                    ],
+                }
+            ],
+        }
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "physicalType is required" in str(exc_info.value)
+            assert "missing_pt" in str(exc_info.value)
+            assert "b" in str(exc_info.value)
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_raises_when_physical_type_invalid(self, generator):
+        """When physicalType is not a valid Unity Catalog type, InvalidPhysicalTypeError is raised."""
+        contract_dict = self.create_basic_contract(
+            schema_name="invalid_pt",
+            properties=[
+                {"name": "a", "physicalType": "STRING"},
+                {"name": "b", "physicalType": "varchar(100)"},  # ODCS-style, not Unity
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "not a valid Unity Catalog" in str(exc_info.value)
+            assert "invalid_pt" in str(exc_info.value)
+            assert "b" in str(exc_info.value)
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_ddl_escapes_special_column_names(self, generator):
+        """Test that column names with special chars or starting with digit are backtick-escaped (Databricks/ANSI)."""
+        contract_dict = self.create_basic_contract(
+            schema_name="special_cols",
+            properties=[
+                {"name": "col-name", "physicalType": "STRING"},
+                {"name": "col name", "physicalType": "STRING"},
+                {"name": "123col", "physicalType": "STRING"},
+                {"name": "normal_col", "physicalType": "STRING"},
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            self._assert_special_column_escapes_in_ddl(schema_rules, ddl)
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_with_only_nested_objects_includes_binary_column(self, generator):
+        """Test that schema with only nested object properties produces one column as BINARY (Databricks byte sequence)."""
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "test:nested_only",
+            "name": "Nested Only",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "nested_schema",
+                    "physicalType": "table",
+                    "properties": [
+                        {
+                            "name": "payload",
+                            "physicalType": "BINARY",
+                            "logicalType": "object",
+                            "properties": [
+                                {"name": "nested_field", "physicalType": "STRING", "logicalType": "string"},
+                            ],
+                        },
+                    ],
+                },
+            ],
+        }
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+            schema_rules = get_schema_validation_rules(rules)
+            assert len(schema_rules) == 1, "Nested object is represented as one BINARY column"
+            ddl = schema_rules[0]["check"]["arguments"]["expected_schema"]
+            assert "payload BINARY" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_property_with_no_physical_type_raises(self, generator):
+        """Test that property with no physicalType raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            schema_name="no_type",
+            properties=[
+                {"name": "untyped_col"},
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "physicalType is required" in str(exc_info.value)
+            assert "untyped_col" in str(exc_info.value)
         finally:
             os.unlink(temp_path)
 
@@ -946,16 +1192,18 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
     def test_generate_rules_and_skip_predefined_rules(self, generator, sample_contract_path):
         """Test that generate_predefined_rules=False skips predefined rules."""
         rules = generator.generate_rules_from_contract(
-            contract_file=sample_contract_path, generate_predefined_rules=False, process_text_rules=False
+            contract_file=sample_contract_path,
+            generate_predefined_rules=False,
+            process_text_rules=False,
         )
 
-        # Should only have explicit rules (no predefined rules)
-        # Sample ODCS v3.x contract has 8 explicit DQX rules (5 property-level + 3 schema-level)
-        assert len(rules) == 8
-
-        # Verify all rules are explicit
-        for rule in rules:
-            assert rule["user_metadata"]["rule_type"] == "explicit"
+        # Should have explicit rules plus schema validation (no predefined rules)
+        # Sample ODCS v3.x contract has 2 schemas (sensor_readings, all_data_types) + 8 explicit DQX rules
+        schema_rules = get_schema_validation_rules(rules)
+        explicit_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+        assert len(schema_rules) == 2
+        assert len(explicit_rules) == 8
+        assert len(rules) == 10
 
     def test_generate_rules_from_datacontract_obj_with_custom_check_func(
         self, mock_workspace_client, mock_spark, sample_contract_path
@@ -987,8 +1235,11 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
 
         schema:
           - name: sensor_readings
+            physicalType: table
             properties:
               - name: sensor_id
+                physicalType: STRING
+                logicalType: string
                 quality:
                   # Explicit check with error criticality
                   - type: custom
@@ -1012,13 +1263,18 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
                         function: not_ends_with_suffix
                         arguments:
                           column: sensor_name
-                          suffix: _test"""
+                          suffix: _test
+              - name: sensor_name
+                physicalType: STRING
+                logicalType: string"""
 
         contract = DataContract(data_contract_str=data_contract_str)
 
         # Generate rules with text processing enabled
         rules = generator.generate_rules_from_contract(
-            contract=contract, generate_predefined_rules=False, process_text_rules=False
+            contract=contract,
+            generate_predefined_rules=False,
+            process_text_rules=False,
         )
 
         # Verify rules were generated
@@ -1057,7 +1313,408 @@ class TestDataContractGeneratorBasic(DataContractGeneratorTestBase):
             },
         ]
 
-        assert rules == expected_rules, f"Rules do not match expected: {rules}"
+        explicit_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+        assert len(explicit_rules) == len(expected_rules), f"Explicit rules count mismatch: {explicit_rules}"
+        assert len(get_schema_validation_rules(rules)) == 1, "Expected one schema_validation rule"
+        for exp in expected_rules:
+            match = next(
+                (r for r in explicit_rules if r.get("name") == exp.get("name") and r.get("check") == exp.get("check")),
+                None,
+            )
+            assert match is not None, f"No matching rule for expected {exp} in {explicit_rules}"
+
+
+class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
+    """Tests for schema validation rule generation (has_valid_schema, physicalType)."""
+
+    def test_schema_validation_rule_generated_by_default(self, generator, sample_contract_path):
+        """Test that rules include has_valid_schema per schema when the contract defines a schema."""
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path, generate_predefined_rules=False, process_text_rules=False
+        )
+        schema_rules = get_schema_validation_rules(rules)
+        assert len(schema_rules) >= 1, "Expected at least one schema validation rule"
+        assert schema_rules[0]["check"]["arguments"]["strict"] is True
+        assert schema_rules[0]["user_metadata"]["schema"] == "sensor_readings"
+        assert "expected_schema" in schema_rules[0]["check"]["arguments"]
+
+    def test_schema_validation_expected_schema_matches_contract(self, generator):
+        """Test that derived expected_schema DDL matches contract properties (physicalType = Unity types)."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {"name": "id", "physicalType": "STRING", "required": True},
+                {"name": "amount", "physicalType": "DOUBLE"},
+                {"name": "created_at", "physicalType": "TIMESTAMP"},
+            ]
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+            )
+            schema_rules = get_schema_validation_rules(rules)
+            assert len(schema_rules) == 1
+            ddl = schema_rules[0]["check"]["arguments"]["expected_schema"]
+            assert "id STRING" in ddl
+            assert "amount DOUBLE" in ddl
+            assert "created_at TIMESTAMP" in ddl  # physicalType used as-is (Unity Catalog)
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_ddl_uses_unity_physical_type(self, generator):
+        """Test that expected_schema uses physicalType (Unity Catalog) as-is when valid."""
+        contract_dict = self.create_basic_contract(
+            schema_name="unity_types",
+            properties=[
+                {"name": "id", "physicalType": "STRING"},
+                {"name": "amount", "physicalType": "DOUBLE"},
+                {"name": "qty", "physicalType": "INT"},
+                {"name": "big_id", "physicalType": "BIGINT"},
+                {"name": "flag", "physicalType": "BOOLEAN"},
+                {"name": "dt", "physicalType": "DATE"},
+                {"name": "ts", "physicalType": "TIMESTAMP"},
+                {"name": "raw", "physicalType": "BINARY"},
+                {"name": "dec_precision", "physicalType": "DECIMAL(12,4)"},
+                {"name": "arr_col", "physicalType": "ARRAY<STRING>"},
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            self._assert_unity_ddl_contains(
+                ddl,
+                [
+                    "id STRING",
+                    "amount DOUBLE",
+                    "qty INT",
+                    "big_id BIGINT",
+                    "flag BOOLEAN",
+                    "dt DATE",
+                    "ts TIMESTAMP",
+                    "raw BINARY",
+                    "dec_precision DECIMAL(12,4)",
+                    "arr_col ARRAY<STRING>",
+                ],
+            )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_decimal_physical_type_normalized_no_spaces(self, generator):
+        """DECIMAL with spaces in physicalType is normalized to DECIMAL(p,s) for consistent DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {"name": "id", "physicalType": "STRING"},
+                {"name": "amount", "physicalType": "DECIMAL ( 10 , 2 )"},
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "amount DECIMAL(10,2)" in ddl, "DECIMAL must be normalized without spaces for strict schema match"
+            assert "DECIMAL ( 10 , 2 )" not in ddl, "DDL must not retain spaces from physicalType input"
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_complex_physical_type_normalized_uppercase(self, generator):
+        """Complex types (ARRAY, MAP, STRUCT) are normalized to uppercase for consistent DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {"name": "tags", "physicalType": "array<string>"},
+                {"name": "meta", "physicalType": "map<string, int>"},
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "tags ARRAY<STRING>" in ddl, "Complex types must be normalized to uppercase"
+            assert "meta MAP<STRING,INT>" in ddl, "MAP type must be normalized to uppercase"
+            assert "array<string>" not in ddl and "map<string" not in ddl, "DDL must not retain lowercase type"
+        finally:
+            os.unlink(temp_path)
+
+
+class TestDataContractGeneratorSchemaValidationRecursiveAndDecimal(DataContractGeneratorTestBase):
+    """Tests for recursive type validation, DECIMAL limits, recursion depth, and nameless-property warnings."""
+
+    def test_schema_validation_recursive_invalid_inner_type_array(self, generator):
+        """ARRAY<NOT_A_TYPE> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "ARRAY<NOT_A_TYPE>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "NOT_A_TYPE" in str(exc_info.value) or "not a valid" in str(exc_info.value).lower()
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_inner_type_map_value(self, generator):
+        """MAP<STRING, NOT_A_TYPE> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "MAP<STRING, NOT_A_TYPE>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_inner_type_map_key(self, generator):
+        """MAP<NOT_A_TYPE, INT> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "MAP<NOT_A_TYPE, INT>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_inner_type_struct(self, generator):
+        """STRUCT<a:INT, b:NOT_A_TYPE> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "STRUCT<a:INT, b:NOT_A_TYPE>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_nested_array_map(self, generator):
+        """ARRAY<MAP<STRING, BAD>> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "ARRAY<MAP<STRING, BAD>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_invalid_struct_array_inner(self, generator):
+        """STRUCT<x:ARRAY<INVALID>> raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "STRUCT<x:ARRAY<INVALID>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_array_array_int(self, generator):
+        """ARRAY<ARRAY<INT>> is valid and appears in DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "ARRAY<ARRAY<INT>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            self._assert_unity_ddl_contains(ddl, ["col ARRAY<ARRAY<INT>>"])
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_map_string_array_int(self, generator):
+        """MAP<STRING, ARRAY<INT>> is valid and appears in DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "MAP<STRING, ARRAY<INT>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            self._assert_unity_ddl_contains(ddl, ["col MAP<STRING,ARRAY<INT>>"])
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_struct_with_array(self, generator):
+        """STRUCT<a:INT, b:ARRAY<STRING>> is valid and appears in DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "STRUCT<a:INT, b:ARRAY<STRING>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "col STRUCT<" in ddl
+            assert "a:INT" in ddl
+            assert "b:ARRAY<STRING>" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_struct_nested_struct(self, generator):
+        """STRUCT<a:STRUCT<x:INT, y:STRING>> is valid and appears in DDL."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "STRUCT<a:STRUCT<x:INT, y:STRING>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "col STRUCT<" in ddl
+            assert "a:STRUCT<" in ddl
+            assert "x:INT" in ddl
+            assert "y:STRING" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursive_valid_deep_array(self, generator):
+        """ARRAY<ARRAY<ARRAY<STRING>>> is valid."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "ARRAY<ARRAY<ARRAY<STRING>>>"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "ARRAY<ARRAY<ARRAY<STRING>>>" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_recursion_limit_exceeded(self, generator):
+        """Type nested beyond max depth raises InvalidPhysicalTypeError."""
+        depth = 52  # One more than _MAX_TYPE_RECURSION_DEPTH (50)
+        nested = "STRING"
+        for _ in range(depth):
+            nested = f"ARRAY<{nested}>"
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": nested}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "depth" in str(exc_info.value).lower() or "50" in str(exc_info.value)
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_decimal_precision_over_38_raises(self, generator):
+        """DECIMAL(100,2) raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "DECIMAL(100,2)"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "38" in str(exc_info.value) or "precision" in str(exc_info.value).lower()
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_decimal_scale_over_precision_raises(self, generator):
+        """DECIMAL(10,50) raises InvalidPhysicalTypeError."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "DECIMAL(10,50)"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with pytest.raises(InvalidPhysicalTypeError) as exc_info:
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
+                )
+            assert "scale" in str(exc_info.value).lower() or "precision" in str(exc_info.value).lower()
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_decimal_38_10_accepted(self, generator):
+        """DECIMAL(38,10) is accepted (Spark max precision)."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "col", "physicalType": "DECIMAL(38,10)"}],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            schema_rules, ddl = self._generate_rules_and_get_schema_ddl(
+                generator, temp_path, generate_predefined_rules=False
+            )
+            assert len(schema_rules) == 1
+            assert "col DECIMAL(38,10)" in ddl
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_nameless_property_warns_in_ddl_and_schema_info(self, generator, caplog):
+        """Skipping property without name logs warning in DDL and schema_info paths."""
+        contract_dict = self.create_basic_contract(
+            properties=[
+                {"name": "valid_col", "physicalType": "STRING"},
+                {"name": "", "physicalType": "INT"},  # nameless
+            ],
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            with caplog.at_level(logging.WARNING):
+                generator.generate_rules_from_contract(
+                    contract_file=temp_path,
+                    generate_predefined_rules=True,
+                    process_text_rules=False,
+                )
+            # Both _schema_object_to_ddl and _build_schema_info_from_model (via text/predefined path) may see props
+            # Predefined rules iterate properties and skip nameless with warning; DDL path also skips with warning
+            assert any("Skipping property without name" in rec.message for rec in caplog.records)
+        finally:
+            os.unlink(temp_path)
 
 
 class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
@@ -1067,28 +1724,30 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         """Test that required fields generate is_not_null rules."""
         # Create a simple contract with a required property
         contract_dict = self.create_basic_contract(
-            properties=[{"name": "user_id", "logicalType": "string", "required": True}]
+            properties=[{"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True}]
         )
 
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=True,
+                process_text_rules=False,
             )
 
-            assert len(rules) == 1
-            assert rules[0]["check"]["function"] == "is_not_null"
-            assert rules[0]["check"]["arguments"]["column"] == "user_id"
-            assert rules[0]["user_metadata"]["rule_type"] == "predefined"
-            assert rules[0]["user_metadata"]["dimension"] == "completeness"
+            predefined = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"]
+            assert len(predefined) == 1
+            assert predefined[0]["check"]["function"] == "is_not_null"
+            assert predefined[0]["check"]["arguments"]["column"] == "user_id"
+            assert predefined[0]["user_metadata"]["dimension"] == "completeness"
         finally:
             os.unlink(temp_path)
 
     def test_unique_field_generates_is_unique(self, generator):
         """Test that unique fields generate is_unique rules."""
         contract_dict = self.create_basic_contract(
-            properties=[{"name": "user_id", "logicalType": "string", "unique": True}]
+            properties=[{"name": "user_id", "physicalType": "STRING", "logicalType": "string", "unique": True}]
         )
 
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
@@ -1108,6 +1767,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "status",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "logicalTypeOptions": {"pattern": "^(active|inactive|pending)$"},
                 }
@@ -1141,6 +1801,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "code",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "logicalTypeOptions": {"pattern": "^[A-Z]{3}-[0-9]{4}$"},
                 }
@@ -1164,6 +1825,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "age",
+                    "physicalType": "INT",
                     "logicalType": "integer",
                     "logicalTypeOptions": {"minimum": 0, "maximum": 120},
                 }
@@ -1188,11 +1850,13 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "event_date",
+                    "physicalType": "DATE",
                     "logicalType": "date",
                     "logicalTypeOptions": {"format": "%Y-%m-%d"},
                 },
                 {
                     "name": "event_time",
+                    "physicalType": "TIMESTAMP",
                     "logicalType": "timestamp",
                     "logicalTypeOptions": {"format": "%Y-%m-%d %H:%M:%S"},
                 },
@@ -1224,7 +1888,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             assert "schema" in metadata
             # field is optional (not present for schema-level rules)
             assert "rule_type" in metadata
-            assert metadata["rule_type"] in {"predefined", "explicit", "text_llm"}
+            assert metadata["rule_type"] in {"predefined", "explicit", "text_llm", "schema_validation"}
 
     def test_missing_datacontract_cli_dependency(self, generator, monkeypatch):
         """Test error when datacontract-cli is not installed."""
@@ -1240,24 +1904,28 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "customer",
+                    "physicalType": "BINARY",
                     "logicalType": "object",
                     "required": True,
                     "properties": [
-                        {"name": "name", "logicalType": "string", "required": True},
+                        {"name": "name", "physicalType": "STRING", "logicalType": "string", "required": True},
                         {
                             "name": "email",
+                            "physicalType": "STRING",
                             "logicalType": "string",
                             "required": True,
                             "logicalTypeOptions": {"pattern": "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"},
                         },
                         {
                             "name": "address",
+                            "physicalType": "BINARY",
                             "logicalType": "object",
                             "properties": [
-                                {"name": "street", "logicalType": "string", "required": True},
-                                {"name": "city", "logicalType": "string", "required": True},
+                                {"name": "street", "physicalType": "STRING", "logicalType": "string", "required": True},
+                                {"name": "city", "physicalType": "STRING", "logicalType": "string", "required": True},
                                 {
                                     "name": "zipcode",
+                                    "physicalType": "STRING",
                                     "logicalType": "string",
                                     "logicalTypeOptions": {"pattern": "^[0-9]{5}$"},
                                 },
@@ -1292,8 +1960,10 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         assert "customer.address.street" in rule_columns, "Should have deeply nested path"
         assert "customer.address.city" in rule_columns, "Should have deeply nested path"
 
-        # Check that metadata also contains the nested paths
+        # Check that metadata also contains the nested paths (skip schema_validation rules; they have no 'field')
         for rule in rules:
+            if "field" not in rule.get("user_metadata", {}):
+                continue
             field = rule["user_metadata"]["field"]
             assert "." in field or field == "customer", f"Nested fields should have dot notation: {field}"
 
@@ -1303,9 +1973,9 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
         """Test that fields without quality checks are handled gracefully."""
         contract_dict = self.create_basic_contract(
             properties=[
-                {"name": "id", "logicalType": "string", "required": True},
-                {"name": "optional_field", "logicalType": "string", "required": False},
-                {"name": "another_field", "logicalType": "string"},
+                {"name": "id", "physicalType": "STRING", "logicalType": "string", "required": True},
+                {"name": "optional_field", "physicalType": "STRING", "logicalType": "string", "required": False},
+                {"name": "another_field", "physicalType": "STRING", "logicalType": "string"},
             ]
         )
 
@@ -1313,12 +1983,15 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=True,
+                process_text_rules=False,
             )
 
-            # Should only generate rule for required field
-            assert len(rules) == 1, "Should only generate rule for field with constraints"
-            assert rules[0]["check"]["arguments"]["column"] == "id"
+            # Should only generate predefined rule for required field (plus schema_validation)
+            predefined = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "predefined"]
+            assert len(predefined) == 1, "Should only generate one predefined rule for field with constraints"
+            assert predefined[0]["check"]["arguments"]["column"] == "id"
 
         finally:
             os.unlink(temp_path)
@@ -1338,11 +2011,14 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=True,
             )
 
-            # Should generate no rules since all text descriptions are empty/whitespace
-            assert len(rules) == 0, "Should skip text rules with empty or whitespace-only descriptions"
+            # Should generate no text_llm rules; only schema_validation when schema is present
+            text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+            assert len(text_rules) == 0, "Should skip text rules with empty or whitespace-only descriptions"
 
         finally:
             os.unlink(temp_path)
@@ -1362,7 +2038,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                     "name": "test_table",
                     "physicalType": "table",
                     "properties": [
-                        {"name": "user_id", "logicalType": "string", "required": True},
+                        {"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True},
                     ],
                 }
             ],
@@ -1387,7 +2063,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             os.unlink(temp_path)
 
     def test_multiple_models_in_contract(self, generator):
-        """Test that contracts with multiple schemas generate rules for all schemas."""
+        """Test that contracts with multiple schemas generate rules for all schemas (predefined only)."""
         contract_dict = {
             "kind": "DataContract",
             "apiVersion": "v3.0.2",
@@ -1400,16 +2076,16 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
                     "name": "users",
                     "physicalType": "table",
                     "properties": [
-                        {"name": "user_id", "logicalType": "string", "required": True},
-                        {"name": "email", "logicalType": "string", "required": True},
+                        {"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True},
+                        {"name": "email", "physicalType": "STRING", "logicalType": "string", "required": True},
                     ],
                 },
                 {
                     "name": "orders",
                     "physicalType": "table",
                     "properties": [
-                        {"name": "order_id", "logicalType": "string", "required": True},
-                        {"name": "user_id", "logicalType": "string", "required": True},
+                        {"name": "order_id", "physicalType": "STRING", "logicalType": "string", "required": True},
+                        {"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True},
                     ],
                 },
             ],
@@ -1419,17 +2095,62 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=True,
+                process_text_rules=False,
             )
 
-            # Should generate rules for both schemas
+            # Should generate rules for both schemas (2 schema_validation + 4 predefined is_not_null)
             schemas_in_rules = {rule["user_metadata"]["schema"] for rule in rules}
             assert "users" in schemas_in_rules, "Should have rules for users schema"
             assert "orders" in schemas_in_rules, "Should have rules for orders schema"
 
-            # Should have 4 rules total (2 required fields per schema)
-            assert len(rules) == 4, f"Should have 4 rules, got {len(rules)}"
+            # 2 schema_validation + 4 predefined (2 required per schema)
+            assert len(rules) == 6, f"Should have 6 rules (2 schema + 4 predefined), got {len(rules)}"
 
+        finally:
+            os.unlink(temp_path)
+
+    def test_multiple_schemas_with_schema_validation(self, generator):
+        """Test that contracts with multiple schemas get one schema_validation rule per schema."""
+        contract_dict = {
+            "kind": "DataContract",
+            "apiVersion": "v3.0.2",
+            "id": "multi-schema-sv",
+            "name": "multi-schema-sv",
+            "version": "1.0.0",
+            "status": "active",
+            "schema": [
+                {
+                    "name": "users",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True},
+                        {"name": "email", "physicalType": "STRING", "logicalType": "string", "required": True},
+                    ],
+                },
+                {
+                    "name": "orders",
+                    "physicalType": "table",
+                    "properties": [
+                        {"name": "order_id", "physicalType": "STRING", "logicalType": "string", "required": True},
+                        {"name": "user_id", "physicalType": "STRING", "logicalType": "string", "required": True},
+                    ],
+                },
+            ],
+        }
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=True,
+                process_text_rules=False,
+            )
+            schema_validation_rules = get_schema_validation_rules(rules)
+            assert len(schema_validation_rules) == 2, "Expected one schema_validation rule per schema"
+            names = {r["name"] for r in schema_validation_rules}
+            assert "users_schema_validation" in names
+            assert "orders_schema_validation" in names
         finally:
             os.unlink(temp_path)
 
@@ -1439,6 +2160,7 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "product_code",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "required": True,
                     "unique": True,
@@ -1510,13 +2232,16 @@ class TestDataContractGeneratorPredefinedRules(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
             )
 
-            # Should have 2 rules with different criticalities
-            assert len(rules) == 2, f"Should have 2 rules, got {len(rules)}"
+            # Should have 2 explicit rules with different criticalities plus schema validation
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 2, f"Should have 2 explicit rules, got {len(explicit)}"
 
-            criticalities = {rule["criticality"] for rule in rules}
+            criticalities = {rule["criticality"] for rule in explicit}
             assert "error" in criticalities, "Should have error criticality"
             assert "warn" in criticalities, "Should have warn criticality"
 
@@ -1533,6 +2258,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "temperature",
+                    "physicalType": "DOUBLE",
                     "logicalType": "number",
                     "logicalTypeOptions": {
                         "minimum": -273.15,  # Float minimum, should use sql_expression
@@ -1566,6 +2292,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "humidity",
+                    "physicalType": "DOUBLE",
                     "logicalType": "number",
                     "logicalTypeOptions": {
                         "maximum": 100.0,  # Float maximum, should use sql_expression
@@ -1599,6 +2326,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "age",
+                    "physicalType": "INT",
                     "logicalType": "integer",
                     "logicalTypeOptions": {
                         "maximum": 150,  # Integer maximum
@@ -1633,6 +2361,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "quantity",
+                    "physicalType": "INT",
                     "logicalType": "integer",
                     "logicalTypeOptions": {
                         "minimum": 0,  # Integer minimum
@@ -1688,12 +2417,15 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
             )
 
-            # Should only have 1 rule (the DQX one)
-            assert len(rules) == 1, f"Should only extract DQX rules, got {len(rules)}"
-            assert rules[0]["check"]["function"] == "is_not_null"
+            # Should have 1 explicit rule (the DQX one) plus schema validation
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 1, f"Should only extract one DQX explicit rule, got {len(explicit)}"
+            assert explicit[0]["check"]["function"] == "is_not_null"
 
         finally:
             os.unlink(temp_path)
@@ -1721,11 +2453,15 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
 
         try:
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
             )
 
-            # Should generate no rules since non-DQX engines are not supported
-            assert len(rules) == 0, "Should ignore non-DQX custom quality checks"
+            # Should generate no explicit rules; only schema_validation is present
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) == 0, "Should ignore non-DQX custom quality checks"
+            assert len(get_schema_validation_rules(rules)) == 1
 
         finally:
             os.unlink(temp_path)
@@ -1736,6 +2472,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "age",
+                    "physicalType": "INT",
                     "logicalType": "integer",
                     "logicalTypeOptions": {
                         "minimum": 0,
@@ -1770,6 +2507,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "code",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "logicalTypeOptions": {
                         "minLength": 5,
@@ -1803,6 +2541,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "description",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "logicalTypeOptions": {
                         "maxLength": 200,
@@ -1836,6 +2575,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "postal_code",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "logicalTypeOptions": {
                         "minLength": 5,
@@ -1870,6 +2610,7 @@ class TestDataContractGeneratorConstraints(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "status",
+                    "physicalType": "STRING",
                     "logicalType": "string",
                     "logicalTypeOptions": {
                         "description": "User status field",
@@ -1935,9 +2676,9 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         """Test that schema info is correctly built from a model."""
         contract_dict = self.create_basic_contract(
             properties=[
-                {"name": "customer_id", "logicalType": "string"},
-                {"name": "order_date", "logicalType": "date"},
-                {"name": "amount", "logicalType": "number"},
+                {"name": "customer_id", "physicalType": "STRING", "logicalType": "string"},
+                {"name": "order_date", "physicalType": "DATE", "logicalType": "date"},
+                {"name": "amount", "physicalType": "DOUBLE", "logicalType": "number"},
             ]
         )
         temp_path = self.create_test_contract_file(custom_contract=contract_dict)
@@ -2026,11 +2767,14 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         try:
             # Generator without LLM engine (llm_engine=None by default in fixture)
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=True,
             )
 
-            # Should generate no rules since LLM is not available
-            assert len(rules) == 0, "Should skip text rules when LLM is not available"
+            # Should generate no text_llm rules (only schema_validation when schema is present)
+            text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+            assert len(text_rules) == 0, "Should skip text rules when LLM is not available"
 
         finally:
             os.unlink(temp_path)
@@ -2057,14 +2801,17 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
 
             # Generate with process_text_rules=False
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
             )
 
             # Should not call LLM
             assert not mock_llm_engine.detect_business_rules_with_llm.called
 
-            # Should generate no rules
-            assert len(rules) == 0, "Should skip text rules when process_text_rules=False"
+            # Should generate no text_llm rules (only schema_validation)
+            text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+            assert len(text_rules) == 0, "Should skip text rules when process_text_rules=False"
 
         finally:
             os.unlink(temp_path)
@@ -2102,14 +2849,15 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
     def _verify_multiple_text_rules(self, rules, mock_llm_engine):
         """Helper to verify multiple text rules were generated."""
         assert mock_llm_engine.detect_business_rules_with_llm.call_count == 2
-        assert len(rules) == 2
-        fields_with_rules = {r["user_metadata"]["field"] for r in rules}
+        text_rules = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "text_llm"]
+        assert len(text_rules) == 2
+        fields_with_rules = {r["user_metadata"]["field"] for r in text_rules}
         assert "order_id" in fields_with_rules
         assert "customer_email" in fields_with_rules
 
-        assert len(rules) > 0
+        assert len(text_rules) > 0
 
-        for rule in rules:
+        for rule in text_rules:
             # Use DQEngine's validate_checks method
             validation_status = DQEngine.validate_checks([rule], validate_custom_check_functions=False)
             assert not validation_status.has_errors, f"Rule validation failed: {validation_status.errors}"
@@ -2119,7 +2867,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 assert isinstance(rule["user_metadata"], dict), "user_metadata must be a dictionary"
 
         # Verify all are text_llm rules
-        for rule in rules:
+        for rule in text_rules:
             assert rule["user_metadata"]["rule_type"] == "text_llm"
 
     def test_multiple_text_rules_processed(self, generator):
@@ -2138,11 +2886,13 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     "properties": [
                         {
                             "name": "order_id",
+                            "physicalType": "STRING",
                             "logicalType": "string",
                             "quality": [{"type": "text", "description": "Order IDs must be unique across all systems"}],
                         },
                         {
                             "name": "customer_email",
+                            "physicalType": "STRING",
                             "logicalType": "string",
                             "quality": [{"type": "text", "description": "Email must be valid and deliverable"}],
                         },
@@ -2156,7 +2906,9 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             mock_llm_engine = self._create_multiple_text_rules_llm_mock()
             generator.llm_engine = mock_llm_engine
             rules = generator.generate_rules_from_contract(
-                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=True
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=True,
             )
             self._verify_multiple_text_rules(rules, mock_llm_engine)
         finally:
@@ -2170,6 +2922,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "created_at",
+                    "physicalType": "TIMESTAMP",
                     "logicalType": "timestamp",
                     "required": True,
                     "logicalTypeOptions": {"format": "yyyy-MM-dd HH:mm:ss"},
@@ -2197,6 +2950,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "status",
+                    "physicalType": "STRING",
                     "logicalType": "string",  # Not date/timestamp
                     "logicalTypeOptions": {"format": "yyyy-MM-dd"},  # Format should be ignored
                 }
@@ -2228,6 +2982,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             properties=[
                 {
                     "name": "birth_date",
+                    "physicalType": "DATE",
                     "logicalType": "date",
                     "logicalTypeOptions": {"format": "%Y-%m-%d"},  # Already Python format
                 }
@@ -2285,7 +3040,9 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 {
                     # No 'name' field
                     "physicalType": "table",
-                    "properties": [{"name": "field1", "logicalType": "string", "required": True}],
+                    "properties": [
+                        {"name": "field1", "physicalType": "STRING", "logicalType": "string", "required": True}
+                    ],
                 }
             ],
         }
@@ -2316,7 +3073,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                 {
                     "name": "test_schema",
                     "properties": [
-                        {"name": "valid_field", "logicalType": "string", "required": True},
+                        {"name": "valid_field", "physicalType": "STRING", "logicalType": "string", "required": True},
                         # Property without name - should be skipped
                         {"logicalType": "integer", "required": False},
                     ],
@@ -2329,11 +3086,13 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         try:
             with caplog.at_level(logging.WARNING):
                 rules = generator.generate_rules_from_contract(
-                    contract_file=temp_path, generate_predefined_rules=True, process_text_rules=False
+                    contract_file=temp_path,
+                    generate_predefined_rules=True,
+                    process_text_rules=False,
                 )
 
-            # Should have rules for valid_field only
-            field_names = {rule["user_metadata"]["field"] for rule in rules}
+            # Should have rules for valid_field only (schema_validation has no 'field')
+            field_names = {rule["user_metadata"]["field"] for rule in rules if "field" in rule["user_metadata"]}
             assert "valid_field" in field_names
             # Should NOT have rules for the unnamed property
             assert all("None" not in name for name in field_names)
@@ -2342,6 +3101,16 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             assert "Skipping property without name" in caplog.text
         finally:
             os.unlink(temp_path)
+
+    @staticmethod
+    def _assert_invalid_explicit_rules_filtered(rules, caplog):
+        """Assert that invalid explicit rules were filtered and expected warnings were logged."""
+        explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+        assert len(explicit) == 0, "Invalid explicit rules should be filtered out"
+        assert len(get_schema_validation_rules(rules)) == 1
+        assert "Excluding invalid rule" in caplog.text
+        assert "invalid_rule" in caplog.text
+        assert "excluded 2 invalid rule(s)" in caplog.text
 
     def test_invalid_explicit_rule_is_filtered_out(self, generator, caplog):
         """Test that contracts with invalid explicit rules filter them out with warnings."""
@@ -2358,6 +3127,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                     "properties": [
                         {
                             "name": "amount",
+                            "physicalType": "DOUBLE",
                             "logicalType": "number",
                             "quality": [
                                 {
@@ -2393,16 +3163,11 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         try:
             with caplog.at_level(logging.WARNING):
                 rules = generator.generate_rules_from_contract(
-                    contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+                    contract_file=temp_path,
+                    generate_predefined_rules=False,
+                    process_text_rules=False,
                 )
-
-            # Should return empty list (invalid rule filtered out)
-            assert len(rules) == 0
-
-            # Should log warning about excluding invalid rule
-            assert "Excluding invalid rule" in caplog.text
-            assert "invalid_rule" in caplog.text
-            assert "excluded 2 invalid rule(s)" in caplog.text
+            self._assert_invalid_explicit_rules_filtered(rules, caplog)
         finally:
             os.unlink(temp_path)
 
@@ -2412,9 +3177,10 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
         # Create a deeply nested structure (25 levels deep, limit is 20)
         def create_nested_property(depth):
             if depth == 0:
-                return {"name": "leaf", "logicalType": "string", "required": True}
+                return {"name": "leaf", "physicalType": "STRING", "logicalType": "string", "required": True}
             return {
                 "name": f"level_{depth}",
+                "physicalType": "BINARY",
                 "logicalType": "object",
                 "properties": [create_nested_property(depth - 1)],
             }
@@ -2487,8 +3253,8 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
                         {"type": "text", "description": "Records should be unique by id and timestamp"}
                     ],
                     "properties": [
-                        {"name": "id", "logicalType": "string"},
-                        {"name": "timestamp", "logicalType": "timestamp"},
+                        {"name": "id", "physicalType": "STRING", "logicalType": "string"},
+                        {"name": "timestamp", "physicalType": "TIMESTAMP", "logicalType": "timestamp"},
                     ],
                 }
             ],
@@ -2533,11 +3299,14 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             data_contract = DataContract(data_contract_file=temp_path)
 
             rules = generator.generate_rules_from_contract(
-                contract=data_contract, generate_predefined_rules=False, process_text_rules=False
+                contract=data_contract,
+                generate_predefined_rules=False,
+                process_text_rules=False,
             )
 
-            assert len(rules) >= 1
-            assert rules[0]["criticality"] == "warn"
+            explicit = [r for r in rules if r.get("user_metadata", {}).get("rule_type") == "explicit"]
+            assert len(explicit) >= 1
+            assert explicit[0]["criticality"] == "warn"
         finally:
             os.unlink(temp_path)
 
