@@ -30,8 +30,7 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
-_MLFLOW_WORKER_EXPERIMENT_ID: str | None = None
-_MLFLOW_WORKER_EXPERIMENT_PATH: str | None = None
+_MLFLOW_WORKER_EXPERIMENT_CACHE: dict[str, str | None] = {"id": None, "path": None}
 
 
 # -----------------------------------------------------------------------------
@@ -72,8 +71,9 @@ def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
 @pytest.fixture
 def mlflow_worker_experiment(ws):
     """Create one unique MLflow experiment per xdist worker process and reuse it across tests."""
-    if _MLFLOW_WORKER_EXPERIMENT_PATH is not None:
-        return (_MLFLOW_WORKER_EXPERIMENT_ID, _MLFLOW_WORKER_EXPERIMENT_PATH)
+    cached_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
+    if cached_path is not None:
+        return (_MLFLOW_WORKER_EXPERIMENT_CACHE["id"], cached_path)
 
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
@@ -95,8 +95,8 @@ def mlflow_worker_experiment(ws):
     experiment = mlflow.set_experiment(experiment_path)
     experiment_id = getattr(experiment, "experiment_id", None) if experiment else None
     logger.debug(f"Created MLflow experiment {experiment_path} (id={experiment_id})")
-    globals()["_MLFLOW_WORKER_EXPERIMENT_ID"] = experiment_id
-    globals()["_MLFLOW_WORKER_EXPERIMENT_PATH"] = experiment_path
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = experiment_id
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = experiment_path
     return (experiment_id, experiment_path)
 
 
@@ -104,18 +104,18 @@ def mlflow_worker_experiment(ws):
 def _cleanup_mlflow_worker_experiment():
     """Delete the cached worker experiment once at the end of the worker session."""
     yield
-    experiment_path = _MLFLOW_WORKER_EXPERIMENT_PATH
+    experiment_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
     if experiment_path is None:
         return
-    experiment_id = _MLFLOW_WORKER_EXPERIMENT_ID
+    experiment_id = _MLFLOW_WORKER_EXPERIMENT_CACHE["id"]
     os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
     os.environ.pop("MLFLOW_EXPERIMENT_NAME", None)
     if experiment_id:
         _delete_mlflow_experiment(experiment_id)
     else:
         _delete_mlflow_experiment_by_name(experiment_path)
-    globals()["_MLFLOW_WORKER_EXPERIMENT_ID"] = None
-    globals()["_MLFLOW_WORKER_EXPERIMENT_PATH"] = None
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = None
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = None
 
 
 @pytest.fixture(autouse=True)
@@ -125,7 +125,7 @@ def configure_mlflow_tracking(mlflow_worker_experiment):
     if experiment_id:
         os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
     os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_path
-    logger.info(f"MLflow configured: experiment={experiment_path}")
+    logger.debug(f"MLflow configured: experiment={experiment_path}")
 
 
 @pytest.fixture
