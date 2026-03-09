@@ -171,7 +171,8 @@ def test_apply_anomaly_check_by_metadata_with_multiple_checks(ws, spark: SparkSe
 
     # Anomaly row: verify anomaly check produced info; hard error flagging can vary by model fit.
     row2_errors = rows[2]["_errors"] if rows[2]["_errors"] is not None else []
-    row2_info = rows[2]["_dq_info"] if rows[2]["_dq_info"] is not None else []
+    row2_info = rows[2]["_dq_info"]
+    assert row2_info is not None
     assert len(row2_info) > 0
     anomaly_entries = [
         info
