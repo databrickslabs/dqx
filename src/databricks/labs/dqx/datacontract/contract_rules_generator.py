@@ -84,6 +84,8 @@ class DataContractRulesGenerator(DQEngineBase):
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
+        generate_schema_validation: bool = True,
+        strict_schema_validation: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
         """
@@ -91,7 +93,9 @@ class DataContractRulesGenerator(DQEngineBase):
 
         Parses an ODCS v3.x contract natively and generates rules based on schema properties,
         logicalTypeOptions constraints, explicit quality definitions, and text-based expectations.
-        When the contract defines a schema, one dataset-level has_valid_schema rule per schema is always generated.
+        When the contract defines a schema and generate_schema_validation is True, one dataset-level
+        has_valid_schema rule per schema is generated. strict_schema_validation is passed as the
+        strict argument to has_valid_schema (default True = exact match).
 
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
@@ -102,6 +106,8 @@ class DataContractRulesGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs"). Only "odcs" is supported.
             generate_predefined_rules: Whether to generate rules from schema properties (default True). Set to False to only generate explicit rules.
             process_text_rules: Whether to process text-based expectations using LLM (default True). Requires llm_engine to be provided in __init__.
+            generate_schema_validation: Whether to generate dataset-level has_valid_schema rules from the contract schema (default True).
+            strict_schema_validation: Passed as the strict argument to has_valid_schema (default True = exact columns, order, types; False = permissive).
             default_criticality: Default criticality level for generated rules (default is "error").
 
         Returns:
@@ -117,7 +123,14 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs = self._load_contract_spec(contract, contract_file)
         self._validate_contract_spec(odcs)
 
-        dq_rules = self._generate_all_rules(odcs, generate_predefined_rules, process_text_rules, default_criticality)
+        dq_rules = self._generate_all_rules(
+            odcs,
+            generate_predefined_rules,
+            process_text_rules,
+            generate_schema_validation,
+            strict_schema_validation,
+            default_criticality,
+        )
         valid_rules = self._validate_generated_rules(dq_rules)
 
         return valid_rules
@@ -213,6 +226,8 @@ class DataContractRulesGenerator(DQEngineBase):
         odcs: OpenDataContractStandard,
         generate_predefined_rules: bool,
         process_text_rules: bool,
+        generate_schema_validation: bool,
+        strict_schema_validation: bool,
         default_criticality: str,
     ) -> list[dict]:
         """Generate all rules from ODCS v3.x contract schemas."""
@@ -222,10 +237,11 @@ class DataContractRulesGenerator(DQEngineBase):
         for schema_obj in odcs.schema_ or []:
             schema_name = schema_obj.name or "unknown_schema"
 
-            schema_validation_rules = self._generate_schema_validation_rules_for_schema(
-                schema_obj, schema_name, odcs, default_criticality
-            )
-            dq_rules.extend(schema_validation_rules)
+            if generate_schema_validation:
+                schema_validation_rules = self._generate_schema_validation_rules_for_schema(
+                    schema_obj, schema_name, odcs, default_criticality, strict_schema_validation
+                )
+                dq_rules.extend(schema_validation_rules)
 
             if generate_predefined_rules:
                 predefined_rules = self._generate_predefined_rules_for_schema(
@@ -296,9 +312,6 @@ class DataContractRulesGenerator(DQEngineBase):
         }
     )
     _UNITY_COMPLEX_PREFIXES: tuple[str, ...] = (
-        "ARRAY<",
-        "MAP<",
-        "STRUCT<",
         "GEOGRAPHY(",
         "GEOMETRY(",
         "INTERVAL ",
@@ -359,7 +372,9 @@ class DataContractRulesGenerator(DQEngineBase):
         """Validate ARRAY<T> and return normalized string."""
         inner = cls._extract_content_in_angle_brackets(type_str_stripped)
         if not inner:
-            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has empty ARRAY element type.")
+            raise InvalidPhysicalTypeError(
+                f"physicalType '{type_str}' has empty ARRAY element type. Use ARRAY<element_type>, e.g. ARRAY<STRING>."
+            )
         validated_inner = cls._validate_unity_physical_type(inner, depth + 1)
         return f"ARRAY<{validated_inner}>"
 
@@ -368,7 +383,9 @@ class DataContractRulesGenerator(DQEngineBase):
         """Validate MAP<K,V> and return normalized string."""
         inner = cls._extract_content_in_angle_brackets(type_str_stripped)
         if not inner:
-            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has empty MAP key/value types.")
+            raise InvalidPhysicalTypeError(
+                f"physicalType '{type_str}' has empty MAP key/value types. Use MAP<key_type,value_type>, e.g. MAP<STRING,INT>."
+            )
         key_value = cls._split_top_level_comma(inner)
         if len(key_value) != 2:
             raise InvalidPhysicalTypeError(
@@ -407,7 +424,9 @@ class DataContractRulesGenerator(DQEngineBase):
         """Validate STRUCT<...> and return normalized string."""
         inner = cls._extract_content_in_angle_brackets(type_str_stripped)
         if not inner:
-            raise InvalidPhysicalTypeError(f"physicalType '{type_str}' has empty STRUCT fields.")
+            raise InvalidPhysicalTypeError(
+                f"physicalType '{type_str}' has empty STRUCT fields. Use STRUCT<name:type,...>, e.g. STRUCT<id:STRING,count:INT>."
+            )
         fields = cls._split_top_level_comma(inner)
         validated_parts = [cls._parse_struct_field_and_validate(spec, type_str, depth) for spec in fields]
         return "STRUCT<" + ",".join(validated_parts) + ">"
@@ -444,9 +463,12 @@ class DataContractRulesGenerator(DQEngineBase):
             return cls._validate_struct_type(type_str_stripped, type_str, depth)
         if any(type_upper.startswith(prefix) for prefix in cls._UNITY_COMPLEX_PREFIXES):
             return type_upper
+        allowed_hint = (
+            "Allowed types include: STRING, INT, BIGINT, FLOAT, DOUBLE, BOOLEAN, DATE, TIMESTAMP, "
+            "DECIMAL(p,s), ARRAY<T>, MAP<K,V>, STRUCT<...>. "
+        )
         raise InvalidPhysicalTypeError(
-            f"physicalType '{type_str}' is not a valid Unity Catalog data type. "
-            "Use Unity Catalog types (e.g. STRING, INT, DECIMAL(10,2), ARRAY<STRING>). "
+            f"physicalType '{type_str}' is not a valid Unity Catalog data type. {allowed_hint}"
             "See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes"
         )
 
@@ -486,8 +508,9 @@ class DataContractRulesGenerator(DQEngineBase):
         schema_name: str,
         odcs: OpenDataContractStandard,
         default_criticality: str,
+        strict_schema_validation: bool,
     ) -> list[dict]:
-        """Generate one dataset-level has_valid_schema rule per ODCS schema. Always strict."""
+        """Generate one dataset-level has_valid_schema rule per ODCS schema. strict_schema_validation is passed to the check."""
         ddl = self._schema_object_to_ddl(schema_obj, schema_name)
         if not ddl:
             logger.warning(f"Schema '{schema_name}' has no flat properties; skipping schema validation rule.")
@@ -502,7 +525,7 @@ class DataContractRulesGenerator(DQEngineBase):
         rule = {
             "check": {
                 "function": "has_valid_schema",
-                "arguments": {"expected_schema": ddl, "strict": True},
+                "arguments": {"expected_schema": ddl, "strict": strict_schema_validation},
             },
             "name": f"{schema_name}_schema_validation",
             "criticality": default_criticality,

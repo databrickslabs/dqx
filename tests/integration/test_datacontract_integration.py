@@ -8,6 +8,7 @@ multiple schemas, recursive type validation, DECIMAL validation, and error paths
 (ParameterError, NotFound, ODCSContractError, InvalidPhysicalTypeError).
 """
 
+import contextlib
 import logging
 import os
 import tempfile
@@ -45,11 +46,19 @@ def _generate_rules_from_temp_contract(
             pass
 
 
-def _temp_contract_path_with_content(content: str) -> str:
-    """Write raw content to a temp YAML file and return its path. Caller must os.unlink(path)."""
+@contextlib.contextmanager
+def _temp_contract_file(content: str):
+    """Write raw content to a temp YAML file and yield its path. Cleans up on exit."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(content)
-        return f.name
+        path = f.name
+    try:
+        yield path
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 # Minimal valid ODCS v3.x contract (single schema, one property) for contract-from-string path
@@ -146,6 +155,36 @@ class TestDataContractIntegration:
         assert len(schema_validation_rules) >= 1
         assert schema_validation_rules[0]["check"]["arguments"].get("strict") is True
         assert "expected_schema" in schema_validation_rules[0]["check"]["arguments"]
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_generate_schema_validation_false_no_schema_rules(self, ws, spark, sample_contract_path):
+        """When generate_schema_validation=False, no schema_validation rules are generated; other rules remain."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) == 0
+        assert len(rules) > 0
+        status = DQEngine.validate_checks(rules)
+        assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
+
+    def test_strict_schema_validation_false_integration(self, ws, spark, sample_contract_path):
+        """strict_schema_validation=False produces schema_validation rules with strict=False."""
+        generator = DQGenerator(workspace_client=ws, spark=spark)
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=False,
+            process_text_rules=False,
+            strict_schema_validation=False,
+        )
+        schema_validation_rules = get_schema_validation_rules(rules)
+        assert len(schema_validation_rules) >= 1
+        assert schema_validation_rules[0]["check"]["arguments"]["strict"] is False
         status = DQEngine.validate_checks(rules)
         assert not status.has_errors, f"Generated rules have validation errors: {status.errors}"
 
@@ -548,18 +587,12 @@ class TestDataContractIntegrationErrors:
 
     def test_error_invalid_contract_raises_odcs_error(self, ws, spark):
         """Error path: malformed ODCS (missing required fields); raises ODCSContractError."""
-        path = _temp_contract_path_with_content(
+        with _temp_contract_file(
             "kind: DataContract\napiVersion: v3.0.2\ninvalid_structure: missing_required_fields\n"
-        )
-        try:
+        ) as path:
             generator = DQGenerator(workspace_client=ws, spark=spark)
             with pytest.raises(ODCSContractError, match="Failed to parse ODCS contract"):
                 generator.generate_rules_from_contract(contract_file=path)
-        finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
 
     def _contract_with_physical_type(self, physical_type: str) -> dict[str, Any]:
         """Minimal ODCS contract with one schema and one property with given physicalType."""

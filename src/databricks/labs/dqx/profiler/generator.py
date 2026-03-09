@@ -160,6 +160,8 @@ class DQGenerator(DQEngineBase):
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
+        generate_schema_validation: bool = True,
+        strict_schema_validation: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
         """
@@ -167,7 +169,8 @@ class DQGenerator(DQEngineBase):
 
         Parses a data contract (ODCS v3.x; any apiVersion accepted by the library, e.g. v3.0.2, v3.1.0) and generates rules based on
         schema properties, explicit quality definitions, and text-based expectations.
-        When the contract defines a schema, one dataset-level has_valid_schema rule per schema is always generated.
+        When the contract defines a schema and generate_schema_validation is True, one dataset-level
+        has_valid_schema rule per schema is generated. strict_schema_validation is passed to the check.
 
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
@@ -178,6 +181,8 @@ class DQGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs").
             generate_predefined_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
+            generate_schema_validation: Whether to generate dataset-level has_valid_schema rules (default True).
+            strict_schema_validation: Passed as strict to has_valid_schema (default True = exact match; False = permissive).
             default_criticality: Default criticality for generated rules as "warn" or "error" (default is "error").
 
         Returns:
@@ -210,6 +215,8 @@ class DQGenerator(DQEngineBase):
             contract_format=contract_format,
             generate_predefined_rules=generate_predefined_rules,
             process_text_rules=process_text_rules,
+            generate_schema_validation=generate_schema_validation,
+            strict_schema_validation=strict_schema_validation,
             default_criticality=default_criticality,
         )
         logger.info(

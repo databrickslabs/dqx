@@ -14,7 +14,7 @@ DQX enables the generation of data quality rules directly from data contracts th
 
 The data contract-based quality rules generation is available via the `DQGenerator` class and supports generation of the following rule types:
 
-- **Schema Validation**: One dataset-level `has_valid_schema` rule per ODCS schema, derived from the contract's schema definition. Always uses strict mode (exact column set, order, and types). Ensures the dataset schema matches the contract's definition.
+- **Schema Validation**: One dataset-level `has_valid_schema` rule per ODCS schema when `generate_schema_validation=True` (default), derived from the contract's schema definition. Use `strict_schema_validation=True` (default) for exact column set, order, and types; set to `False` for permissive validation (expected columns with compatible types, extra columns allowed).
 - **Predefined Rules**: Automatically derived from schema properties and constraints (required, unique, pattern, min/max, enum, format).
 - **Explicit Rules**: Custom DQX rules embedded directly in the contract's quality section using DQX native format.
 - **Text-Based Rules**: Natural language quality expectations that are processed using AI/LLM to generate appropriate checks (requires `[llm]` extra).
@@ -43,7 +43,7 @@ DQX natively supports Open Data Contract Standard (ODCS) v3.x contracts. ODCS is
 
 **Key Features:**
 - **Native Processing**: DQX processes ODCS v3.x contracts directly without conversion
-- **Schema Validation**: Generates one `has_valid_schema` rule per schema (always strict) from the contract's schema definition
+- **Schema Validation**: Generates one `has_valid_schema` rule per schema when enabled (default strict; optional permissive)
 - **Full Support**: Extracts constraints from `logicalTypeOptions` (pattern, minimum, maximum, minLength, maxLength)
 - **Quality Sections**: Handles explicit DQX rules via `implementation` blocks in quality sections
 - **Version Compatibility**: Supports ODCS v3.0.x and above (no backward compatibility with older versions)
@@ -125,11 +125,28 @@ You can also pass a pre-loaded `DataContract` object from `datacontract-cli`:
 
 ### Schema validation
 
-When the contract defines a schema, DQX always generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. This ensures the dataset's columns and types match the contract. Schema validation is always **strict** (exact columns, order, and types).
+When the contract defines a schema and `generate_schema_validation=True` (default), DQX generates one **dataset-level** rule per ODCS schema that calls `has_valid_schema` with the expected schema derived from the contract. Set `generate_schema_validation=False` to skip these rules. The **strictness** of schema validation is controlled by `strict_schema_validation`: default `True` (exact columns, order, and types); set to `False` for permissive validation (expected columns must exist with compatible types; extra columns are allowed).
 
 <Admonition type="note" title="Physical types required for schema validation">
 Schema validation requires every property in the contract to have a `physicalType` field set to a valid Unity Catalog data type. Properties with only `logicalType` will cause an `InvalidPhysicalTypeError`.
 </Admonition>
+
+```python
+# Default: schema validation rules generated, strict mode
+rules = generator.generate_rules_from_contract(contract_file="/path/to/contract.yaml")
+
+# Skip schema validation rules
+rules = generator.generate_rules_from_contract(
+    contract_file="/path/to/contract.yaml",
+    generate_schema_validation=False,
+)
+
+# Permissive schema validation (allow extra columns)
+rules = generator.generate_rules_from_contract(
+    contract_file="/path/to/contract.yaml",
+    strict_schema_validation=False,
+)
+```
 
 <Admonition type="info" title="Type validation rules">
 - **Recursive validation**: Inner types of `ARRAY&lt;T&gt;`, `MAP&lt;K,V&gt;`, and `STRUCT&lt;...&gt;` are validated at every nesting level. Invalid inner types (e.g. `ARRAY&lt;NOT_A_TYPE&gt;`) raise `InvalidPhysicalTypeError` at contract load time.

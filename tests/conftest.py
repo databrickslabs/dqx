@@ -51,7 +51,6 @@ def get_schema_validation_rules(rules):
     ]
 
 
-
 @pytest.fixture(scope="session")
 def debug_env_name():
     return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json

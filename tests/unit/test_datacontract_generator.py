@@ -1338,6 +1338,53 @@ class TestDataContractGeneratorSchemaValidation(DataContractGeneratorTestBase):
         assert schema_rules[0]["user_metadata"]["schema"] == "sensor_readings"
         assert "expected_schema" in schema_rules[0]["check"]["arguments"]
 
+    def test_schema_validation_disabled_when_generate_schema_validation_false(self, generator, sample_contract_path):
+        """Test that when generate_schema_validation=False, no has_valid_schema rules are generated."""
+        rules = generator.generate_rules_from_contract(
+            contract_file=sample_contract_path,
+            generate_predefined_rules=True,
+            process_text_rules=False,
+            generate_schema_validation=False,
+        )
+        schema_rules = get_schema_validation_rules(rules)
+        assert len(schema_rules) == 0, "Expected no schema validation rules when generate_schema_validation=False"
+        assert len(rules) > 0, "Other rules (e.g. predefined, explicit) should still be present"
+
+    def test_schema_validation_strict_true_by_default(self, generator):
+        """Test that default generation produces schema_validation rules with strict=True."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "id", "physicalType": "STRING"}, {"name": "x", "physicalType": "INT"}]
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path, generate_predefined_rules=False, process_text_rules=False
+            )
+            schema_rules = get_schema_validation_rules(rules)
+            assert len(schema_rules) == 1
+            assert schema_rules[0]["check"]["arguments"]["strict"] is True
+        finally:
+            os.unlink(temp_path)
+
+    def test_schema_validation_strict_false_passed_through(self, generator):
+        """Test that strict_schema_validation=False produces rules with strict=False."""
+        contract_dict = self.create_basic_contract(
+            properties=[{"name": "id", "physicalType": "STRING"}, {"name": "x", "physicalType": "INT"}]
+        )
+        temp_path = self.create_test_contract_file(custom_contract=contract_dict)
+        try:
+            rules = generator.generate_rules_from_contract(
+                contract_file=temp_path,
+                generate_predefined_rules=False,
+                process_text_rules=False,
+                strict_schema_validation=False,
+            )
+            schema_rules = get_schema_validation_rules(rules)
+            assert len(schema_rules) == 1
+            assert schema_rules[0]["check"]["arguments"]["strict"] is False
+        finally:
+            os.unlink(temp_path)
+
     def test_schema_validation_expected_schema_matches_contract(self, generator):
         """Test that derived expected_schema DDL matches contract properties (physicalType = Unity types)."""
         contract_dict = self.create_basic_contract(
