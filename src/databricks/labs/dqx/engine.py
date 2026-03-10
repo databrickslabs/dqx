@@ -91,6 +91,7 @@ class DQEngineCore(DQEngineCoreBase):
             datetime.fromisoformat(extra_params.run_time_overwrite) if extra_params.run_time_overwrite else None
         )
         self.engine_user_metadata = extra_params.user_metadata
+        self.skip_quietly = extra_params.skip_quietly
 
         self.observer = observer
         if self.observer:
@@ -467,6 +468,7 @@ class DQEngineCore(DQEngineCoreBase):
                 engine_user_metadata=self.engine_user_metadata,
                 run_time_overwrite=self.run_time_overwrite,
                 ref_dfs=ref_dfs,
+                skip_quietly=self.skip_quietly,
             )
             log_telemetry(self.ws, "check", check.check_func.__name__)
             result = manager.process()
