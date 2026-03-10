@@ -15,10 +15,12 @@ from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import OUTLIER_AMOUNT, OUTLIER_QUANTITY
 from tests.integration_anomaly.test_helpers import (
     create_anomaly_apply_fn,
+    train_model_with_params,
+)
+from tests.integration_anomaly.test_helpers_data import (
     get_standard_2d_training_data,
     get_standard_3d_training_data,
     get_standard_4d_training_data,
-    train_model_with_params,
 )
 
 

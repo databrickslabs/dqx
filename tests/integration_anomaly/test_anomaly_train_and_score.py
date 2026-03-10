@@ -9,11 +9,13 @@ from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.test_helpers import (
     create_anomaly_check_rule,
     get_percentile_threshold_from_data,
+    train_simple_2d_model,
+)
+from tests.integration_anomaly.test_helpers_data import (
     get_standard_2d_training_data,
     get_standard_4d_training_data,
     get_standard_test_points_2d,
     get_standard_test_points_4d,
-    train_simple_2d_model,
 )
 
 

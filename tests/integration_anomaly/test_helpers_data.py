@@ -25,10 +25,7 @@ def get_standard_3d_training_data() -> list[tuple[float, float, float]]:
 
 def get_standard_4d_training_data() -> list[tuple[float, float, float, float]]:
     """Standard 4D training data for multi-column anomaly detection (400 points)."""
-    return [
-        (100.0 + i * 0.5, 10.0 + i * 0.1, 0.1 + i * 0.001, 50.0 + i * 0.2)
-        for i in range(400)
-    ]
+    return [(100.0 + i * 0.5, 10.0 + i * 0.1, 0.1 + i * 0.001, 50.0 + i * 0.2) for i in range(400)]
 
 
 def get_standard_test_points_2d() -> dict[str, tuple[float, float]]:

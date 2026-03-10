@@ -11,12 +11,6 @@ from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.rule import DQDatasetRule
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD, OUTLIER_AMOUNT, OUTLIER_QUANTITY
 from tests.integration_anomaly.test_helpers_data import (
-    get_standard_2d_training_data,
-    get_standard_3d_training_data,
-    get_standard_4d_training_data,
-    get_standard_test_points_2d,
-    get_standard_test_points_4d,
-    get_standard_training_ranges,
     qualify_model_name,
 )
 
