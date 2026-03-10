@@ -14,7 +14,7 @@ import pyspark.sql.functions as F
 from pyspark.sql import types
 from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql.window import Window
-from databricks.labs.dqx.rule import register_rule
+from databricks.labs.dqx.rule import register_rule, register_for_original_columns_preselection
 from databricks.labs.dqx.utils import (
     get_column_name_or_alias,
     is_sql_query_safe,
@@ -22,7 +22,6 @@ from databricks.labs.dqx.utils import (
     get_columns_as_strings,
     to_lowercase,
 )
-from databricks.labs.dqx.reporting_columns import DefaultColumnNames
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError, UnsafeSqlQueryError
 
 _IPV4_OCTET = r"(25[0-5]|2[0-4]\d|1\d{2}|[1-9]?\d)"
@@ -2054,6 +2053,7 @@ def is_data_fresh_per_time_window(
     return condition, apply
 
 
+@register_for_original_columns_preselection()
 @register_rule("dataset")
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
@@ -2067,9 +2067,7 @@ def has_valid_schema(
     Build a schema compatibility check condition and closure for dataset-level validation.
 
     This function checks whether the DataFrame schema is compatible with the expected schema.
-    In non-strict mode, validates that all expected columns exist with compatible types.
-    In strict mode, validates that the schema matches exactly (same columns, same order, same types)
-    for the columns specified in columns or for all columns if columns is not specified.
+    The check will be skipped by the engine if the columns parameter contains column names that do not exist in the checked DataFrame.
 
     All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.
 
@@ -2077,13 +2075,14 @@ def has_valid_schema(
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table to load the schema from (e.g. "catalog.schema.table")
-        columns: Optional list of columns to validate (default: all columns are considered).
-            When strict=False, the expected_schema is the subset of expected columns after
-            filtering using this parameter. When strict=True, the expected_schema is the full
-            expected schema, either from the expected_schema, ref_df_name, or ref_table.
+        columns: Optional list of columns to validate (default: all columns in the checked DataFrame are considered).
+            - When strict=False, the expected_schema is filtered to only include this subset of columns.
+            - When strict=True, this parameter does not filter the expected_schema; the full schema is used.
         strict: Whether to perform strict schema validation (default: False).
-            - False: Validates that all expected columns exist with compatible types (allows extra columns).
-            - True: Validates exact schema match against the full expected schema (same columns, same order, same types).
+            - False: Validates that all expected columns (after filtering by the `columns` parameter) exist
+            with compatible types. Allows the DataFrame to contain extra columns.
+            - True: Validates an exact schema match against the full expected schema (same columns,
+            same order, same types).
         exclude_columns: Optional list of columns in the checked DataFrame schema to
             ignore for validation.
 
@@ -2147,10 +2146,8 @@ def has_valid_schema(
         else:
             _expected_schema = expected_schema
 
-        selected_column_names = column_names if column_names else df.columns
-        if column_names is None:
-            dqx_column_names = {col_name.value for col_name in DefaultColumnNames}
-            selected_column_names = [col for col in selected_column_names if col not in dqx_column_names]
+        # Use columns (engine-injected or user-provided) to filter actual schema.
+        selected_column_names = column_names if column_names is not None else list(df.columns)
 
         if exclude_column_names:
             ignore_set = set(exclude_column_names)

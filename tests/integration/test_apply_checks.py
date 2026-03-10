@@ -9220,42 +9220,23 @@ def test_apply_checks_with_has_valid_schema_missing_columns(ws, spark):
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
+    expected_error = [
+        {
+            "name": "has_valid_schema",
+            "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
+            "columns": ["id", "v1"],
+            "filter": None,
+            "function": "has_valid_schema",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {},
+        }
+    ]
+
     expected = spark.createDataFrame(
         [
-            [
-                1,
-                10,
-                None,
-                [
-                    {
-                        "name": "has_valid_schema",
-                        "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
-                        "columns": None,
-                        "filter": None,
-                        "function": "has_valid_schema",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                    },
-                ],
-            ],
-            [
-                2,
-                20,
-                None,
-                [
-                    {
-                        "name": "has_valid_schema",
-                        "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
-                        "columns": None,
-                        "filter": None,
-                        "function": "has_valid_schema",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                    },
-                ],
-            ],
+            [1, 10, None, expected_error],
+            [2, 20, None, expected_error],
         ],
         expected_schema,
     )
@@ -9267,7 +9248,6 @@ def test_apply_checks_with_has_valid_schema_permissive_missing_columns(ws, spark
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
     schema = "id int, v1 int"
-    # df has an extra column 'extra_col' which should be ignored in permissive mode
     test_df = spark.createDataFrame(
         [
             [1, 10, "foo"],
@@ -9290,46 +9270,183 @@ def test_apply_checks_with_has_valid_schema_permissive_missing_columns(ws, spark
 
     checked = dq_engine.apply_checks(test_df, checks)
 
-    # In permissive mode, the extra_col is allowed, but missing_col should still be flagged
     expected_schema = schema + ", extra_col string" + REPORTING_COLUMNS
     expected = spark.createDataFrame(
         [
-            [
-                1,
-                10,
-                "foo",
-                None,
-                [
-                    {
-                        "name": "has_valid_schema",
-                        "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
-                        "columns": None,
-                        "filter": None,
-                        "function": "has_valid_schema",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                    },
-                ],
-            ],
-            [
-                2,
-                20,
-                "bar",
-                None,
-                [
-                    {
-                        "name": "has_valid_schema",
-                        "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
-                        "columns": None,
-                        "filter": None,
-                        "function": "has_valid_schema",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                    },
-                ],
-            ],
+            [1, 10, "foo", None, None],
+            [2, 20, "bar", None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_custom_result_columns(ws, spark):
+    custom_extra_params = ExtraParams(
+        run_time_overwrite=EXTRA_PARAMS.run_time_overwrite,
+        run_id_overwrite=EXTRA_PARAMS.run_id_overwrite,
+        result_column_names={"errors": "my_errors", "warnings": "my_warnings"},
+    )
+    dq_engine = DQEngine(workspace_client=ws, extra_params=custom_extra_params)
+
+    schema = "id int, v1 int"
+    test_df = spark.createDataFrame(
+        [
+            [1, 10],
+            [2, 20],
+        ],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int",
+                "strict": True,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    custom_reporting = f", my_errors: {dq_result_schema.simpleString()}, my_warnings: {dq_result_schema.simpleString()}"
+    expected_schema = schema + custom_reporting
+    expected = spark.createDataFrame(
+        [
+            [1, 10, None, None],
+            [2, 20, None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_columns_not_in_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, v1 int"
+    test_df = spark.createDataFrame(
+        [[1, 10], [2, 20]],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema_strict_fails",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "columns": ["id", "v1"],
+                "strict": True,
+            },
+        ),
+        DQDatasetRule(
+            name="has_valid_schema_non_strict_passes",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "columns": ["id", "v1"],
+                "strict": False,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected_error = [
+        {
+            "name": "has_valid_schema_strict_fails",
+            "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
+            "columns": ["id", "v1"],
+            "filter": None,
+            "function": "has_valid_schema",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {},
+        }
+    ]
+
+    expected = spark.createDataFrame(
+        [
+            [1, 10, None, expected_error],
+            [2, 20, None, expected_error],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, v1 int"
+    test_df = spark.createDataFrame(
+        [[1, 10], [2, 20]],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema_strict",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "columns": ["id", "v1", "missing_col"],
+                "strict": True,
+            },
+        ),
+        DQDatasetRule(
+            name="has_valid_schema_permissive",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "columns": ["id", "v1", "missing_col"],
+                "strict": False,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+
+    expected_skip_strict = {
+        "name": "has_valid_schema_strict",
+        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+        "columns": ["id", "v1", "missing_col"],
+        "filter": None,
+        "function": "has_valid_schema",
+        "run_time": RUN_TIME,
+        "run_id": RUN_ID,
+        "user_metadata": {},
+    }
+
+    expected_skip_permissive = {
+        "name": "has_valid_schema_permissive",
+        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+        "columns": ["id", "v1", "missing_col"],
+        "filter": None,
+        "function": "has_valid_schema",
+        "run_time": RUN_TIME,
+        "run_id": RUN_ID,
+        "user_metadata": {},
+    }
+
+    expected = spark.createDataFrame(
+        [
+            [1, 10, None, [expected_skip_strict, expected_skip_permissive]],
+            [2, 20, None, [expected_skip_strict, expected_skip_permissive]],
         ],
         expected_schema,
     )
