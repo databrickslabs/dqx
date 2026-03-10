@@ -88,7 +88,7 @@ Metrics are not directly accessible from the returned Spark Observation when dat
 
 ### Writing Metrics to a Table
 
-Engine methods for applying checks (e.g. `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, `save_results_in_table`, `apply_checks_and_save_in_tables`, `apply_checks_and_save_in_tables_for_patterns`) can write summary metrics into a table automatically.
+End-to-end engine methods for applying checks (e.g. `apply_checks_and_save_in_table`, `apply_checks_by_metadata_and_save_in_table`, `save_results_in_table`, `apply_checks_and_save_in_tables`, `apply_checks_and_save_in_tables_for_patterns`) can write summary metrics into a table automatically using configuration.
 Metrics can be written to a table in batch or streaming. You can write metrics for different datasets or workloads into a common metrics table to track data quality over time centrally.
 
 The `name` specified in the `DQMetricsObserver` is recorded as the `run_name` column in the metrics table. It is recommended to assign a unique `name` to the observer for each job or table to enable efficient filtering when centralizing metrics in a single table.

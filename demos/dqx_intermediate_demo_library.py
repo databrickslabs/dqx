@@ -425,9 +425,27 @@ output_config = OutputConfig(output_table)
 quarantine_config = OutputConfig(quarantine_table)  # optional
 metrics_config = OutputConfig(metrics_table)  # optional
 
-# Use End to End method: read the data, apply the checks, write data to valid, quarantine and metrics tables
+# End to End method with preloaded checks:
+# -> Apply checks to the entire input table -> write data to valid, quarantine and metrics tables
 engine.apply_checks_by_metadata_and_save_in_table(
     checks=loaded_rules,
+    input_config=input_config,
+    output_config=output_config,
+    quarantine_config=quarantine_config,
+    metrics_config=metrics_config,
+    checks_location=rules_table # for reporting purpose only
+)
+
+# COMMAND ----------
+
+display(spark.table(metrics_table))
+
+# COMMAND ----------
+
+# End to End method:
+# -> Load checks from a storage -> apply the checks to the entire input table -> write data to valid, quarantine and metrics tables
+engine.apply_checks_by_metadata_and_save_in_table(
+    checks_location=rules_table,
     input_config=input_config,
     output_config=output_config,
     quarantine_config=quarantine_config,

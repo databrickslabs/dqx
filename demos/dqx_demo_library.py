@@ -477,7 +477,7 @@ display(spark.table(f"{demo_catalog_name}.{demo_schema_name}.dqx_quarantine"))
 # end-to-end quality checking flow
 dq_engine.apply_checks_by_metadata_and_save_in_table(
     input_config=InputConfig("/databricks-datasets/delta-sharing/samples/nyctaxi_2019"),
-    checks=checks,
+    checks=checks,  # or provide checks_location to load from a checks storage such as delta table, volume or workspace file
     output_config=OutputConfig(f"{demo_catalog_name}.{demo_schema_name}.dqx_e2e_output", mode="overwrite"),
     quarantine_config=OutputConfig(f"{demo_catalog_name}.{demo_schema_name}.dqx_e2e_quarantine", mode="overwrite")
 )

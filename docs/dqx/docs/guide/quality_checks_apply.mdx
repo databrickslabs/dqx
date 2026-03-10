@@ -23,12 +23,12 @@ Checks can be applied to the input data by one of the following methods of the `
 * For checks defined with DQX classes:
   * `apply_checks`: apply quality checks to a DataFrame and report issues as additional columns.
   * `apply_checks_and_split`: apply quality checks and split the input DataFrame into valid and invalid (quarantined) DataFrames.
-  * `apply_checks_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to the output table(s) via single method call.
+  * `apply_checks_and_save_in_table`: end-to-end approach to apply quality checks to the entire input table and save results to the output table(s) via single method call. Checks can be passed directly or loaded automatically from a storage location.
 
 * For checks defined as metadata (list of dictionaries, or [loaded from a storage](/docs/guide/quality_checks_storage)):
   * `apply_checks_by_metadata`: apply quality checks to a DataFrame and report issues as additional columns.
   * `apply_checks_by_metadata_and_split`: apply quality checks and split the input DataFrame into valid and invalid (quarantined) DataFrames.
-  * `apply_checks_by_metadata_and_save_in_table`: end-to-end approach to apply quality checks to a table and save results to output table(s) via single method call.
+  * `apply_checks_by_metadata_and_save_in_table`: end-to-end approach to apply quality checks to the entire table and save results to output table(s) via single method call. Checks can be passed directly as metadata/dict or loaded automatically from a storage location.
 
 * There are also method for applying checks to multiple input locations at once:
   * `apply_checks_and_save_in_tables`: apply quality checks to input locations defined by provided list of `RunConfig`.
@@ -124,6 +124,15 @@ You can customize the reporting columns as described in the [additional configur
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
     )
+
+    # Option 5 End-to-End approach: load checks from a storage location and apply them to the entire input table
+    dq_engine.apply_checks_and_save_in_table(
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.valid"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        checks_location="catalog.schema.dq_checks",  # delta table, volume or workspace file path
+        run_config_name="default",  # required for checks stored in a table
+    )
     ```
   </TabItem>
 </Tabs>
@@ -199,6 +208,15 @@ In the example below, checks are defined in YAML syntax for convenience and then
         checks=checks,
         input_config=InputConfig(location="catalog.schema.input"),
         output_config=OutputConfig(location="catalog.schema.output"),
+    )
+
+    # Option 5 End-to-End approach: load checks from a storage location and apply them to the entire input table
+    dq_engine.apply_checks_by_metadata_and_save_in_table(
+        input_config=InputConfig(location="catalog.schema.input"),
+        output_config=OutputConfig(location="catalog.schema.valid"),
+        quarantine_config=OutputConfig(location="catalog.schema.quarantine"),
+        checks_location="catalog.schema.dq_checks",  # delta table, volume or workspace file path
+        run_config_name="default",  # required for checks stored in a table
     )
     ```
   </TabItem>
