@@ -9,10 +9,11 @@ from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
 from tests.integration_anomaly.constants import (
+    DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.conftest import create_anomaly_check_rule
+from tests.integration_anomaly.test_helpers import create_anomaly_check_rule
 
 
 def test_apply_anomaly_checks(ws, spark: SparkSession, shared_2d_model):
@@ -31,7 +32,7 @@ def test_apply_anomaly_checks(ws, spark: SparkSession, shared_2d_model):
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=95.0,
+            threshold=DEFAULT_SCORE_THRESHOLD,
         )
     ]
 
@@ -68,7 +69,7 @@ def test_apply_anomaly_checks_and_split(ws, spark: SparkSession, shared_2d_model
         create_anomaly_check_rule(
             model_name=model_name,
             registry_table=registry_table,
-            threshold=95.0,
+            threshold=DEFAULT_SCORE_THRESHOLD,
         )
     ]
 

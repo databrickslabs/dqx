@@ -14,7 +14,7 @@ from tests.integration_anomaly.constants import (
     DQENGINE_SCORE_THRESHOLD,
     SEGMENT_REGIONS,
 )
-from tests.integration_anomaly.conftest import create_anomaly_check_rule, train_model_with_params
+from tests.integration_anomaly.test_helpers import create_anomaly_check_rule, train_model_with_params
 
 
 def test_explicit_segment_training(

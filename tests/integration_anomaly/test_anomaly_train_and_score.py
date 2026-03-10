@@ -6,7 +6,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
 from tests.constants import TEST_CATALOG
-from tests.integration_anomaly.conftest import (
+from tests.integration_anomaly.test_helpers import (
     create_anomaly_check_rule,
     get_percentile_threshold_from_data,
     get_standard_2d_training_data,

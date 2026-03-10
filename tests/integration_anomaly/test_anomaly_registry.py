@@ -19,7 +19,7 @@ from databricks.labs.dqx.anomaly.model_registry import (
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
-from tests.integration_anomaly.conftest import (
+from tests.integration_anomaly.test_helpers import (
     get_standard_2d_training_data,
     get_standard_3d_training_data,
     score_with_anomaly_check,

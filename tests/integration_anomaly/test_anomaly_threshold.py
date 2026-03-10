@@ -13,7 +13,7 @@ from tests.integration_anomaly.constants import (
     DEFAULT_SCORE_THRESHOLD,
     OUTLIER_AMOUNT,
 )
-from tests.integration_anomaly.conftest import (
+from tests.integration_anomaly.test_helpers import (
     apply_anomaly_check_direct,
     create_anomaly_dataset_rule,
     train_simple_2d_model,

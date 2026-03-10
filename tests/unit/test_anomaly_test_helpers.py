@@ -2,7 +2,7 @@
 
 import pytest
 
-from tests.integration_anomaly.conftest import (
+from tests.integration_anomaly.test_helpers_data import (
     get_standard_2d_training_data,
     get_standard_3d_training_data,
     get_standard_4d_training_data,

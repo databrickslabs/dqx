@@ -8,7 +8,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
-from tests.integration_anomaly.conftest import (
+from tests.integration_anomaly.test_helpers import (
     create_anomaly_check_rule,
     train_large_dataset_model,
     train_model_with_params,

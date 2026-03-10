@@ -17,7 +17,7 @@ from tests.integration_anomaly.constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.conftest import (
+from tests.integration_anomaly.test_helpers import (
     create_anomaly_check_rule,
     train_simple_2d_model,
 )

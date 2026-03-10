@@ -29,7 +29,7 @@ from tests.integration_anomaly.constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.conftest import score_3d_with_contributions
+from tests.integration_anomaly.test_helpers import score_3d_with_contributions
 
 
 def test_feature_contributions_added(spark: SparkSession, shared_3d_model, test_df_factory, anomaly_scorer):

@@ -32,7 +32,7 @@ from databricks.labs.dqx.anomaly.segment_utils import build_segment_filter
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import ComputationError, InvalidParameterError
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
-from tests.integration_anomaly.conftest import (
+from tests.integration_anomaly.test_helpers import (
     create_anomaly_dataset_rule,
     qualify_model_name,
     train_simple_2d_model,

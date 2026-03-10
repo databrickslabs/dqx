@@ -92,7 +92,7 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
         run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5 --durations=10
 
       # Recursively search the entire workspace directory for all coverage reports.
       # All uploaded test coverage reports will be used even if publish is done multiple time.
@@ -171,7 +171,7 @@ jobs:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage
           DATABRICKS_SERVERLESS_COMPUTE_ID: auto
         run: |
-          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5
+          hatch run pytest tests/integration_anomaly/ -v -rs -n 10 --cov --cov-report=xml --timeout=2000 --reruns 1 --reruns-delay 5 --durations=10
 
       # collects all coverage reports
       - name: Publish test coverage
