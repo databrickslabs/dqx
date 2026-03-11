@@ -30,6 +30,9 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
+# Process-scoped cache for MLflow experiment (one per xdist worker); lifecycle cleared by
+# _cleanup_mlflow_worker_experiment at session end. Not thread-safe.
+_MLFLOW_WORKER_EXPERIMENT_CACHE: dict[str, str | None] = {"id": None, "path": None}
 
 
 # -----------------------------------------------------------------------------
@@ -398,9 +401,11 @@ def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
         logger.warning(msg)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def mlflow_worker_experiment(ws):
-    """Create one MLflow experiment per worker session; reuse across tests and clean up on teardown."""
+    """Create one MLflow experiment per xdist worker (via module cache); reuse across tests.
+    Cleanup is done by _cleanup_mlflow_worker_experiment at session end. Function-scoped so
+    we can depend on ws (pytester provides ws as function-scoped)."""
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
         local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB")
@@ -414,6 +419,10 @@ def mlflow_worker_experiment(ws):
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_registry_uri(registry_uri)
 
+    cached_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
+    if cached_path is not None:
+        return (_MLFLOW_WORKER_EXPERIMENT_CACHE["id"], cached_path)
+
     os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
     user_name = ws.current_user.me().user_name
     worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
@@ -422,15 +431,27 @@ def mlflow_worker_experiment(ws):
     experiment = mlflow.set_experiment(experiment_path)
     experiment_id = getattr(experiment, "experiment_id", None) if experiment else None
     logger.debug(f"Created MLflow experiment {experiment_path} (id={experiment_id})")
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = experiment_id
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = experiment_path
+    return (experiment_id, experiment_path)
 
-    yield (experiment_id, experiment_path)
 
+@pytest.fixture(autouse=True, scope="session")
+def _cleanup_mlflow_worker_experiment():
+    """Clear MLflow experiment and cache at end of worker session."""
+    yield
+    experiment_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
+    if experiment_path is None:
+        return
+    experiment_id = _MLFLOW_WORKER_EXPERIMENT_CACHE["id"]
     os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
     os.environ.pop("MLFLOW_EXPERIMENT_NAME", None)
     if experiment_id:
         _delete_mlflow_experiment(experiment_id)
     else:
         _delete_mlflow_experiment_by_name(experiment_path)
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = None
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = None
 
 
 @pytest.fixture(autouse=True)
