@@ -11,7 +11,7 @@ from tests.integration_anomaly.constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.test_helpers import apply_anomaly_check_direct
+from tests.integration_anomaly.conftest import apply_anomaly_check_direct
 
 
 def test_training_filters_nulls(

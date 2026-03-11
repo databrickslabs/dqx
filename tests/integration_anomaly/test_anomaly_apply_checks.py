@@ -13,7 +13,7 @@ from tests.integration_anomaly.constants import (
     OUTLIER_AMOUNT,
     OUTLIER_QUANTITY,
 )
-from tests.integration_anomaly.test_helpers import create_anomaly_check_rule
+from tests.integration_anomaly.conftest import create_anomaly_check_rule
 
 
 def test_apply_anomaly_checks(ws, spark: SparkSession, shared_2d_model):

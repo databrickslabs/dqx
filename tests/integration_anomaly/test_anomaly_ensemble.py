@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession
 from databricks.labs.dqx.config import AnomalyParams
 from databricks.labs.dqx.engine import DQEngine
 from tests.integration_anomaly.constants import DEFAULT_SCORE_THRESHOLD
-from tests.integration_anomaly.test_helpers import (
+from tests.integration_anomaly.conftest import (
     create_anomaly_check_rule,
     score_3d_with_contributions,
     train_simple_2d_model,

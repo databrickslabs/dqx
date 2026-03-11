@@ -185,6 +185,9 @@ def test_apply_anomaly_check_by_metadata_with_multiple_checks(ws, spark: SparkSe
     if anomaly_info.is_anomaly:
         assert len(row2_errors) > 0
 
+    # At least one row should have errors (null row has is_not_null, optionally anomaly row).
+    assert any(len(r["_errors"] or []) > 0 for r in rows), "At least one row should have errors"
+
 
 def test_apply_anomaly_multiple_checks_by_metadata(ws, spark, shared_2d_model):
     """Two has_no_row_anomalies (error) + one (warn); _dq_info should be an array with 3 elements."""

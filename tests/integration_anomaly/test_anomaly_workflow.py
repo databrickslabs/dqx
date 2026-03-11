@@ -6,7 +6,7 @@ from databricks.labs.dqx.config import AnomalyConfig, InputConfig, RunConfig
 from databricks.labs.dqx.contexts.workflow_context import WorkflowContext
 from databricks.labs.dqx.errors import InvalidConfigError
 from tests.constants import TEST_CATALOG
-from tests.integration_anomaly.test_helpers_data import get_standard_2d_training_data
+from tests.integration_anomaly.conftest import get_standard_2d_training_data
 
 
 def _make_workflow_ctx(run_config, spark, ws):

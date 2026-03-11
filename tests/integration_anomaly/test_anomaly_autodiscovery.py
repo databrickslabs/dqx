@@ -6,7 +6,7 @@ from pyspark.sql import functions as F
 from databricks.labs.dqx.anomaly.profiler import auto_discover_columns
 from tests.constants import TEST_CATALOG
 from tests.integration_anomaly.constants import SEGMENT_REGIONS
-from tests.integration_anomaly.test_helpers import qualify_model_name
+from tests.integration_anomaly.conftest import qualify_model_name
 
 
 def test_auto_discover_numeric_columns(spark: SparkSession):

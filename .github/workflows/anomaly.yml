@@ -86,6 +86,8 @@ jobs:
           echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
           echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
           echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
+          echo "MLFLOW_HTTP_REQUEST_TIMEOUT=600" >> $GITHUB_ENV
+          echo "MLFLOW_HTTP_REQUEST_MAX_RETRIES=10" >> $GITHUB_ENV
 
       - name: Run anomaly integration tests and generate test coverage report
         timeout-minutes: 200
@@ -164,6 +166,8 @@ jobs:
           echo "MLFLOW_ENABLE_DB_SDK=true" >> $GITHUB_ENV
           echo "MLFLOW_TRACKING_URI=databricks" >> $GITHUB_ENV
           echo "MLFLOW_REGISTRY_URI=databricks-uc" >> $GITHUB_ENV
+          echo "MLFLOW_HTTP_REQUEST_TIMEOUT=600" >> $GITHUB_ENV
+          echo "MLFLOW_HTTP_REQUEST_MAX_RETRIES=10" >> $GITHUB_ENV
 
       - name: Run anomaly integration tests on serverless cluster
         timeout-minutes: 200

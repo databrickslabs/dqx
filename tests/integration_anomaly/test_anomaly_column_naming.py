@@ -10,7 +10,7 @@ from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine, ExtraParams
 from databricks.labs.dqx.reporting_columns import ColumnArguments
-from tests.integration_anomaly.test_helpers import create_anomaly_check_rule
+from tests.integration_anomaly.conftest import create_anomaly_check_rule
 
 
 def test_anomaly_check_with_custom_info_column_name(
