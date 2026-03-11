@@ -17,8 +17,10 @@ from typing import Any
 import pytest
 import yaml
 from datacontract.data_contract import DataContract
+from pyspark.sql import SparkSession
 from pyspark.sql import types as spark_types
 
+from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidPhysicalTypeError, ODCSContractError, ParameterError
@@ -27,11 +29,11 @@ from tests.conftest import get_schema_validation_rules
 
 
 def _generate_rules_from_temp_contract(
-    workspace_client: Any,
-    spark: Any,
+    workspace_client: WorkspaceClient,
+    spark: SparkSession,
     contract: dict[str, Any],
     **kwargs: Any,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Write contract to a temp YAML file, run generator, return rules. Cleans up the file."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         yaml.safe_dump(contract, f)

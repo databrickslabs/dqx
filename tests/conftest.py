@@ -38,10 +38,7 @@ from databricks.sdk.service.workspace import ImportFormat
 logger = logging.getLogger(__name__)
 
 
-TEST_CATALOG = "dqx"
-
-
-def get_schema_validation_rules(rules):
+def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return rules that are has_valid_schema schema_validation rules (for data contract tests)."""
     return [
         rule

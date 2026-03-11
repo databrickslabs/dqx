@@ -292,6 +292,8 @@ class DataContractRulesGenerator(DQEngineBase):
 
     # Schema validation: require physicalType to be a Unity Catalog type; no mapping.
     # See: https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
+    # VOID and OBJECT are excluded: VOID (NullType) cannot be stored in Delta Lake,
+    # and OBJECT cannot be stored in table columns. Both would fail StructType.fromDDL().
     _UNITY_SIMPLE_TYPES: frozenset[str] = frozenset(
         {
             "STRING",
@@ -307,10 +309,10 @@ class DataContractRulesGenerator(DQEngineBase):
             "VARIANT",
             "SMALLINT",
             "TINYINT",
-            "VOID",
-            "OBJECT",
         }
     )
+    # GEOGRAPHY, GEOMETRY, INTERVAL: we allow by prefix only; inner content is not validated.
+    # Malformed values (e.g. GEOGRAPHY(GARBAGE)) will pass here but may fail at DDL parse or runtime.
     _UNITY_COMPLEX_PREFIXES: tuple[str, ...] = (
         "GEOGRAPHY(",
         "GEOMETRY(",
@@ -483,7 +485,8 @@ class DataContractRulesGenerator(DQEngineBase):
             if not prop.name:
                 logger.warning(f"Skipping property without name in schema '{schema_name}'")
                 continue
-            physical_type = getattr(prop, "physicalType", None)
+            # SchemaProperty from ODCS model defines physicalType (may be None if omitted in contract).
+            physical_type = prop.physicalType
             if not physical_type:
                 raise InvalidPhysicalTypeError(
                     f"Schema '{schema_name}', property '{prop.name}': physicalType is required. "
