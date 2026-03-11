@@ -592,8 +592,10 @@ displayHTML(f'<a href="/#workspace{sensor_rules_file_path}" target="_blank">Qual
 maintenance_quality_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=sensor_rules_file_path))
 
 # Apply the checks and write the output data
+# By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+# Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-  checks=maintenance_quality_checks,
+  checks=maintenance_quality_checks,  # or provide checks_location and run_config_name to auto-load from checks storage
   input_config=InputConfig(sensor_table),
   output_config=OutputConfig(f"{sensor_table}_valid", mode="overwrite"),
   quarantine_config=OutputConfig(f"{sensor_table}_quarantine", mode="overwrite")
@@ -612,8 +614,10 @@ displayHTML(f'<a href="/#workspace{maintenance_rules_file_path}" target="_blank"
 maintenance_quality_checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=maintenance_rules_file_path))
 
 # Apply the checks and write the output data
+# By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+# Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-  checks=maintenance_quality_checks,
+  checks=maintenance_quality_checks,  # or provide checks_location and run_config_name to auto-load from checks storage
   input_config=InputConfig(maintenance_table),
   output_config=OutputConfig(f"{maintenance_table}_valid", mode="overwrite"),
   quarantine_config=OutputConfig(f"{maintenance_table}_quarantine", mode="overwrite")

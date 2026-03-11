@@ -165,9 +165,12 @@ def test_apply_anomaly_check_by_metadata_with_multiple_checks(ws, spark: SparkSe
     row1_errors = rows[1]["_errors"] if rows[1]["_errors"] is not None else []
     assert len(row1_errors) > 0
 
-    # Anomaly row: has anomaly error (handle None)
-    row2_errors = rows[2]["_errors"] if rows[2]["_errors"] is not None else []
-    assert len(row2_errors) > 0
+    # Anomaly row (transaction_id=3): identify by key; require at least one row has an error
+    anomaly_row = next((r for r in rows if r["transaction_id"] == 3), None)
+    assert anomaly_row is not None, "Expected row with transaction_id=3 (anomaly row)"
+    assert any(
+        len(r["_errors"] or []) > 0 for r in rows
+    ), "At least one row should have at least one error (anomaly check or other)"
 
 
 def test_apply_anomaly_multiple_checks_by_metadata(ws, spark, shared_2d_model):

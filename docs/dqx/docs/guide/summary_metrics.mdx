@@ -159,8 +159,9 @@ Summary metrics can be written to a table when calling `DQEngine` methods to app
     )
 
     # Option 2: Use End to End method: read the data, apply the checks, write data to valid and quarantine tables, and write metrics to the metrics table
+    # By default, checks are applied to the entire input table. See next section for incremental support with Streaming.
     engine.apply_checks_and_save_in_table(
-        checks=checks,
+        checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
         input_config=input_config,
         output_config=output_config,
         quarantine_config=quarantine_config,
@@ -251,7 +252,7 @@ You must use streaming metrics listener or end-to-end methods that persist the o
     # Option 2: Use End-to-End method: read the data, apply the checks, write data to valid and quarantine tables, and write metrics to the metrics table
     # Output and quarantine data will be written in streaming and summary metrics will be written for each micro-batch
     engine.apply_checks_and_save_in_table(
-        checks=checks,
+        checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
         input_config=input_config,
         output_config=output_config,
         quarantine_config=quarantine_config,
