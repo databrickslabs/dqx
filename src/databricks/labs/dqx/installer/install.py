@@ -269,18 +269,22 @@ class InstallationService:
         self._wheels = WheelsV2(self._installation, product_info)
 
     @classmethod
-    def current(cls, ws: WorkspaceClient):
+    def current(cls, ws: WorkspaceClient, install_folder: str | None = None):
         """
         Creates a current WorkspaceInstallation instance based on the current workspace client.
 
         Args:
             ws: The WorkspaceClient instance.
+            install_folder: Optional custom workspace folder path for the installation.
 
         Returns:
             A WorkspaceInstallation instance.
         """
         product_info = ProductInfo.from_class(WorkspaceConfig)
-        installation = product_info.current_installation(ws)
+        if install_folder:
+            installation = Installation(ws, product_info.product_name(), install_folder=install_folder)
+        else:
+            installation = product_info.current_installation(ws)
         install_state = InstallState.from_installation(installation)
         config = installation.load(WorkspaceConfig)
         prompts = Prompts()
