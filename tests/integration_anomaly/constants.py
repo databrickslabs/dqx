@@ -12,6 +12,8 @@ EXTRA_PARAMS = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overw
 # Default thresholds used across anomaly integration tests.
 DEFAULT_SCORE_THRESHOLD = 95.0
 DQENGINE_SCORE_THRESHOLD = 95.0
+# Lower threshold for tests that need deterministic anomaly flagging (e.g. mixed checks).
+DETERMINISTIC_FLAG_THRESHOLD = 80.0
 DRIFT_THRESHOLD = 3.0
 DRIFT_TRAIN_SIZE = 1500
 
