@@ -2053,8 +2053,8 @@ def is_data_fresh_per_time_window(
     return condition, apply
 
 
-@register_rule("dataset")
 @register_for_original_columns_preselection()
+@register_rule("dataset")
 def has_valid_schema(
     expected_schema: str | types.StructType | None = None,
     ref_df_name: str | None = None,
@@ -2067,9 +2067,7 @@ def has_valid_schema(
     Build a schema compatibility check condition and closure for dataset-level validation.
 
     This function checks whether the DataFrame schema is compatible with the expected schema.
-    In non-strict mode, validates that all expected columns exist with compatible types.
-    In strict mode, validates that the schema matches exactly (same columns, same order, same types)
-    for the columns specified in columns or for all columns if columns is not specified.
+    The check will be skipped by the engine if the columns parameter contains column names that do not exist in the checked DataFrame.
 
     All columns in the `exclude_columns` list will be ignored even if the column is present in the `columns` list.
 
@@ -2077,10 +2075,14 @@ def has_valid_schema(
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table to load the schema from (e.g. "catalog.schema.table")
-        columns: Optional list of columns to validate (default: all columns are considered)
+        columns: Optional list of columns to validate (default: all columns in the checked DataFrame are considered).
+            - When strict=False, the expected_schema is filtered to only include this subset of columns.
+            - When strict=True, this parameter does not filter the expected_schema; the full schema is used.
         strict: Whether to perform strict schema validation (default: False).
-            - False: Validates that all expected columns exist with compatible types (allows extra columns)
-            - True: Validates exact schema match (same columns, same order, same types)
+            - False: Validates that all expected columns (after filtering by the `columns` parameter) exist
+            with compatible types. Allows the DataFrame to contain extra columns.
+            - True: Validates an exact schema match against the full expected schema (same columns,
+            same order, same types).
         exclude_columns: Optional list of columns in the checked DataFrame schema to
             ignore for validation.
 
@@ -2117,7 +2119,7 @@ def has_valid_schema(
             get_column_name_or_alias(col) if not isinstance(col, str) else col for col in exclude_columns
         ]
 
-    expected_schema = _get_schema(expected_schema or types.StructType(), column_names)
+    expected_schema = _get_schema(expected_schema or types.StructType(), column_names if not strict else None)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__schema_condition_{unique_str}"
@@ -2140,11 +2142,13 @@ def has_valid_schema(
 
         if ref_df_name or ref_table:
             ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
-            _expected_schema = _get_schema(ref_df.schema, column_names)
+            _expected_schema = _get_schema(ref_df.schema, column_names if not strict else None)
         else:
             _expected_schema = expected_schema
 
-        selected_column_names = column_names if column_names else df.columns
+        # Use columns (engine-injected or user-provided) to filter actual schema.
+        selected_column_names = column_names if column_names is not None else list(df.columns)
+
         if exclude_column_names:
             ignore_set = set(exclude_column_names)
             selected_column_names = [col for col in selected_column_names if col not in ignore_set]
