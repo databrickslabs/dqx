@@ -2084,3 +2084,169 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_ref_df(ws, spark, mak
         schema=expected_schema,
     )
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+
+
+def test_apply_checks_and_save_in_table_loads_checks_from_table(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    checks_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+
+    # Create test data and save to source table
+    test_schema = "a: int, b: int, c: string"
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    # Save checks to a delta table
+    checks_metadata = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        },
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        },
+    ]
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.save_checks(checks_metadata, config=TableChecksStorageConfig(location=checks_table))
+
+    # Apply checks loading from table via checks_location (no checks param)
+    engine.apply_checks_and_save_in_table(
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
+        checks_location=checks_table,
+    )
+
+    # Verify the table was created and contains the expected data
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, "valid", None, None],
+            [
+                None,
+                3,
+                "error",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                4,
+                None,
+                "warn",
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_and_save_in_table_loads_checks_from_table(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+    checks_table = f"{catalog_name}.{schema.name}.{make_random(10).lower()}"
+
+    # Create test data and save to source table
+    test_schema = "a: int, b: int, c: string"
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    # Save checks to a delta table
+    checks_metadata = [
+        {
+            "name": "a_is_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+        },
+        {
+            "name": "b_is_null",
+            "criticality": "warn",
+            "check": {"function": "is_not_null", "arguments": {"column": "b"}},
+        },
+    ]
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.save_checks(checks_metadata, config=TableChecksStorageConfig(location=checks_table))
+
+    # Apply checks by metadata loading from table via checks_location (no checks param)
+    engine.apply_checks_by_metadata_and_save_in_table(
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
+        checks_location=checks_table,
+    )
+
+    # Verify the table was created and contains the expected data
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, "valid", None, None],
+            [
+                None,
+                3,
+                "error",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [
+                4,
+                None,
+                "warn",
+                None,
+                [
+                    {
+                        "name": "b_is_null",
+                        "message": "Column 'b' value is null",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+            ],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
