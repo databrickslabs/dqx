@@ -30,399 +30,13 @@ logging.getLogger("tests").setLevel("DEBUG")
 logging.getLogger("databricks.labs.dqx").setLevel("DEBUG")
 
 logger = logging.getLogger(__name__)
+# Process-scoped cache for MLflow experiment (one per xdist worker); lifecycle cleared by
+# _cleanup_mlflow_worker_experiment at session end. Not thread-safe.
+_MLFLOW_WORKER_EXPERIMENT_CACHE: dict[str, str | None] = {"id": None, "path": None}
 
 
 # -----------------------------------------------------------------------------
-# Fixtures
-# -----------------------------------------------------------------------------
-
-
-@pytest.fixture
-def anomaly_engine(ws, spark):
-    """Provide an AnomalyEngine instance for anomaly integration tests."""
-    return AnomalyEngine(ws, spark)
-
-
-def _create_mlflow_experiment_for_session(ws, _tracking_uri: str, _registry_uri: str) -> tuple[str | None, str | None]:
-    """Create or get MLflow experiment for this test session; returns (experiment_id, experiment_path)."""
-    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
-    user_name = ws.current_user.me().user_name
-    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
-    unique_suffix = uuid4().hex[:8]
-    experiment_path = f"/Users/{user_name}/dqx_integration_tests_{worker_id}_{unique_suffix}"
-    experiment = mlflow.set_experiment(experiment_path)
-    experiment_id = getattr(experiment, "experiment_id", None) if experiment else None
-    return experiment_id, experiment_path
-
-
-def _configure_mlflow_impl(ws, tracking_uri: str, registry_uri: str, session_state: dict[str, str | None]) -> None:
-    """Set MLflow URIs, create or reuse session experiment, set env and log."""
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_registry_uri(registry_uri)
-    existing_id = session_state.get("experiment_id")
-    existing_path = session_state.get("experiment_path")
-    if existing_id is not None and existing_path is not None:
-        os.environ["MLFLOW_EXPERIMENT_ID"] = existing_id
-        os.environ["MLFLOW_EXPERIMENT_NAME"] = existing_path
-        return
-    experiment_id, experiment_path = _create_mlflow_experiment_for_session(ws, tracking_uri, registry_uri)
-    if experiment_id:
-        session_state["experiment_id"] = experiment_id
-        os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
-    if experiment_path:
-        session_state["experiment_path"] = experiment_path
-        os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_path
-    msg = f"MLflow configured: tracking_uri={tracking_uri} " f"registry_uri={registry_uri} experiment={experiment_path}"
-    logger.info(msg)
-
-
-def _delete_mlflow_experiment(experiment_id: str) -> None:
-    """Delete an MLflow experiment; log and ignore errors so teardown does not fail the run."""
-    try:
-        mlflow.delete_experiment(experiment_id)
-        msg = f"Deleted MLflow experiment {experiment_id}"
-        logger.debug(msg)
-    except Exception as e:
-        msg = f"Could not delete MLflow experiment {experiment_id}: {e}"
-        logger.warning(msg)
-
-
-def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
-    """Resolve experiment by name and delete; log and ignore errors."""
-    try:
-        exp = mlflow.get_experiment_by_name(experiment_path)
-        if exp is not None and getattr(exp, "experiment_id", None):
-            mlflow.delete_experiment(exp.experiment_id)
-            msg = f"Deleted MLflow experiment {experiment_path} (id={exp.experiment_id})"
-            logger.debug(msg)
-    except Exception as e:
-        msg = f"Could not delete MLflow experiment by name {experiment_path}: {e}"
-        logger.warning(msg)
-
-
-@pytest.fixture(scope="session")
-def _mlflow_session_state():
-    """Hold MLflow session experiment id and path for configure and cleanup. One dict per session."""
-    return {"experiment_id": None, "experiment_path": None}
-
-
-@pytest.fixture(autouse=True, scope="session")
-def _cleanup_mlflow_experiment(_mlflow_session_state):
-    """Delete the session MLflow experiment after all anomaly integration tests finish."""
-    yield
-    os.environ.pop("MLFLOW_EXPERIMENT_NAME", None)
-    experiment_id = _mlflow_session_state.get("experiment_id")
-    experiment_path = _mlflow_session_state.get("experiment_path")
-    if experiment_id:
-        _delete_mlflow_experiment(experiment_id)
-    elif experiment_path:
-        _delete_mlflow_experiment_by_name(experiment_path)
-    _mlflow_session_state["experiment_id"] = None
-    _mlflow_session_state["experiment_path"] = None
-
-
-@pytest.fixture(autouse=True)
-def configure_mlflow_tracking(ws, _mlflow_session_state):
-    """Configure MLflow for integration tests; reuse one unique experiment per session and clean up after.
-
-    Uses a unique experiment path per session (user home + worker id + short uuid) so
-    parallel workers and repeated runs do not collide. The experiment is deleted when
-    the session ends via _cleanup_mlflow_experiment.
-    """
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
-    if not tracking_uri:
-        local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB")
-        if not local_mlflow_db:
-            worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
-            local_mlflow_db = f"/tmp/dqx-mlflow-{worker_id}.db"
-        tracking_uri = f"sqlite:///{local_mlflow_db}"
-        os.environ.setdefault("MLFLOW_TRACKING_URI", tracking_uri)
-        os.environ.setdefault("MLFLOW_REGISTRY_URI", tracking_uri)
-
-    registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
-
-    try:
-        _configure_mlflow_impl(ws, tracking_uri, registry_uri, _mlflow_session_state)
-    except Exception as e:
-        msg = f"Failed to configure MLflow: {e}"
-        logger.error(msg)
-        raise
-
-
-@pytest.fixture
-def anomaly_registry_schema(make_schema):
-    """Schema for row anomaly detection test isolation."""
-    return make_schema(catalog_name=TEST_CATALOG)
-
-
-@pytest.fixture
-def anomaly_registry_prefix(request):
-    """Registry prefix for row anomaly detection tests."""
-    schema = request.getfixturevalue("anomaly_registry_schema")
-    return f"{TEST_CATALOG}.{schema.name}"
-
-
-@pytest.fixture
-def shared_2d_model(ws, spark, make_schema, make_random):
-    """Function-scoped 2D anomaly model for testing."""
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    suffix = make_random(8).lower()
-    model_name = f"{TEST_CATALOG}.{schema.name}.test_2d_{suffix}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
-    columns = ["amount", "quantity"]
-
-    training_data = get_standard_2d_training_data()
-    train_df = spark.createDataFrame(training_data, "amount double, quantity double")
-
-    engine = AnomalyEngine(ws, spark)
-    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.1, random_seed=42))
-    full_model_name = engine.train(
-        df=train_df,
-        columns=columns,
-        model_name=model_name,
-        registry_table=registry_table,
-        params=params,
-    )
-
-    return {
-        "model_name": full_model_name,
-        "registry_table": registry_table,
-        "columns": columns,
-        "training_data": training_data,
-    }
-
-
-@pytest.fixture
-def shared_3d_model(ws, spark, make_schema, make_random):
-    """Function-scoped 3D anomaly model for testing."""
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    suffix = make_random(8).lower()
-    model_name = f"{TEST_CATALOG}.{schema.name}.test_3d_{suffix}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
-    columns = ["amount", "quantity", "discount"]
-
-    training_data = get_standard_3d_training_data()
-    train_df = spark.createDataFrame(training_data, "amount double, quantity double, discount double")
-
-    engine = AnomalyEngine(ws, spark)
-    full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
-
-    return {
-        "model_name": full_model_name,
-        "registry_table": registry_table,
-        "columns": columns,
-        "training_data": training_data,
-    }
-
-
-@pytest.fixture
-def shared_4d_model(ws, spark, make_schema, make_random):
-    """Function-scoped 4D anomaly model for testing."""
-    schema = make_schema(catalog_name=TEST_CATALOG)
-    suffix = make_random(8).lower()
-    model_name = f"{TEST_CATALOG}.{schema.name}.test_4d_{suffix}"
-    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
-    columns = ["amount", "quantity", "discount", "weight"]
-
-    training_data = get_standard_4d_training_data()
-    train_df = spark.createDataFrame(training_data, "amount double, quantity double, discount double, weight double")
-
-    engine = AnomalyEngine(ws, spark)
-    full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
-
-    return {
-        "model_name": full_model_name,
-        "registry_table": registry_table,
-        "columns": columns,
-        "training_data": training_data,
-    }
-
-
-@pytest.fixture
-def test_df_factory():
-    """Factory for creating test DataFrames with transaction_id."""
-
-    def _create(
-        session,
-        normal_rows: list[tuple] | None = None,
-        anomaly_rows: list[tuple] | None = None,
-        columns_schema: str = "amount double, quantity double",
-        id_column: str = "transaction_id",
-    ):
-        if normal_rows is None:
-            normal_rows = [(100.0, 2.0)]
-        if anomaly_rows is None:
-            anomaly_rows = [(OUTLIER_AMOUNT, OUTLIER_QUANTITY)]
-
-        all_rows = []
-        for idx, row in enumerate(normal_rows + anomaly_rows, start=1):
-            all_rows.append((idx,) + row)
-
-        schema = f"{id_column} int, {columns_schema}"
-        return session.createDataFrame(all_rows, schema)
-
-    return _create
-
-
-@pytest.fixture
-def anomaly_scorer():
-    """Helper to score DataFrames with anomaly check."""
-
-    def _score(
-        test_df,
-        model_name: str,
-        registry_table: str,
-        extract_score: bool = True,
-        **check_kwargs,
-    ):
-        apply_fn = _create_anomaly_apply_fn(
-            model_name=model_name,
-            registry_table=registry_table,
-            **check_kwargs,
-        )
-
-        result_df = apply_fn(test_df)
-
-        if extract_score:
-            # Use element_at(_, 1) for first array element to avoid Spark Connect resolving "0" as struct field
-            first_info = F.element_at(F.col("_dq_info"), 1)
-            return result_df.select(
-                "*",
-                first_info.getField("anomaly").getField("score").alias("anomaly_score"),
-            )
-        return result_df
-
-    return _score
-
-
-@pytest.fixture
-def setup_anomaly_deployed_workflow(ws, spark, installation_ctx, make_schema, make_random):
-    def create(_spark, **_kwargs):
-        schema = make_schema(catalog_name=TEST_CATALOG)
-        suffix = make_random(8).lower()
-        table_name = f"{TEST_CATALOG}.{schema.name}.workflow_deploy_train_{suffix}"
-        registry_table = f"{TEST_CATALOG}.{schema.name}.workflow_deploy_registry_{suffix}"
-        model_name = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_deploy_{suffix}"
-
-        train_df = _spark.createDataFrame(
-            get_standard_2d_training_data(),
-            "amount double, quantity double",
-        )
-        train_df.write.saveAsTable(table_name)
-
-        config = installation_ctx.config
-        run_config = config.get_run_config()
-        run_config.input_config = InputConfig(location=table_name)
-        run_config.anomaly_config = AnomalyConfig(
-            columns=["amount", "quantity"],
-            registry_table=registry_table,
-            model_name=model_name,
-        )
-        installation_ctx.installation.save(config)
-
-        installation_ctx.installation_service.run()
-
-        return (installation_ctx, run_config, registry_table, model_name)
-
-    def delete(resource):
-        ctx, run_config, _, _ = resource
-        checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
-        try:
-            ws.workspace.delete(checks_location)
-        except Exception:
-            pass
-
-    yield from factory("anomaly_workflows", lambda **kw: create(spark, **kw), delete)
-
-
-@pytest.fixture
-def quick_model_factory(ws, make_random, make_schema):
-    """
-    Factory for training lightweight models with custom parameters.
-
-    Use when tests need specific training params (internal, e.g., AnomalyParams, segment_by).
-    For simple 2D scoring tests, prefer function-scoped shared_2d_model instead.
-
-    Returns a callable that accepts spark and training parameters.
-    """
-
-    def _train(
-        session,
-        train_size: int = 50,
-        columns: list[str] | None = None,
-        train_data: list[tuple] | None = None,
-        params=None,
-        segment_by: list[str] | None = None,
-        catalog: str = TEST_CATALOG,
-        schema: str | None = None,
-    ):
-        """
-        Train a quick test model.
-
-        Args:
-            session (SparkSession): SparkSession instance
-            train_size (int): Number of training rows (default: 50)
-            columns (list[str] | None): Column names (default: ["amount", "quantity"])
-            train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
-            params (AnomalyParams | None): Internal training params (test-only)
-            segment_by (list[str] | None): Segment columns for segmented models
-            catalog (str): Catalog name
-            schema (str | None): Schema name
-
-        Returns:
-            tuple: (model_name, registry_table, columns)
-
-        Example:
-            model, registry, cols = quick_model_factory(
-                spark, params=AnomalyParams(sample_fraction=1.0, max_rows=100)
-            )
-        """
-        if columns is None:
-            columns = ["amount", "quantity"]
-
-        if schema is None:
-            schema = make_schema(catalog_name=catalog).name
-
-        unique_id = make_random(8).lower()
-        model_name = f"{catalog}.{schema}.test_model_{make_random(4).lower()}"
-        registry_table = f"{catalog}.{schema}.{unique_id}_registry"
-
-        if train_data is None:
-            train_data = [(100.0 + i * 0.5, 2.0) for i in range(train_size)]
-
-        # Infer schema from columns
-        schema_str = ", ".join(f"{col} double" for col in columns)
-        train_df = session.createDataFrame(train_data, schema_str)
-
-        # Create engine with shared ws client
-        engine = AnomalyEngine(ws, session)
-
-        if params is None:
-            full_model_name = engine.train(
-                df=train_df,
-                columns=columns,
-                model_name=model_name,
-                registry_table=registry_table,
-                segment_by=segment_by,
-            )
-        else:
-            full_model_name = train_model_with_params(
-                engine=engine,
-                df=train_df,
-                model_name=model_name,
-                registry_table=registry_table,
-                columns=columns,
-                params=params,
-                segment_by=segment_by,
-            )
-
-        return full_model_name, registry_table, columns
-
-    return _train
-
-
-# -----------------------------------------------------------------------------
-# Shared test helpers (moved from test_anomaly_utils)
+# Helper functions (reusable across tests)
 # -----------------------------------------------------------------------------
 
 
@@ -432,63 +46,6 @@ def qualify_model_name(model_name: str, registry_table: str) -> str:
         return model_name
     registry_prefix = registry_table.rsplit(".", 1)[0]
     return f"{registry_prefix}.{model_name}"
-
-
-def _normalize_anomaly_apply_fn(apply_fn, info_col: str):
-    """Wrap apply_fn so the result DataFrame exposes _dq_info for direct-access tests.
-
-    When used through DQEngine the engine merges info columns into an array; this wrapper
-    ensures _dq_info is always array<struct<...>> (one element when a single check runs)
-    so tests can use row["_dq_info"][0]["anomaly"]["contributions"] etc.
-    """
-
-    def normalized(df: DataFrame) -> DataFrame:
-        result = apply_fn(df)
-        if info_col not in result.columns:
-            return result
-        # Single check produces one struct; wrap in array to match engine/merge contract
-        return result.withColumn("_dq_info", F.array(F.col(info_col))).drop(info_col)
-
-    return normalized
-
-
-def _create_anomaly_apply_fn(
-    model_name: str,
-    registry_table: str,
-    *,
-    driver_only: bool = True,
-    **check_kwargs,
-):
-    """Create apply function from has_no_row_anomalies check. Default driver_only=True for tests."""
-    _, apply_fn, info_col = has_no_row_anomalies(
-        model_name=qualify_model_name(model_name, registry_table),
-        registry_table=registry_table,
-        driver_only=driver_only,
-        **check_kwargs,
-    )
-    return _normalize_anomaly_apply_fn(apply_fn, info_col)
-
-
-def train_model_with_params(
-    engine: AnomalyEngine,
-    df: DataFrame,
-    model_name: str,
-    registry_table: str,
-    columns: list[str],
-    params: AnomalyParams,
-    segment_by: list[str] | None = None,
-    expected_anomaly_rate: float = 0.02,
-) -> str:
-    """Train a model with internal params (test-only)."""
-    return engine.train(
-        df=df,
-        columns=columns,
-        model_name=model_name,
-        registry_table=registry_table,
-        segment_by=segment_by,
-        params=params,
-        expected_anomaly_rate=expected_anomaly_rate,
-    )
 
 
 def get_standard_2d_training_data() -> list[tuple[float, float]]:
@@ -536,13 +93,64 @@ def get_standard_training_ranges() -> dict[str, dict[str, tuple[float, float]]]:
     }
 
 
+def _normalize_anomaly_apply_fn(apply_fn, info_col: str):
+    """Wrap apply_fn so the result DataFrame exposes _dq_info for direct-access tests."""
+
+    def normalized(df: DataFrame) -> DataFrame:
+        result = apply_fn(df)
+        if info_col not in result.columns:
+            return result
+        return result.withColumn("_dq_info", F.array(F.col(info_col))).drop(info_col)
+
+    return normalized
+
+
+def create_anomaly_apply_fn(
+    model_name: str,
+    registry_table: str,
+    *,
+    driver_only: bool = True,
+    **check_kwargs,
+):
+    """Create apply function from has_no_row_anomalies check. Default driver_only=True for tests."""
+    _, apply_fn, info_col = has_no_row_anomalies(
+        model_name=qualify_model_name(model_name, registry_table),
+        registry_table=registry_table,
+        driver_only=driver_only,
+        **check_kwargs,
+    )
+    return _normalize_anomaly_apply_fn(apply_fn, info_col)
+
+
+def train_model_with_params(
+    engine: AnomalyEngine,
+    df: DataFrame,
+    model_name: str,
+    registry_table: str,
+    columns: list[str],
+    params: AnomalyParams,
+    segment_by: list[str] | None = None,
+    expected_anomaly_rate: float = 0.02,
+) -> str:
+    """Train a model with internal params (test-only)."""
+    return engine.train(
+        df=df,
+        columns=columns,
+        model_name=model_name,
+        registry_table=registry_table,
+        segment_by=segment_by,
+        params=params,
+        expected_anomaly_rate=expected_anomaly_rate,
+    )
+
+
 def get_percentile_threshold_from_data(
     df: DataFrame,
     model_name: str,
     registry_table: str,
     percentile: float = 0.95,
 ) -> float:
-    """Derive a severity percentile threshold (0–100) from a target percentile."""
+    """Return a fixed severity percentile threshold (0–100) for test stability."""
     _ = (df, model_name, registry_table)
     return float(percentile * 100.0)
 
@@ -697,7 +305,7 @@ def score_with_anomaly_check(
     threshold: float = 60.0,
 ) -> DataFrame:
     """Score a DataFrame using has_no_row_anomalies and collect results."""
-    apply_fn = _create_anomaly_apply_fn(
+    apply_fn = create_anomaly_apply_fn(
         model_name=model_name,
         registry_table=registry_table,
         threshold=threshold,
@@ -756,3 +364,374 @@ def create_anomaly_dataset_rule(
             **kwargs,
         },
     )
+
+
+# -----------------------------------------------------------------------------
+# Fixtures
+# -----------------------------------------------------------------------------
+
+
+@pytest.fixture
+def anomaly_engine(ws, spark):
+    """Provide an AnomalyEngine instance for anomaly integration tests."""
+    return AnomalyEngine(ws, spark)
+
+
+def _delete_mlflow_experiment(experiment_id: str) -> None:
+    """Delete an MLflow experiment; log and ignore errors so teardown does not fail the run."""
+    try:
+        mlflow.delete_experiment(experiment_id)
+        msg = f"Deleted MLflow experiment {experiment_id}"
+        logger.debug(msg)
+    except Exception as e:
+        msg = f"Could not delete MLflow experiment {experiment_id}: {e}"
+        logger.warning(msg)
+
+
+def _delete_mlflow_experiment_by_name(experiment_path: str) -> None:
+    """Resolve experiment by name and delete; log and ignore errors."""
+    try:
+        exp = mlflow.get_experiment_by_name(experiment_path)
+        if exp is not None and getattr(exp, "experiment_id", None):
+            mlflow.delete_experiment(exp.experiment_id)
+            msg = f"Deleted MLflow experiment {experiment_path} (id={exp.experiment_id})"
+            logger.debug(msg)
+    except Exception as e:
+        msg = f"Could not delete MLflow experiment by name {experiment_path}: {e}"
+        logger.warning(msg)
+
+
+@pytest.fixture
+def mlflow_worker_experiment(ws):
+    """Create one MLflow experiment per xdist worker (via module cache); reuse across tests.
+    Cleanup is done by _cleanup_mlflow_worker_experiment at session end. Function-scoped so
+    we can depend on ws (pytester provides ws as function-scoped)."""
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not tracking_uri:
+        local_mlflow_db = os.environ.get("MLFLOW_LOCAL_DB")
+        if not local_mlflow_db:
+            worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
+            local_mlflow_db = f"/tmp/dqx-mlflow-{worker_id}.db"
+        tracking_uri = f"sqlite:///{local_mlflow_db}"
+        os.environ.setdefault("MLFLOW_TRACKING_URI", tracking_uri)
+        os.environ.setdefault("MLFLOW_REGISTRY_URI", tracking_uri)
+    registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
+    mlflow.set_tracking_uri(tracking_uri)
+    mlflow.set_registry_uri(registry_uri)
+
+    cached_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
+    if cached_path is not None:
+        return (_MLFLOW_WORKER_EXPERIMENT_CACHE["id"], cached_path)
+
+    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
+    user_name = ws.current_user.me().user_name
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
+    suffix = uuid4().hex[:8]
+    experiment_path = f"/Users/{user_name}/dqx_integration_tests_{worker_id}_{suffix}"
+    experiment = mlflow.set_experiment(experiment_path)
+    experiment_id = getattr(experiment, "experiment_id", None) if experiment else None
+    logger.debug(f"Created MLflow experiment {experiment_path} (id={experiment_id})")
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = experiment_id
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = experiment_path
+    return (experiment_id, experiment_path)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _cleanup_mlflow_worker_experiment():
+    """Clear MLflow experiment and cache at end of worker session."""
+    yield
+    experiment_path = _MLFLOW_WORKER_EXPERIMENT_CACHE["path"]
+    if experiment_path is None:
+        return
+    experiment_id = _MLFLOW_WORKER_EXPERIMENT_CACHE["id"]
+    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
+    os.environ.pop("MLFLOW_EXPERIMENT_NAME", None)
+    if experiment_id:
+        _delete_mlflow_experiment(experiment_id)
+    else:
+        _delete_mlflow_experiment_by_name(experiment_path)
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["id"] = None
+    _MLFLOW_WORKER_EXPERIMENT_CACHE["path"] = None
+
+
+@pytest.fixture(autouse=True)
+def configure_mlflow_tracking(mlflow_worker_experiment):
+    """Set MLflow experiment env for each test from the worker-scoped experiment fixture."""
+    experiment_id, experiment_path = mlflow_worker_experiment
+    os.environ.pop("MLFLOW_EXPERIMENT_ID", None)
+    if experiment_id:
+        os.environ["MLFLOW_EXPERIMENT_ID"] = experiment_id
+    os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_path
+    logger.debug(f"MLflow configured: experiment={experiment_path}")
+
+
+@pytest.fixture
+def anomaly_registry_schema(make_schema):
+    """Schema for row anomaly detection test isolation."""
+    return make_schema(catalog_name=TEST_CATALOG)
+
+
+@pytest.fixture
+def anomaly_registry_prefix(request):
+    """Registry prefix for row anomaly detection tests."""
+    schema = request.getfixturevalue("anomaly_registry_schema")
+    return f"{TEST_CATALOG}.{schema.name}"
+
+
+@pytest.fixture
+def shared_2d_model(ws, spark, make_schema, make_random):
+    """Function-scoped 2D anomaly model for testing."""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_2d_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
+    columns = ["amount", "quantity"]
+
+    training_data = get_standard_2d_training_data()
+    train_df = spark.createDataFrame(training_data, "amount double, quantity double")
+
+    engine = AnomalyEngine(ws, spark)
+    params = AnomalyParams(algorithm_config=IsolationForestConfig(contamination=0.1, random_seed=42))
+    full_model_name = engine.train(
+        df=train_df,
+        columns=columns,
+        model_name=model_name,
+        registry_table=registry_table,
+        params=params,
+    )
+
+    return {
+        "model_name": full_model_name,
+        "registry_table": registry_table,
+        "columns": columns,
+        "training_data": training_data,
+    }
+
+
+@pytest.fixture
+def shared_3d_model(ws, spark, make_schema, make_random):
+    """Function-scoped 3D anomaly model for testing."""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_3d_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
+    columns = ["amount", "quantity", "discount"]
+
+    training_data = get_standard_3d_training_data()
+    train_df = spark.createDataFrame(training_data, "amount double, quantity double, discount double")
+
+    engine = AnomalyEngine(ws, spark)
+    full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
+
+    return {
+        "model_name": full_model_name,
+        "registry_table": registry_table,
+        "columns": columns,
+        "training_data": training_data,
+    }
+
+
+@pytest.fixture
+def shared_4d_model(ws, spark, make_schema, make_random):
+    """Function-scoped 4D anomaly model for testing."""
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    suffix = make_random(8).lower()
+    model_name = f"{TEST_CATALOG}.{schema.name}.test_4d_{suffix}"
+    registry_table = f"{TEST_CATALOG}.{schema.name}.reg_{suffix}"
+    columns = ["amount", "quantity", "discount", "weight"]
+
+    training_data = get_standard_4d_training_data()
+    train_df = spark.createDataFrame(training_data, "amount double, quantity double, discount double, weight double")
+
+    engine = AnomalyEngine(ws, spark)
+    full_model_name = engine.train(df=train_df, columns=columns, model_name=model_name, registry_table=registry_table)
+
+    return {
+        "model_name": full_model_name,
+        "registry_table": registry_table,
+        "columns": columns,
+        "training_data": training_data,
+    }
+
+
+@pytest.fixture
+def test_df_factory():
+    """Factory for creating test DataFrames with transaction_id."""
+
+    def _create(
+        session,
+        normal_rows: list[tuple] | None = None,
+        anomaly_rows: list[tuple] | None = None,
+        columns_schema: str = "amount double, quantity double",
+        id_column: str = "transaction_id",
+    ):
+        if normal_rows is None:
+            normal_rows = [(100.0, 2.0)]
+        if anomaly_rows is None:
+            anomaly_rows = [(OUTLIER_AMOUNT, OUTLIER_QUANTITY)]
+
+        all_rows = []
+        for idx, row in enumerate(normal_rows + anomaly_rows, start=1):
+            all_rows.append((idx,) + row)
+
+        schema = f"{id_column} int, {columns_schema}"
+        return session.createDataFrame(all_rows, schema)
+
+    return _create
+
+
+@pytest.fixture
+def anomaly_scorer():
+    """Helper to score DataFrames with anomaly check."""
+
+    def _score(
+        test_df,
+        model_name: str,
+        registry_table: str,
+        extract_score: bool = True,
+        **check_kwargs,
+    ):
+        apply_fn = create_anomaly_apply_fn(
+            model_name=model_name,
+            registry_table=registry_table,
+            **check_kwargs,
+        )
+
+        result_df = apply_fn(test_df)
+
+        if extract_score:
+            # Use element_at(_, 1) for first array element to avoid Spark Connect resolving "0" as struct field
+            first_info = F.element_at(F.col("_dq_info"), 1)
+            return result_df.select(
+                "*",
+                first_info.getField("anomaly").getField("score").alias("anomaly_score"),
+            )
+        return result_df
+
+    return _score
+
+
+@pytest.fixture
+def setup_anomaly_deployed_workflow(ws, spark, installation_ctx, make_schema, make_random):
+    def create(_spark, **_kwargs):
+        schema = make_schema(catalog_name=TEST_CATALOG)
+        suffix = make_random(8).lower()
+        table_name = f"{TEST_CATALOG}.{schema.name}.workflow_deploy_train_{suffix}"
+        registry_table = f"{TEST_CATALOG}.{schema.name}.workflow_deploy_registry_{suffix}"
+        model_name = f"{TEST_CATALOG}.{schema.name}.dqx_anomaly_deploy_{suffix}"
+
+        train_df = _spark.createDataFrame(
+            get_standard_2d_training_data(),
+            "amount double, quantity double",
+        )
+        train_df.write.saveAsTable(table_name)
+
+        config = installation_ctx.config
+        run_config = config.get_run_config()
+        run_config.input_config = InputConfig(location=table_name)
+        run_config.anomaly_config = AnomalyConfig(
+            columns=["amount", "quantity"],
+            registry_table=registry_table,
+            model_name=model_name,
+        )
+        installation_ctx.installation.save(config)
+
+        installation_ctx.installation_service.run()
+
+        return (installation_ctx, run_config, registry_table, model_name)
+
+    def delete(resource):
+        ctx, run_config, _, _ = resource
+        checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
+        try:
+            ws.workspace.delete(checks_location)
+        except Exception:
+            pass
+
+    yield from factory("anomaly_workflows", lambda **kw: create(spark, **kw), delete)
+
+
+@pytest.fixture
+def quick_model_factory(ws, make_random, make_schema):
+    """
+    Factory for training lightweight models with custom parameters.
+
+    Use when tests need specific training params (internal, e.g., AnomalyParams, segment_by).
+    For simple 2D scoring tests, prefer function-scoped shared_2d_model instead.
+
+    Returns a callable that accepts spark and training parameters.
+    """
+
+    def _train(
+        session,
+        train_size: int = 50,
+        columns: list[str] | None = None,
+        train_data: list[tuple] | None = None,
+        params=None,
+        segment_by: list[str] | None = None,
+        catalog: str = TEST_CATALOG,
+        schema: str | None = None,
+    ):
+        """
+        Train a quick test model.
+
+        Args:
+            session (SparkSession): SparkSession instance
+            train_size (int): Number of training rows (default: 50)
+            columns (list[str] | None): Column names (default: ["amount", "quantity"])
+            train_data (list[tuple] | None): Custom training data tuples (overrides train_size)
+            params (AnomalyParams | None): Internal training params (test-only)
+            segment_by (list[str] | None): Segment columns for segmented models
+            catalog (str): Catalog name
+            schema (str | None): Schema name
+
+        Returns:
+            tuple: (model_name, registry_table, columns)
+
+        Example:
+            model, registry, cols = quick_model_factory(
+                spark, params=AnomalyParams(sample_fraction=1.0, max_rows=100)
+            )
+        """
+        if columns is None:
+            columns = ["amount", "quantity"]
+
+        if schema is None:
+            schema = make_schema(catalog_name=catalog).name
+
+        unique_id = make_random(8).lower()
+        model_name = f"{catalog}.{schema}.test_model_{make_random(4).lower()}"
+        registry_table = f"{catalog}.{schema}.{unique_id}_registry"
+
+        if train_data is None:
+            train_data = [(100.0 + i * 0.5, 2.0) for i in range(train_size)]
+
+        # Infer schema from columns
+        schema_str = ", ".join(f"{col} double" for col in columns)
+        train_df = session.createDataFrame(train_data, schema_str)
+
+        # Create engine with shared ws client
+        engine = AnomalyEngine(ws, session)
+
+        if params is None:
+            full_model_name = engine.train(
+                df=train_df,
+                columns=columns,
+                model_name=model_name,
+                registry_table=registry_table,
+                segment_by=segment_by,
+            )
+        else:
+            full_model_name = train_model_with_params(
+                engine=engine,
+                df=train_df,
+                model_name=model_name,
+                registry_table=registry_table,
+                columns=columns,
+                params=params,
+                segment_by=segment_by,
+            )
+
+        return full_model_name, registry_table, columns
+
+    return _train

@@ -12,7 +12,7 @@ from databricks.labs.dqx.anomaly.transformers import (
 )
 from databricks.labs.dqx.config import AnomalyParams, IsolationForestConfig
 from databricks.labs.dqx.errors import InvalidParameterError
-from tests.unit.test_anomaly_test_helpers import STANDARD_REGION_PRODUCT_FEATURES
+from tests.unit.anomaly_test_constants import STANDARD_REGION_PRODUCT_FEATURES
 
 # ============================================================================
 # Expected anomaly rate / contamination (service helpers)
