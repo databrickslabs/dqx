@@ -149,7 +149,7 @@ rules = generator.generate_rules_from_contract(
 ```
 
 <Admonition type="info" title="Type validation rules">
-- **Recursive validation**: Inner types of `ARRAY&lt;T&gt;`, `MAP&lt;K,V&gt;`, and `STRUCT&lt;...&gt;` are validated at every nesting level. Invalid inner types (e.g. `ARRAY&lt;NOT_A_TYPE&gt;`) raise `InvalidPhysicalTypeError` at contract load time.
+- **Recursive validation**: Inner types of `ARRAY<T>`, `MAP<K,V>`, and `STRUCT<...>` are validated at every nesting level. Invalid inner types (e.g. `ARRAY<NOT_A_TYPE>`) raise `InvalidPhysicalTypeError` at contract load time.
 - **Nesting depth limit**: Type nesting is limited to **50 levels** to avoid stack overflow on malformed or excessively deep types. Exceeding this limit raises `InvalidPhysicalTypeError`.
 </Admonition>
 
