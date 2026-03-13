@@ -1,0 +1,14 @@
+bundle:
+  name: "dqx-mcp-server"
+
+resources:
+  apps:
+    dqx-mcp-server:
+      name: "dqx-mcp-server"
+      description: "DQX MCP Server - AI agent tools for data quality checks"
+      source_code_path: "."
+
+targets:
+  dev:
+    mode: development
+    default: true
