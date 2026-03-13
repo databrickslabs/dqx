@@ -1759,7 +1759,7 @@ class TestDataContractGeneratorSchemaValidationRecursiveAndDecimal(DataContractG
                 )
             # Both _schema_object_to_ddl and _build_schema_info_from_model (via text/predefined path) may see props
             # Predefined rules iterate properties and skip nameless with warning; DDL path also skips with warning
-            assert any("Skipping property without name" in rec.message for rec in caplog.records)
+            assert any("has a field with no 'name'" in rec.message for rec in caplog.records)
         finally:
             os.unlink(temp_path)
 
@@ -3145,7 +3145,7 @@ class TestDataContractGeneratorLLM(DataContractGeneratorTestBase):
             assert all("None" not in name for name in field_names)
 
             # Should log warning about skipping property without name
-            assert "Skipping property without name" in caplog.text
+            assert "has a field with no 'name'" in caplog.text
         finally:
             os.unlink(temp_path)
 

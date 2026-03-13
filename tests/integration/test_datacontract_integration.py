@@ -453,7 +453,7 @@ class TestDataContractIntegration:
                 generate_predefined_rules=False,
                 process_text_rules=True,
             )
-        assert "Skipping property without name in schema" in caplog.text
+        assert "has a field with no 'name'" in caplog.text
 
     def test_error_invalid_inner_physical_type_raises(self, ws, spark):
         """Contract with invalid inner type (e.g. ARRAY<NOT_A_TYPE>) raises InvalidPhysicalTypeError."""

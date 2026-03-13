@@ -483,7 +483,9 @@ class DataContractRulesGenerator(DQEngineBase):
         parts: list[str] = []
         for prop in schema_obj.properties or []:
             if not prop.name:
-                logger.warning(f"Skipping property without name in schema '{schema_name}'")
+                logger.warning(
+                    f"Schema '{schema_name}' has a field with no 'name'; it will be excluded from schema validation. Set the 'name' attribute on every property in the contract schema."
+                )
                 continue
             # SchemaProperty from ODCS model defines physicalType (may be None if omitted in contract).
             physical_type = prop.physicalType
@@ -577,9 +579,10 @@ class DataContractRulesGenerator(DQEngineBase):
             )
             return []
 
-        # Skip properties without a name
         if not prop.name:
-            logger.warning(f"Skipping property without name in schema '{schema_name}'")
+            logger.warning(
+                f"Schema '{schema_name}' has a field with no 'name'; no quality checks will be generated for it. Set the 'name' attribute on every property in the contract schema."
+            )
             return []
 
         column_path = f"{parent_path}.{prop.name}" if parent_path else prop.name
@@ -1143,9 +1146,10 @@ class DataContractRulesGenerator(DQEngineBase):
         def _extract_columns(props: list[SchemaProperty] | None, prefix: str = "") -> None:
             """Recursively extract column information from properties."""
             for prop in props or []:
-                # Skip properties without a name
                 if not prop.name:
-                    logger.warning(f"Skipping property without name in schema '{schema_name_for_log}'")
+                    logger.warning(
+                        f"Schema '{schema_name_for_log}' has a field with no 'name'; no rules will be generated from its text expectations. Set the 'name' attribute on every property in the contract schema."
+                    )
                     continue
 
                 column_path = f"{prefix}.{prop.name}" if prefix else prop.name
