@@ -9316,6 +9316,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_null",
@@ -9326,6 +9327,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_sql_expression",
@@ -9337,6 +9339,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_unique",
@@ -9348,6 +9351,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "invalid_col_sql_expression",
@@ -9358,6 +9362,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                 ],
                 [
@@ -9370,6 +9375,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                        "skipped": True,
                     },
                 ],
             ]
@@ -9494,6 +9500,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_null",
@@ -9504,6 +9511,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_sql_expression",
@@ -9515,6 +9523,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_unique",
@@ -9526,6 +9535,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "invalid_col_sql_expression",
@@ -9536,6 +9546,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                 ],
                 [
@@ -9548,6 +9559,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                        "skipped": True,
                     },
                 ],
             ]
@@ -9555,3 +9567,51 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
         SCHEMA + complex_cols_schema + REPORTING_COLUMNS,
     )
     assert_df_equality(checked, expected, ignore_nullable=True)
+
+
+def test_apply_checks_skip_quietly_suppresses_skipped_entries(ws, spark):
+    extra_params = ExtraParams(run_time_overwrite=RUN_TIME.isoformat(), run_id_overwrite=RUN_ID, skip_quietly=True)
+    dq_engine = DQEngine(workspace_client=ws, extra_params=extra_params)
+    test_df = spark.createDataFrame([[1, None, 3]], SCHEMA)
+
+    checks = [
+        DQRowRule(name="b_is_null", criticality="error", check_func=check_funcs.is_not_null, column="b"),
+        DQRowRule(
+            name="missing_col_is_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="missing_col",
+        ),
+    ]
+
+    good_df, bad_df = dq_engine.apply_checks_and_split(test_df, checks)
+
+    # row is in bad_df only because of the real failure (b is null), not the skipped check
+    assert bad_df.count() == 1
+    errors = bad_df.select("_errors").first()["_errors"]
+    assert len(errors) == 1
+    assert errors[0]["name"] == "b_is_null"
+
+    # good_df is empty since the real check failed
+    assert good_df.count() == 0
+
+
+def test_apply_checks_skipped_flag_set_on_skipped_entries(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 2, 3]], SCHEMA)
+
+    checks = [
+        DQRowRule(
+            name="missing_col_is_null",
+            criticality="error",
+            check_func=check_funcs.is_not_null,
+            column="missing_col",
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    errors = checked.select("_errors").first()["_errors"]
+    assert len(errors) == 1
+    assert errors[0]["name"] == "missing_col_is_null"
+    assert errors[0]["skipped"] is True

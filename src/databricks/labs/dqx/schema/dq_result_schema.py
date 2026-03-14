@@ -1,4 +1,4 @@
-from pyspark.sql.types import StructType, StructField, ArrayType, StringType, TimestampType, MapType
+from pyspark.sql.types import StructType, StructField, ArrayType, BooleanType, StringType, TimestampType, MapType
 
 dq_result_item_schema = StructType(
     [
@@ -10,6 +10,7 @@ dq_result_item_schema = StructType(
         StructField("run_time", TimestampType(), nullable=True),
         StructField("run_id", StringType(), nullable=True),
         StructField("user_metadata", MapType(StringType(), StringType()), nullable=True),
+        StructField("skipped", BooleanType(), nullable=True),
     ]
 )
 
