@@ -5,14 +5,14 @@ from decimal import Decimal
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
+from databricks.labs.dqx.rule import compute_rule_set_fingerprint
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
     BaseChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, UnsafeSqlQueryError
 from databricks.sdk.errors import NotFound
 
 
@@ -460,6 +460,25 @@ def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random
     engine.save_checks(INPUT_CHECKS[1:], config=TableChecksStorageConfig(location=table_name, mode="overwrite"))
     checks = engine.load_checks(config=TableChecksStorageConfig(location=table_name))
     assert checks == EXPECTED_CHECKS[2:], "Checks were not loaded correctly after overwriting."
+
+
+def test_save_checks_raises_unsafe_sql_query_error_when_run_config_name_contains_forbidden_sql(
+    ws, make_schema, make_random, spark
+):
+    """Save with mode=overwrite rejects run_config_name that would produce unsafe SQL (e.g. DML/DDL)."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(
+        location=table_name,
+        run_config_name="default'; DROP TABLE x; --",
+        mode="overwrite",
+    )
+
+    with pytest.raises(UnsafeSqlQueryError, match="run_config_name must not contain unsafe SQL"):
+        engine.save_checks(INPUT_CHECKS[:1], config=config)
 
 
 def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, make_schema, make_random, spark):

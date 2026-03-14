@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
+from databricks.labs.dqx.rule import compute_rule_set_fingerprint
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound

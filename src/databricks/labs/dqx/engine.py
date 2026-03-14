@@ -146,7 +146,7 @@ class DQEngineCore(DQEngineCoreBase):
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
         all_check_dicts = [c.to_dict() for c in checks]
-        rule_set_fp = compute_rule_set_fingerprint(all_check_dicts)
+        rule_set_fingerprint = compute_rule_set_fingerprint(all_check_dicts)
 
         result_df = self._create_results_array(
             df,
@@ -154,7 +154,7 @@ class DQEngineCore(DQEngineCoreBase):
             self._result_column_names[ColumnArguments.ERRORS],
             self._result_column_names[ColumnArguments.INFO],
             ref_dfs,
-            rule_set_fingerprint=rule_set_fp,
+            rule_set_fingerprint=rule_set_fingerprint,
         )
         result_df = self._create_results_array(
             result_df,
@@ -162,7 +162,7 @@ class DQEngineCore(DQEngineCoreBase):
             self._result_column_names[ColumnArguments.WARNINGS],
             self._result_column_names[ColumnArguments.INFO],
             ref_dfs,
-            rule_set_fingerprint=rule_set_fp,
+            rule_set_fingerprint=rule_set_fingerprint,
         )
         observed_result = self._observe_metrics(result_df)
 

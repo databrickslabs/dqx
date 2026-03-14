@@ -13,11 +13,8 @@ import pytest
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
-from databricks.labs.dqx.checks_serializer import (
-    compute_rule_fingerprint,
-    compute_rule_set_fingerprint,
-    serialize_checks,
-)
+from databricks.labs.dqx.checks_serializer import serialize_checks
+from databricks.labs.dqx.rule import compute_rule_fingerprint, compute_rule_set_fingerprint
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
@@ -102,9 +99,9 @@ def compute_fingerprints(checks: list[DQRule]) -> tuple[dict[str, str], str]:
         rule_fingerprints_by_name maps check name to its fingerprint.
     """
     check_dicts = [c.to_dict() for c in checks]
-    rule_set_fp = compute_rule_set_fingerprint(check_dicts)
+    rule_set_fingerprint = compute_rule_set_fingerprint(check_dicts)
     rule_fps = {c.name: compute_rule_fingerprint(c.to_dict()) for c in checks}
-    return rule_fps, rule_set_fp
+    return rule_fps, rule_set_fingerprint
 
 
 def build_quality_violation(

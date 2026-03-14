@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CHECK_FUNC_REGISTRY",
     "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
+    "compute_rule_fingerprint",
+    "compute_rule_set_fingerprint",
     "Criticality",
     "DQDatasetRule",
     "DQForEachColRule",
@@ -30,6 +32,90 @@ __all__ = [
     "register_for_original_columns_preselection",
     "register_rule",
 ]
+
+
+def compute_rule_fingerprint(check_dict: dict) -> str:
+    """Compute a deterministic SHA-256 hash of a single rule definition.
+
+    Args:
+        check_dict: Dictionary representing a single check rule.
+
+    Returns:
+        A hex-encoded SHA-256 hash string.
+    """
+    fingerprint_data = {
+        "name": check_dict.get("name"),
+        "criticality": check_dict.get("criticality", "error"),
+        "function": check_dict.get("check", {}).get("function"),
+        "arguments": check_dict.get("check", {}).get("arguments"),
+        "filter": check_dict.get("filter"),
+        "user_metadata": check_dict.get("user_metadata", None),
+        "for_each_column": check_dict.get("check", {}).get("for_each_column"),
+    }
+    canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _build_expanded_check(check: dict, check_inner: dict, col: str) -> dict:
+    """Build one expanded check dict for a single column from a for_each_column rule."""
+    base_args = dict(check_inner.get("arguments") or {})
+    expanded_args = {**base_args, "column": col}
+    expanded_check: dict = {
+        "name": check.get("name"),
+        "criticality": check.get("criticality", "error"),
+        "filter": check.get("filter"),
+        "check": {
+            "function": check_inner.get("function"),
+            "arguments": expanded_args,
+        },
+    }
+    if "user_metadata" in check:
+        expanded_check["user_metadata"] = check["user_metadata"]
+    return expanded_check
+
+
+def expand_checks_for_each_column(checks: list[dict]) -> list[dict]:
+    """Expand any check with for_each_column into one dict per column.
+
+    Checks without for_each_column (or with empty for_each_column) are passed through unchanged.
+    Source check fields (e.g. user_metadata) are copied into each expanded dict.
+
+    Args:
+        checks: List of check dictionaries.
+
+    Returns:
+        Flat list of check dicts (expanded entries have no for_each_column, arguments.column set).
+    """
+    result: list[dict] = []
+    for check in checks:
+        check_inner = check.get("check") or {}
+        for_each_column = check_inner.get("for_each_column")
+        if for_each_column:
+            for col in for_each_column:
+                result.append(_build_expanded_check(check, check_inner, col))
+        else:
+            result.append(check)
+    return result
+
+
+def compute_rule_set_fingerprint(checks: list[dict]) -> str:
+    """Compute a deterministic SHA-256 hash of the complete rule set.
+
+    The hash is order-independent: individual rule fingerprints are sorted before combining.
+    Checks with for_each_column are expanded to one rule per column before hashing, so that
+    the same logical rule set yields the same fingerprint whether expressed as one unexpanded
+    dict or as multiple expanded dicts.
+
+    Args:
+        checks: List of check dictionaries.
+
+    Returns:
+        A hex-encoded SHA-256 hash string representing the entire rule set.
+    """
+    canonical = expand_checks_for_each_column(checks)
+    individual_fps = sorted(compute_rule_fingerprint(c) for c in canonical)
+    combined = json.dumps(individual_fps, sort_keys=True)
+    return hashlib.sha256(combined.encode()).hexdigest()
 
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
@@ -226,17 +312,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         Returns:
             A hex-encoded SHA-256 hash string.
         """
-        check_dict = self.to_dict()
-        fingerprint_data = {
-            "name": check_dict.get("name"),
-            "criticality": check_dict.get("criticality", "error"),
-            "function": check_dict.get("check", {}).get("function"),
-            "arguments": check_dict.get("check", {}).get("arguments"),
-            "filter": check_dict.get("filter"),
-        }
-
-        canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
-        return hashlib.sha256(canonical.encode()).hexdigest()
+        return compute_rule_fingerprint(self.to_dict())
 
     def to_dict(self) -> dict:
         """

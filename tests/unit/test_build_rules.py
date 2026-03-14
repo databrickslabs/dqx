@@ -1933,3 +1933,34 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
 def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
     result = ChecksSerializer.serialize_to_bytes(checks, file_path_suffix)
     assert result == expected_output
+
+
+def test_dq_rule_rule_fingerprint_returns_64_char_hex():
+    """DQRule.rule_fingerprint is a 64-character lowercase hex string (SHA-256)."""
+    rule = DQRowRule(check_func=is_not_null, column="id")
+    fingerprint = rule.rule_fingerprint
+    assert len(fingerprint) == 64
+    assert all(char in "0123456789abcdef" for char in fingerprint)
+
+
+def test_dq_rule_rule_fingerprint_deterministic():
+    """Same DQRule instance produces the same rule_fingerprint every time (cached)."""
+    rule = DQRowRule(name="id_not_null", criticality="error", check_func=is_not_null, column="id")
+    assert rule.rule_fingerprint == rule.rule_fingerprint
+
+
+def test_dq_rule_rule_fingerprint_different_rules_different_fingerprints():
+    """Different rules produce different rule_fingerprint values."""
+    rule_1 = DQRowRule(check_func=is_not_null, column="id")
+    rule_2 = DQRowRule(check_func=is_not_null, column="name")
+    rule_3 = DQRowRule(criticality="warn", check_func=is_not_null, column="id")
+    fp1, fp2, fp3 = rule_1.rule_fingerprint, rule_2.rule_fingerprint, rule_3.rule_fingerprint
+    assert len({fp1, fp2, fp3}) == 3
+
+
+def test_dq_dataset_rule_rule_fingerprint():
+    """DQDatasetRule has rule_fingerprint (same contract as DQRowRule)."""
+    rule = DQDatasetRule(check_func=is_unique, columns=["a", "b"])
+    fingerprint = rule.rule_fingerprint
+    assert len(fingerprint) == 64
+    assert all(char in "0123456789abcdef" for char in fingerprint)

@@ -1,4 +1,5 @@
 import pytest
+
 from databricks.labs.dqx.checks_storage import is_table_location
 
 
