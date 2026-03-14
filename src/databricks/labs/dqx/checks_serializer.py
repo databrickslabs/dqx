@@ -452,27 +452,22 @@ class DataFrameConverter:
         filtered_df = df.where(F.col("run_config_name") == run_config_name)
 
         # Filter by fingerprint or to the latest batch by created_at
-        has_versioning_columns = all(
-            col in df.columns for col in ("created_at", "rule_fingerprint", "rule_set_fingerprint")
-        )
-
-        if has_versioning_columns:
-            if not rule_set_fingerprint:
-                result = (
-                    filtered_df.select(F.col("rule_set_fingerprint"))
-                    .orderBy(
-                        F.col("created_at").desc(),
-                        F.col("rule_set_fingerprint").desc(),
-                    )
-                    .limit(1)
-                    .collect()
+        if not rule_set_fingerprint:
+            result = (
+                filtered_df.select(F.col("rule_set_fingerprint"))
+                .orderBy(
+                    F.col("created_at").desc(),
+                    F.col("rule_set_fingerprint").desc(),
                 )
-                if not result:
-                    return []
-                rule_set_fingerprint = result[0][0]
+                .limit(1)
+                .collect()
+            )
+            if not result:
+                return []
+            rule_set_fingerprint = result[0][0]
 
-            assert rule_set_fingerprint is not None  # to satisfy the type checker
-            filtered_df = filtered_df.where(F.col("rule_set_fingerprint") == rule_set_fingerprint)
+        assert rule_set_fingerprint is not None  # to satisfy the type checker
+        filtered_df = filtered_df.where(F.col("rule_set_fingerprint") == rule_set_fingerprint)
 
         check_rows = filtered_df.collect()
         collect_limit = 500
