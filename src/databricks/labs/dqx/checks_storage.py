@@ -184,8 +184,8 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         if config.mode == "overwrite":
             if not re.fullmatch(r"[\w.\-]+", config.run_config_name):
                 raise UnsafeSqlQueryError(
-                    f"run_config_name '{config.run_config_name}' contains invalid characters. "
-                    "Only word characters (a-z, A-Z, 0-9, _), '.', and '-' are allowed."
+                    f"run_config_name must not contain unsafe SQL characters. "
+                    f"Only word characters (a-z, A-Z, 0-9, _), '.', and '-' are allowed; got '{config.run_config_name}'."
                 )
             predicate = f"run_config_name = '{config.run_config_name}'"
             writer = writer.option("replaceWhere", predicate)
