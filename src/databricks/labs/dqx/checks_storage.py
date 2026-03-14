@@ -157,6 +157,12 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             logger.info("No checks available. Skipping saving to a delta table.")
             return
 
+        if config.mode == "overwrite" and not re.fullmatch(r"[\w.\-]+", config.run_config_name):
+            raise UnsafeSqlQueryError(
+                f"run_config_name must not contain unsafe SQL characters. "
+                f"Only word characters (a-z, A-Z, 0-9, _), '.', and '-' are allowed; got '{config.run_config_name}'."
+            )
+
         logger.info(f"Saving quality rules (checks) to table '{config.location}'")
         rule_set_fingerprint = compute_rule_set_fingerprint(checks)
         rules_df = DataFrameConverter.to_dataframe(
@@ -182,11 +188,6 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
         writer = rules_df.write
         if config.mode == "overwrite":
-            if not re.fullmatch(r"[\w.\-]+", config.run_config_name):
-                raise UnsafeSqlQueryError(
-                    f"run_config_name must not contain unsafe SQL characters. "
-                    f"Only word characters (a-z, A-Z, 0-9, _), '.', and '-' are allowed; got '{config.run_config_name}'."
-                )
             predicate = f"run_config_name = '{config.run_config_name}'"
             writer = writer.option("replaceWhere", predicate)
         writer.saveAsTable(config.location, mode=config.mode)

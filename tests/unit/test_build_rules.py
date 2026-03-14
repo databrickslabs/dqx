@@ -1739,12 +1739,16 @@ def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
-    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression"):
-        DQRowRule(
-            criticality="error",
-            check_func=is_not_null_and_not_empty,
-            column=F.col("val") + F.lit(1),
-        ).to_dict()
+    # to_dict() uses allow_simple_expressions_only=False so it accepts complex Column expressions,
+    # serialising them as their string representation. This path is used for fingerprinting only —
+    # round-trip storage (to_dataframe) still rejects complex expressions.
+    result = DQRowRule(
+        criticality="error",
+        check_func=is_not_null_and_not_empty,
+        column=F.col("val") + F.lit(1),
+    ).to_dict()
+    assert result["check"]["function"] == "is_not_null_and_not_empty"
+    assert isinstance(result["check"]["arguments"]["column"], str)
 
 
 def test_dq_rules_to_dict_when_invalid_arg_type() -> None:

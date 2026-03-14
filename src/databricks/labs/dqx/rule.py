@@ -322,6 +322,12 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         args, kwargs = self.prepare_check_func_args_and_kwargs()
         sig = inspect.signature(self.check_func)
         bound_args = sig.bind_partial(*args, **kwargs)
+        # allow_simple_expressions_only=False: to_dict() is used for fingerprinting and metadata only,
+        # not for round-trip serialization. Complex Column expressions (e.g. F.try_element_at(...))
+        # are serialized as their string representation here. Round-trip storage uses
+        # normalize_bound_args with the default allow_simple_expressions_only=True, which rejects
+        # complex expressions — so a check with a complex Column arg can never be stored, and no
+        # inconsistency between the fingerprint and the stored arguments can arise.
         full_args = {
             key: normalize_bound_args(val, allow_simple_expressions_only=False)
             for key, val in bound_args.arguments.items()
