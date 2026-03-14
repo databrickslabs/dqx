@@ -1,15 +1,16 @@
-import pytest
-from unittest.mock import create_autospec
+from unittest.mock import MagicMock, create_autospec
 
+import pytest
 from pyspark.sql import SparkSession
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound
 
-from databricks.labs.dqx.checks_storage import TableChecksStorageHandler, _VERSIONING_COLUMNS, is_table_location
+from databricks.labs.dqx.checks_storage import TableChecksStorageHandler, is_table_location
 from databricks.labs.dqx.config import TableChecksStorageConfig
 from databricks.labs.dqx.errors import UnsafeSqlQueryError
 
 _SIMPLE_CHECK = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
+_VERSIONING_COLUMNS = ("created_at", "rule_fingerprint", "rule_set_fingerprint")
 
 
 @pytest.mark.parametrize(
@@ -105,14 +106,31 @@ class _MockField:
         self.name = name
 
 
-def test_ensure_versioning_columns_quotes_location():
-    """ALTER TABLE statements use backtick-quoted identifiers to prevent SQL injection via location."""
+def _make_handler_with_existing_table(
+    schema_fields: list,
+) -> tuple[TableChecksStorageHandler, TableChecksStorageConfig, MagicMock]:
+    """Return a handler/config pair where the table already exists.
+
+    *schema_fields* is set on the mock DataFrame returned by spark.read.table so that
+    _ensure_versioning_columns sees the desired existing columns.  The idempotency guard
+    is configured to report no matching fingerprint so save() always proceeds past it.
+    """
     spark = create_autospec(SparkSession)
     ws = create_autospec(WorkspaceClient)
-    spark.read.table.return_value.schema.fields = []  # all versioning columns are missing
-
+    # ws.tables.get does not raise → _table_exists returns True → _ensure_versioning_columns is called
+    spark.read.table.return_value.schema.fields = schema_fields
+    # No matching fingerprint in the table → idempotency guard does not short-circuit
+    spark.read.table.return_value.filter.return_value.isEmpty.return_value = True
     handler = TableChecksStorageHandler(ws, spark)
-    handler._ensure_versioning_columns("catalog.schema.table")
+    config = TableChecksStorageConfig(location="catalog.schema.table", run_config_name="default")
+    return handler, config, spark
+
+
+def test_ensure_versioning_columns_quotes_location():
+    """ALTER TABLE statements use backtick-quoted identifiers to prevent SQL injection via location."""
+    handler, config, spark = _make_handler_with_existing_table(schema_fields=[])
+
+    handler.save(_SIMPLE_CHECK, config)
 
     expected_quoted = "`catalog`.`schema`.`table`"
     for actual_call in spark.sql.call_args_list:
@@ -125,9 +143,11 @@ def test_ensure_versioning_columns_strips_existing_backticks_before_quoting():
     spark = create_autospec(SparkSession)
     ws = create_autospec(WorkspaceClient)
     spark.read.table.return_value.schema.fields = []
-
+    spark.read.table.return_value.filter.return_value.isEmpty.return_value = True
     handler = TableChecksStorageHandler(ws, spark)
-    handler._ensure_versioning_columns("`catalog`.`schema`.`table`")
+    config = TableChecksStorageConfig(location="`catalog`.`schema`.`table`", run_config_name="default")
+
+    handler.save(_SIMPLE_CHECK, config)
 
     expected_quoted = "`catalog`.`schema`.`table`"
     for actual_call in spark.sql.call_args_list:
@@ -136,28 +156,23 @@ def test_ensure_versioning_columns_strips_existing_backticks_before_quoting():
 
 def test_ensure_versioning_columns_skips_ddl_when_all_columns_exist():
     """No ALTER TABLE is issued when the table already has all versioning columns."""
-    spark = create_autospec(SparkSession)
-    ws = create_autospec(WorkspaceClient)
-    spark.read.table.return_value.schema.fields = [_MockField(col) for col in _VERSIONING_COLUMNS]
+    handler, config, spark = _make_handler_with_existing_table(
+        schema_fields=[_MockField(col) for col in _VERSIONING_COLUMNS]
+    )
 
-    handler = TableChecksStorageHandler(ws, spark)
-    handler._ensure_versioning_columns("catalog.schema.table")
+    handler.save(_SIMPLE_CHECK, config)
 
     spark.sql.assert_not_called()
 
 
 def test_ensure_versioning_columns_adds_only_missing_columns():
     """Only the missing versioning columns are added via ALTER TABLE."""
-    spark = create_autospec(SparkSession)
-    ws = create_autospec(WorkspaceClient)
-    # Simulate a table that already has rule_fingerprint and rule_set_fingerprint but not created_at
-    spark.read.table.return_value.schema.fields = [
-        _MockField("rule_fingerprint"),
-        _MockField("rule_set_fingerprint"),
-    ]
+    # Table already has rule_fingerprint and rule_set_fingerprint but not created_at
+    handler, config, spark = _make_handler_with_existing_table(
+        schema_fields=[_MockField("rule_fingerprint"), _MockField("rule_set_fingerprint")]
+    )
 
-    handler = TableChecksStorageHandler(ws, spark)
-    handler._ensure_versioning_columns("catalog.schema.table")
+    handler.save(_SIMPLE_CHECK, config)
 
     assert spark.sql.call_count == 1
     sql_str = spark.sql.call_args.args[0]
