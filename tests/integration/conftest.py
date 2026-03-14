@@ -14,7 +14,8 @@ from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_serializer import serialize_checks
-from databricks.labs.dqx.rule import compute_rule_fingerprint, compute_rule_set_fingerprint
+from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
+from databricks.labs.dqx.rule import compute_rule_fingerprint
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine

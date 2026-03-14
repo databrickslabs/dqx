@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import json
 import warnings
@@ -18,7 +19,7 @@ from databricks.labs.dqx.rule import (
     DQDatasetRule,
     DQForEachColRule,
     CHECK_FUNC_REGISTRY,
-    compute_rule_set_fingerprint,
+    compute_rule_fingerprint,
     normalize_bound_args,
 )
 from databricks.labs.dqx.utils import safe_json_load
@@ -33,10 +34,31 @@ CHECKS_TABLE_SCHEMA = (
 logger = logging.getLogger(__name__)
 
 
+def compute_rule_set_fingerprint(checks: list[dict]) -> str:
+    """Compute a deterministic SHA-256 hash of the complete rule set.
+
+    The hash is order-independent: individual rule fingerprints are sorted before combining.
+    Checks with for_each_column are expanded to one rule per column before hashing, so that
+    the same logical rule set yields the same fingerprint whether expressed as one unexpanded
+    dict or as multiple expanded dicts.
+
+    Args:
+        checks: List of check dictionaries.
+
+    Returns:
+        A hex-encoded SHA-256 hash string representing the entire rule set.
+    """
+    canonical = ChecksNormalizer.expand_for_each_column(checks)
+    individual_fps = sorted(compute_rule_fingerprint(c) for c in canonical)
+    combined = json.dumps(individual_fps, sort_keys=True)
+    return hashlib.sha256(combined.encode()).hexdigest()
+
+
 class ChecksNormalizer:
     """
     Handles normalization and denormalization of check dictionaries.
-    E.g. responsible for converting Decimal values to/from serializable format.
+    E.g. responsible for converting Decimal values to/from serializable format
+    and expanding for_each_column rules into one dict per column.
     """
 
     @staticmethod
@@ -86,6 +108,61 @@ class ChecksNormalizer:
             List of check dictionaries with special markers converted to objects.
         """
         return [ChecksNormalizer.denormalize_value(check) for check in checks]
+
+    @staticmethod
+    def expand_for_each_column(checks: list[dict]) -> list[dict]:
+        """Expand any check with for_each_column into one dict per column.
+
+        Checks without for_each_column (or with empty for_each_column) are passed through unchanged.
+        Source check fields (e.g. user_metadata) are copied into each expanded dict.
+
+        This function mirrors the expansion performed by DQForEachColRule.get_rules() and
+        ChecksDeserializer — the source name is preserved unchanged in every expanded
+        rule. When name is None or empty (the typical case), each rule is auto-named at
+        apply time from its check condition, producing unique column-specific names. When an
+        explicit name is provided in the source dict, all expanded rules share that name.
+
+        Args:
+            checks: List of check dictionaries.
+
+        Returns:
+            Flat list of check dicts (expanded entries have no for_each_column, arguments.column set).
+        """
+        result: list[dict] = []
+        for check in checks:
+            check_inner = check.get("check") or {}
+            for_each_column = check_inner.get("for_each_column")
+            if for_each_column:
+                for col in for_each_column:
+                    result.append(ChecksNormalizer._build_expanded_check(check, check_inner, col))
+            else:
+                result.append(check)
+        return result
+
+    @staticmethod
+    def _build_expanded_check(check: dict, check_inner: dict, col: str) -> dict:
+        """Build one expanded check dict for a single column from a for_each_column rule.
+
+        The source name is preserved as-is. When name is None or empty, the rule
+        will be auto-named at apply time (via _initialize_name_if_missing) based on
+        the check condition — producing a column-specific name. When an explicit name is
+        provided, all expanded rules share that name; callers are responsible for ensuring
+        uniqueness if required.
+        """
+        base_args = dict(check_inner.get("arguments") or {})
+        expanded_args = {**base_args, "column": col}
+        expanded_check: dict = {
+            "name": check.get("name"),
+            "criticality": check.get("criticality", "error"),
+            "filter": check.get("filter"),
+            "check": {
+                "function": check_inner.get("function"),
+                "arguments": expanded_args,
+            },
+        }
+        if "user_metadata" in check:
+            expanded_check["user_metadata"] = check["user_metadata"]
+        return expanded_check
 
 
 class FileFormatSerializer(ABC):

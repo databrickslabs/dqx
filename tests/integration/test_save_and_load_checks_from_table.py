@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from databricks.labs.dqx.rule import compute_rule_set_fingerprint
+from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,

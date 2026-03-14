@@ -3,7 +3,8 @@
 import re
 
 from databricks.labs.dqx.check_funcs import is_not_null
-from databricks.labs.dqx.rule import DQRowRule, compute_rule_fingerprint, compute_rule_set_fingerprint
+from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
+from databricks.labs.dqx.rule import DQRowRule, compute_rule_fingerprint
 
 
 def _hex_sha256_pattern() -> re.Pattern[str]:
@@ -103,6 +104,17 @@ def test_compute_rule_fingerprint_includes_filter_and_for_each_column():
     assert fp_base != fp_filter
     assert fp_base != fp_fec
     assert fp_filter != fp_fec
+
+
+def test_compute_rule_fingerprint_excludes_user_metadata():
+    """user_metadata is excluded from the fingerprint; rules with/without it hash identically."""
+    base = {
+        "name": "r",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+    }
+    with_meta = {**base, "user_metadata": {"team": "eng"}}
+    assert compute_rule_fingerprint(base) == compute_rule_fingerprint(with_meta)
 
 
 def test_compute_rule_set_fingerprint_returns_64_char_hex():
