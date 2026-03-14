@@ -399,8 +399,9 @@ class DataFrameConverter:
                 return []
             rule_set_fingerprint = result[0][0]
 
-        assert rule_set_fingerprint is not None  # to satisfy the type checker
-        filtered_df = filtered_df.where(F.col("rule_set_fingerprint") == rule_set_fingerprint)
+        # Legacy tables may have NULL rule_set_fingerprint; load all rows for run_config_name
+        if rule_set_fingerprint is not None:
+            filtered_df = filtered_df.where(F.col("rule_set_fingerprint") == rule_set_fingerprint)
 
         check_rows = filtered_df.collect()
         collect_limit = 500

@@ -342,6 +342,18 @@ def test_normalize_bound_args_handle_none():
     assert normalize_bound_args(None) is None
 
 
+def test_normalize_bound_args_complex_column_default_rejects():
+    """Default allow_simple_expressions_only=True rejects complex Column expressions."""
+    with pytest.raises(InvalidParameterError, match="Only simple references are allowed"):
+        normalize_bound_args(F.try_element_at("arr_col", F.lit(1)))
+
+
+def test_normalize_bound_args_complex_column_allowed_when_opted_in():
+    """allow_simple_expressions_only=False accepts complex Column expressions for serialization."""
+    result = normalize_bound_args(F.try_element_at("arr_col", F.lit(1)), allow_simple_expressions_only=False)
+    assert "try_element_at" in result
+
+
 def test_get_reference_dataframes_with_missing_ref_tables(mock_spark) -> None:
     assert get_reference_dataframes(mock_spark, reference_tables={}) is None
     assert get_reference_dataframes(mock_spark, reference_tables=None) is None

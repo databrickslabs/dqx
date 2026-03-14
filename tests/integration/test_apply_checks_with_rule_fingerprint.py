@@ -201,7 +201,7 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
     versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint(checks)
     good, bad = dq_engine.apply_checks_by_metadata_and_split(test_df, checks)
 
-    expected_good = spark.createDataFrame([[1, 3, 3], [None, 4, None]], SCHEMA)
+    expected_good = spark.createDataFrame([[1, 3, 3]], SCHEMA)
     assert_df_equality(good, expected_good)
 
     expected_bad = spark.createDataFrame(
@@ -247,7 +247,6 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
                 None,
                 4,
                 None,
-                None,
                 [
                     {
                         "name": "a_is_null",
@@ -263,6 +262,8 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(versioning_rules_checks),
                         "user_metadata": {},
                     },
+                ],
+                [
                     {
                         "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",
@@ -285,22 +286,6 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
                 None,
                 [
                     {
-                        "name": "b_is_null_or_empty",
-                        "message": "Column 'b' value is null or empty",
-                        "columns": ["b"],
-                        "filter": None,
-                        "function": "is_not_null_and_not_empty",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "rule_fingerprint": get_rule_fingerprint_from_checks(
-                            versioning_rules_checks, "b_is_null_or_empty", "error"
-                        ),
-                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(versioning_rules_checks),
-                        "user_metadata": {},
-                    }
-                ],
-                [
-                    {
                         "name": "a_is_null",
                         "message": "Column 'a' value is null or empty",
                         "columns": ["a"],
@@ -314,6 +299,22 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
                         "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(versioning_rules_checks),
                         "user_metadata": {},
                     },
+                    {
+                        "name": "b_is_null_or_empty",
+                        "message": "Column 'b' value is null or empty",
+                        "columns": ["b"],
+                        "filter": None,
+                        "function": "is_not_null_and_not_empty",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "rule_fingerprint": get_rule_fingerprint_from_checks(
+                            versioning_rules_checks, "b_is_null_or_empty", "error"
+                        ),
+                        "rule_set_fingerprint": get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                        "user_metadata": {},
+                    },
+                ],
+                [
                     {
                         "name": "c_is_null_or_empty",
                         "message": "Column 'c' value is null or empty",

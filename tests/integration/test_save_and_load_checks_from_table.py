@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
+from databricks.labs.dqx.checks_serializer import DataFrameConverter, compute_rule_set_fingerprint
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
@@ -18,6 +18,7 @@ from databricks.sdk.errors import NotFound
 
 from tests.constants import TEST_CATALOG
 
+# Legacy schema: no versioning columns (created_at, rule_fingerprint, rule_set_fingerprint)
 TEST_CHECKS_TABLE_SCHEMA = (
     "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
     " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>"
@@ -523,6 +524,51 @@ def test_save_checks_invalid_storage_config(ws, spark):
 
     with pytest.raises(InvalidConfigError, match="Unsupported storage config type"):
         engine.save_checks([{}], config=config)
+
+
+def test_load_checks_from_table_with_new_schema(ws, make_schema, make_random, spark):
+    """Load from table created with new schema (versioning columns populated)."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    checks_df = DataFrameConverter.to_dataframe(
+        spark, INPUT_CHECKS, run_config_name="default"
+    )
+    checks_df.write.saveAsTable(table_name)
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name)
+    loaded_checks = engine.load_checks(config=config)
+
+    assert loaded_checks == EXPECTED_CHECKS, "Checks were not loaded correctly from table with new schema."
+
+
+def test_load_checks_from_table_with_new_schema_and_rule_set_fingerprint(ws, make_schema, make_random, spark):
+    """Load from table with new schema, filtering by rule_set_fingerprint."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    df_batch1 = DataFrameConverter.to_dataframe(
+        spark, INPUT_CHECKS[:1], run_config_name="default"
+    )
+    df_batch2 = DataFrameConverter.to_dataframe(
+        spark, INPUT_CHECKS[1:], run_config_name="default"
+    )
+    df_batch1.write.saveAsTable(table_name)
+    df_batch2.write.mode("append").saveAsTable(table_name)
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(
+        location=table_name,
+        rule_set_fingerprint=compute_rule_set_fingerprint(INPUT_CHECKS[:1]),
+    )
+    loaded_checks = engine.load_checks(config=config)
+
+    assert loaded_checks == EXPECTED_CHECKS[:2], (
+        "Checks were not loaded correctly when filtering by rule_set_fingerprint."
+    )
 
 
 def test_save_and_load_checks_from_delta_table_without_rule_set_fingerprint(ws, make_schema, make_random, spark):

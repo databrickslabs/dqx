@@ -322,7 +322,10 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         args, kwargs = self.prepare_check_func_args_and_kwargs()
         sig = inspect.signature(self.check_func)
         bound_args = sig.bind_partial(*args, **kwargs)
-        full_args = {key: normalize_bound_args(val) for key, val in bound_args.arguments.items()}
+        full_args = {
+            key: normalize_bound_args(val, allow_simple_expressions_only=False)
+            for key, val in bound_args.arguments.items()
+        }
 
         metadata = {
             "name": self.name,
