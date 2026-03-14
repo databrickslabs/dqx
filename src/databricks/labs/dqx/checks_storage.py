@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import urllib
 import uuid
 from datetime import datetime, timezone
@@ -58,10 +59,9 @@ from databricks.labs.dqx.checks_serializer import (
     SerializerFactory,
     DataFrameConverter,
     ChecksNormalizer,
-    compute_rule_set_fingerprint,
 )
-from databricks.labs.dqx.rule import compute_rule_fingerprint
-from databricks.labs.dqx.utils import get_file_extension, is_sql_query_safe
+from databricks.labs.dqx.rule import compute_rule_fingerprint, compute_rule_set_fingerprint
+from databricks.labs.dqx.utils import get_file_extension
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.io import TABLE_PATTERN
@@ -182,9 +182,12 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
         writer = rules_df.write
         if config.mode == "overwrite":
+            if not re.fullmatch(r"[\w.\-]+", config.run_config_name):
+                raise UnsafeSqlQueryError(
+                    f"run_config_name '{config.run_config_name}' contains invalid characters. "
+                    "Only word characters (a-z, A-Z, 0-9, _), '.', and '-' are allowed."
+                )
             predicate = f"run_config_name = '{config.run_config_name}'"
-            if not is_sql_query_safe("SELECT 1 WHERE " + predicate):
-                raise UnsafeSqlQueryError("run_config_name must not contain unsafe SQL (e.g. DML/DDL keywords).")
             writer = writer.option("replaceWhere", predicate)
         writer.saveAsTable(config.location, mode=config.mode)
 
@@ -216,9 +219,10 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         if not missing:
             return
 
+        quoted = ".".join(f"`{part}`" for part in location.replace("`", "").split("."))
         for col in missing:
             col_type = "TIMESTAMP" if col == "created_at" else "STRING"
-            self.spark.sql(f"ALTER TABLE {location} ADD COLUMN {col} {col_type}")
+            self.spark.sql(f"ALTER TABLE {quoted} ADD COLUMN {col} {col_type}")
         logger.info(f"Added versioning columns {missing} to table '{location}'.")
 
 

@@ -16,10 +16,8 @@ from pyspark.sql.streaming import StreamingQuery
 
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
-from databricks.labs.dqx.checks_serializer import (
-    deserialize_checks,
-    compute_rule_set_fingerprint,
-)
+from databricks.labs.dqx.checks_serializer import deserialize_checks
+from databricks.labs.dqx.rule import compute_rule_set_fingerprint
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
