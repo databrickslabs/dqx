@@ -60,7 +60,11 @@ from databricks.labs.dqx.checks_serializer import (
     DataFrameConverter,
     ChecksNormalizer,
 )
-from databricks.labs.dqx.rule import compute_rule_fingerprint, compute_rule_set_fingerprint
+from databricks.labs.dqx.rule import (
+    compute_rule_fingerprint,
+    compute_rule_set_fingerprint,
+    expand_checks_for_each_column,
+)
 from databricks.labs.dqx.utils import get_file_extension, is_sql_query_safe
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.installer.mixins import InstallationMixin
@@ -336,9 +340,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         run_config_name = config.run_config_name
         rule_set_fingerprint = compute_rule_set_fingerprint(normalized_for_serialization)
 
-        # Normalize the structure for Lakebase table (one row per check; for_each_column stored as-is)
+        # Expand for_each_column rules so each row represents a single column rule,
+        # matching the per-rule fingerprint semantics of the Delta table storage
+        expanded = expand_checks_for_each_column(normalized_for_serialization)
+
         normalized_checks = []
-        for check in normalized_for_serialization:
+        for check in expanded:
             user_metadata = check.get("user_metadata")
             normalized_check = {
                 "name": check.get("name"),

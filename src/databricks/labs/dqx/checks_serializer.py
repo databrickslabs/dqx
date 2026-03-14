@@ -462,7 +462,9 @@ class DataFrameConverter:
         dq_rule_checks: list[DQRule] = deserialize_checks(checks)
 
         created_at = datetime.now(timezone.utc)
-        rule_set_fingerprint = rule_set_fingerprint if rule_set_fingerprint is not None else compute_rule_set_fingerprint(checks)
+        rule_set_fingerprint = (
+            rule_set_fingerprint if rule_set_fingerprint is not None else compute_rule_set_fingerprint(checks)
+        )
 
         dq_rule_rows = []
         for dq_rule_check in dq_rule_checks:

@@ -49,7 +49,6 @@ def compute_rule_fingerprint(check_dict: dict) -> str:
         "function": check_dict.get("check", {}).get("function"),
         "arguments": check_dict.get("check", {}).get("arguments"),
         "filter": check_dict.get("filter"),
-        "user_metadata": check_dict.get("user_metadata", None),
         "for_each_column": check_dict.get("check", {}).get("for_each_column"),
     }
     canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
@@ -57,7 +56,14 @@ def compute_rule_fingerprint(check_dict: dict) -> str:
 
 
 def _build_expanded_check(check: dict, check_inner: dict, col: str) -> dict:
-    """Build one expanded check dict for a single column from a for_each_column rule."""
+    """Build one expanded check dict for a single column from a for_each_column rule.
+
+    The source name is preserved as-is. When name is None or empty, the rule
+    will be auto-named at apply time (via _initialize_name_if_missing) based on
+    the check condition — producing a column-specific name. When an explicit name is
+    provided, all expanded rules share that name; callers are responsible for ensuring
+    uniqueness if required.
+    """
     base_args = dict(check_inner.get("arguments") or {})
     expanded_args = {**base_args, "column": col}
     expanded_check: dict = {
@@ -79,6 +85,12 @@ def expand_checks_for_each_column(checks: list[dict]) -> list[dict]:
 
     Checks without for_each_column (or with empty for_each_column) are passed through unchanged.
     Source check fields (e.g. user_metadata) are copied into each expanded dict.
+
+    This function mirrors the expansion performed by DQForEachColRule.get_rules() and
+    ChecksDeserializer — the source name is preserved unchanged in every expanded
+    rule. When name is None or empty (the typical case), each rule is auto-named at
+    apply time from its check condition, producing unique column-specific names. When an
+    explicit name is provided in the source dict, all expanded rules share that name.
 
     Args:
         checks: List of check dictionaries.
