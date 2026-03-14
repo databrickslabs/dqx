@@ -10,6 +10,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 from pyspark.sql import Column
+from pyspark.sql.types import StructType
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -150,9 +151,12 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     if val is None:
         return None
 
-    if isinstance(val, (list, tuple, set)):
+    if isinstance(val, (list, tuple, set, frozenset)):
         normalized = [normalize_bound_args(v, allow_simple_expressions_only) for v in val]
         return normalized
+
+    if isinstance(val, dict):
+        return {k: normalize_bound_args(v, allow_simple_expressions_only) for k, v in val.items()}
 
     if isinstance(val, (str, int, float, bool)):
         return val
@@ -172,6 +176,10 @@ def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -
     if isinstance(val, column_types):
         col_str = get_column_name_or_alias(val, allow_simple_expressions_only=allow_simple_expressions_only)
         return col_str
+
+    if isinstance(val, StructType):
+        return val.simpleString()
+
     raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")
 
 

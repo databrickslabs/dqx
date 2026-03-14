@@ -532,9 +532,7 @@ def test_load_checks_from_table_with_new_schema(ws, make_schema, make_random, sp
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
-    checks_df = DataFrameConverter.to_dataframe(
-        spark, INPUT_CHECKS, run_config_name="default"
-    )
+    checks_df = DataFrameConverter.to_dataframe(spark, INPUT_CHECKS, run_config_name="default")
     checks_df.write.saveAsTable(table_name)
 
     engine = DQEngine(ws, spark)
@@ -550,12 +548,8 @@ def test_load_checks_from_table_with_new_schema_and_rule_set_fingerprint(ws, mak
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
-    df_batch1 = DataFrameConverter.to_dataframe(
-        spark, INPUT_CHECKS[:1], run_config_name="default"
-    )
-    df_batch2 = DataFrameConverter.to_dataframe(
-        spark, INPUT_CHECKS[1:], run_config_name="default"
-    )
+    df_batch1 = DataFrameConverter.to_dataframe(spark, INPUT_CHECKS[:1], run_config_name="default")
+    df_batch2 = DataFrameConverter.to_dataframe(spark, INPUT_CHECKS[1:], run_config_name="default")
     df_batch1.write.saveAsTable(table_name)
     df_batch2.write.mode("append").saveAsTable(table_name)
 
@@ -566,9 +560,9 @@ def test_load_checks_from_table_with_new_schema_and_rule_set_fingerprint(ws, mak
     )
     loaded_checks = engine.load_checks(config=config)
 
-    assert loaded_checks == EXPECTED_CHECKS[:2], (
-        "Checks were not loaded correctly when filtering by rule_set_fingerprint."
-    )
+    assert (
+        loaded_checks == EXPECTED_CHECKS[:2]
+    ), "Checks were not loaded correctly when filtering by rule_set_fingerprint."
 
 
 def test_save_and_load_checks_from_delta_table_without_rule_set_fingerprint(ws, make_schema, make_random, spark):
