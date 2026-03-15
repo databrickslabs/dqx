@@ -651,8 +651,17 @@ class DQProfiler(DQEngineBase):
                 dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
             elif typ == T.TimestampType():
                 dst = dst.select(F.col(column).cast("bigint").alias(column))
-            # TODO: do summary instead? to get percentiles, etc.?
-            mn_mx = dst.agg(F.min(column), F.max(column), F.mean(column), F.stddev(column)).collect()
+            # Use aliases for aggregation results to ensure consistent column names
+            mn_mx = dst.agg(
+                F.min(column).alias("min_val"),
+                F.max(column).alias("max_val"),
+                F.mean(column).alias("avg_val"),
+                F.stddev(column).alias("stddev_val"),
+            ).collect()
+            # Handle empty result
+            if not mn_mx or not mn_mx[0]:
+                logger.info(f"Can't get min/max for field {col_name}")
+                return None
             descr, max_limit, min_limit = self._get_min_max(
                 col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
             )
@@ -714,11 +723,12 @@ class DQProfiler(DQEngineBase):
             A tuple containing the description, maximum limit, and minimum limit.
         """
         if mn_mx and len(mn_mx) > 0:
-            metrics["min"] = mn_mx[0][0]
-            metrics["max"] = mn_mx[0][1]
+            row = mn_mx[0]
+            metrics["min"] = row["min_val"]
+            metrics["max"] = row["max_val"]
             sigmas = opts.get("sigmas", 3)
-            avg = mn_mx[0][2]
-            stddev = mn_mx[0][3]
+            avg = row["avg_val"]
+            stddev = row["stddev_val"]
 
             if avg is None or stddev is None:
                 return descr, max_limit, min_limit
@@ -736,18 +746,18 @@ class DQProfiler(DQEngineBase):
                     f"Range doesn't include outliers, capped by {sigmas} sigmas. avg={avg}, "
                     f"stddev={stddev}, min={metrics.get('min')}, max={metrics.get('max')}"
                 )
-            elif min_limit < mn_mx[0][0] and max_limit > mn_mx[0][1]:  #
-                min_limit = mn_mx[0][0]
-                max_limit = mn_mx[0][1]
+            elif min_limit < row["min_val"] and max_limit > row["max_val"]:  #
+                min_limit = row["min_val"]
+                max_limit = row["max_val"]
                 descr = "Real min/max values were used"
-            elif min_limit < mn_mx[0][0]:
-                min_limit = mn_mx[0][0]
+            elif min_limit < row["min_val"]:
+                min_limit = row["min_val"]
                 descr = (
                     f"Real min value was used. Max was capped by {sigmas} sigmas. avg={avg}, "
                     f"stddev={stddev}, max={metrics.get('max')}"
                 )
-            elif max_limit > mn_mx[0][1]:
-                max_limit = mn_mx[0][1]
+            elif max_limit > row["max_val"]:
+                max_limit = row["max_val"]
                 descr = (
                     f"Real max value was used. Min was capped by {sigmas} sigmas. avg={avg}, "
                     f"stddev={stddev}, min={metrics.get('min')}"
