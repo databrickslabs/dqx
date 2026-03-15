@@ -18,6 +18,7 @@ from databricks.labs.dqx.rule import (
     DQDatasetRule,
     DQForEachColRule,
     CHECK_FUNC_REGISTRY,
+    compute_rule_fingerprint,
     compute_rule_set_fingerprint,
     expand_checks_for_each_column,
     normalize_bound_args,
@@ -465,39 +466,40 @@ class DataFrameConverter:
         Raises:
             InvalidCheckError: If any check is invalid or unsupported.
         """
-        dq_rule_checks: list[DQRule] = deserialize_checks(checks)
+        status = ChecksValidator.validate_checks(checks, None)
+        if status.has_errors:
+            raise InvalidCheckError(str(status))
 
-        created_at = datetime.now(timezone.utc)
+        normalized_for_serialization = ChecksNormalizer.normalize(checks)
         rule_set_fingerprint = (
             rule_set_fingerprint if rule_set_fingerprint is not None else compute_rule_set_fingerprint(checks)
         )
+        expanded = ChecksNormalizer.expand_for_each_column(normalized_for_serialization)
 
+        created_at = datetime.now(timezone.utc)
         dq_rule_rows = []
-        for dq_rule_check in dq_rule_checks:
-            arguments = dict(dq_rule_check.check_func_kwargs)
+        for check in expanded:
+            check_inner = check.get("check") or {}
+            func_args = check_inner.get("arguments") or {}
+            # Values are already normalized by ChecksNormalizer.normalize; json.dumps for MAP<STRING, STRING>
+            json_arguments = {k: json.dumps(v) for k, v in func_args.items()}
 
-            if dq_rule_check.column is not None:
-                arguments["column"] = dq_rule_check.column
-
-            if dq_rule_check.columns is not None:
-                arguments["columns"] = dq_rule_check.columns
-
-            # Default allow_simple_expressions_only=True: stored arguments must be round-trippable
-            # (load → reconstruct a working Column). Complex Column expressions are intentionally
-            # rejected here; to_dict() uses allow=False for fingerprinting only, where no
-            # reconstruction is needed.
-            json_arguments = {k: json.dumps(normalize_bound_args(v)) for k, v in arguments.items()}
+            check_struct = {
+                "function": check_inner.get("function"),
+                "for_each_column": check_inner.get("for_each_column") or [],
+                "arguments": json_arguments,
+            }
 
             dq_rule_rows.append(
                 [
-                    dq_rule_check.name,
-                    dq_rule_check.criticality,
-                    {"function": dq_rule_check.check_func.__name__, "arguments": json_arguments},
-                    dq_rule_check.filter,
+                    check.get("name"),
+                    check.get("criticality", "error"),
+                    check_struct,
+                    check.get("filter"),
                     run_config_name,
-                    dq_rule_check.user_metadata,
+                    check.get("user_metadata"),
                     created_at,
-                    dq_rule_check.rule_fingerprint,
+                    compute_rule_fingerprint(check),
                     rule_set_fingerprint,
                 ]
             )

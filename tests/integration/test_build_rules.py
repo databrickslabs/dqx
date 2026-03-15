@@ -204,3 +204,21 @@ def test_from_dataframe_latest_rule_set_tiebreaker_by_fingerprint(spark):
     assert (
         loaded == expected_checks
     ), "When created_at ties, the rule set with the larger rule_set_fingerprint should be selected."
+
+
+def test_to_dataframe_accepts_complex_column_expression_as_string(spark):
+    """Delta storage builds from dicts directly (like file/Lakebase); complex column expressions
+    as strings round-trip successfully."""
+    checks_with_complex_col = [
+        {
+            "name": "arr_element_not_null",
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "try_element_at(arr_col, 1)"},
+            },
+        },
+    ]
+    df = DataFrameConverter.to_dataframe(spark, checks_with_complex_col)
+    loaded = DataFrameConverter.from_dataframe(df)
+    assert loaded == checks_with_complex_col

@@ -1740,8 +1740,9 @@ def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
     # to_dict() uses allow_simple_expressions_only=False so it accepts complex Column expressions,
-    # serialising them as their string representation. This path is used for fingerprinting only —
-    # round-trip storage (to_dataframe) still rejects complex expressions.
+    # serialising them as their string representation. Delta storage (to_dataframe) now builds from
+    # dicts directly (like file/Lakebase), so checks with complex column expressions as strings
+    # round-trip successfully.
     result = DQRowRule(
         criticality="error",
         check_func=is_not_null_and_not_empty,
