@@ -11,7 +11,7 @@ from databricks.labs.dqx.errors import InvalidParameterError
 from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileType
 
 
-PROFILE_BUILDER_REGISTRY = {}
+PROFILE_BUILDER_REGISTRY: dict[str, DQProfileType] = {}
 logger = logging.getLogger(__name__)
 
 
@@ -75,6 +75,9 @@ def make_is_in_profile(
         return None
 
     total_count = profiler_metrics.get("total_count", 0)
+    if total_count == 0:
+        return None
+
     max_in_count = profiler_options.get("max_in_count", 0)
     max_distinct_ratio = profiler_options.get("distinct_ratio", 0.0)
 
@@ -142,7 +145,7 @@ def _is_text(column_type: T.DataType) -> bool:
     Returns:
         True if the column is a Spark text type, otherwise False
     """
-    return column_type in [T.CharType, T.StringType, T.VarcharType]
+    return isinstance(column_type, (T.CharType, T.StringType, T.VarcharType))
 
 
 def _make_null_or_empty_profile(
@@ -233,6 +236,8 @@ def _make_null_profile(
     """
     null_count = profiler_metrics.get("null_count", 0)
     total_count = profiler_metrics.get("total_count", 0)
+    if total_count == 0:
+        return None
     null_ratio = null_count / total_count
     max_null_ratio = profiler_options.get("max_null_ratio", 0.0)
 
@@ -261,7 +266,7 @@ def _supports_distinct(column_type: T.DataType) -> bool:
     Returns:
         True if the column supports distinct operations, otherwise False
     """
-    return column_type in [T.IntegerType, T.LongType, T.StringType]
+    return isinstance(column_type, (T.IntegerType, T.LongType, T.StringType))
 
 
 def _supports_min_max(column_type: T.DataType) -> bool:
@@ -274,7 +279,7 @@ def _supports_min_max(column_type: T.DataType) -> bool:
     Returns:
         True if the column supports min and max operations, otherwise False
     """
-    return isinstance(column_type, T.NumericType) or column_type in [T.DateType, T.TimestampType, T.TimestampNTZType]
+    return isinstance(column_type, (T.DateType, T.NumericType, T.TimestampNTZType, T.TimestampType))
 
 
 def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool:
@@ -438,7 +443,7 @@ def _get_min_max_limits(
     max_value = aggregates.get("max_value")
     mean_value = aggregates.get("mean_value")
     stddev_value = aggregates.get("stddev_value")
-    num_sigmas = profiler_options.get("num_sigmas", 3)
+    num_sigmas = profiler_options.get("num_sigmas", profiler_options.get("sigmas", 3))
 
     if mean_value is None or stddev_value is None:
         return min_value, max_value, "Real min/max values were used"
