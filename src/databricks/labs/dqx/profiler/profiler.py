@@ -708,8 +708,27 @@ class DQProfiler(DQEngineBase):
                 dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
             elif typ == T.TimestampType():
                 dst = dst.select(F.col(column).cast("bigint").alias(column))
-            # TODO: do summary instead? to get percentiles, etc.?
-            mn_mx = dst.agg(F.min(column), F.max(column), F.mean(column), F.stddev(column)).collect()
+            # Add percentiles (p10, p90) using approx_percentile for faster computation
+            pct_exprs = [
+                F.min(column),
+                F.max(column),
+                F.mean(column),
+                F.stddev(column),
+                F.expr(f"approx_percentile(`{column}`, array(0.1, 0.25, 0.5, 0.75, 0.9))").alias("percentiles"),
+            ]
+            result = dst.agg(*pct_exprs).collect()
+            if result and result[0]:
+                row = result[0]
+                # Extract percentiles from array
+                pct_array = row["percentiles"] if row["percentiles"] else []
+                if len(pct_array) >= 5:
+                    metrics["p10"] = pct_array[0]
+                    metrics["p25"] = pct_array[1]
+                    metrics["p50"] = pct_array[2]
+                    metrics["p75"] = pct_array[3]
+                    metrics["p90"] = pct_array[4]
+                # Build min/max/mean/stddev tuple for _get_min_max
+                mn_mx = [(row[f"min({column})"], row[f"max({column})"], row[f"avg({column})"], row[f"stddev({column})"])]
             descr, max_limit, min_limit = self._get_min_max(
                 col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
             )
