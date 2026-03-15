@@ -2084,3 +2084,60 @@ def test_apply_checks_and_save_in_tables_with_patterns_and_ref_df(ws, spark, mak
         schema=expected_schema,
     )
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_and_save_in_table_with_variables(ws, spark, make_schema, make_random):
+    catalog_name = TEST_CATALOG
+    schema = make_schema(catalog_name=catalog_name)
+    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
+
+    test_schema = "a: int, b: int, c: string"
+    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
+    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
+
+    checks = [
+        {
+            "name": "{{ col }}_is_null",
+            "criticality": "{{ crit }}",
+            "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}},
+        },
+    ]
+    variables = {"col": "a", "crit": "error"}
+
+    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
+    engine.apply_checks_by_metadata_and_save_in_table(
+        checks=checks,
+        input_config=InputConfig(location=input_table),
+        output_config=OutputConfig(location=output_table, mode="overwrite"),
+        variables=variables,
+    )
+
+    actual_df = spark.table(output_table)
+    expected_schema = test_schema + REPORTING_COLUMNS
+    expected_df = spark.createDataFrame(
+        [
+            [1, 2, "valid", None, None],
+            [
+                None,
+                3,
+                "error",
+                [
+                    {
+                        "name": "a_is_null",
+                        "message": "Column 'a' value is null",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "is_not_null",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    }
+                ],
+                None,
+            ],
+            [4, None, "warn", None, None],
+        ],
+        schema=expected_schema,
+    )
+    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
