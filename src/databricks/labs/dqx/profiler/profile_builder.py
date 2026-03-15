@@ -247,7 +247,7 @@ def _make_null_profile(
             column=column_name,
             description=(
                 f"Column {column_name} has {null_ratio * 100:.1f}% of null values (allowed {max_null_ratio * 100:.1f}%)"
-                if null_ratio < 1.0
+                if null_count > 0
                 else None
             ),
             filter=profiler_options.get("filter", None),
@@ -396,7 +396,7 @@ def _make_min_max_profile_without_outlier_removal(
     if min_value is None or max_value is None:
         col = df.columns[0]
         agg_df = df.agg(F.min(col).alias("min_value"), F.max(col).alias("max_value"))
-        if column_type == T.TimestampType():
+        if isinstance(column_type, T.TimestampType):
             agg_df = agg_df.select(
                 F.date_format("min_value", "yyyy-MM-dd HH:mm:ss").alias("min_value"),
                 F.date_format("max_value", "yyyy-MM-dd HH:mm:ss").alias("max_value"),
@@ -405,7 +405,7 @@ def _make_min_max_profile_without_outlier_removal(
         if not aggregates or aggregates.get("min_value") is None:
             logger.info(f"Can't get min/max for field {column_name}")
             return None
-        if column_type == T.TimestampType():
+        if isinstance(column_type, T.TimestampType):
             min_value = datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S")
             max_value = datetime.datetime.strptime(aggregates["max_value"], "%Y-%m-%d %H:%M:%S")
         else:
@@ -490,10 +490,10 @@ def _adjust_min_max_limits(
         A tuple containing the adjusted minimum and maximum limits.
     """
 
-    if column_type == T.DateType():
+    if isinstance(column_type, T.DateType):
         return datetime.date.fromtimestamp(int(min_value)), datetime.date.fromtimestamp(int(max_value))
 
-    if column_type == T.TimestampType():
+    if isinstance(column_type, T.TimestampType):
         return _round_value(
             datetime.datetime.fromtimestamp(int(min_value), tz=datetime.timezone.utc), "down", profiler_options
         ), _round_value(
