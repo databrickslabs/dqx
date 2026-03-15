@@ -1,4 +1,6 @@
+import logging
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from pathlib import Path
 from unittest.mock import Mock
@@ -17,6 +19,7 @@ from databricks.labs.dqx.utils import (
     safe_strip_file_from_path,
     missing_required_packages,
     get_file_extension,
+    apply_variables,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
@@ -414,3 +417,237 @@ def test_get_file_extension_with_path_object():
     """Test get_file_extension function with Path object."""
     file_path = Path("/path/to/file.json")
     assert get_file_extension(file_path) == ".json"
+
+
+def test_apply_variables_replaces_all_string_fields():
+    checks = [
+        {
+            "criticality": "error",
+            "name": "{{ col }}_not_null",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "{{ col }}"},
+            },
+            "filter": "{{ filter_col }} = 'active'",
+        }
+    ]
+    variables = {"col": "email", "filter_col": "status"}
+    result = apply_variables(checks, variables)
+
+    assert result[0]["name"] == "email_not_null"
+    assert result[0]["check"]["arguments"]["column"] == "email"
+    assert result[0]["filter"] == "status = 'active'"
+
+
+def test_apply_variables_none_variables():
+    checks = [{"name": "{{ x }}"}]
+    result = apply_variables(checks, None)
+    assert result is checks  # same object, no copy
+    assert result[0]["name"] == "{{ x }}"
+
+
+def test_apply_variables_empty_variables():
+    checks = [{"name": "{{ x }}"}]
+    result = apply_variables(checks, {})
+    assert result is checks  # same object, no copy
+    assert result[0]["name"] == "{{ x }}"
+
+
+def test_apply_variables_non_string_values_converted():
+    checks = [
+        {
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "{{ col }} > {{ threshold }}"},
+            },
+        }
+    ]
+    variables = {"col": "age", "threshold": 18}
+    result = apply_variables(checks, variables)
+    assert result[0]["check"]["arguments"]["expression"] == "age > 18"
+
+
+def test_apply_variables_does_not_mutate_original():
+    checks = [
+        {
+            "name": "{{ col }}_check",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {"column": "{{ col }}"},
+            },
+        }
+    ]
+    variables = {"col": "name"}
+    apply_variables(checks, variables)
+
+    # Original must be unchanged
+    assert checks[0]["name"] == "{{ col }}_check"
+    assert checks[0]["check"]["arguments"]["column"] == "{{ col }}"
+
+
+def test_apply_variables_nested_dicts():
+    checks = [
+        {
+            "check": {
+                "function": "sql_expression",
+                "arguments": {
+                    "expression": "{{ col }} IS NOT NULL",
+                },
+            },
+            "user_metadata": {"owner": "{{ team }}"},
+        }
+    ]
+    variables = {"col": "id", "team": "data-eng"}
+    result = apply_variables(checks, variables)
+
+    assert result[0]["check"]["arguments"]["expression"] == "id IS NOT NULL"
+    assert result[0]["user_metadata"]["owner"] == "data-eng"
+
+
+def test_apply_variables_partial_replacement():
+    checks = [{"name": "{{ p1 }}_greater_than_{{ threshold }}"}]
+    variables = {"p1": "column1", "threshold": 10}
+    result = apply_variables(checks, variables)
+    assert result[0]["name"] == "column1_greater_than_10"
+
+
+def test_apply_variables_unresolved_placeholder_warning(caplog):
+    checks = [{"name": "{{ resolved }}_{{ unresolved }}"}]
+    variables = {"resolved": "ok"}
+    with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.utils"):
+        result = apply_variables(checks, variables)
+
+    assert result[0]["name"] == "ok_{{ unresolved }}"
+    assert any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+
+def test_apply_variables_whitespace_tolerance():
+    checks = [
+        {"a": "{{x}}", "b": "{{ x }}", "c": "{{  x  }}"},
+    ]
+    variables = {"x": "val"}
+    result = apply_variables(checks, variables)
+    assert result[0]["a"] == "val"
+    assert result[0]["b"] == "val"
+    assert result[0]["c"] == "val"
+
+
+def test_apply_variables_non_string_dict_values_untouched():
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_in_list",
+                "arguments": {"column": "{{ col }}", "allowed": [1, 2, 3]},
+            },
+        }
+    ]
+    variables = {"col": "status"}
+    result = apply_variables(checks, variables)
+    assert result[0]["check"]["arguments"]["column"] == "status"
+    assert result[0]["check"]["arguments"]["allowed"] == [1, 2, 3]
+    assert result[0]["criticality"] == "error"
+
+
+def test_apply_variables_for_each_column():
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "is_not_null",
+                "for_each_column": ["{{ col1 }}", "{{ col2 }}"],
+            },
+        }
+    ]
+    variables = {"col1": "first_name", "col2": "last_name"}
+    result = apply_variables(checks, variables)
+    assert result[0]["check"]["for_each_column"] == ["first_name", "last_name"]
+
+
+def test_apply_variables_multiple_checks():
+    checks = [
+        {
+            "name": "{{ col }}_not_null",
+            "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}},
+        },
+        {
+            "name": "{{ col2 }}_not_empty",
+            "check": {"function": "is_not_empty", "arguments": {"column": "{{ col2 }}"}},
+        },
+    ]
+    variables = {"col": "a", "col2": "b"}
+    result = apply_variables(checks, variables)
+    assert result[0]["name"] == "a_not_null"
+    assert result[0]["check"]["arguments"]["column"] == "a"
+    assert result[1]["name"] == "b_not_empty"
+    assert result[1]["check"]["arguments"]["column"] == "b"
+
+
+def test_apply_variables_empty_checks_list():
+    result = apply_variables([], {"col": "x"})
+    assert result == []
+
+
+def test_apply_variables_empty_string_value():
+    checks = [{"name": "prefix_{{ col }}_suffix"}]
+    result = apply_variables(checks, {"col": ""})
+    assert result[0]["name"] == "prefix__suffix"
+
+
+def test_apply_variables_value_contains_braces():
+    """Variable value itself contains {{ }} — should NOT be re-expanded."""
+    checks = [{"expr": "{{ col }}"}]
+    result = apply_variables(checks, {"col": "{{ other }}"})
+    assert result[0]["expr"] == "{{ other }}"
+
+
+def test_apply_variables_key_with_regex_special_chars():
+    """Variable keys with regex metacharacters must be escaped properly."""
+    checks = [{"name": "{{ col.name }}_check", "filter": "{{ col+1 }} > 0"}]
+    variables = {"col.name": "revenue", "col+1": "amount"}
+    result = apply_variables(checks, variables)
+    assert result[0]["name"] == "revenue_check"
+    assert result[0]["filter"] == "amount > 0"
+
+
+def test_apply_variables_same_placeholder_repeated_in_string():
+    checks = [{"expr": "{{ x }} + {{ x }}"}]
+    result = apply_variables(checks, {"x": "col"})
+    assert result[0]["expr"] == "col + col"
+
+
+def test_apply_variables_deeply_nested():
+    checks = [{"a": {"b": {"c": {"d": "{{ v }}"}}}}]
+    result = apply_variables(checks, {"v": "deep"})
+    assert result[0]["a"]["b"]["c"]["d"] == "deep"
+
+
+def test_apply_variables_value_with_backslash():
+    """Backslashes in values should be treated literally (no regex group refs)."""
+    checks = [{"path": "{{ p }}"}]
+    result = apply_variables(checks, {"p": r"C:\Users\test"})
+    assert result[0]["path"] == r"C:\Users\test"
+
+
+def test_apply_variables_rejects_list_value():
+    checks = [{"check": {"arguments": {"column": "{{ col }}"}}}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'list'"):
+        apply_variables(checks, {"col": ["a", "b"]})
+
+
+def test_apply_variables_rejects_dict_value():
+    checks = [{"check": {"arguments": {"column": "{{ col }}"}}}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'dict'"):
+        apply_variables(checks, {"col": {"nested": "value"}})
+
+
+def test_apply_variables_accepts_decimal_value():
+    checks = [{"expr": "col > {{ threshold }}"}]
+    result = apply_variables(checks, {"threshold": Decimal("3.14")})
+    assert result[0]["expr"] == "col > 3.14"
+
+
+def test_apply_variables_accepts_bool_value():
+    checks = [{"expr": "{{ flag }}"}]
+    result = apply_variables(checks, {"flag": True})
+    assert result[0]["expr"] == "True"
