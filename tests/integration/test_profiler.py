@@ -83,7 +83,12 @@ def test_profiler(spark, ws):
             description='Real min/max values were used',
             parameters={'max': Decimal('333323.00'), 'min': Decimal('1.23')},
         ),
-        DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': True}),
+        DQProfile(
+            name='is_not_empty',
+            column='t2',
+            description="Column t2 has 0% of empty values (allowed 1.0%)",
+            parameters={'trim_strings': True},
+        ),
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
         DQProfile(
             name="min_max",
