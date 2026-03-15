@@ -5,18 +5,24 @@ from decimal import Decimal
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
+from databricks.labs.dqx.checks_serializer import DataFrameConverter, compute_rule_set_fingerprint
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
     BaseChecksStorageConfig,
 )
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.errors import InvalidConfigError, UnsafeSqlQueryError
 from databricks.sdk.errors import NotFound
 
-from databricks.labs.dqx.checks_serializer import CHECKS_TABLE_SCHEMA
 
 from tests.constants import TEST_CATALOG
+
+# Legacy schema: no versioning columns (created_at, rule_fingerprint, rule_set_fingerprint)
+TEST_CHECKS_TABLE_SCHEMA = (
+    "name STRING, criticality STRING, check STRUCT<function STRING, for_each_column ARRAY<STRING>,"
+    " arguments MAP<STRING, STRING>>, filter STRING, run_config_name STRING, user_metadata MAP<STRING, STRING>"
+)
 
 
 INPUT_CHECKS = [
@@ -130,7 +136,9 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
     engine = DQEngine(ws, spark)
     config = TableChecksStorageConfig(location=table_name, run_config_name="default")
     engine.save_checks(INPUT_CHECKS, config=config)
-    checks_df = spark.read.table(table_name)
+    checks_df = spark.read.table(table_name).select(
+        "name", "criticality", "check", "filter", "run_config_name", "user_metadata"
+    )
 
     expected_raw_checks = [
         {
@@ -192,7 +200,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
         },
     ]
 
-    expected_checks_df = spark.createDataFrame(expected_raw_checks, CHECKS_TABLE_SCHEMA)
+    expected_checks_df = spark.createDataFrame(expected_raw_checks, TEST_CHECKS_TABLE_SCHEMA)
 
     assert_df_equality(checks_df, expected_checks_df, ignore_nullable=True)
 
@@ -251,7 +259,7 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
             "run_config_name": "non_default",
         },
     ]
-    checks_df = spark.createDataFrame(input_checks, CHECKS_TABLE_SCHEMA)
+    checks_df = spark.createDataFrame(input_checks, TEST_CHECKS_TABLE_SCHEMA)
     checks_df.write.saveAsTable(table_name)
 
     engine = DQEngine(ws, spark)
@@ -361,7 +369,7 @@ def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema,
         ],
     ]
 
-    checks_df = spark.createDataFrame(input_checks, CHECKS_TABLE_SCHEMA)
+    checks_df = spark.createDataFrame(input_checks, TEST_CHECKS_TABLE_SCHEMA)
     checks_df.write.saveAsTable(table_name)
 
     engine = DQEngine(ws, spark)
@@ -455,6 +463,25 @@ def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random
     assert checks == EXPECTED_CHECKS[2:], "Checks were not loaded correctly after overwriting."
 
 
+def test_save_checks_raises_unsafe_sql_query_error_when_run_config_name_contains_forbidden_sql(
+    ws, make_schema, make_random, spark
+):
+    """Save with mode=overwrite rejects run_config_name that would produce unsafe SQL (e.g. DML/DDL)."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(
+        location=table_name,
+        run_config_name="default'; DROP TABLE x; --",
+        mode="overwrite",
+    )
+
+    with pytest.raises(UnsafeSqlQueryError, match="run_config_name must not contain unsafe SQL"):
+        engine.save_checks(INPUT_CHECKS[:1], config=config)
+
+
 def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, make_schema, make_random, spark):
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
@@ -497,3 +524,93 @@ def test_save_checks_invalid_storage_config(ws, spark):
 
     with pytest.raises(InvalidConfigError, match="Unsupported storage config type"):
         engine.save_checks([{}], config=config)
+
+
+def test_load_checks_from_table_with_new_schema(ws, make_schema, make_random, spark):
+    """Load from table created with new schema (versioning columns populated)."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    checks_df = DataFrameConverter.to_dataframe(spark, INPUT_CHECKS, run_config_name="default")
+    checks_df.write.saveAsTable(table_name)
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name)
+    loaded_checks = engine.load_checks(config=config)
+
+    assert loaded_checks == EXPECTED_CHECKS, "Checks were not loaded correctly from table with new schema."
+
+
+def test_load_checks_from_table_with_new_schema_and_rule_set_fingerprint(ws, make_schema, make_random, spark):
+    """Load from table with new schema, filtering by rule_set_fingerprint."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    df_batch1 = DataFrameConverter.to_dataframe(spark, INPUT_CHECKS[:1], run_config_name="default")
+    df_batch2 = DataFrameConverter.to_dataframe(spark, INPUT_CHECKS[1:], run_config_name="default")
+    df_batch1.write.saveAsTable(table_name)
+    df_batch2.write.mode("append").saveAsTable(table_name)
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(
+        location=table_name,
+        rule_set_fingerprint=compute_rule_set_fingerprint(INPUT_CHECKS[:1]),
+    )
+    loaded_checks = engine.load_checks(config=config)
+
+    assert (
+        loaded_checks == EXPECTED_CHECKS[:2]
+    ), "Checks were not loaded correctly when filtering by rule_set_fingerprint."
+
+
+def test_save_and_load_checks_from_delta_table_without_rule_set_fingerprint(ws, make_schema, make_random, spark):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name)
+    engine.save_checks(INPUT_CHECKS[:1], config=config)
+
+    engine.save_checks(INPUT_CHECKS[1:], config=config)
+
+    checks = engine.load_checks(config=config)
+    assert checks == EXPECTED_CHECKS[2:], f"Checks were not loaded correctly for {config.run_config_name} run config."
+
+
+def test_save_and_load_checks_from_delta_table_with_rule_set_fingerprint(ws, make_schema, make_random, spark):
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config_save = TableChecksStorageConfig(location=table_name)
+    engine.save_checks(INPUT_CHECKS[:1], config=config_save)
+
+    engine.save_checks(INPUT_CHECKS[1:], config=config_save)
+
+    config_load = TableChecksStorageConfig(
+        location=table_name,
+        rule_set_fingerprint=compute_rule_set_fingerprint(INPUT_CHECKS[:1]),
+    )
+    checks = engine.load_checks(config=config_load)
+
+    assert (
+        checks == EXPECTED_CHECKS[0:2]
+    ), f"Checks were not loaded correctly for {config_load.run_config_name} run config."
+
+
+def test_save_and_load_checks_from_delta_table_rule_set_fingerprint_already_exists(ws, make_schema, make_random, spark):
+
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name)
+    engine.save_checks(INPUT_CHECKS[1:], config=config)
+    engine.save_checks(INPUT_CHECKS[1:], config=config)
+    checks = engine.load_checks(config=config)
+    assert checks == EXPECTED_CHECKS[2:], f"Checks were not loaded correctly for {config.run_config_name} run config."

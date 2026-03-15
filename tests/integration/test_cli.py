@@ -2,7 +2,7 @@ import logging
 from dataclasses import dataclass
 import yaml
 import pytest
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from tests.integration.conftest import assert_df_equality_ignore_fingerprints as assert_df_equality
 
 from databricks.labs.blueprint.parallel import ManyError
 from databricks.labs.dqx.cli import (

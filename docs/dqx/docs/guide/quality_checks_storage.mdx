@@ -199,11 +199,17 @@ If you create checks as a list of DQRule objects, you can convert them using the
     # load checks from a Delta table with specific run config for filtering (it can be any string, e.g. input table or job name)
     checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table"))
 
+    # load checks from a Delta table with specific rule_set_fingerprint for filtering (it can be any rule_set_fingerprint from checks_table)
+    checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", rule_set_fingerprint="9664332437da274d921cefac60bd509e0aa383292ba695341e1f3fbc2a716e48"))
+
     # load checks from a Unity Catalog Volume
     checks: list[dict] = dq_engine.load_checks(config=VolumeFileChecksStorageConfig(location="/Volumes/dq/config/checks_volume/App1/checks.yml"))
 
     # load checks from a Lakebase table using a Databricks service principal
     checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", user="00000000-0000-0000-0000-000000000000", location="dqx.config.checks"))
+
+    # load checks from a Lakebase table using specific rule_set_fingerprint for filtering (it can be any rule_set_fingerprint from checks_table)
+    checks: list[dict] = dq_engine.load_checks(config=LakebaseChecksStorageConfig(instance_name="my-instance", user="00000000-0000-0000-0000-000000000000", location="dqx.config.checks", rule_set_fingerprint="9664332437da274d921cefac60bd509e0aa383292ba695341e1f3fbc2a716e48"))
 
     # load checks from a file or table defined in the run config ('checks_location' field)
     # only works if DQX is installed in the workspace
@@ -231,7 +237,8 @@ The following backend configuration are currently supported:
 * `TableChecksStorageConfig`: Unity Catalog tables. Containing fields:
     * `location`: table fully qualified name.
     * `run_config_name`: (optional) run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
-    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    * `rule_set_fingerprint`: (optional) Optional SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.            
 * `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
     * `location`: Unity Catalog Volume file path (JSON or YAML).
 * `LakebaseChecksStorageConfig`: Lakebase table. Containing fields:
@@ -240,7 +247,8 @@ The following backend configuration are currently supported:
     * `location`: fully-qualified table name in the format "database.schema.table".
     * `port`: (optional) port on which to connect to the Lakebase instance (use 5432 if not provided).
     * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).
-    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    * `rule_set_fingerprint`: (optional) Optional SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.
 * `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config. Containing fields:
     * `location` (optional): automatically set based on the `checks_location` field from the run configuration.
     * `install_folder`: (optional) installation folder where DQX is installed, only required when custom installation folder is used.

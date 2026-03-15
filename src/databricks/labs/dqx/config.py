@@ -339,11 +339,16 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
         run_config_name: The name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
             The *overwrite* mode will only replace checks for the specific run config and not all checks in the table.
+            The default mode is append.
+        rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set to load.
+            When provided, loads rules matching this specific fingerprint instead of the latest batch.
+            When None (default), loads the latest batch.
     """
 
     location: str
     run_config_name: str = "default"  # to filter checks by run config
-    mode: str = "overwrite"
+    mode: str = "append"
+    rule_set_fingerprint: str | None = None  # to filter checks by rule set fingerprint
 
     def __post_init__(self):
         if not self.location:
@@ -362,7 +367,10 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
         port: The Lakebase port (default is '5432').
         run_config_name: Name of the run configuration to use for checks (default is 'default').
         mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
-              only replaces checks for the specific run config and not all checks in the table (default is 'overwrite').
+              only replaces checks for the specific run config and not all checks in the table (default is 'append').
+        rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set to load.
+            When provided, loads rules matching this specific fingerprint instead of the latest batch.
+            When None (default), loads the latest batch.
     """
 
     location: str
@@ -370,7 +378,8 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
     client_id: str | None = None
     port: str = "5432"
     run_config_name: str = "default"
-    mode: str = "overwrite"
+    mode: str = "append"
+    rule_set_fingerprint: str | None = None
 
     def __post_init__(self):
         if not self.location or self.location == "":

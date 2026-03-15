@@ -10,6 +10,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 from pyspark.sql import Column
+from pyspark.sql.types import StructType
 
 # Import spark connect column if spark session is created using spark connect
 try:
@@ -124,7 +125,7 @@ def is_simple_column_expression(col_name: str) -> bool:
     return not bool(INVALID_COLUMN_NAME_PATTERN.search(col_name))
 
 
-def normalize_bound_args(val: Any) -> Any:
+def normalize_bound_args(val: Any, allow_simple_expressions_only: bool = True) -> Any:
     """
     Normalize a value or collection of values for consistent processing.
 
@@ -136,6 +137,10 @@ def normalize_bound_args(val: Any) -> Any:
 
     Args:
         val: Value or collection of values to normalize.
+        allow_simple_expressions_only: If True (default), Column values must be simple expressions
+            (e.g. F.col("name")). If False, complex expressions (e.g. F.try_element_at(...)) are
+            allowed and serialized as their string representation. Use False when serializing
+            for fingerprinting/metadata only, where round-trip reconstruction is not required.
 
     Returns:
         Normalized value or collection.
@@ -146,9 +151,12 @@ def normalize_bound_args(val: Any) -> Any:
     if val is None:
         return None
 
-    if isinstance(val, (list, tuple, set)):
-        normalized = [normalize_bound_args(v) for v in val]
+    if isinstance(val, (list, tuple, set, frozenset)):
+        normalized = [normalize_bound_args(v, allow_simple_expressions_only) for v in val]
         return normalized
+
+    if isinstance(val, dict):
+        return {k: normalize_bound_args(v, allow_simple_expressions_only) for k, v in val.items()}
 
     if isinstance(val, (str, int, float, bool)):
         return val
@@ -166,8 +174,12 @@ def normalize_bound_args(val: Any) -> Any:
         column_types = (Column,)
 
     if isinstance(val, column_types):
-        col_str = get_column_name_or_alias(val, allow_simple_expressions_only=True)
+        col_str = get_column_name_or_alias(val, allow_simple_expressions_only=allow_simple_expressions_only)
         return col_str
+
+    if isinstance(val, StructType):
+        return val.simpleString()
+
     raise TypeError(f"Unsupported type for normalization: {type(val).__name__}")
 
 

@@ -1,5 +1,7 @@
 import abc
+import hashlib
 import inspect
+import json
 import logging
 from enum import Enum
 from dataclasses import dataclass, field
@@ -17,6 +19,9 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CHECK_FUNC_REGISTRY",
     "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
+    "compute_rule_fingerprint",
+    "compute_rule_set_fingerprint",
+    "expand_checks_for_each_column",
     "Criticality",
     "DQDatasetRule",
     "DQForEachColRule",
@@ -28,6 +33,90 @@ __all__ = [
     "register_for_original_columns_preselection",
     "register_rule",
 ]
+
+
+def compute_rule_fingerprint(check_dict: dict) -> str:
+    """Compute a deterministic SHA-256 hash of a single rule definition.
+
+    Args:
+        check_dict: Dictionary representing a single check rule.
+
+    Returns:
+        A hex-encoded SHA-256 hash string.
+    """
+    fingerprint_data = {
+        "name": check_dict.get("name"),
+        "criticality": check_dict.get("criticality", "error"),
+        "function": check_dict.get("check", {}).get("function"),
+        "arguments": check_dict.get("check", {}).get("arguments"),
+        "filter": check_dict.get("filter"),
+        "for_each_column": check_dict.get("check", {}).get("for_each_column"),
+    }
+    canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def expand_checks_for_each_column(checks: list[dict]) -> list[dict]:
+    """Expand any check with for_each_column into one dict per column.
+
+    Checks without for_each_column (or with empty for_each_column) are passed through unchanged.
+    Source check fields (e.g. user_metadata) are copied into each expanded dict.
+
+    This function mirrors the expansion performed by DQForEachColRule.get_rules() and
+    ChecksDeserializer — the source name is preserved unchanged in every expanded rule.
+    When name is None or empty (the typical case), each rule is auto-named at apply time
+    from its check condition, producing unique column-specific names. When an explicit name
+    is provided, all expanded rules share that name.
+
+    Args:
+        checks: List of check dictionaries.
+
+    Returns:
+        Flat list of check dicts (expanded entries have no for_each_column, arguments.column set).
+    """
+    result: list[dict] = []
+    for check in checks:
+        check_inner = check.get("check") or {}
+        for_each_column = check_inner.get("for_each_column")
+        if not for_each_column:
+            result.append(check)
+            continue
+
+        base_args = dict(check_inner.get("arguments") or {})
+        for col in for_each_column:
+            expanded: dict = {
+                "name": check.get("name"),
+                "criticality": check.get("criticality", "error"),
+                "filter": check.get("filter"),
+                "check": {
+                    "function": check_inner.get("function"),
+                    "arguments": {**base_args, "column": col},
+                },
+            }
+            if "user_metadata" in check:
+                expanded["user_metadata"] = check["user_metadata"]
+            result.append(expanded)
+    return result
+
+
+def compute_rule_set_fingerprint(checks: list[dict]) -> str:
+    """Compute a deterministic SHA-256 hash of the complete rule set.
+
+    The hash is order-independent: individual rule fingerprints are sorted before combining.
+    Checks with for_each_column are expanded to one rule per column before hashing, so that
+    the same logical rule set yields the same fingerprint whether expressed as one unexpanded
+    dict or as multiple expanded dicts.
+
+    Args:
+        checks: List of check dictionaries.
+
+    Returns:
+        A hex-encoded SHA-256 hash string representing the entire rule set.
+    """
+    canonical = expand_checks_for_each_column(checks)
+    individual_fps = sorted(compute_rule_fingerprint(c) for c in canonical)
+    combined = json.dumps(individual_fps, sort_keys=True)
+    return hashlib.sha256(combined.encode()).hexdigest()
 
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
@@ -217,6 +306,15 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
 
         return args, kwargs
 
+    @ft.cached_property
+    def rule_fingerprint(self) -> str:
+        """Compute a deterministic SHA-256 hash of a single rule definition.
+
+        Returns:
+            A hex-encoded SHA-256 hash string.
+        """
+        return compute_rule_fingerprint(self.to_dict())
+
     def to_dict(self) -> dict:
         """
         Converts a DQRule instance into a structured dictionary.
@@ -224,7 +322,16 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
         args, kwargs = self.prepare_check_func_args_and_kwargs()
         sig = inspect.signature(self.check_func)
         bound_args = sig.bind_partial(*args, **kwargs)
-        full_args = {key: normalize_bound_args(val) for key, val in bound_args.arguments.items()}
+        # allow_simple_expressions_only=False: to_dict() is used for fingerprinting and metadata only,
+        # not for round-trip serialization. Complex Column expressions (e.g. F.try_element_at(...))
+        # are serialized as their string representation here. Round-trip storage uses
+        # normalize_bound_args with the default allow_simple_expressions_only=True, which rejects
+        # complex expressions — so a check with a complex Column arg can never be stored, and no
+        # inconsistency between the fingerprint and the stored arguments can arise.
+        full_args = {
+            key: normalize_bound_args(val, allow_simple_expressions_only=False)
+            for key, val in bound_args.arguments.items()
+        }
 
         metadata = {
             "name": self.name,

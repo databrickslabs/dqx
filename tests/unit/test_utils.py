@@ -335,11 +335,47 @@ def test_normalize_bound_args(input_value: Any, expected_output: Any):
 
 def test_normalize_bound_args_unsupported_type():
     with pytest.raises(TypeError, match="Unsupported type for normalization"):
-        normalize_bound_args({"a": 1})
+        normalize_bound_args(object())
 
 
 def test_normalize_bound_args_handle_none():
     assert normalize_bound_args(None) is None
+
+
+def test_normalize_bound_args_complex_column_default_rejects():
+    """Default allow_simple_expressions_only=True rejects complex Column expressions."""
+    with pytest.raises(InvalidParameterError, match="Only simple references are allowed"):
+        normalize_bound_args(F.try_element_at("arr_col", F.lit(1)))
+
+
+def test_normalize_bound_args_complex_column_allowed_when_opted_in():
+    """allow_simple_expressions_only=False accepts complex Column expressions for serialization."""
+    result = normalize_bound_args(F.try_element_at("arr_col", F.lit(1)), allow_simple_expressions_only=False)
+    assert "try_element_at" in result
+
+
+def test_normalize_bound_args_struct_type():
+    """StructType is normalized to simpleString for fingerprinting (e.g. has_valid_schema with df.schema)."""
+    from pyspark.sql.types import IntegerType, StringType, StructField, StructType
+
+    schema = StructType([StructField("id", IntegerType()), StructField("name", StringType())])
+    result = normalize_bound_args(schema)
+    assert result == "struct<id:int,name:string>"
+
+
+def test_normalize_bound_args_dict():
+    """Dict is recursively normalized for fingerprinting (e.g. custom checks with dict args)."""
+    result = normalize_bound_args({"min": 1, "max": 10})
+    assert result == {"min": 1, "max": 10}
+
+    result = normalize_bound_args({"nested": {"a": 1, "b": "x"}})
+    assert result == {"nested": {"a": 1, "b": "x"}}
+
+
+def test_normalize_bound_args_frozenset():
+    """Frozenset is recursively normalized for fingerprinting."""
+    result = normalize_bound_args(frozenset({1, 2, 3}))
+    assert sorted(result) == [1, 2, 3]
 
 
 def test_get_reference_dataframes_with_missing_ref_tables(mock_spark) -> None:
