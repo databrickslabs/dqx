@@ -973,6 +973,8 @@ Below is a sample output of a check stored in a result column (error or warning)
     "function": "is_not_null",
     "run_time": "2025-10-29T15:09:41.174Z",
     "run_id": "2f9120cf-e9f2-446a-8278-12d508b00639"
+    "rule_fingerprint": "f921efe3649267b67b9563861e0eee3adcbccd1ae8f38f86ac1467aeffea75eb",
+    "rule_set_fingerprint": "9266a2f58cc01e52dee9d38e6e586f138a5c2d8c17e02ba27298838e9395fb6c",
     "user_metadata": {"key1": "value1", "key2": "value2"},
   },
 ]
@@ -987,6 +989,8 @@ The structure of the result columns is an array of struct containing the followi
 - `function`: rule/check function applied (string type).
 - `run_time`: timestamp when the check was executed (timestamp type).
 - `run_id`: unique run ID recorded in the detailed quality checking results as well as summary metrics to enable cross-referencing. When reusing the same `DQEngine` and observer instances, the run ID stays the same. Each apply checks execution does not generate a new run ID for the same instance. It is only changed when new engine and observer (if using one) is created.
+- `rule_fingerprint`: hex-encoded SHA-256 hash string of a single rule definition
+- `rule_set_fingerprint`: hex-encoded SHA-256 hash string of the complete rule set
 - `user_metadata`: optional key-value custom metadata provided by the user (dictionary type).
 
 The below example demonstrates how to extract the results from a result columns in PySpark:
@@ -1020,12 +1024,12 @@ The below example demonstrates how to extract the results from a result columns 
 
 The `results_df` will contain the following columns:
 ```python
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
-| name             | message               | columns  | filter             | function    | run_time                      | run_id                               | user_metadata  |
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
-| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29T15:11:51.354+00:00 | 2f9120cf-e9f2-446a-8278-12d508b00639 | {}             |
-| ...              | ...                   | ...      | ...                | ...         | ...                           | ...                                  |                |
-+------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+------------------------------------------------------------------+------------------------------------------------------------------+----------------+
+| name             | message               | columns  | filter             | function    | run_time                      | run_id                               | rule_fingerprint                                                 | rule_set_fingerprint                                             | user_metadata  |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+------------------------------------------------------------------+------------------------------------------------------------------+----------------+
+| col_city_is_null | Column 'city' is null | ['city'] | country = 'Poland' | is_not_null | 2025-10-29T15:11:51.354+00:00 | 2f9120cf-e9f2-446a-8278-12d508b00639 | f921efe3649267b67b9563861e0eee3adcbccd1ae8f38f86ac1467aeffea75eb | 9266a2f58cc01e52dee9d38e6e586f138a5c2d8c17e02ba27298838e9395fb6c | {}             |
+| ...              | ...                   | ...      | ...                | ...         | ...                           | ...                                  | ...                                                              | ...                                                              |                |
++------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+------------------------------------------------------------------+------------------------------------------------------------------+----------------+
 ```
 
 An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.
