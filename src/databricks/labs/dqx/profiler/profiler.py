@@ -75,6 +75,7 @@ class DQProfiler(DQEngineBase):
         "limit": 1000,  # limit the number of samples
         "filter": None,  # filter to apply to the dataset
         "llm_primary_key_detection": True,  # detect primary keys
+        "percentiles": [0.1, 0.9],  # percentiles to calculate (p10, p90)
     }
 
     @staticmethod
@@ -529,6 +530,8 @@ class DQProfiler(DQEngineBase):
             rule = self._extract_min_max(dst, field_name, typ, metrics, opts)
             if rule:
                 dq_rules.append(rule)
+            # Calculate percentiles (p10, p90 by default)
+            self._calculate_percentiles(dst, field_name, typ, metrics, opts)
 
     def _get_df_summary_as_dict(self, df: DataFrame) -> dict[str, Any]:
         """
@@ -614,6 +617,60 @@ class DQProfiler(DQEngineBase):
 
         return value
 
+    def _calculate_percentiles(
+        self,
+        dst: DataFrame,
+        col_name: str,
+        typ: T.DataType,
+        metrics: dict[str, Any],
+        opts: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Calculates percentiles for a numeric column and adds them to metrics.
+
+        Args:
+            dst: The DataFrame with the column to calculate percentiles for.
+            col_name: The name of the column.
+            typ: The data type of the column.
+            metrics: A dictionary to store the calculated percentile metrics.
+            opts: A dictionary of options for percentile calculation.
+        """
+        if opts is None:
+            opts = {}
+
+        # Get configured percentiles, default to p10 and p90
+        percentiles = opts.get("percentiles", [0.1, 0.9])
+
+        # Only calculate for numeric types
+        if not self._type_supports_min_max(typ):
+            return
+
+        # Skip for string/boolean types
+        if typ in {T.StringType(), T.BooleanType()}:
+            return
+
+        column = col_name
+        if typ == T.DateType():
+            dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
+            column = F.col(column).cast("double")
+        elif typ == T.TimestampType():
+            dst = dst.select(F.col(column).cast("bigint").alias(column))
+            column = F.col(column).cast("double")
+        elif typ == T.DoubleType() or typ == T.FloatType():
+            column = F.col(column).cast("double")
+
+        # Build the aggregation expression for percentiles
+        try:
+            pct_agg = dst.agg(F.percentile_approx(column, percentiles)).collect()
+            if pct_agg and pct_agg[0]:
+                pct_values = pct_agg[0][0]
+                if pct_values and len(pct_values) == len(percentiles):
+                    for i, pct in enumerate(percentiles):
+                        pct_key = f"p{int(pct * 100)}"
+                        metrics[pct_key] = self._round_value(pct_values[i], "nearest", opts)
+        except Exception as e:
+            logger.debug(f"Could not calculate percentiles for {col_name}: {e}")
+
     def _extract_min_max(
         self,
         dst: DataFrame,
@@ -651,8 +708,27 @@ class DQProfiler(DQEngineBase):
                 dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
             elif typ == T.TimestampType():
                 dst = dst.select(F.col(column).cast("bigint").alias(column))
-            # TODO: do summary instead? to get percentiles, etc.?
-            mn_mx = dst.agg(F.min(column), F.max(column), F.mean(column), F.stddev(column)).collect()
+            # Add percentiles (p10, p90) using approx_percentile for faster computation
+            pct_exprs = [
+                F.min(column),
+                F.max(column),
+                F.mean(column),
+                F.stddev(column),
+                F.expr(f"approx_percentile(`{column}`, array(0.1, 0.25, 0.5, 0.75, 0.9))").alias("percentiles"),
+            ]
+            result = dst.agg(*pct_exprs).collect()
+            if result and result[0]:
+                row = result[0]
+                # Extract percentiles from array
+                pct_array = row["percentiles"] if row["percentiles"] else []
+                if len(pct_array) >= 5:
+                    metrics["p10"] = pct_array[0]
+                    metrics["p25"] = pct_array[1]
+                    metrics["p50"] = pct_array[2]
+                    metrics["p75"] = pct_array[3]
+                    metrics["p90"] = pct_array[4]
+                # Build min/max/mean/stddev tuple for _get_min_max
+                mn_mx = [(row[f"min({column})"], row[f"max({column})"], row[f"avg({column})"], row[f"stddev({column})"])]
             descr, max_limit, min_limit = self._get_min_max(
                 col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
             )
