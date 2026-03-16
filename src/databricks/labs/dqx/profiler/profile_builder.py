@@ -321,13 +321,13 @@ def _make_min_max_profile_with_outlier_removal(
     Returns:
         A 'min_max' DQProfile
     """
-    col = df.columns[0]
+    column_alias = df.columns[0]
     if isinstance(column_type, T.DateType):
-        cast_df = df.select(F.col(col).cast("timestamp").cast("bigint").alias(col))
-        aggregates = _get_aggregates(cast_df, column_name)
+        cast_df = df.select(F.col(column_alias).cast("timestamp").cast("bigint").alias(column_alias))
+        aggregates = _get_aggregates(cast_df, column_alias)
     elif isinstance(column_type, T.TimestampType):
-        cast_df = df.select(F.col(col).cast("bigint").alias(col))
-        aggregates = _get_aggregates(cast_df, column_name)
+        cast_df = df.select(F.col(column_alias).cast("bigint").alias(column_alias))
+        aggregates = _get_aggregates(cast_df, column_alias)
     else:
         aggregates = {
             "min_value": profiler_metrics.get("min"),
@@ -446,28 +446,43 @@ def _get_min_max_limits(
     num_sigmas = profiler_options.get("num_sigmas", profiler_options.get("sigmas", 3))
 
     if mean_value is None or stddev_value is None:
-        return min_value, max_value, "Real min/max values were used"
+        adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
+            column_type, min_value, max_value, profiler_options
+        )
+        return adjusted_min_value, adjusted_max_value, "Real min/max values were used"
 
     min_limit = mean_value - num_sigmas * stddev_value
     max_limit = mean_value + num_sigmas * stddev_value
     if min_limit < min_value and max_limit > max_value:
-        return min_value, max_value, "Real min/max values were used"
+        adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
+            column_type, min_limit, max_limit, profiler_options
+        )
+        return adjusted_min_value, adjusted_max_value, "Real min/max values were used"
     if min_limit > min_value and max_limit < max_value:
+        adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
+            column_type, min_value, max_value, profiler_options
+        )
         return (
-            min_limit,
-            max_limit,
+            adjusted_min_value,
+            adjusted_max_value,
             f"Range doesn't include outliers, capped by {num_sigmas} sigmas. avg={mean_value}, stddev={stddev_value}, min={min_value}, max={max_value}",
         )
     if min_limit < min_value:
+        adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
+            column_type, min_value, max_limit, profiler_options
+        )
         return (
-            min_value,
-            max_limit,
+            adjusted_min_value,
+            adjusted_max_value,
             f"Real min value was used. Max was capped by {num_sigmas} sigmas. avg={mean_value}, stddev={stddev_value}, max={max_value}",
         )
     if max_limit > max_value:
+        adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
+            column_type, min_limit, max_value, profiler_options
+        )
         return (
-            min_limit,
-            max_value,
+            adjusted_min_value,
+            adjusted_max_value,
             f"Real max value was used. Min was capped by {num_sigmas} sigmas. avg={mean_value}, stddev={stddev_value}, min={min_value}",
         )
     adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(column_type, min_value, max_value, profiler_options)

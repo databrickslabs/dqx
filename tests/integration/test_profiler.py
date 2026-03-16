@@ -312,7 +312,13 @@ def test_profiler_non_default_profile_options(spark, ws):
             parameters={'max': datetime(2023, 1, 8, 10, 0, 11), 'min': datetime(2023, 1, 6, 10, 0, 11)},
             filter="t1 > 0",
         ),
-        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None, filter="t1 > 0"),
+        DQProfile(
+            name="is_not_null_or_empty",
+            column="s1.s2.ns2",
+            description=None,
+            parameters={'trim_strings': False},
+            filter="t1 > 0",
+        ),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None, filter="t1 > 0"),
         DQProfile(
             name="min_max",
@@ -497,7 +503,7 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
         DQProfile(name='is_not_null_or_empty', column='t2', description=None, parameters={'trim_strings': False}),
-        DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
+        DQProfile(name="is_not_null_or_empty", column="s1.ns1", description=None, parameters={'trim_strings': False}),
         DQProfile(
             name="min_max",
             column="s1.ns1",
