@@ -1,10 +1,10 @@
 bundle:
-  name: "dqx-mcp-server"
+  name: "mcp-dqx"
 
 resources:
   apps:
-    dqx-mcp-server:
-      name: "dqx-mcp-server"
+    mcp-dqx:
+      name: "mcp-dqx"
       description: "DQX MCP Server - AI agent tools for data quality checks"
       source_code_path: "."
 
