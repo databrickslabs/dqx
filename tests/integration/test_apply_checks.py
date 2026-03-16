@@ -9271,10 +9271,23 @@ def test_apply_checks_with_has_valid_schema_permissive_missing_columns(ws, spark
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + ", extra_col string" + REPORTING_COLUMNS
+    expected_error = [
+        {
+            "name": "has_valid_schema",
+            "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
+            "columns": ["id", "v1", "extra_col"],
+            "filter": None,
+            "function": "has_valid_schema",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {},
+        }
+    ]
+
     expected = spark.createDataFrame(
         [
-            [1, 10, "foo", None, None],
-            [2, 20, "bar", None, None],
+            [1, 10, "foo", None, expected_error],
+            [2, 20, "bar", None, expected_error],
         ],
         expected_schema,
     )
@@ -9347,7 +9360,7 @@ def test_apply_checks_with_has_valid_schema_columns_not_in_df(ws, spark):
             },
         ),
         DQDatasetRule(
-            name="has_valid_schema_non_strict_passes",
+            name="has_valid_schema_non_strict_fails",
             criticality="warn",
             check_func=check_funcs.has_valid_schema,
             check_func_kwargs={
@@ -9361,7 +9374,7 @@ def test_apply_checks_with_has_valid_schema_columns_not_in_df(ws, spark):
     checked = dq_engine.apply_checks(test_df, checks)
 
     expected_schema = schema + REPORTING_COLUMNS
-    expected_error = [
+    expected_errors = [
         {
             "name": "has_valid_schema_strict_fails",
             "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
@@ -9371,13 +9384,23 @@ def test_apply_checks_with_has_valid_schema_columns_not_in_df(ws, spark):
             "run_time": RUN_TIME,
             "run_id": RUN_ID,
             "user_metadata": {},
-        }
+        },
+        {
+            "name": "has_valid_schema_non_strict_fails",
+            "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
+            "columns": ["id", "v1"],
+            "filter": None,
+            "function": "has_valid_schema",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {},
+        },
     ]
 
     expected = spark.createDataFrame(
         [
-            [1, 10, None, expected_error],
-            [2, 20, None, expected_error],
+            [1, 10, None, expected_errors],
+            [2, 20, None, expected_errors],
         ],
         expected_schema,
     )

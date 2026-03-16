@@ -2075,9 +2075,7 @@ def has_valid_schema(
         expected_schema: Expected schema as a DDL string (e.g., "id INT, name STRING") or StructType object.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table to load the schema from (e.g. "catalog.schema.table")
-        columns: Optional list of columns to validate (default: all columns in the checked DataFrame are considered).
-            - When strict=False, the expected_schema is filtered to only include this subset of columns.
-            - When strict=True, this parameter does not filter the expected_schema; the full schema is used.
+        columns: Optional list of columns to validate (default: all columns in the checked DataFrame are considered). Only the input DataFrame columns are filtered by this parameter.
         strict: Whether to perform strict schema validation (default: False).
             - False: Validates that all expected columns (after filtering by the `columns` parameter) exist
             with compatible types. Allows the DataFrame to contain extra columns.
@@ -2119,7 +2117,7 @@ def has_valid_schema(
             get_column_name_or_alias(col) if not isinstance(col, str) else col for col in exclude_columns
         ]
 
-    expected_schema = _get_schema(expected_schema or types.StructType(), column_names if not strict else None)
+    expected_schema = _get_schema(expected_schema or types.StructType(), None)
 
     unique_str = uuid.uuid4().hex  # make sure any column added to the dataframe is unique
     condition_col = f"__schema_condition_{unique_str}"
@@ -2142,7 +2140,7 @@ def has_valid_schema(
 
         if ref_df_name or ref_table:
             ref_df = _get_ref_df(ref_df_name, ref_table, ref_dfs, spark)
-            _expected_schema = _get_schema(ref_df.schema, column_names if not strict else None)
+            _expected_schema = _get_schema(ref_df.schema, None)
         else:
             _expected_schema = expected_schema
 
