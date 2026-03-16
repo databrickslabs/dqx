@@ -279,7 +279,7 @@ def _supports_min_max(column_type: T.DataType) -> bool:
     Returns:
         True if the column supports min and max operations, otherwise False
     """
-    return isinstance(column_type, (T.DateType, T.NumericType, T.TimestampNTZType, T.TimestampType))
+    return isinstance(column_type, (T.DateType, T.NumericType, T.TimestampNTZType, T.TimestampType)) and not isinstance(column_type, T.ByteType)
 
 
 def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool:
@@ -295,7 +295,9 @@ def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool
         return False
 
     outlier_columns = profiler_options.get("outlier_columns", [])
-    return not outlier_columns or column_name in outlier_columns
+    if not outlier_columns:
+        return False
+    return column_name in outlier_columns
 
 
 def _make_min_max_profile_with_outlier_removal(
@@ -406,8 +408,8 @@ def _make_min_max_profile_without_outlier_removal(
             logger.info(f"Can't get min/max for field {column_name}")
             return None
         if isinstance(column_type, T.TimestampType):
-            min_value = datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S")
-            max_value = datetime.datetime.strptime(aggregates["max_value"], "%Y-%m-%d %H:%M:%S")
+            min_value = datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
+            max_value = datetime.datetime.strptime(aggregates["max_value"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=datetime.timezone.utc)
         else:
             min_value = aggregates["min_value"]
             max_value = aggregates["max_value"]
@@ -443,7 +445,7 @@ def _get_min_max_limits(
     max_value = aggregates.get("max_value")
     mean_value = aggregates.get("mean_value")
     stddev_value = aggregates.get("stddev_value")
-    num_sigmas = profiler_options.get("num_sigmas", profiler_options.get("sigmas", 3))
+    num_sigmas = profiler_options.get("num_sigmas", 3)
 
     if mean_value is None or stddev_value is None:
         adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
@@ -455,12 +457,12 @@ def _get_min_max_limits(
     max_limit = mean_value + num_sigmas * stddev_value
     if min_limit < min_value and max_limit > max_value:
         adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
-            column_type, min_limit, max_limit, profiler_options
+            column_type, min_value, max_value, profiler_options
         )
         return adjusted_min_value, adjusted_max_value, "Real min/max values were used"
     if min_limit > min_value and max_limit < max_value:
         adjusted_min_value, adjusted_max_value = _adjust_min_max_limits(
-            column_type, min_value, max_value, profiler_options
+            column_type, min_limit, max_limit, profiler_options
         )
         return (
             adjusted_min_value,
@@ -506,14 +508,12 @@ def _adjust_min_max_limits(
     """
 
     if isinstance(column_type, T.DateType):
-        return datetime.date.fromtimestamp(int(min_value)), datetime.date.fromtimestamp(int(max_value))
+        return datetime.datetime.fromtimestamp(int(min_value), tz=datetime.timezone.utc).date(), datetime.datetime.fromtimestamp(int(max_value), tz=datetime.timezone.utc).date()
 
     if isinstance(column_type, T.TimestampType):
-        return _round_value(
-            datetime.datetime.fromtimestamp(int(min_value), tz=datetime.timezone.utc), "down", profiler_options
-        ), _round_value(
-            datetime.datetime.fromtimestamp(int(max_value), tz=datetime.timezone.utc), "up", profiler_options
-        )
+        min_value = datetime.datetime.fromtimestamp(int(min_value), tz=datetime.timezone.utc)
+        max_value = datetime.datetime.fromtimestamp(int(max_value), tz=datetime.timezone.utc)
+        return _round_value(min_value, "down", profiler_options), _round_value(max_value, "up", profiler_options)
 
     if isinstance(column_type, T.IntegralType):
         return int(_round_value(min_value, "down", profiler_options)), int(
