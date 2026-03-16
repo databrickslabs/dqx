@@ -1,17 +1,21 @@
 [project]
-name = "dqx-mcp-server"
+name = "mcp-dqx"
 version = "0.1.0"
 description = "DQX MCP Server - AI agent tools for data quality checks"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.0",
+    "fastapi>=0.115.12",
+    "mcp[cli]>=1.14.0",
+    "uvicorn>=0.34.2",
+    "databricks-sdk>=0.60.0",
+    "pydantic>=2",
+    "fastmcp>=2.12.5",
     "databricks-labs-dqx",
-    "databricks-sdk~=0.73",
     "databricks-connect~=15.4",
 ]
 
 [project.scripts]
-dqx-mcp-server = "dqx_mcp_server.server:main"
+mcp-dqx = "server.main:main"
 
 # For local development, uncomment the following to use the local DQX source:
 # [tool.uv.sources]
@@ -22,4 +26,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/dqx_mcp_server"]
+packages = ["server"]

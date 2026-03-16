@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROFILE="${DATABRICKS_CLI_PROFILE:-DEFAULT}"
-APP_NAME="dqx-mcp-server"
+APP_NAME="mcp-dqx"
 
 echo "=== DQX MCP Server Deployment ==="
 echo ""
