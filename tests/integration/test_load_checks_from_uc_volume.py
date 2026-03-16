@@ -7,7 +7,7 @@ from databricks.labs.dqx.config import VolumeFileChecksStorageConfig, Installati
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidParameterError
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 TEST_CHECKS = [

@@ -44,6 +44,8 @@ import {
   UploadCloud,
   LayoutDashboard,
   Loader2,
+  FolderOpen,
+  Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import yaml from "js-yaml";
@@ -115,39 +117,46 @@ function ConfigLocationSettings({ onSettingsSaved }: { onSettingsSaved?: () => v
 
   return (
     <>
-      <Popover open={isOpen} onOpenChange={setIsOpen}>
-        <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full">
-            <Settings className="h-4 w-4" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[500px]" align="end">
-          <div className="grid gap-4">
-            <div className="space-y-2">
-              <h4 className="font-medium leading-none">
-                DQX Installation Folder
-              </h4>
-              <p className="text-sm text-muted-foreground">
-                Path to the config.yml file.
-              </p>
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border/60">
+        <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+        <span className="text-xs text-muted-foreground shrink-0">Config location:</span>
+        <code className="text-xs font-mono text-foreground truncate max-w-[400px]" title={settings.install_folder}>
+          {settings.install_folder}
+        </code>
+        <Popover open={isOpen} onOpenChange={setIsOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 ml-1">
+              <Pencil className="h-3 w-3" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[500px]" align="end">
+            <div className="grid gap-4">
+              <div className="space-y-2">
+                <h4 className="font-medium leading-none">
+                  DQX Installation Folder
+                </h4>
+                <p className="text-sm text-muted-foreground">
+                  Path to the config.yml file.
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="config-path">Path</Label>
+                <Input
+                  id="config-path"
+                  value={path}
+                  onChange={(e) => setPath(e.target.value)}
+                  className="h-8 font-mono text-[10px]"
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={onSave} disabled={isPending}>
+                  {isPending ? "Saving..." : "Save"}
+                </Button>
+              </div>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="config-path">Path</Label>
-              <Input
-                id="config-path"
-                value={path}
-                onChange={(e) => setPath(e.target.value)}
-                className="h-8 font-mono text-[10px]"
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button size="sm" onClick={onSave} disabled={isPending}>
-                {isPending ? "Saving..." : "Save"}
-              </Button>
-            </div>
-          </div>
-        </PopoverContent>
-      </Popover>
+          </PopoverContent>
+        </Popover>
+      </div>
 
       {isSaving && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
@@ -544,56 +553,66 @@ function ConfigPage() {
 
   return (
     <div className="space-y-6 h-full flex flex-col">
-      <div className="flex items-start justify-between shrink-0">
-        <div className="space-y-2">
-          <PageBreadcrumb page="Configuration" />
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              <ShinyText text="Configuration" speed={6} className="font-bold" />
-            </h1>
-            <p className="text-muted-foreground">
-              View your current workspace configuration.
-            </p>
+      <div className="space-y-3 shrink-0">
+        <div className="flex items-start justify-between">
+          <div className="space-y-2">
+            <PageBreadcrumb page="Configuration" />
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">
+                <ShinyText text="Configuration" speed={6} className="font-bold" />
+              </h1>
+              <p className="text-muted-foreground">
+                View your current workspace configuration.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-6">
+            <div className="bg-muted rounded-lg p-1 flex items-center">
+              <Button
+                variant={view === "ui" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2 gap-2"
+                onClick={() => setView("ui")}
+              >
+                <Eye className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                variant={view === "yaml" ? "secondary" : "ghost"}
+                size="sm"
+                className="h-7 px-2 gap-2"
+                onClick={() => setView("yaml")}
+              >
+                <Code2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 pt-6">
-          <div className="bg-muted rounded-lg p-1 flex items-center">
-            <Button
-              variant={view === "ui" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 px-2 gap-2"
-              onClick={() => setView("ui")}
+        <QueryErrorResetBoundary>
+          {({ reset }) => (
+            <ErrorBoundary
+              onReset={reset}
+              fallback={
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20">
+                  <AlertCircle className="h-4 w-4 text-destructive" />
+                  <span className="text-xs text-destructive">Failed to load config location</span>
+                </div>
+              }
             >
-              <Eye className="h-3.5 w-3.5" />
-            </Button>
-            <Button
-              variant={view === "yaml" ? "secondary" : "ghost"}
-              size="sm"
-              className="h-7 px-2 gap-2"
-              onClick={() => setView("yaml")}
-            >
-              <Code2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-          <div className="w-px h-8 bg-border mx-1" />
-          <QueryErrorResetBoundary>
-            {({ reset }) => (
-              <ErrorBoundary
-                onReset={reset}
-                fallback={<Settings className="h-4 w-4 text-destructive" />}
+              <Suspense
+                fallback={
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border/60">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Loading config location...</span>
+                  </div>
+                }
               >
-                <Suspense
-                  fallback={
-                    <Settings className="h-4 w-4 animate-spin text-muted-foreground" />
-                  }
-                >
-                  <ConfigLocationSettings onSettingsSaved={forceRefresh} />
-                </Suspense>
-              </ErrorBoundary>
-            )}
-          </QueryErrorResetBoundary>
-        </div>
+                <ConfigLocationSettings onSettingsSaved={forceRefresh} />
+              </Suspense>
+            </ErrorBoundary>
+          )}
+        </QueryErrorResetBoundary>
       </div>
 
       <div className="flex-1 min-h-0" key={refreshKey}>

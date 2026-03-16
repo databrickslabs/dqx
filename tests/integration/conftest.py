@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from io import BytesIO
 from typing import Any
@@ -18,7 +19,7 @@ from databricks.labs.dqx.installer.mixins import InstallationMixin
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.sdk.service.compute import DataSecurityMode, Kind
 
-from tests.conftest import TEST_CATALOG
+from tests.constants import TEST_CATALOG
 
 
 logging.getLogger("tests").setLevel("DEBUG")
@@ -52,6 +53,73 @@ def build_quality_violation(
         "run_id": RUN_ID,
         "user_metadata": {},
     }
+
+
+class SparkKeepAlive:
+    """
+    Utility to keep Spark Connect session alive during long-running operations.
+
+    Runs lightweight queries periodically to prevent INACTIVITY_TIMEOUT.
+    """
+
+    def __init__(self, spark, interval_seconds=60, join_timeout=5):
+        """
+        Args:
+            spark: SparkSession to keep alive
+            interval_seconds: How often to run keep-alive query (default 60s)
+            join_timeout: Seconds to wait for the background thread to stop (default 5s)
+        """
+        self.spark = spark
+        self.interval = interval_seconds
+        self._join_timeout = join_timeout
+        self._stop_flag = threading.Event()
+        self._thread = None
+
+    def _keep_alive_loop(self):
+        """Background thread that runs periodic queries."""
+        logger.debug(f"SparkKeepAlive started (interval={self.interval}s)")
+
+        while not self._stop_flag.is_set():
+            try:
+                # Lightweight query to keep session active
+                self.spark.sql("SELECT 1").collect()
+                logger.debug("SparkKeepAlive: sent keep-alive query")
+            except Exception as e:
+                logger.warning(f"SparkKeepAlive: query failed: {e}")
+
+            # Wait for interval or stop signal
+            self._stop_flag.wait(self.interval)
+
+        logger.debug("SparkKeepAlive stopped")
+
+    def start(self):
+        """Start the keep-alive background thread."""
+        if self._thread and self._thread.is_alive():
+            logger.warning("SparkKeepAlive already running")
+            return
+
+        self._stop_flag.clear()
+        self._thread = threading.Thread(target=self._keep_alive_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop the keep-alive background thread."""
+        if self._thread and self._thread.is_alive():
+            self._stop_flag.set()
+            self._thread.join(timeout=self._join_timeout)
+            if self._thread.is_alive():
+                logger.warning(f"SparkKeepAlive thread did not stop within {self._join_timeout}s")
+
+
+@pytest.fixture
+def spark_keep_alive(spark):
+    """
+    Fixture that provides a SparkKeepAlive utility to prevent session timeouts during long-running tests (e.g. workflows).
+    """
+    keep_alive = SparkKeepAlive(spark, interval_seconds=60)
+    keep_alive.start()
+    yield keep_alive
+    keep_alive.stop()
 
 
 @pytest.fixture

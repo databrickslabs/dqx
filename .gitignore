@@ -59,6 +59,15 @@ coverage-integration.xml
 .pytest_cache/
 cover/
 
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-*
+
+# Test output logs
+test_*.log
+
 # Translations
 *.mo
 *.pot
@@ -166,7 +175,7 @@ dev/cleanup.py
 # Cursor IDE specific files
 .cursorrules
 .cursor/
-
+.claude/
 
 # docgen
 docs/dqx/docs/reference/api
