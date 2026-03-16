@@ -111,12 +111,45 @@ class JsonSerializer(FileFormatSerializer):
         return json.load(file_like) or []
 
 
+# YAML 1.1 boolean literals (parsed as bool); strings equal to these (case-insensitive)
+# must be quoted when dumping so they round-trip as strings (e.g. allowed: ["Yes", "No"]).
+_YAML_BOOL_LITERALS = frozenset(
+    s.lower()
+    for s in (
+        "true",
+        "false",
+        "yes",
+        "no",
+        "on",
+        "off",
+        "y",
+        "n",
+    )
+)
+
+
+def _yaml_safe_dump_roundtrip_str(data: Any) -> str:
+    """Dump to YAML with string values that look like booleans quoted so they round-trip as strings."""
+
+    class _QuotedStrDumper(yaml.SafeDumper):
+        pass
+
+    def _str_representer(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
+        if isinstance(value, str) and value.lower() in _YAML_BOOL_LITERALS:
+            return dumper.represent_scalar("tag:yaml.org,2002:str", value, style='"')
+        return dumper.represent_scalar("tag:yaml.org,2002:str", value)
+
+    _QuotedStrDumper.add_representer(str, _str_representer)
+    return yaml.dump(data, Dumper=_QuotedStrDumper, default_flow_style=False, sort_keys=False)
+
+
 class YamlSerializer(FileFormatSerializer):
     """YAML format serializer implementation."""
 
     def serialize(self, data: list[dict]) -> str:
-        """Serialize data to YAML string."""
-        return yaml.safe_dump(data)
+        """Serialize data to YAML string. Quotes string values that are YAML boolean
+        literals (e.g. Yes, No) so they round-trip as strings and are not parsed as bool."""
+        return _yaml_safe_dump_roundtrip_str(data)
 
     def deserialize(self, file_like: TextIO) -> list[dict]:
         """Deserialize data from YAML file."""
