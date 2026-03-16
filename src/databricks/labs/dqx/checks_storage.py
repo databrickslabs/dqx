@@ -459,20 +459,20 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             )
 
     @staticmethod
-    def _ensure_versioning_columns(conn_or_engine: Engine, config: LakebaseChecksStorageConfig) -> None:
+    def _ensure_versioning_columns(engine: Engine, config: LakebaseChecksStorageConfig) -> None:
         """Add missing versioning columns to an existing Lakebase table.
 
         Skips DDL if all columns already exist.
 
         Args:
-            conn_or_engine: SQLAlchemy engine for the Lakebase instance.
+            engine: SQLAlchemy engine for the Lakebase instance.
             config: Configuration for saving and loading checks to Lakebase.
         """
-        if LakebaseChecksStorageHandler._rule_set_columns_exists(conn_or_engine, config.schema_name, config.table_name):
+        if LakebaseChecksStorageHandler._rule_set_columns_exists(engine, config.schema_name, config.table_name):
             return
 
         tbl = f'"{config.schema_name}"."{config.table_name}"'
-        with conn_or_engine.begin() as conn:
+        with engine.begin() as conn:
             for col in _VERSIONING_COLUMNS:
                 col_type = "TIMESTAMP" if col == "created_at" else "VARCHAR(255)"
                 conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {col_type}"))

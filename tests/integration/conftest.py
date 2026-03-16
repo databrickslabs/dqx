@@ -584,7 +584,15 @@ def assert_output_df(spark, expected_output, output_config):
     assert_df_equality_ignore_fingerprints(checked_df, expected_output, ignore_nullable=True)
 
 
-def generate_checks_with_rule_and_set_fingerprint(rules: list) -> list[dict]:
+def generate_checks_with_rule_and_set_fingerprint(rules: list[DQRule] | list[dict]) -> list[dict]:
+    """Generate check dicts with rule_fingerprint and rule_set_fingerprint fields populated.
+
+    Args:
+        rules: Either a list of DQRule instances or a list of check dicts.
+
+    Returns:
+        List of check dicts with rule_fingerprint and rule_set_fingerprint added.
+    """
     if all(isinstance(rule, DQRule) for rule in rules):
         checks_dict = serialize_checks(rules)
     else:
@@ -604,7 +612,7 @@ def get_rule_fingerprint_from_checks(
     based on the check name, function, criticality and column (if applicable).
     versioning_rules_checks: list of versioning rules checks
     check_name: name of the check
-    criticality: criticality of the check (e.g. "error", "warning")
+    criticality: criticality of the check (e.g. "error", "warn")
 
     """
     rule_dict = {}
