@@ -651,8 +651,29 @@ class DQProfiler(DQEngineBase):
                 dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
             elif typ == T.TimestampType():
                 dst = dst.select(F.col(column).cast("bigint").alias(column))
-            # TODO: do summary instead? to get percentiles, etc.?
-            mn_mx = dst.agg(F.min(column), F.max(column), F.mean(column), F.stddev(column)).collect()
+            # Add percentiles (p10, p90) using approx_percentile for faster computation
+            pct_exprs = [
+                F.min(column),
+                F.max(column),
+                F.mean(column),
+                F.stddev(column),
+                F.expr("approx_percentile(col, array(0.1, 0.25, 0.5, 0.75, 0.9))").alias("percentiles"),
+            ]
+            result = dst.agg(*pct_exprs).collect()
+            if result and result[0]:
+                row = result[0]
+                # Extract percentiles from array
+                pct_array = row["percentiles"] if row["percentiles"] else []
+                if len(pct_array) >= 5:
+                    metrics["p10"] = pct_array[0]
+                    metrics["p25"] = pct_array[1]
+                    metrics["p50"] = pct_array[2]
+                    metrics["p75"] = pct_array[3]
+                    metrics["p90"] = pct_array[4]
+                # Build min/max/mean/stddev tuple for _get_min_max
+                mn_mx = [(row["min(col)"], row["max(col)"], row["avg(col)"], row["stddev(col)"])]
+            else:
+                mn_mx = []
             descr, max_limit, min_limit = self._get_min_max(
                 col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
             )
@@ -676,10 +697,23 @@ class DQProfiler(DQEngineBase):
             else:
                 logger.info(f"Can't get min/max for field {col_name}")
         if descr and min_limit and max_limit:
+            # Build parameters including percentiles if available
+            params = {"min": min_limit, "max": max_limit}
+            # Add percentiles to parameters if they were computed
+            if "p10" in metrics:
+                params["p10"] = self._round_value(metrics.get("p10"), "down", opts)
+            if "p25" in metrics:
+                params["p25"] = self._round_value(metrics.get("p25"), "down", opts)
+            if "p50" in metrics:
+                params["p50"] = self._round_value(metrics.get("p50"), "nearest", opts)
+            if "p75" in metrics:
+                params["p75"] = self._round_value(metrics.get("p75"), "up", opts)
+            if "p90" in metrics:
+                params["p90"] = self._round_value(metrics.get("p90"), "up", opts)
             return DQProfile(
                 name="min_max",
                 column=col_name,
-                parameters={"min": min_limit, "max": max_limit},
+                parameters=params,
                 description=descr,
                 filter=opts.get("filter", None),
             )
