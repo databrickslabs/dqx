@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column
+from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
 from databricks.labs.dqx.io import read_input_data, get_reference_dataframes
 from databricks.labs.dqx.utils import (
@@ -356,8 +357,6 @@ def test_normalize_bound_args_complex_column_allowed_when_opted_in():
 
 def test_normalize_bound_args_struct_type():
     """StructType is normalized to simpleString for fingerprinting (e.g. has_valid_schema with df.schema)."""
-    from pyspark.sql.types import IntegerType, StringType, StructField, StructType
-
     schema = StructType([StructField("id", IntegerType()), StructField("name", StringType())])
     result = normalize_bound_args(schema)
     assert result == "struct<id:int,name:string>"

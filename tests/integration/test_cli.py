@@ -1,9 +1,8 @@
 import logging
 from dataclasses import dataclass
-import yaml
-import pytest
-from tests.integration.conftest import assert_df_equality_ignore_fingerprints as assert_df_equality
 
+import pytest
+import yaml
 from databricks.labs.blueprint.parallel import ManyError
 from databricks.labs.dqx.cli import (
     open_remote_config,
@@ -20,7 +19,11 @@ from databricks.labs.dqx.config import WorkspaceConfig, InstallationChecksStorag
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.sdk.errors import NotFound
-from tests.integration.conftest import contains_expected_workflows
+
+from tests.integration.conftest import (
+    assert_df_equality_ignore_fingerprints as assert_df_equality,
+    contains_expected_workflows,
+)
 
 
 logger = logging.getLogger(__name__)

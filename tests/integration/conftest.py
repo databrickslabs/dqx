@@ -568,19 +568,19 @@ def assert_output_df(spark, expected_output, output_config):
     assert_df_equality_ignore_fingerprints(checked_df, expected_output, ignore_nullable=True)
 
 
-def generate_checks_with_rule_and_set_fingerprint(rules: list[DQRule] | list[dict]) -> list[dict]:
-    """Generate check dicts with rule_fingerprint and rule_set_fingerprint fields populated.
+def generate_checks_with_rule_and_set_fingerprint_from_rules(rules: list[DQRule]) -> list[dict]:
+    """Generate check dicts with rule_fingerprint and rule_set_fingerprint from DQRule instances."""
+    checks_dict = serialize_checks(rules)
+    rule_set_fingerprint = compute_rule_set_fingerprint(checks_dict)
+    return [
+        {**check, "rule_fingerprint": compute_rule_fingerprint(check), "rule_set_fingerprint": rule_set_fingerprint}
+        for check in checks_dict
+    ]
 
-    Args:
-        rules: Either a list of DQRule instances or a list of check dicts.
 
-    Returns:
-        List of check dicts with rule_fingerprint and rule_set_fingerprint added.
-    """
-    if all(isinstance(rule, DQRule) for rule in rules):
-        checks_dict = serialize_checks(rules)
-    else:
-        checks_dict = [dict(check) for check in rules]
+def generate_checks_with_rule_and_set_fingerprint_from_dicts(checks: list[dict]) -> list[dict]:
+    """Generate check dicts with rule_fingerprint and rule_set_fingerprint from check dicts."""
+    checks_dict = [dict(check) for check in checks]
     rule_set_fingerprint = compute_rule_set_fingerprint(checks_dict)
     return [
         {**check, "rule_fingerprint": compute_rule_fingerprint(check), "rule_set_fingerprint": rule_set_fingerprint}

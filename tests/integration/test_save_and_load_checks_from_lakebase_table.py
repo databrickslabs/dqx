@@ -1,8 +1,10 @@
 import dataclasses
+import json
 import os
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
@@ -14,7 +16,46 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
 
 from tests.conftest import compare_checks
-from tests.integration.test_save_and_load_checks_from_table import EXPECTED_CHECKS as TEST_CHECKS
+
+
+TEST_CHECKS = [
+    {
+        "name": "col1_is_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
+    },
+    {
+        "name": "col2_is_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
+    },
+    {
+        "name": "column_not_less_than",
+        "criticality": "warn",
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1.01}},
+        "filter": "Col_3 >1",
+        "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
+    },
+    {
+        "name": "column_in_list",
+        "criticality": "warn",
+        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
+    },
+    {
+        "name": "col_3_is_in_range",
+        "criticality": "warn",
+        "check": {
+            "function": "is_in_range",
+            "arguments": {
+                "column": "col_3",
+                "min_limit": Decimal("0.01"),
+                "max_limit": Decimal("999.99"),
+            },
+        },
+    },
+]
 
 
 def test_remove_orphaned_lakebase_instances(ws):
@@ -327,10 +368,8 @@ def test_save_checks_for_each_column_idempotency(ws, spark, make_lakebase_instan
 
 def _create_legacy_lakebase_table(ws, spark, config: LakebaseChecksStorageConfig, rows: list[dict]) -> None:
     """Create a Lakebase table with the legacy schema (no versioning columns) and insert rows."""
-    import json as _json
-
     handler = LakebaseChecksStorageHandler(ws, spark)
-    engine = handler._get_engine(config)
+    engine = handler.get_engine(config)
     tbl = f'"{config.schema_name}"."{config.table_name}"'
     with engine.begin() as conn:
         if not conn.dialect.has_schema(conn, config.schema_name):
@@ -350,7 +389,7 @@ def _create_legacy_lakebase_table(ws, spark, config: LakebaseChecksStorageConfig
             )
         )
         for row in rows:
-            check_json = _json.dumps(row.get("check", {}))
+            check_json = json.dumps(row.get("check", {}))
             conn.execute(
                 text(
                     f'INSERT INTO {tbl} (name, criticality, "check", filter, run_config_name) '

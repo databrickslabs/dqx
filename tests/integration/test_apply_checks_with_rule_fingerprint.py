@@ -7,7 +7,8 @@ from tests.integration.conftest import (
     RUN_TIME,
     EXTRA_PARAMS,
     RUN_ID,
-    generate_checks_with_rule_and_set_fingerprint,
+    generate_checks_with_rule_and_set_fingerprint_from_rules,
+    generate_checks_with_rule_and_set_fingerprint_from_dicts,
     get_rule_fingerprint_from_checks,
     get_rule_set_fingerprint_from_checks,
 )
@@ -46,7 +47,7 @@ def test_apply_checks_with_fingerprints(ws, spark):
 
     checked = dq_engine.apply_checks(test_df, checks)
 
-    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint(checks)
+    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint_from_rules(checks)
     expected = spark.createDataFrame(
         [
             [1, 3, 3, None, None],
@@ -203,7 +204,7 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
     expected_good = spark.createDataFrame([[1, 3, 3]], SCHEMA)
     assert_df_equality(good, expected_good)
 
-    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint(checks)
+    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint_from_dicts(checks)
     expected_bad = spark.createDataFrame(
         [
             [

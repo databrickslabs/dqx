@@ -54,78 +54,9 @@ INPUT_CHECKS = [
     },
 ]
 
-# When loading from a table, for_each_column is preserved (compact format, no expansion on save).
-EXPECTED_CHECKS_FROM_TABLE_LOAD = [
-    {
-        "name": None,
-        "criticality": "error",
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
-        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
-    },
-    {
-        "name": "column_not_less_than",
-        "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1.01}},
-        "filter": "Col_3 >1",
-        "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
-    },
-    {
-        "name": "column_in_list",
-        "criticality": "warn",
-        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
-    },
-    {
-        "name": "col_3_is_in_range",
-        "criticality": "warn",
-        "check": {
-            "function": "is_in_range",
-            "arguments": {
-                "column": "col_3",
-                "min_limit": Decimal("0.01"),
-                "max_limit": Decimal("999.99"),
-            },
-        },
-    },
-]
 
-EXPECTED_CHECKS = [
-    {
-        "name": "col1_is_null",
-        "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
-        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
-    },
-    {
-        "name": "col2_is_null",
-        "criticality": "error",
-        "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
-        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
-    },
-    {
-        "name": "column_not_less_than",
-        "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1.01}},
-        "filter": "Col_3 >1",
-        "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
-    },
-    {
-        "name": "column_in_list",
-        "criticality": "warn",
-        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
-    },
-    {
-        "name": "col_3_is_in_range",
-        "criticality": "warn",
-        "check": {
-            "function": "is_in_range",
-            "arguments": {
-                "column": "col_3",
-                "min_limit": Decimal("0.01"),
-                "max_limit": Decimal("999.99"),
-            },
-        },
-    },
-]
+# When loading from a table, missing name becomes None; all other fields are preserved.
+EXPECTED_CHECKS_FROM_TABLE_LOAD = [{**check, "name": check.get("name")} for check in INPUT_CHECKS]
 
 
 def test_load_checks_when_checks_table_does_not_exist(ws, make_schema, make_random, spark):
@@ -690,8 +621,8 @@ def test_save_checks_for_each_column_produces_deterministic_rule_set_fingerprint
     engine.save_checks(compact, config=TableChecksStorageConfig(location=table_name))
     engine.save_checks(compact, config=TableChecksStorageConfig(location=table_name))  # idempotency: same fingerprint
 
-    fp = spark.read.table(table_name).select("rule_set_fingerprint").first()["rule_set_fingerprint"]
-    assert fp is not None
+    rule_set_fingerprint = spark.read.table(table_name).select("rule_set_fingerprint").first()["rule_set_fingerprint"]
+    assert rule_set_fingerprint is not None
     assert spark.read.table(table_name).count() == 1  # one compact row, second save skipped
 
 

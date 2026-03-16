@@ -29,7 +29,7 @@ from tests.integration.conftest import (
     RUN_ID,
     build_quality_violation,
     assert_df_equality_ignore_fingerprints as assert_df_equality,
-    generate_checks_with_rule_and_set_fingerprint,
+    generate_checks_with_rule_and_set_fingerprint_from_rules,
     get_rule_fingerprint_from_checks,
     get_rule_set_fingerprint_from_checks,
 )
@@ -7181,7 +7181,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
 
     checked = dq_engine.apply_checks(test_df, checks)
 
-    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint(checks)
+    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint_from_rules(checks)
     expected_errors = spark.createDataFrame(
         [
             [
