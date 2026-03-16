@@ -20,6 +20,10 @@ For the save methods to work, checks must be defined declaratively as metadata (
 If you create checks as a list of `DQRule` objects, you can convert them to metadata format and back using the methods described [here](/docs/reference/quality_checks/#converting-checks-between-formats).
 </Admonition>
 
+<Admonition type="info" title="Table storage: for_each_column expansion">
+You can use `for_each_column` in your checks. When saving with `DQEngine.save_checks` to **Delta tables** or **Lakebase tables**, DQX expands each `for_each_column` check into individual rules — one row per column — before writing. When loading, you receive the expanded format (one check per column). Manually created tables can use either the compact format (one row with `for_each_column`) or the expanded format.
+</Admonition>
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -82,6 +86,8 @@ If you create checks as a list of `DQRule` objects, you can convert them to meta
 Quality rules can be stored in a Delta table as showcased above using `DQEngine`.
 You can also store them directly in a Delta table using Spark DataFrame API.
 
+When using `DQEngine.save_checks`, you can pass checks with `for_each_column`; DQX expands them into individual rules (one row per column) before writing to the table. When creating a DataFrame manually (without DQX), provide rows in the expanded format — one row per column.
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -98,32 +104,21 @@ You can also store them directly in a Delta table using Spark DataFrame API.
       "user_metadata MAP<STRING, STRING>"
     )
 
-    # define checks as a list of dictionaries
-    checks: list[dict] = [
-      {
-        "criticality": "error",
-        "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
-        "filter": "col1 > 0",
-        "user_metadata": {"check_owner": "someone@email.com"},
-      },
-      {
-        "name": "column_not_less_than",
-        "criticality": "warn",
-        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1}},
-      },
-      {
-        "criticality": "warn",
-        "name": "column_in_list",
-        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
-      },
-    ]
-
-    # checks can also be defined by specifying columns explicitly
+    # Option 1: use DQEngine.save_checks — you can pass for_each_column, it gets expanded
+    # Option 2: manual DataFrame — use expanded format (one row per column)
     checks = [
       [
         None,
         "error",
-        {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
+        {"function": "is_not_null", "arguments": {"column": "col1"}},
+        "col1 > 0",
+        "default",
+        {"check_owner": "someone@email.com"},
+      ],
+      [
+        None,
+        "error",
+        {"function": "is_not_null", "arguments": {"column": "col2"}},
         "col1 > 0",
         "default",
         {"check_owner": "someone@email.com"},
@@ -139,7 +134,7 @@ You can also store them directly in a Delta table using Spark DataFrame API.
       [
         "column_in_list",
         "warn",
-        {"function": "is_in_list", "for_each_column": None, "arguments": {"column": "col_2", "allowed": [1, 2]}},
+        {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
         None,
         "default",
         None,
@@ -237,7 +232,7 @@ The following backend configuration are currently supported:
 * `TableChecksStorageConfig`: Unity Catalog tables. Containing fields:
     * `location`: table fully qualified name.
     * `run_config_name`: (optional) run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
-    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). **overwrite**: replaces all rows for this run_config_name when the fingerprint differs; skips when fingerprint exists. **append**: adds new rows when fingerprint differs (multiple versions accumulate); skips when fingerprint exists.
     * `rule_set_fingerprint`: (optional) Optional SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.            
 * `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
     * `location`: Unity Catalog Volume file path (JSON or YAML).
@@ -247,7 +242,7 @@ The following backend configuration are currently supported:
     * `location`: fully-qualified table name in the format "database.schema.table".
     * `port`: (optional) port on which to connect to the Lakebase instance (use 5432 if not provided).
     * `run_config_name`: (optional) run configuration name to load (use "default" if not provided).
-    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). **overwrite**: replaces all rows for this run_config_name when the fingerprint differs; skips when fingerprint exists. **append**: adds new rows when fingerprint differs (multiple versions accumulate); skips when fingerprint exists.
     * `rule_set_fingerprint`: (optional) Optional SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.
 * `InstallationChecksStorageConfig`: installation-managed location from the run config, ignores location and infers it from `checks_location` in the run config. Containing fields:
     * `location` (optional): automatically set based on the `checks_location` field from the run configuration.

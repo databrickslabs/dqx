@@ -337,9 +337,11 @@ class TableChecksStorageConfig(BaseChecksStorageConfig):
     Args:
         location: The table name where the checks are stored.
         run_config_name: The name of the run configuration to use for checks, e.g. input table or job name (use "default" if not provided).
-        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite').
-            The *overwrite* mode will only replace checks for the specific run config and not all checks in the table.
-            The default mode is append.
+        mode: The mode for writing checks to a table ('append' or 'overwrite', default 'append').
+            - **overwrite**: Replaces all rows for this run_config_name when the fingerprint differs.
+              Skips write when the fingerprint already exists.
+            - **append**: Adds new rows when the fingerprint differs; multiple versions can coexist.
+              Skips write when the fingerprint already exists.
         rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set to load.
             When provided, loads rules matching this specific fingerprint instead of the latest batch.
             When None (default), loads the latest batch.
@@ -366,8 +368,11 @@ class LakebaseChecksStorageConfig(BaseChecksStorageConfig):
         client_id: ID of the Databricks service principal to use for the Lakebase connection.
         port: The Lakebase port (default is '5432').
         run_config_name: Name of the run configuration to use for checks (default is 'default').
-        mode: The mode for writing checks to a table (e.g., 'append' or 'overwrite'). The *overwrite* mode
-              only replaces checks for the specific run config and not all checks in the table (default is 'append').
+        mode: The mode for writing checks to a table ('append' or 'overwrite', default 'append').
+            - **overwrite**: Replaces all rows for this run_config_name when the fingerprint differs.
+              Skips write when the fingerprint already exists.
+            - **append**: Adds new rows when the fingerprint differs; multiple versions can coexist.
+              Skips write when the fingerprint already exists.
         rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set to load.
             When provided, loads rules matching this specific fingerprint instead of the latest batch.
             When None (default), loads the latest batch.

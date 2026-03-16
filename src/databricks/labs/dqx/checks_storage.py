@@ -151,6 +151,12 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
             run_config_name, the save is skipped and the method returns without writing. This applies regardless
             of config.mode (including "overwrite"). So a call with mode="overwrite" and a checks payload
             that hashes to an existing fingerprint will not overwrite (e.g. if only non-fingerprinted metadata changed).
+
+            Mode behavior:
+            - **overwrite**: If the fingerprint differs, replaces all rows for this run_config_name with the new
+              checks (via Delta replaceWhere). If the fingerprint matches, no write is performed.
+            - **append**: If the fingerprint differs, appends the new checks as additional rows for this
+              run_config_name (multiple versions accumulate). If the fingerprint matches, no write is performed.
         """
 
         if not checks:
@@ -173,13 +179,10 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         if self._table_exists(config.location):
             existing_df = self.spark.read.table(config.location)
             self._ensure_versioning_columns(config.location, existing_df)
-            exists = (
-                not existing_df.filter(
-                    (F.col("run_config_name") == config.run_config_name)
-                    & (F.col("rule_set_fingerprint") == rule_set_fingerprint)
-                )
-                .isEmpty()
-            )
+            exists = not existing_df.filter(
+                (F.col("run_config_name") == config.run_config_name)
+                & (F.col("rule_set_fingerprint") == rule_set_fingerprint)
+            ).isEmpty()
             if exists:
                 logger.info(
                     f"Checks with rule_set_fingerprint '{rule_set_fingerprint}' already exist in table '{config.location}'"
@@ -403,6 +406,12 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             run_config_name, the save is skipped and the method returns without writing or deleting. This applies
             regardless of config.mode (including "overwrite"). The fingerprint check is performed before any
             overwrite delete, so an existing matching fingerprint always results in a no-op.
+
+            Mode behavior:
+            - **overwrite**: If the fingerprint differs, deletes all rows for this run_config_name and inserts
+              the new checks. If the fingerprint matches, no write is performed.
+            - **append**: If the fingerprint differs, inserts the new checks (existing rows remain; multiple
+              versions accumulate). If the fingerprint matches, no write is performed.
         """
         if not checks:
             logger.info("No checks available. Skipping saving to a lakebase instance.")
@@ -505,20 +514,30 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
             )
         else:
             logger.info("No rule_set_fingerprint provided, loading the most recent version.")
-            latest_rule_set_fingerprint = (
+            # Exclude legacy rows (NULL versioning cols) when picking latest; use NULLS LAST so
+            # legacy rows don't sort first (PostgreSQL sorts NULL first in DESC by default).
+            latest_subq = (
                 select(table.c.rule_set_fingerprint)
-                .where(table.c.run_config_name == config.run_config_name)
+                .where(
+                    table.c.run_config_name == config.run_config_name,
+                    table.c.rule_set_fingerprint.isnot(None),
+                )
                 .order_by(
-                    table.c.created_at.desc(),
-                    table.c.rule_set_fingerprint.desc(),
+                    table.c.created_at.desc().nulls_last(),
+                    table.c.rule_set_fingerprint.desc().nulls_last(),
                 )
                 .limit(1)
-                .scalar_subquery()
             )
-            stmt = select(table).where(
-                table.c.rule_set_fingerprint == latest_rule_set_fingerprint,
-                table.c.run_config_name == config.run_config_name,
-            )
+            with engine.connect() as conn:
+                latest_rule_set_fingerprint = conn.execute(latest_subq).scalar_one_or_none()
+            if latest_rule_set_fingerprint is not None:
+                stmt = select(table).where(
+                    table.c.rule_set_fingerprint == latest_rule_set_fingerprint,
+                    table.c.run_config_name == config.run_config_name,
+                )
+            else:
+                # Legacy-only table (all rows have NULL fingerprint); load all rows for run_config.
+                stmt = select(table).where(table.c.run_config_name == config.run_config_name)
 
         with engine.connect() as conn:
             result = conn.execute(stmt)

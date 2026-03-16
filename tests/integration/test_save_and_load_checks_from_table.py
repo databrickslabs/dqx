@@ -1,4 +1,5 @@
 import json
+import time
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -49,6 +50,46 @@ INPUT_CHECKS = [
         "check": {
             "function": "is_in_range",
             "arguments": {"column": "col_3", "min_limit": Decimal("0.01"), "max_limit": Decimal("999.99")},
+        },
+    },
+]
+
+# When loading from a table, for_each_column-expanded rules without explicit name come back with name=None.
+EXPECTED_CHECKS_FROM_TABLE_LOAD = [
+    {
+        "name": None,
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
+    },
+    {
+        "name": None,
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
+        "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
+    },
+    {
+        "name": "column_not_less_than",
+        "criticality": "warn",
+        "check": {"function": "is_not_less_than", "arguments": {"column": "col_2", "limit": 1.01}},
+        "filter": "Col_3 >1",
+        "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
+    },
+    {
+        "name": "column_in_list",
+        "criticality": "warn",
+        "check": {"function": "is_in_list", "arguments": {"column": "col_2", "allowed": [1, 2]}},
+    },
+    {
+        "name": "col_3_is_in_range",
+        "criticality": "warn",
+        "check": {
+            "function": "is_in_range",
+            "arguments": {
+                "column": "col_3",
+                "min_limit": Decimal("0.01"),
+                "max_limit": Decimal("999.99"),
+            },
         },
     },
 ]
@@ -113,7 +154,7 @@ def test_load_checks_with_special_characters_in_table_name(ws, make_schema, make
     config = TableChecksStorageConfig(location=table_name, run_config_name="default")
     engine.save_checks(INPUT_CHECKS, config=config)
     checks = engine.load_checks(config=config)
-    assert checks == EXPECTED_CHECKS, "Checks were not loaded correctly."
+    assert checks == EXPECTED_CHECKS_FROM_TABLE_LOAD, "Checks were not loaded correctly."
 
 
 def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
@@ -125,7 +166,7 @@ def test_save_and_load_checks_from_table(ws, make_schema, make_random, spark):
     config = TableChecksStorageConfig(location=table_name, run_config_name="default")
     engine.save_checks(checks=INPUT_CHECKS, config=config)
     checks = engine.load_checks(config=config)
-    assert checks == EXPECTED_CHECKS, "Checks were not loaded correctly."
+    assert checks == EXPECTED_CHECKS_FROM_TABLE_LOAD, "Checks were not loaded correctly."
 
 
 def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
@@ -142,26 +183,24 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 
     expected_raw_checks = [
         {
-            "name": "col1_is_null",
+            "name": None,
             "criticality": "error",
             "check": {
                 "function": "is_not_null",
-                "arguments": {
-                    "column": "\"col1\"",
-                },
+                "for_each_column": [],
+                "arguments": {"column": "\"col1\""},
             },
             "filter": None,
             "run_config_name": "default",
             "user_metadata": {"check_type": "completeness", "check_owner": "someone@email.com"},
         },
         {
-            "name": "col2_is_null",
+            "name": None,
             "criticality": "error",
             "check": {
                 "function": "is_not_null",
-                "arguments": {
-                    "column": "\"col2\"",
-                },
+                "for_each_column": [],
+                "arguments": {"column": "\"col2\""},
             },
             "filter": None,
             "run_config_name": "default",
@@ -170,7 +209,11 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
         {
             "name": "column_not_less_than",
             "criticality": "warn",
-            "check": {"function": "is_not_less_than", "arguments": {"limit": "1.01", "column": "\"col_2\""}},
+            "check": {
+                "function": "is_not_less_than",
+                "for_each_column": [],
+                "arguments": {"limit": "1.01", "column": "\"col_2\""},
+            },
             "filter": "Col_3 >1",
             "run_config_name": "default",
             "user_metadata": {"check_type": "standardization", "check_owner": "someone_else@email.com"},
@@ -178,7 +221,11 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
         {
             "name": "column_in_list",
             "criticality": "warn",
-            "check": {"function": "is_in_list", "arguments": {"column": '"col_2"', "allowed": '[1, 2]'}},
+            "check": {
+                "function": "is_in_list",
+                "for_each_column": [],
+                "arguments": {"column": '"col_2"', "allowed": '[1, 2]'},
+            },
             "filter": None,
             "run_config_name": "default",
             "user_metadata": None,
@@ -188,6 +235,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
             "criticality": "warn",
             "check": {
                 "function": "is_in_range",
+                "for_each_column": [],
                 "arguments": {
                     "column": '"col_3"',
                     "min_limit": '{"__decimal__": "0.01"}',
@@ -206,6 +254,7 @@ def test_save_checks_to_table_with_unresolved_for_each_column(ws, make_schema, m
 
 
 def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
+    """Load from table created with dict rows. Supports compact for_each_column format."""
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
@@ -268,7 +317,7 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
 
     expected_checks = [
         {
-            'name': 'col1_is_null',
+            "name": "col1_is_null",
             "criticality": "error",
             "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
         },
@@ -312,15 +361,18 @@ def test_load_checks_from_table_saved_from_dict_with_unresolved_for_each_column(
 
 
 def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema, make_random, spark):
+    """Load from table created with row format. Supports compact for_each_column format."""
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
 
+    # Row format: [name, criticality, check, filter, run_config_name, user_metadata]
+    # check struct: {function, for_each_column, arguments} — compact format supported
     input_checks = [
         [
             "col1_is_null",
             "error",
-            {"for_each_column": ["col1", "col2"], "function": "is_not_null"},
+            {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
             None,
             "default",
             None,
@@ -378,7 +430,7 @@ def test_load_checks_from_table_with_unresolved_for_each_column(ws, make_schema,
 
     expected_checks = [
         {
-            'name': 'col1_is_null',
+            "name": "col1_is_null",
             "criticality": "error",
             "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
         },
@@ -432,7 +484,9 @@ def test_save_and_load_checks_from_table_with_run_config(ws, make_schema, make_r
     engine.save_checks(INPUT_CHECKS[:1], config=config_save)
     config_load = TableChecksStorageConfig(location=table_name, run_config_name=run_config_name)
     checks = engine.load_checks(config=config_load)
-    assert checks == EXPECTED_CHECKS[:2], f"Checks were not loaded correctly for {run_config_name} run config."
+    assert (
+        checks == EXPECTED_CHECKS_FROM_TABLE_LOAD[:2]
+    ), f"Checks were not loaded correctly for {run_config_name} run config."
 
     # verify overwrite works for specific run config only
     run_config_name2 = "workflow_002"
@@ -440,7 +494,9 @@ def test_save_and_load_checks_from_table_with_run_config(ws, make_schema, make_r
     engine.save_checks(INPUT_CHECKS[1:], config=config_save2)
     config_load2 = TableChecksStorageConfig(location=table_name, run_config_name=run_config_name)
     checks = engine.load_checks(config=config_load2)
-    assert checks == EXPECTED_CHECKS[:2], f"Checks were not loaded correctly for {run_config_name} run config."
+    assert (
+        checks == EXPECTED_CHECKS_FROM_TABLE_LOAD[:2]
+    ), f"Checks were not loaded correctly for {run_config_name} run config."
 
     # use default run_config_name
     engine.save_checks(INPUT_CHECKS[1:], config=TableChecksStorageConfig(location=table_name))
@@ -449,6 +505,7 @@ def test_save_and_load_checks_from_table_with_run_config(ws, make_schema, make_r
 
 
 def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random, spark):
+    """Append adds rows; overwrite replaces all rows for run_config when fingerprint differs."""
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
@@ -456,11 +513,28 @@ def test_save_and_load_checks_to_table_output_modes(ws, make_schema, make_random
     engine = DQEngine(ws, spark)
     engine.save_checks(INPUT_CHECKS[:1], config=TableChecksStorageConfig(location=table_name, mode="append"))
     checks = engine.load_checks(config=TableChecksStorageConfig(location=table_name))
-    assert checks == EXPECTED_CHECKS[:2], "Checks were not loaded correctly after appending."
+    assert checks == EXPECTED_CHECKS_FROM_TABLE_LOAD[:2], "Checks were not loaded correctly after appending."
 
     engine.save_checks(INPUT_CHECKS[1:], config=TableChecksStorageConfig(location=table_name, mode="overwrite"))
     checks = engine.load_checks(config=TableChecksStorageConfig(location=table_name))
     assert checks == EXPECTED_CHECKS[2:], "Checks were not loaded correctly after overwriting."
+
+
+def test_save_append_accumulates_multiple_versions(ws, make_schema, make_random, spark):
+    """Append twice with different fingerprints; load returns latest version."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, mode="append")
+
+    engine.save_checks(INPUT_CHECKS[:1], config=config)
+    time.sleep(1)  # ensures second append has later created_at
+    engine.save_checks(INPUT_CHECKS[1:], config=config)
+
+    checks = engine.load_checks(config=TableChecksStorageConfig(location=table_name))
+    assert checks == EXPECTED_CHECKS[2:], "Load must return latest version after append accumulates"
 
 
 def test_save_checks_raises_unsafe_sql_query_error_when_run_config_name_contains_forbidden_sql(
@@ -500,7 +574,7 @@ def test_save_load_checks_from_table_in_user_installation(ws, installation_ctx, 
     dq_engine.save_checks(INPUT_CHECKS, config=config)
 
     checks = dq_engine.load_checks(config=config)
-    assert EXPECTED_CHECKS == checks, "Checks were not saved correctly"
+    assert EXPECTED_CHECKS_FROM_TABLE_LOAD == checks, "Checks were not saved correctly"
 
 
 @dataclass
@@ -539,7 +613,9 @@ def test_load_checks_from_table_with_new_schema(ws, make_schema, make_random, sp
     config = TableChecksStorageConfig(location=table_name)
     loaded_checks = engine.load_checks(config=config)
 
-    assert loaded_checks == EXPECTED_CHECKS, "Checks were not loaded correctly from table with new schema."
+    assert (
+        loaded_checks == EXPECTED_CHECKS_FROM_TABLE_LOAD
+    ), "Checks were not loaded correctly from table with new schema."
 
 
 def test_load_checks_from_table_with_new_schema_and_rule_set_fingerprint(ws, make_schema, make_random, spark):
@@ -561,7 +637,7 @@ def test_load_checks_from_table_with_new_schema_and_rule_set_fingerprint(ws, mak
     loaded_checks = engine.load_checks(config=config)
 
     assert (
-        loaded_checks == EXPECTED_CHECKS[:2]
+        loaded_checks == EXPECTED_CHECKS_FROM_TABLE_LOAD[:2]
     ), "Checks were not loaded correctly when filtering by rule_set_fingerprint."
 
 
@@ -598,7 +674,7 @@ def test_save_and_load_checks_from_delta_table_with_rule_set_fingerprint(ws, mak
     checks = engine.load_checks(config=config_load)
 
     assert (
-        checks == EXPECTED_CHECKS[0:2]
+        checks == EXPECTED_CHECKS_FROM_TABLE_LOAD[0:2]
     ), f"Checks were not loaded correctly for {config_load.run_config_name} run config."
 
 
@@ -633,13 +709,61 @@ def test_save_checks_for_each_column_and_expanded_have_same_rule_set_fingerprint
     engine.save_checks(unexpanded, config=TableChecksStorageConfig(location=table_unexpanded))
     engine.save_checks(expanded, config=TableChecksStorageConfig(location=table_expanded))
 
-    fp_unexpanded = (
-        spark.read.table(table_unexpanded).select("rule_set_fingerprint").first()["rule_set_fingerprint"]
-    )
-    fp_expanded = (
-        spark.read.table(table_expanded).select("rule_set_fingerprint").first()["rule_set_fingerprint"]
-    )
+    fp_unexpanded = spark.read.table(table_unexpanded).select("rule_set_fingerprint").first()["rule_set_fingerprint"]
+    fp_expanded = spark.read.table(table_expanded).select("rule_set_fingerprint").first()["rule_set_fingerprint"]
 
-    assert fp_unexpanded == fp_expanded, (
-        "rule_set_fingerprint must be identical whether checks are saved as for_each_column or pre-expanded"
+    assert (
+        fp_unexpanded == fp_expanded
+    ), "rule_set_fingerprint must be identical whether checks are saved as for_each_column or pre-expanded"
+
+
+def test_save_to_legacy_delta_table_adds_versioning_columns(ws, make_schema, make_random, spark):
+    """Saving to an existing legacy table (no versioning columns) triggers ALTER TABLE and succeeds."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    # Create table with legacy schema (no versioning columns)
+    legacy_df = spark.createDataFrame(
+        [
+            [
+                "a_is_null",
+                "error",
+                {"function": "is_not_null", "for_each_column": [], "arguments": {}},
+                None,
+                "default",
+                None,
+            ]
+        ],
+        TEST_CHECKS_TABLE_SCHEMA,
     )
+    legacy_df.write.saveAsTable(table_name)
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, mode="append")
+    engine.save_checks(INPUT_CHECKS[:1], config=config)
+
+    # Verify versioning columns were added and data was written
+    saved_df = spark.read.table(table_name)
+    assert "rule_fingerprint" in saved_df.columns
+    assert "rule_set_fingerprint" in saved_df.columns
+    assert "created_at" in saved_df.columns
+    # New rows (from save_checks) have fingerprints; legacy row has null fingerprints
+    new_rows = saved_df.filter("rule_set_fingerprint IS NOT NULL")
+    assert new_rows.count() == 2  # INPUT_CHECKS[:1] expands to 2 rows
+
+
+def test_save_idempotency_overwrite_mode(ws, make_schema, make_random, spark):
+    """Same fingerprint: mode=overwrite is skipped (idempotency); no duplicate write."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_name = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    engine = DQEngine(ws, spark)
+    config = TableChecksStorageConfig(location=table_name, mode="overwrite")
+    engine.save_checks(INPUT_CHECKS[1:], config=config)
+    # Second save with same checks and overwrite mode — idempotency guard must skip it
+    engine.save_checks(INPUT_CHECKS[1:], config=config)
+
+    checks = engine.load_checks(config=TableChecksStorageConfig(location=table_name))
+    assert checks == EXPECTED_CHECKS[2:], "Idempotency guard must prevent duplicate overwrite"

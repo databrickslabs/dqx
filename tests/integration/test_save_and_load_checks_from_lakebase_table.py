@@ -1,9 +1,14 @@
+import dataclasses
 import os
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.schema import CreateSchema
 from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
+from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk.errors import NotFound
@@ -125,6 +130,7 @@ def test_save_and_load_checks_from_lakebase_table_with_run_config(
 def test_save_and_load_checks_from_lakebase_table_with_output_modes(
     ws, spark, make_lakebase_instance, lakebase_client_id, make_random
 ):
+    """Save to different run_configs with append and overwrite modes."""
     dq_engine = DQEngine(ws, spark)
 
     instance = make_lakebase_instance()
@@ -314,9 +320,7 @@ def test_save_checks_for_each_column_and_expanded_have_same_rule_set_fingerprint
     instance = make_lakebase_instance()
     location = _create_lakebase_location(instance.database_name, make_random)
 
-    config = LakebaseChecksStorageConfig(
-        location=location, client_id=lakebase_client_id, instance_name=instance.name
-    )
+    config = LakebaseChecksStorageConfig(location=location, client_id=lakebase_client_id, instance_name=instance.name)
 
     unexpanded = [{"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"]}}]
     expanded = [
@@ -329,6 +333,181 @@ def test_save_checks_for_each_column_and_expanded_have_same_rule_set_fingerprint
     dq_engine.save_checks(checks=expanded, config=config)
 
     checks = dq_engine.load_checks(config=config)
-    assert len(checks) == 2, (
-        f"Expected 2 checks (idempotency guard should have skipped the second save), got {len(checks)}"
+    assert (
+        len(checks) == 2
+    ), f"Expected 2 checks (idempotency guard should have skipped the second save), got {len(checks)}"
+
+
+def _create_legacy_lakebase_table(ws, spark, config: LakebaseChecksStorageConfig, rows: list[dict]) -> None:
+    """Create a Lakebase table with the legacy schema (no versioning columns) and insert rows."""
+    import json as _json
+
+    handler = LakebaseChecksStorageHandler(ws, spark)
+    engine = handler._get_engine(config)
+    tbl = f'"{config.schema_name}"."{config.table_name}"'
+    with engine.begin() as conn:
+        if not conn.dialect.has_schema(conn, config.schema_name):
+            conn.execute(CreateSchema(config.schema_name))
+        conn.execute(
+            text(
+                f"""
+            CREATE TABLE IF NOT EXISTS {tbl} (
+                name VARCHAR(255),
+                criticality VARCHAR(50) DEFAULT 'error',
+                "check" JSONB,
+                filter TEXT,
+                run_config_name VARCHAR(255) DEFAULT 'default',
+                user_metadata JSONB
+            )
+        """
+            )
+        )
+        for row in rows:
+            check_json = _json.dumps(row.get("check", {}))
+            conn.execute(
+                text(
+                    f'INSERT INTO {tbl} (name, criticality, "check", filter, run_config_name) '
+                    "VALUES (:n, :c, CAST(:check_json AS jsonb), :f, :r)"
+                ),
+                {
+                    "n": row.get("name"),
+                    "c": row.get("criticality", "error"),
+                    "check_json": check_json,
+                    "f": row.get("filter"),
+                    "r": row.get("run_config_name", "default"),
+                },
+            )
+
+
+def test_save_to_legacy_lakebase_table_adds_versioning_columns(
+    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
+):
+    """Saving to an existing Lakebase table without versioning columns triggers ALTER TABLE and succeeds."""
+    dq_engine = DQEngine(ws, spark)
+    instance = make_lakebase_instance()
+    location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(location=location, client_id=lakebase_client_id, instance_name=instance.name)
+
+    _create_legacy_lakebase_table(
+        ws, spark, config, [{"name": "legacy_check", "criticality": "error", "check": {"function": "is_not_null"}}]
     )
+
+    dq_engine.save_checks(checks=TEST_CHECKS[:1], config=config)
+    checks = dq_engine.load_checks(config=config)
+
+    compare_checks(checks, TEST_CHECKS[:1])
+
+
+def test_load_from_legacy_lakebase_table_adds_versioning_columns(
+    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
+):
+    """Loading from a Lakebase table without versioning columns triggers ALTER TABLE and returns all rows for run_config."""
+    dq_engine = DQEngine(ws, spark)
+    instance = make_lakebase_instance()
+    location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(location=location, client_id=lakebase_client_id, instance_name=instance.name)
+
+    _create_legacy_lakebase_table(
+        ws,
+        spark,
+        config,
+        [
+            {
+                "name": "col1_is_null",
+                "criticality": "error",
+                "check": {"function": "is_not_null", "arguments": {"column": "col1"}},
+                "run_config_name": "default",
+            },
+            {
+                "name": "col2_is_null",
+                "criticality": "error",
+                "check": {"function": "is_not_null", "arguments": {"column": "col2"}},
+                "run_config_name": "default",
+            },
+            {
+                "name": "other_config_check",
+                "criticality": "error",
+                "check": {"function": "is_not_null", "arguments": {"column": "col3"}},
+                "run_config_name": "other",
+            },
+        ],
+    )
+
+    checks = dq_engine.load_checks(config=config)
+
+    # Only "default" run_config rows returned; versioning columns added (nullable, so load still works)
+    assert len(checks) == 2
+    assert all(c.get("check", {}).get("function") == "is_not_null" for c in checks)
+
+
+def test_save_overwrite_replaces_existing_records_with_different_fingerprint(
+    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
+):
+    """Overwrite replaces all rows for run_config when fingerprint differs."""
+    dq_engine = DQEngine(ws, spark)
+    instance = make_lakebase_instance()
+    location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(
+        location=location, client_id=lakebase_client_id, instance_name=instance.name, mode="overwrite"
+    )
+
+    dq_engine.save_checks(checks=TEST_CHECKS[:1], config=config)
+    dq_engine.save_checks(checks=TEST_CHECKS[1:], config=config)
+    checks = dq_engine.load_checks(config=config)
+
+    # Second save overwrote the first; only TEST_CHECKS[1:] should be present
+    compare_checks(checks, TEST_CHECKS[1:])
+
+
+def test_save_idempotency_overwrite_mode(ws, spark, make_lakebase_instance, lakebase_client_id, make_random):
+    """Same fingerprint: mode=overwrite is skipped (idempotency); no duplicate write."""
+    dq_engine = DQEngine(ws, spark)
+    instance = make_lakebase_instance()
+    location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(
+        location=location, client_id=lakebase_client_id, instance_name=instance.name, mode="overwrite"
+    )
+
+    dq_engine.save_checks(checks=TEST_CHECKS[:1], config=config)
+    # Second save with same checks and overwrite mode — idempotency guard must skip it
+    dq_engine.save_checks(checks=TEST_CHECKS[:1], config=config)
+
+    checks = dq_engine.load_checks(config=config)
+    compare_checks(checks, TEST_CHECKS[:1])
+
+
+def test_save_append_then_overwrite_same_run_config(ws, spark, make_lakebase_instance, lakebase_client_id, make_random):
+    """Append then overwrite for same run_config: overwrite replaces all rows for that run_config."""
+    dq_engine = DQEngine(ws, spark)
+    instance = make_lakebase_instance()
+    location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(location=location, client_id=lakebase_client_id, instance_name=instance.name)
+
+    dq_engine.save_checks(checks=TEST_CHECKS[:1], config=dataclasses.replace(config, mode="append"))
+    dq_engine.save_checks(checks=TEST_CHECKS[1:], config=dataclasses.replace(config, mode="overwrite"))
+
+    checks = dq_engine.load_checks(config=config)
+    compare_checks(checks, TEST_CHECKS[1:])
+
+
+def test_save_append_accumulates_multiple_versions(ws, spark, make_lakebase_instance, lakebase_client_id, make_random):
+    """Append twice with different fingerprints; load returns latest version."""
+    dq_engine = DQEngine(ws, spark)
+    instance = make_lakebase_instance()
+    location = _create_lakebase_location(instance.database_name, make_random)
+
+    config = LakebaseChecksStorageConfig(
+        location=location, client_id=lakebase_client_id, instance_name=instance.name, mode="append"
+    )
+
+    dq_engine.save_checks(checks=TEST_CHECKS[:1], config=config)
+    time.sleep(1)  # ensures second append has later created_at
+    dq_engine.save_checks(checks=TEST_CHECKS[1:], config=config)
+
+    checks = dq_engine.load_checks(config=config)
+    compare_checks(checks, TEST_CHECKS[1:])

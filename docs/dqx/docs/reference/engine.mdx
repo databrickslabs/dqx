@@ -108,7 +108,7 @@ Supported storage backend configurations (implementations of `BaseChecksStorageC
 * `TableChecksStorageConfig` can be used to save or load checks from a table, with fields:
     * `location`: table fully qualified name.
     * `run_config_name`: (optional) run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
-    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `overwrite`). The `overwrite` mode will only replace checks for the specific run config and not all checks in the table.
+    * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). **overwrite**: replaces all rows for this run_config_name when the fingerprint differs; skips when fingerprint exists. **append**: adds new rows when fingerprint differs (multiple versions accumulate); skips when fingerprint exists.
 * `VolumeFileChecksStorageConfig` can be used to save or load checks from a Unity Catalog Volume file, with fields:
     * `location`: Unity Catalog Volume file path (JSON or YAML).
 * `InstallationChecksStorageConfig` can be used to save or load checks from workspace installation, with fields:
