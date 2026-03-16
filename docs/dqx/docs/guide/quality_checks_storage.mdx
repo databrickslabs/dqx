@@ -47,6 +47,12 @@ You can use `for_each_column` in your checks. When saving with `DQEngine.save_ch
         function: is_not_null_and_not_empty
         arguments:
           column: col3
+    - criticality: error
+      check:
+        function: is_not_null
+        for_each_column:
+        - col1
+        - col2
      # ...
     """)
 
@@ -88,6 +94,8 @@ You can also store them directly in a Delta table using Spark DataFrame API.
 
 When using `DQEngine.save_checks`, you can pass checks with `for_each_column`; DQX stores them in compact format (one row per check). When creating a DataFrame manually (without DQX), you can use either compact format (one row with `for_each_column`) or expanded format (one row per column).
 
+The minimal schema for manual creation has no versioning columns. When you first use `DQEngine.save_checks`, DQX adds `created_at`, `rule_fingerprint`, and `rule_set_fingerprint` via `ALTER TABLE` if missing.
+
 <Tabs>
   <TabItem value="Python" label="Python" default>
     ```python
@@ -95,6 +103,7 @@ When using `DQEngine.save_checks`, you can pass checks with `for_each_column`; D
     from databricks.sdk import WorkspaceClient
     from databricks.labs.dqx.config import TableChecksStorageConfig
 
+    # Minimal schema (no versioning columns). DQX adds created_at, rule_fingerprint, rule_set_fingerprint when saving.
     schema = (
       "name STRING, "
       "criticality STRING, "
@@ -103,22 +112,12 @@ When using `DQEngine.save_checks`, you can pass checks with `for_each_column`; D
       "run_config_name STRING, "
       "user_metadata MAP<STRING, STRING>"
     )
-
-    # Option 1: use DQEngine.save_checks — you can pass for_each_column, stored in compact format
-    # Option 2: manual DataFrame — use compact (one row with for_each_column) or expanded format (one row per column)
+    
     checks = [
       [
         None,
         "error",
-        {"function": "is_not_null", "arguments": {"column": "col1"}},
-        "col1 > 0",
-        "default",
-        {"check_owner": "someone@email.com"},
-      ],
-      [
-        None,
-        "error",
-        {"function": "is_not_null", "arguments": {"column": "col2"}},
+        {"function": "is_not_null", "for_each_column": ["col1", "col2"], "arguments": {}},
         "col1 > 0",
         "default",
         {"check_owner": "someone@email.com"},
@@ -147,14 +146,37 @@ When using `DQEngine.save_checks`, you can pass checks with `for_each_column`; D
 
     # load checks as dict from the delta table
     dq_engine = DQEngine(WorkspaceClient())
-    checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="main.default.dqx_checks_table"))
+    loaded_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="main.default.dqx_checks_table"))
 
     # validate loaded checks
-    assert not dq_engine.validate_checks(checks).has_errors
+    assert not dq_engine.validate_checks(loaded_checks).has_errors
     ```
   </TabItem>
-</Tabs>
+  </Tabs>
 </details>
+
+## Calculating rule set fingerprint manually
+
+When loading from Delta or Lakebase tables, you can filter by `rule_set_fingerprint` to load a specific version of the rule set. You can also use it to verify that the current rule set matches the one used to apply the checks. 
+To compute this fingerprint manually, use `compute_rule_set_fingerprint` function:
+
+```python
+from databricks.labs.dqx.rule import compute_rule_set_fingerprint
+from databricks.labs.dqx.config import TableChecksStorageConfig
+
+checks: list[dict] = [
+    {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
+    {"criticality": "warn", "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["col1", "col2"], "arguments": {}}},
+]
+fingerprint = compute_rule_set_fingerprint(checks)
+# e.g. "9664332437da274d921cefac60bd509e0aa383292ba695341e1f3fbc2a716e48"
+
+# Use when loading
+loaded_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", rule_set_fingerprint=fingerprint))
+assert load_checks
+```
+
+The fingerprint is a deterministic SHA-256 hash of the rule set. The order of checks does not matter. `for_each_column` is included in the fingerprint (sorted for determinism).
 
 ## Loading quality checks from a storage
 

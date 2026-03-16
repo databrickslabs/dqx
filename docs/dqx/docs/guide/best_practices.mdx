@@ -107,7 +107,7 @@ Bootstrap rule candidates:
 Continuously refine and tune rules:
 * Monitor data quality metrics (pass/fail rates, trends, and anomalies) to identify areas for improvement and reduce false positives while maintaining strong coverage.
 * Add or tune checks (e.g. update thresholds) immediately when production issues are detected, preventing recurring data failures.
-* Retire or relax obsolete rules as business logic or data evolves. Maintain versioning to track the history and evolution of rules.
+* Retire or relax obsolete rules as business logic or data evolves.
 
 See more in [Profiling Guide](/docs/guide/data_profiling/) and [AI-Assisted Rules Generation](/docs/guide/ai_assisted_quality_checks_generation).
 
@@ -175,36 +175,11 @@ Deploy checks across environments systematically:
 * Check rules into Git and deploy them as Delta tables.
 * Align deployment of DQX checks with your pipeline release process (e.g. using Databricks Assets Bundle).
 * Use environment-specific configs when promoting checks from dev → qa → prod.
-* Treat data quality rules as living assets: version them, review them regularly, and evolve them alongside the data products they protect.
+* Treat data quality rules as living assets: review regularly and evolve alongside the data products they protect.
 
-Version your rules to track changes over time and ensure reproducibility. Leverage `user_metadata` or `run_config_name` to tag rules with version information.
-To improve traceability, you can include the location of the checks definition in the `user_metadata` of each rule.
-
-```python
-# version individual rules
-checks = """
-- criticality: error
-  check:
-    function: is_not_null
-    arguments:
-      column: col1
-  user_metadata:
-    version: v1
-    location: catalog.schema.checks_table
-"""
-
-# version rules set
-dq_engine.save_checks(
-    checks,
-    config=TableChecksStorageConfig(
-      location="catalog.schema.checks_table",
-      run_config_name="main.default.input_table_v1",
-      mode="overwrite"
-  )
-)
-```
-
-See more in [Installation](/docs/installation/).
+When saving checks to Delta or Lakebase tables, DQX automatically performs rule versioning: it adds `rule_fingerprint`, `rule_set_fingerprint`, and `created_at` columns. This enables loading specific rule set versions and ensures reproducibility. See [Loading and Storing Quality Checks](/docs/guide/quality_checks_storage) for details.
+You can also leverage `user_metadata` or `run_config_name` to tag rules with version information if you prefer manual tracking.
+To improve traceability, you can also include the location of the checks definition in the `user_metadata` of each rule.
 
 ### Pin DQX Version
 
