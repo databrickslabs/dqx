@@ -83,27 +83,29 @@ def test_compute_rule_fingerprint_handles_missing_optional_fields():
     assert compute_rule_fingerprint(minimal) == compute_rule_fingerprint(with_default)
 
 
-def test_compute_rule_fingerprint_includes_filter_and_for_each_column():
-    """Filter and for_each_column are part of the fingerprint input."""
+def test_compute_rule_fingerprint_includes_filter():
+    """Filter is part of the fingerprint input; for_each_column is excluded (rules are always expanded first)."""
     base = {
         "name": "r",
         "criticality": "error",
         "check": {"function": "is_not_null", "arguments": {"column": "id"}},
     }
     with_filter = {**base, "filter": "id > 0"}
-    with_fec = {
-        **base,
-        "check": {
-            **base["check"],
-            "for_each_column": ["a", "b"],
-        },
+    assert compute_rule_fingerprint(base) != compute_rule_fingerprint(with_filter)
+
+
+def test_compute_rule_fingerprint_ignores_for_each_column():
+    """for_each_column is excluded from the fingerprint — callers must expand before fingerprinting."""
+    base = {
+        "name": "r",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
     }
-    fp_base = compute_rule_fingerprint(base)
-    fp_filter = compute_rule_fingerprint(with_filter)
-    fp_fec = compute_rule_fingerprint(with_fec)
-    assert fp_base != fp_filter
-    assert fp_base != fp_fec
-    assert fp_filter != fp_fec
+    with_for_each_column = {
+        **base,
+        "check": {**base["check"], "for_each_column": ["a", "b"]},
+    }
+    assert compute_rule_fingerprint(base) == compute_rule_fingerprint(with_for_each_column)
 
 
 def test_compute_rule_fingerprint_excludes_user_metadata():

@@ -614,3 +614,32 @@ def test_save_and_load_checks_from_delta_table_rule_set_fingerprint_already_exis
     engine.save_checks(INPUT_CHECKS[1:], config=config)
     checks = engine.load_checks(config=config)
     assert checks == EXPECTED_CHECKS[2:], f"Checks were not loaded correctly for {config.run_config_name} run config."
+
+
+def test_save_checks_for_each_column_and_expanded_have_same_rule_set_fingerprint(ws, make_schema, make_random, spark):
+    """A for_each_column check and its manually-expanded equivalents produce the same rule_set_fingerprint in the table."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    table_unexpanded = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+    table_expanded = f"{catalog_name}.{schema_name}.{make_random(10).lower()}"
+
+    unexpanded = [{"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"]}}]
+    expanded = [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "col1"}}},
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "col2"}}},
+    ]
+
+    engine = DQEngine(ws, spark)
+    engine.save_checks(unexpanded, config=TableChecksStorageConfig(location=table_unexpanded))
+    engine.save_checks(expanded, config=TableChecksStorageConfig(location=table_expanded))
+
+    fp_unexpanded = (
+        spark.read.table(table_unexpanded).select("rule_set_fingerprint").first()["rule_set_fingerprint"]
+    )
+    fp_expanded = (
+        spark.read.table(table_expanded).select("rule_set_fingerprint").first()["rule_set_fingerprint"]
+    )
+
+    assert fp_unexpanded == fp_expanded, (
+        "rule_set_fingerprint must be identical whether checks are saved as for_each_column or pre-expanded"
+    )

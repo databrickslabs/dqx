@@ -50,7 +50,6 @@ def compute_rule_fingerprint(check_dict: dict) -> str:
         "function": check_dict.get("check", {}).get("function"),
         "arguments": check_dict.get("check", {}).get("arguments"),
         "filter": check_dict.get("filter"),
-        "for_each_column": check_dict.get("check", {}).get("for_each_column"),
     }
     canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()
