@@ -88,22 +88,6 @@ def assert_df_equality_ignore_fingerprints(
     _chispa_assert_df_equality(df1_clean, df2_clean, **kwargs)
 
 
-def compute_fingerprints(checks: list[DQRule]) -> tuple[dict[str, str], str]:
-    """Compute fingerprints from a list of DQRule checks.
-
-    Args:
-        checks: List of DQRule instances.
-
-    Returns:
-        A tuple of (rule_fingerprints_by_name, rule_set_fingerprint) where
-        rule_fingerprints_by_name maps check name to its fingerprint.
-    """
-    check_dicts = [c.to_dict() for c in checks]
-    rule_set_fingerprint = compute_rule_set_fingerprint(check_dicts)
-    rule_fps = {c.name: compute_rule_fingerprint(c.to_dict()) for c in checks}
-    return rule_fps, rule_set_fingerprint
-
-
 def build_quality_violation(
     name: str,
     message: str,

@@ -45,6 +45,7 @@ def compute_rule_fingerprint(check_dict: dict) -> str:
     """
     check_inner = check_dict.get("check") or {}
     for_each_column = check_inner.get("for_each_column")
+    # Normalize to list: Spark ArrayType or other sources may return non-list iterables
     if for_each_column is not None and not isinstance(for_each_column, list):
         for_each_column = list(for_each_column)
     fingerprint_data = {
