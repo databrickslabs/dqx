@@ -7181,7 +7181,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
 
     checked = dq_engine.apply_checks(test_df, checks)
 
-    checks_with_fingerprints = generate_checks_with_rule_and_set_fingerprint(checks)
+    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint(checks)
     expected_errors = spark.createDataFrame(
         [
             [
