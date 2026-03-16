@@ -1,7 +1,7 @@
 import Layout from '@theme/Layout';
 import { JSX } from 'react';
 import Button from '../components/Button';
-import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart, Radar } from 'lucide-react';
+import { Info, FileText, Activity, AlertTriangle, CheckCircle, Grid, BarChart2, Code, PieChart, Radar, ScrollText } from 'lucide-react';
 
 const CallToAction = () => {
   return (
@@ -75,6 +75,11 @@ const Capabilities = () => {
       title: 'DQ Row Anomaly Detection',
       description: 'Automatically detect unusual rows with trained ML Models and explanations.',
       icon: Radar,
+    },
+    {
+      title: 'Data Contract',
+      description: 'Generate quality rules from ODCS data contracts, including schema validation.',
+      icon: ScrollText,
     },
   ];
 

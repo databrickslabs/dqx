@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/sidebar";
 import SidebarUserFooter from "@/components/apx/SidebarUserFooter";
 import { ModeToggle } from "@/components/apx/mode-toggle";
+import { AIAssistantTrigger } from "@/components/AIAssistantProvider";
 import Logo from "@/components/apx/Logo";
 
 interface SidebarLayoutProps {
@@ -37,6 +38,7 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
         <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-sm border-b flex h-16 shrink-0 items-center gap-2 px-4">
           <SidebarTrigger className="-ml-1 cursor-pointer" />
           <div className="flex-1" />
+          <AIAssistantTrigger />
           <ModeToggle />
         </header>
         <div className="flex flex-1 justify-center overflow-auto">

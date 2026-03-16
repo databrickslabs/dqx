@@ -5,10 +5,47 @@ sidebar_position: 308
 import Admonition from '@theme/Admonition';
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
+import Deck, { Slide } from '@site/src/components/Deck';
 
 # Row Anomaly Detection
 
 Use row anomaly detection to automatically find unusual rows in your data using ML (per‑record anomalies with explanations) without manually specifying thresholds so you can catch issues that rule-based checks miss. You provide recent good data; DQX trains a model and flags rows that don't fit typical patterns. No ML expertise required. Each flagged row includes an explainable breakdown of which columns drove the score, so you can see why it was flagged.
+
+<Deck>
+  <Slide title="Spot the odd banana." visual="title">
+    Row anomaly detection in data quality — in a few minutes.
+  </Slide>
+  <Slide title="Known unknowns vs unknown unknowns." visual="known-unknowns">
+    **Rules** catch things we already expect — like "bananas should be yellow" or "a batch must have at least 100 rows". But what about surprises we never thought to check for? That's where **anomaly detection** comes in.
+  </Slide>
+  <Slide title="DQX handles rules really well." visual="dqx-rules">
+    For a single banana, we can write rules: check size, colour, flavour. These rules live in code — clear, testable, versioned.
+  </Slide>
+  <Slide title="DQM built-in anomaly detection" visual="trucks-dqm">
+    Databricks Data Quality Monitoring (DQM) watches the big picture: did the data arrive? Is it fresh? Are the row counts about right? Think of it as checking the delivery trucks.
+  </Slide>
+  <Slide title="But who checks inside the boxes?" visual="gap">
+    The truck arrived on time and the count looks right — great. But are the bananas inside actually good? DQM watches the delivery; nobody's inspecting the contents. That's the gap.
+  </Slide>
+  <Slide title="DQX fills that gap." visual="row-level">
+    DQX learns what "normal" looks like from your good data, then checks every single row. No labels needed — it figures out what's unusual on its own. *"Is this banana weird?"*
+  </Slide>
+  <Slide title="How does it work? Features & Isolation Forest." visual="features">
+    Each banana becomes a set of numbers — size, colour, spots, bend. An Isolation Forest then tries to separate each point from the rest. If a banana is easy to isolate, it's probably odd.
+  </Slide>
+  <Slide title="The odd banana stands alone." visual="isolation-forest">
+    An unusual banana gets separated in just a few steps — it sticks out. A normal banana is buried in the crowd and takes many steps to single out.
+  </Slide>
+  <Slide title="Why was this banana flagged? SHAP explains." visual="shap">
+    A score alone isn't enough — you want to know *why*. SHAP breaks it down: "too brown", "wrong size". So you can act on the insight straight away.
+  </Slide>
+  <Slide title="Why DQX row anomaly detection?" visual="summary">
+    Everything you need to catch unusual rows — no ML expertise required.
+  </Slide>
+  <Slide title="Get started" visual="coming-soon">
+    Install DQX and start catching unusual rows in minutes.
+  </Slide>
+</Deck>
 
 ## What it is and why it helps
 

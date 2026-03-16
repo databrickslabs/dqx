@@ -4,6 +4,9 @@
 # 2. Explicit DQX rules (via implementation)
 # 3. Text-based expectations (for LLM processing)
 # 4. Dataset-level quality checks
+# 5. All ODCS data types supported by DQX (see schema "all_data_types")
+#
+# Data types reference: https://github.com/bitol-io/open-data-contract-standard/blob/main/docs/examples/data-types/all-data-types.odcs.yaml
 
 kind: DataContract
 apiVersion: v3.0.2
@@ -47,7 +50,7 @@ schema:
       # ===== PRIMARY KEY WITH MULTIPLE CONSTRAINTS =====
       - name: sensor_id
         logicalType: string
-        physicalType: varchar(15)
+        physicalType: STRING
         description: Unique identifier for the IoT sensor device
         required: true
         unique: true
@@ -73,7 +76,7 @@ schema:
       # ===== FOREIGN KEY WITH CONSTRAINTS =====
       - name: machine_id
         logicalType: string
-        physicalType: varchar(13)
+        physicalType: STRING
         description: Identifier of the machine being monitored
         required: true
         logicalTypeOptions:
@@ -88,7 +91,7 @@ schema:
       # ===== TIMESTAMP FIELDS =====
       - name: reading_timestamp
         logicalType: date
-        physicalType: timestamp
+        physicalType: TIMESTAMP
         description: When the sensor reading was recorded
         required: true
         logicalTypeOptions:
@@ -109,7 +112,7 @@ schema:
       
       - name: calibration_date
         logicalType: date
-        physicalType: date
+        physicalType: DATE
         description: Last sensor calibration date
         required: true
         logicalTypeOptions:
@@ -130,7 +133,7 @@ schema:
       # ===== NUMERIC FIELDS WITH RANGES =====
       - name: temperature_celsius
         logicalType: number
-        physicalType: decimal(5,2)
+        physicalType: DECIMAL(5,2)
         description: Temperature reading in Celsius
         required: true
         logicalTypeOptions:
@@ -145,7 +148,7 @@ schema:
       
       - name: humidity_percentage
         logicalType: number
-        physicalType: decimal(5,2)
+        physicalType: DECIMAL(5,2)
         description: Relative humidity percentage
         required: true
         logicalTypeOptions:
@@ -154,7 +157,7 @@ schema:
       
       - name: pressure_bar
         logicalType: number
-        physicalType: decimal(4,2)
+        physicalType: DECIMAL(4,2)
         description: Pressure reading in bar
         required: false
         logicalTypeOptions:
@@ -163,7 +166,7 @@ schema:
       
       - name: vibration_level
         logicalType: integer
-        physicalType: int
+        physicalType: INT
         description: Vibration intensity level (0-10 scale)
         required: true
         logicalTypeOptions:
@@ -173,7 +176,7 @@ schema:
       # ===== CATEGORICAL FIELDS =====
       - name: sensor_status
         logicalType: string
-        physicalType: varchar(20)
+        physicalType: STRING
         description: Current operational status of the sensor
         required: true
         logicalTypeOptions:
@@ -199,7 +202,7 @@ schema:
       
       - name: alert_level
         logicalType: string
-        physicalType: varchar(10)
+        physicalType: STRING
         description: Alert severity level
         required: false
         logicalTypeOptions:
@@ -208,7 +211,7 @@ schema:
       # ===== STRING FIELDS WITH PATTERNS =====
       - name: location
         logicalType: string
-        physicalType: varchar(10)
+        physicalType: STRING
         description: Physical location of the sensor
         required: true
         logicalTypeOptions:
@@ -223,7 +226,7 @@ schema:
       
       - name: device_model
         logicalType: string
-        physicalType: varchar(8)
+        physicalType: STRING
         description: Sensor device model number
         required: true
         logicalTypeOptions:
@@ -232,7 +235,7 @@ schema:
       # ===== OPTIONAL FIELDS =====
       - name: notes
         logicalType: string
-        physicalType: varchar(500)
+        physicalType: STRING
         description: Optional notes or comments about the reading
         required: false
         logicalTypeOptions:
@@ -240,7 +243,7 @@ schema:
       
       - name: technician_id
         logicalType: string
-        physicalType: varchar(10)
+        physicalType: STRING
         description: ID of technician who serviced the sensor (if applicable)
         required: false
         logicalTypeOptions:
@@ -249,14 +252,14 @@ schema:
       # ===== BOOLEAN FIELD =====
       - name: is_anomaly
         logicalType: boolean
-        physicalType: boolean
+        physicalType: BOOLEAN
         description: Flag indicating if this reading is an anomaly
         required: false
       
       # ===== EMAIL FIELD =====
       - name: alert_email
         logicalType: string
-        physicalType: varchar(100)
+        physicalType: STRING
         description: Email to notify for this sensor's alerts
         required: false
         logicalTypeOptions:
@@ -324,3 +327,119 @@ schema:
             for_each_column:
             - technician_id
             - alert_email
+
+  # ===== ALL SUPPORTED ODCS DATA TYPES (DQX schema validation) =====
+  # Reference: https://github.com/bitol-io/open-data-contract-standard/blob/main/docs/examples/data-types/all-data-types.odcs.yaml
+  - name: all_data_types
+    physicalName: all_data_types_table
+    physicalType: table
+    description: Showcases every ODCS logicalType/physicalType supported by DQX for schema validation and rule generation.
+
+    # Properties use Unity Catalog physicalType only (no mapping). See:
+    # https://learn.microsoft.com/en-gb/azure/databricks/sql/language-manual/sql-ref-datatypes
+    properties:
+      # ----- String types -----
+      - name: col_string
+        physicalType: STRING
+        logicalType: string
+        description: ODCS string type
+      - name: col_varchar
+        physicalType: STRING
+        logicalType: string
+        description: Variable-length string
+      - name: col_char
+        physicalType: STRING
+        logicalType: string
+        description: Fixed-length character
+
+      # ----- Integer types -----
+      - name: col_int
+        physicalType: INT
+        logicalType: integer
+        description: 32-bit integer
+      - name: col_integer
+        physicalType: INT
+        logicalType: integer
+        description: Logical integer
+      - name: col_smallint
+        physicalType: SMALLINT
+        logicalType: integer
+        description: Small integer
+      - name: col_tinyint
+        physicalType: TINYINT
+        logicalType: integer
+        description: Tiny integer
+      - name: col_long
+        physicalType: BIGINT
+        logicalType: integer
+        description: 64-bit long
+      - name: col_bigint
+        physicalType: BIGINT
+        logicalType: integer
+        description: Big integer
+
+      # ----- Floating and decimal types -----
+      - name: col_float
+        physicalType: FLOAT
+        logicalType: number
+        description: 32-bit float
+      - name: col_double
+        physicalType: DOUBLE
+        logicalType: number
+        description: 64-bit double
+      - name: col_number
+        physicalType: DOUBLE
+        logicalType: number
+        description: Logical number
+      - name: col_decimal
+        physicalType: DECIMAL(10,2)
+        logicalType: number
+        description: Decimal without precision
+      - name: col_decimal_precision
+        physicalType: DECIMAL(12,4)
+        logicalType: number
+        description: Decimal with precision and scale
+      - name: col_numeric
+        physicalType: DECIMAL(8,2)
+        logicalType: number
+        description: Numeric type
+
+      # ----- Boolean -----
+      - name: col_boolean
+        physicalType: BOOLEAN
+        logicalType: boolean
+        description: Boolean flag
+      - name: col_bool
+        physicalType: BOOLEAN
+        logicalType: boolean
+        description: Bool type
+
+      # ----- Date and time types -----
+      - name: col_date
+        physicalType: DATE
+        logicalType: date
+        description: Date only
+      - name: col_timestamp
+        physicalType: TIMESTAMP
+        logicalType: timestamp
+        description: Timestamp without timezone
+      - name: col_datetime
+        physicalType: TIMESTAMP
+        logicalType: timestamp
+        description: Datetime
+
+      # ----- Binary -----
+      - name: col_binary
+        physicalType: BINARY
+        logicalType: binary
+        description: Binary data
+
+      # ----- Object and semi-structured types -----
+      - name: col_object
+        physicalType: BINARY
+        logicalType: object
+        description: ODCS object as BINARY (Databricks byte sequence)
+      - name: col_array
+        physicalType: ARRAY<STRING>
+        logicalType: array
+        description: Array type (Databricks ARRAY)

@@ -77,3 +77,719 @@ button {
   margin: 0.5rem 0 0.25rem 0.5rem;
   color: var(--ifm-color-content);
 }
+
+/* Spot the odd banana — interactive slide deck */
+.banana-deck {
+  --banana-yellow: #e8c547;
+  --banana-light: #f4e4a6;
+  --banana-dark: #c9a227;
+  --banana-bg: #ffffff;
+  --banana-border: #e5e5e5;
+}
+
+/* Slide change: light fade + slide in from right (like the app) */
+.banana-deck__slide-enter {
+  animation: bananaSlideFadeIn 0.35s ease-out;
+}
+@keyframes bananaSlideFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+[data-theme='dark'] .banana-deck {
+  --banana-bg: #ffffff;
+  --banana-border: #e5e5e5;
+}
+[data-theme='dark'] .banana-deck__card {
+  color: #1c1917;
+}
+[data-theme='dark'] .banana-deck__card * {
+  --ifm-heading-color: #1c1917;
+  --ifm-font-color-base: #292524;
+}
+.banana-deck__card {
+  background: var(--banana-bg);
+  border: 1px solid var(--banana-border);
+  border-radius: 12px;
+  padding: 1.5rem 1.75rem;
+  height: 540px;
+  width: 100%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+@media (max-width: 640px) {
+  .banana-deck__card {
+    height: 480px;
+    padding: 1rem 1.25rem;
+  }
+}
+.banana-deck__slide {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex: 1 1 auto;
+  overflow-y: scroll;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: #c9a227 transparent;
+}
+.banana-deck__slide::-webkit-scrollbar {
+  width: 6px;
+}
+.banana-deck__slide::-webkit-scrollbar-track {
+  background: transparent;
+}
+.banana-deck__slide::-webkit-scrollbar-thumb {
+  background: #c9a227;
+  border-radius: 3px;
+}
+.banana-deck__slide::-webkit-scrollbar-thumb:hover {
+  background: #a68520;
+}
+.banana-deck__title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin: 0;
+  color: var(--ifm-heading-color);
+}
+.banana-deck__body {
+  font-size: 1rem;
+  line-height: 1.55;
+  margin: 0;
+  color: var(--ifm-font-color-base);
+}
+.banana-deck__body p {
+  margin: 0 0 0.5rem 0;
+}
+.banana-deck__body p:last-child {
+  margin-bottom: 0;
+}
+.banana-deck__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--banana-border);
+}
+.banana-deck__hint {
+  font-size: 0.8rem;
+  color: var(--ifm-color-content-secondary);
+  margin-top: 0.5rem;
+}
+.banana-deck__nav {
+  display: flex;
+  gap: 0.5rem;
+}
+.banana-deck__btn {
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  border: 1px solid var(--banana-border);
+  transition: opacity 0.15s, background 0.15s;
+}
+.banana-deck__btn--prev {
+  background: var(--banana-light);
+  color: #1c1917;
+}
+.banana-deck__btn--prev:hover:not(:disabled) {
+  background: #eee4a0;
+}
+.banana-deck__btn--next {
+  background: var(--banana-yellow);
+  color: #1c1917;
+}
+.banana-deck__btn--next:hover:not(:disabled) {
+  background: var(--banana-dark);
+  color: #fff;
+}
+.banana-deck__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.banana-deck__progress {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.banana-deck__counter {
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--ifm-color-content-secondary);
+}
+.banana-deck__dots {
+  display: flex;
+  gap: 0.35rem;
+}
+.banana-deck__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  padding: 0;
+  border: none;
+  background: var(--banana-light);
+  cursor: pointer;
+  transition: transform 0.15s, background 0.15s;
+}
+.banana-deck__dot:hover {
+  background: #e8d88a;
+}
+.banana-deck__dot--current {
+  background: var(--banana-dark);
+  transform: scale(1.15);
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Slide visuals — ported from banana_anomaly_app
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Keyframes ────────────────────────────────────────────────────── */
+@keyframes bvCarousel {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@keyframes bvRevealTyped {
+  from { max-width: 0; }
+  to   { max-width: 42ch; }
+}
+@keyframes bvBlinkCursor {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+@keyframes bvPopIn {
+  from { opacity: 0; transform: scale(0.2); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes bvAlienShipEnter {
+  from { opacity: 0; transform: translate(80px, -60px) scale(0.5); }
+  to   { opacity: 1; transform: translate(0, 0) scale(1); }
+}
+@keyframes bvAlienBananaDrop {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  82%  { transform: translateY(2rem) scale(1); }
+  92%  { transform: translateY(1.85rem) scale(1); }
+  to   { opacity: 1; transform: translateY(1.9rem) scale(1); }
+}
+@keyframes bvLabelPop {
+  0%   { opacity: 0; transform: scale(0.5) translateY(0.25rem); }
+  18%  { opacity: 1; transform: scale(1.15) translateY(0); }
+  25%  { opacity: 1; transform: scale(1) translateY(0); }
+  70%  { opacity: 1; transform: scale(1) translateY(0); }
+  85%  { opacity: 0; transform: scale(0.9) translateY(-0.25rem); }
+  100% { opacity: 0; transform: scale(0.9) translateY(-0.25rem); }
+}
+@keyframes bvRevealCodeLine {
+  from { max-width: 0; }
+  to   { max-width: 100%; }
+}
+@keyframes bvTrucksRoll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+@keyframes bvMagnifierOrbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes bvSummaryBulletIn {
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes bvFactSlideUp {
+  from { opacity: 0; transform: translateY(100%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Title: banana carousel + pip install terminal ────────────────── */
+.bv-title {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  justify-content: center;
+  gap: 1.5rem;
+}
+.bv-title__carousel-wrap {
+  overflow: hidden;
+  flex-shrink: 0;
+  width: 100%;
+}
+.bv-title__carousel-track {
+  display: flex;
+  width: max-content;
+  animation: bvCarousel 25s linear infinite;
+}
+.bv-title__carousel-set {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.bv-title__banana {
+  font-size: 3rem;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.bv-title__install {
+  flex-shrink: 0;
+}
+
+/* ── Terminal (pip install) ───────────────────────────────────────── */
+.bv-terminal {
+  width: 100%;
+  max-width: 32rem;
+  margin-left: auto;
+  margin-right: auto;
+  border-radius: 8px;
+  background: #292524;
+  padding: 0.75rem 1rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1rem;
+  color: #fafaf9;
+  border: 1px solid rgba(120, 113, 108, 0.4);
+}
+.bv-terminal__line {
+  display: flex;
+  align-items: center;
+}
+.bv-terminal__prompt {
+  color: #fbbf24;
+  flex-shrink: 0;
+}
+.bv-terminal__cmd {
+  position: relative;
+  display: inline-block;
+  min-width: 0;
+}
+.bv-terminal__ghost {
+  color: #78716c;
+  white-space: nowrap;
+}
+.bv-terminal__typed {
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: #fafaf9;
+  background: #292524;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 0;
+  animation: bvRevealTyped 2.5s steps(42, end) 0.5s forwards;
+}
+.bv-terminal__cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: #fbbf24;
+  vertical-align: middle;
+  flex-shrink: 0;
+  margin-left: 2px;
+  animation: bvBlinkCursor 0.8s step-end infinite;
+}
+
+/* ── Pop-in ───────────────────────────────────────────────────────── */
+.bv-pop-in {
+  opacity: 0;
+  animation: bvPopIn 0.5s ease-out forwards;
+  display: inline-block;
+}
+
+/* ── Known unknowns (2×2 grid) ────────────────────────────────────── */
+.bv-known {
+  margin-top: 0.75rem;
+  width: 100%;
+}
+.bv-known__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.bv-known__cell {
+  border-radius: 12px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  text-align: center;
+  min-height: 5.5rem;
+}
+.bv-known__cell--green  { background: #f0fdf4; border: 2px solid #bbf7d0; }
+.bv-known__cell--amber  { background: #fffbeb; border: 2px solid #fde68a; }
+.bv-known__cell--stone  { background: #f5f5f4; border: 2px solid #d6d3d1; opacity: 0.9; }
+.bv-known__cell--red    { background: #fef2f2; border: 2px solid #fecaca; position: relative; overflow: visible; }
+.bv-known__icons { display: flex; align-items: center; gap: 0.25rem; }
+.bv-known__ufo-area { min-height: 2.5rem; position: relative; }
+.bv-known__ufo-container { position: relative; }
+.bv-known__footnote { font-size: 0.75rem; color: #78716c; text-align: center; margin-top: 0.5rem; }
+
+.bv-alien-ship {
+  font-size: 2rem;
+  display: block;
+  animation: bvAlienShipEnter 1.2s ease-out forwards;
+}
+.bv-alien-banana {
+  font-size: 1.5rem;
+  display: block;
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  animation: bvAlienBananaDrop 0.6s ease-in 0.1s forwards;
+}
+
+/* ── DQX rules: banana + popping labels + code ────────────────────── */
+.bv-dqx {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+.bv-dqx__banana { font-size: 3rem; flex-shrink: 0; }
+.bv-dqx__label-area {
+  min-height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.bv-label-pop {
+  display: inline-block;
+  font-weight: 500;
+  font-size: 1rem;
+  color: #57534e;
+  text-transform: capitalize;
+  animation: bvLabelPop 2.8s ease-in-out forwards;
+}
+.bv-dqx__code-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  width: 100%;
+  margin: 0;
+  border-radius: 8px;
+}
+.bv-code-block {
+  position: relative;
+  width: 100%;
+  border-radius: 8px;
+  background: #f8f5ee;
+  padding: 0.75rem 1rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.9rem;
+  color: #1c1917;
+  border: 1px solid #e8d88a;
+  overflow: auto;
+}
+.bv-code-block__dimmed { opacity: 0.95; }
+.bv-code-block__typed-overlay {
+  position: absolute;
+  inset: 0;
+  padding: 0.75rem 1rem;
+  background: #f8f5ee;
+  pointer-events: none;
+}
+.bv-code-block__line {
+  display: block;
+  line-height: 1.5;
+  min-height: 1.5em;
+  white-space: pre;
+}
+.bv-code-line-reveal {
+  display: block;
+  max-width: 0;
+  overflow: hidden;
+  animation: bvRevealCodeLine 0.78s steps(60, end) forwards;
+}
+
+/* ── Trucks ───────────────────────────────────────────────────────── */
+.bv-trucks {
+  overflow: hidden;
+  margin-top: 0.75rem;
+  width: 100%;
+}
+.bv-trucks__track {
+  display: flex;
+  width: max-content;
+  animation: bvTrucksRoll 45s linear infinite;
+}
+.bv-trucks__set {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  padding-right: 0.5rem;
+}
+.bv-truck {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.4rem;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: #fefce8;
+  border: 1px solid rgba(214, 211, 209, 0.5);
+}
+.bv-truck--bad {
+  background: rgba(254, 226, 226, 0.9);
+  border: 2px solid rgba(248, 113, 113, 0.7);
+}
+.bv-truck__icon { font-size: 1.75rem; }
+.bv-truck__bananas { display: flex; align-items: center; gap: 1px; font-size: 0.9rem; min-height: 1.2rem; }
+.bv-truck__label { font-size: 0.65rem; font-weight: 600; color: #16a34a; }
+.bv-truck__label--bad { color: #b91c1c; }
+.bv-trucks__caption { font-size: 0.8rem; color: #57534e; text-align: center; margin-top: 0.5rem; }
+.bv-trucks__setup { margin-top: 0.5rem; max-width: 22rem; margin-left: auto; margin-right: auto; }
+.bv-trucks__setup-label { font-size: 0.7rem; color: #78716c; text-align: center; margin: 0 0 0.25rem; }
+.bv-trucks__setup-img { width: 100%; border-radius: 8px; border: 1px solid #d6d3d1; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+
+/* ── Gap ──────────────────────────────────────────────────────────── */
+.bv-gap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 1.5rem;
+}
+.bv-gap__box {
+  position: relative;
+  display: inline-block;
+  padding: 1.25rem;
+  border-radius: 16px;
+  background: rgba(244, 228, 166, 0.7);
+  border: 2px solid rgba(201, 162, 39, 0.3);
+}
+.bv-gap__crate { font-size: 3.5rem; }
+.bv-gap__q { font-size: 2.5rem; position: absolute; top: -4px; right: -4px; }
+.bv-gap__text { margin-top: 0.75rem; color: #57534e; text-align: center; font-size: 0.9rem; }
+
+/* ── Row-level cycle ──────────────────────────────────────────────── */
+.bv-row { margin-top: 0.75rem; }
+.bv-row__flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+.bv-row__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+.bv-row__train-bananas { display: flex; align-items: flex-end; gap: 0.15rem; }
+.bv-row__arrow { font-size: 1.5rem; color: #a8a29e; flex-shrink: 0; }
+.bv-row__label { font-weight: 500; font-size: 0.8rem; color: #44403c; }
+.bv-row__check-area { position: relative; width: 5rem; height: 5rem; display: flex; align-items: center; justify-content: center; }
+.bv-row__check-bananas { display: flex; align-items: center; gap: 0.15rem; }
+.bv-magnifier-orbit {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: bvMagnifierOrbit 5s linear infinite;
+  pointer-events: none;
+}
+.bv-magnifier-orbit__glass { font-size: 1.1rem; position: absolute; transform: translateY(-1.4rem); }
+
+/* ── Features & Isolation Forest flowchart ────────────────────────── */
+.bv-features {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+}
+.bv-features__heading { font-size: 1rem; font-weight: 700; margin: 0; }
+.bv-features__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+}
+.bv-features__banana-labels { position: relative; display: inline-block; }
+.bv-features__banana-big { font-size: 3.5rem; display: block; }
+.bv-features__tag { position: absolute; font-size: 0.6rem; font-weight: 700; color: #78350f; }
+.bv-features__arrow { font-size: 1.25rem; color: #a8a29e; flex-shrink: 0; }
+.bv-features__table {
+  border: 2px solid #fde68a;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fffbeb;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+}
+.bv-features__table th { background: rgba(254, 243, 199, 0.8); padding: 3px 8px; text-align: left; font-weight: 600; }
+.bv-features__table td { padding: 2px 8px; border-top: 1px solid #fde68a; }
+.bv-features__val { font-weight: 600; }
+.bv-features__down-arrow { font-size: 1.25rem; color: #a8a29e; }
+.bv-features__subheading { font-size: 0.8rem; font-weight: 700; margin: 0; text-align: center; }
+.bv-features__tree { display: flex; flex-direction: column; align-items: center; gap: 0.15rem; width: 100%; }
+
+.bv-tree-node {
+  padding: 4px 10px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+.bv-tree-node--root   { background: #fef3c7; border: 2px solid #fcd34d; color: #1c1917; }
+.bv-tree-node--anomaly { background: #ffe4e6; border: 2px solid #fca5a5; color: #9f1239; }
+.bv-tree-node--normal  { background: #dcfce7; border: 2px solid #86efac; color: #166534; }
+.bv-tree-arrow { color: #a8a29e; font-size: 0.9rem; }
+.bv-tree-branches {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 0.15rem;
+}
+.bv-tree-branches--inner { margin-top: 0.15rem; }
+.bv-tree-branch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+}
+.bv-tree-branch small { font-size: 0.65rem; color: #78716c; }
+
+/* ── Isolation Forest (few vs many splits) ────────────────────────── */
+.bv-iso { margin-top: 1rem; }
+.bv-iso__pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+}
+.bv-iso__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  width: 140px;
+  min-height: 120px;
+}
+.bv-iso__card--anomaly { background: rgba(254, 243, 199, 0.8); border: 2px solid rgba(251, 191, 36, 0.5); }
+.bv-iso__card--anomaly strong { color: #92400e; font-size: 0.85rem; text-align: center; }
+.bv-iso__card--normal  { background: rgba(220, 252, 231, 0.8); border: 2px solid rgba(74, 222, 128, 0.5); }
+.bv-iso__card--normal strong { color: #166534; font-size: 0.85rem; text-align: center; }
+.bv-iso__crowd { display: flex; flex-wrap: wrap; gap: 0.2rem; justify-content: center; font-size: 1.5rem; }
+.bv-iso__vs { font-size: 1.25rem; color: #a8a29e; }
+
+/* ── SHAP carousel ────────────────────────────────────────────────── */
+.bv-shap { margin-top: 0.75rem; width: 100%; }
+.bv-shap__subtitle { font-size: 0.8rem; color: #78716c; text-align: center; margin: 0 0 0.5rem; }
+.bv-shap__cards { display: flex; align-items: center; justify-content: center; gap: 0.4rem; }
+.bv-shap__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.6rem;
+  border-radius: 12px;
+  background: #fff;
+  border: 2px solid #e7e5e4;
+  width: 120px;
+  transition: all 0.5s ease-in-out;
+}
+.bv-shap__card--center { opacity: 1; transform: scale(1); }
+.bv-shap__card--side   { opacity: 0.4; transform: scale(0.85); }
+.bv-shap__banana { font-size: 2rem; }
+.bv-shap__banana--ring { outline: 2px solid #f59e0b; border-radius: 8px; }
+.bv-shap__flagged { font-weight: 500; color: #78716c; font-size: 0.7rem; }
+.bv-shap__bar-group { width: 100%; }
+.bv-shap__bar-label { display: flex; justify-content: space-between; font-size: 0.65rem; }
+.bv-shap__bar-value { font-family: var(--ifm-font-family-monospace); font-weight: 700; }
+.bv-shap__bar-bg { height: 5px; border-radius: 3px; background: #fde68a; overflow: hidden; }
+.bv-shap__bar-fill { height: 100%; border-radius: 3px; background: #d97706; transition: width 0.5s ease-in-out; }
+
+/* ── Summary (staggered bullets) ──────────────────────────────────── */
+.bv-summary {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  text-align: left;
+}
+.bv-summary__bullet {
+  opacity: 0;
+  animation: bvSummaryBulletIn 0.4s ease-out forwards;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+}
+.bv-summary__detail { font-size: 0.8rem; color: #57534e; line-height: 1.45; }
+.bv-summary__code {
+  margin: 0.15rem 0 0;
+  border-radius: 6px;
+  background: #292524;
+  padding: 0.4rem 0.6rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.7rem;
+  color: #fafaf9;
+  border: 1px solid rgba(120, 113, 108, 0.4);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+/* ── Coming soon / try it now (fact carousel) ─────────────────────── */
+.bv-coming {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  min-height: 0;
+  justify-content: center;
+  gap: 1rem;
+}
+.bv-coming__cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+.bv-coming__try {
+  font-size: 1.25rem;
+  color: #1c1917;
+}
+.bv-coming__fact {
+  padding: 0.6rem 0.75rem;
+  background: #fffbeb;
+  border-radius: 8px;
+  border: 1px solid #fde68a;
+  font-style: italic;
+  font-size: 0.85rem;
+  text-align: center;
+  color: #44403c;
+}
+.bv-fact-enter {
+  animation: bvFactSlideUp 0.5s ease-out forwards;
+}
