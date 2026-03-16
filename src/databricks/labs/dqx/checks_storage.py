@@ -31,7 +31,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import DatabaseError, ProgrammingError, OperationalError, IntegrityError
 
 import yaml
-from pyspark.sql import SparkSession, functions as F
+from pyspark.sql import DataFrame, SparkSession, functions as F
 from databricks.sdk.errors import NotFound
 from databricks.sdk.service.workspace import ImportFormat
 
@@ -171,16 +171,16 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
         # Skip save if rule_set_fingerprint already exists in existing table
         if self._table_exists(config.location):
-            self._ensure_versioning_columns(config.location)
-            if (
-                rule_set_fingerprint is not None
-                and not self.spark.read.table(config.location)
-                .filter(
+            existing_df = self.spark.read.table(config.location)
+            self._ensure_versioning_columns(config.location, existing_df)
+            exists = (
+                not existing_df.filter(
                     (F.col("run_config_name") == config.run_config_name)
                     & (F.col("rule_set_fingerprint") == rule_set_fingerprint)
                 )
                 .isEmpty()
-            ):
+            )
+            if exists:
                 logger.info(
                     f"Checks with rule_set_fingerprint '{rule_set_fingerprint}' already exist in table '{config.location}'"
                 )
@@ -209,13 +209,16 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         except NotFound:
             return False
 
-    def _ensure_versioning_columns(self, location: str) -> None:
+    def _ensure_versioning_columns(self, location: str, existing_df: DataFrame | None = None) -> None:
         """Add missing versioning columns to an existing Delta table.
 
         Args:
             location: Full table name (e.g., "catalog.schema.table").
+            existing_df: Optional pre-read DataFrame for the table. When provided, its schema is
+                used instead of re-reading the table, avoiding a redundant read.
         """
-        existing_columns = {f.name for f in self.spark.read.table(location).schema.fields}
+        df = existing_df if existing_df is not None else self.spark.read.table(location)
+        existing_columns = {f.name for f in df.schema.fields}
         missing = [col for col in _VERSIONING_COLUMNS if col not in existing_columns]
         if not missing:
             return

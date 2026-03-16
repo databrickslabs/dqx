@@ -117,10 +117,9 @@ def _make_handler_with_existing_table(
     """
     spark = create_autospec(SparkSession)
     ws = create_autospec(WorkspaceClient)
-    # ws.tables.get does not raise → _table_exists returns True → _ensure_versioning_columns is called
     spark.read.table.return_value.schema.fields = schema_fields
     # No matching fingerprint in the table → idempotency guard does not short-circuit
-    spark.read.table.return_value.filter.return_value.isEmpty.return_value = True
+    spark.read.table.return_value.filter.return_value.limit.return_value.isEmpty.return_value = True
     handler = TableChecksStorageHandler(ws, spark)
     config = TableChecksStorageConfig(location="catalog.schema.table", run_config_name="default")
     return handler, config, spark
@@ -143,7 +142,7 @@ def test_ensure_versioning_columns_strips_existing_backticks_before_quoting():
     spark = create_autospec(SparkSession)
     ws = create_autospec(WorkspaceClient)
     spark.read.table.return_value.schema.fields = []
-    spark.read.table.return_value.filter.return_value.isEmpty.return_value = True
+    spark.read.table.return_value.filter.return_value.limit.return_value.isEmpty.return_value = True
     handler = TableChecksStorageHandler(ws, spark)
     config = TableChecksStorageConfig(location="`catalog`.`schema`.`table`", run_config_name="default")
 
