@@ -21,7 +21,6 @@ __all__ = [
     "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
     "compute_rule_fingerprint",
     "compute_rule_set_fingerprint",
-    "expand_checks_for_each_column",
     "Criticality",
     "DQDatasetRule",
     "DQForEachColRule",
@@ -44,67 +43,27 @@ def compute_rule_fingerprint(check_dict: dict) -> str:
     Returns:
         A hex-encoded SHA-256 hash string.
     """
+    check_inner = check_dict.get("check") or {}
+    for_each_column = check_inner.get("for_each_column")
+    if for_each_column is not None and not isinstance(for_each_column, list):
+        for_each_column = list(for_each_column)
     fingerprint_data = {
         "name": check_dict.get("name"),
         "criticality": check_dict.get("criticality", "error"),
-        "function": check_dict.get("check", {}).get("function"),
-        "arguments": check_dict.get("check", {}).get("arguments"),
+        "function": check_inner.get("function"),
+        "arguments": check_inner.get("arguments"),
         "filter": check_dict.get("filter"),
+        "for_each_column": sorted(for_each_column) if for_each_column else None,
     }
     canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def expand_checks_for_each_column(checks: list[dict]) -> list[dict]:
-    """Expand any check with for_each_column into one dict per column.
-
-    Checks without for_each_column (or with empty for_each_column) are passed through unchanged.
-    Source check fields (e.g. user_metadata) are copied into each expanded dict.
-
-    This function mirrors the expansion performed by DQForEachColRule.get_rules() and
-    ChecksDeserializer — the source name is preserved unchanged in every expanded rule.
-    When name is None or empty (the typical case), each rule is auto-named at apply time
-    from its check condition, producing unique column-specific names. When an explicit name
-    is provided, all expanded rules share that name.
-
-    Args:
-        checks: List of check dictionaries.
-
-    Returns:
-        Flat list of check dicts (expanded entries have no for_each_column, arguments.column set).
-    """
-    result: list[dict] = []
-    for check in checks:
-        check_inner = check.get("check") or {}
-        for_each_column = check_inner.get("for_each_column")
-        if not for_each_column:
-            result.append(check)
-            continue
-
-        base_args = dict(check_inner.get("arguments") or {})
-        for col in for_each_column:
-            expanded: dict = {
-                "name": check.get("name"),
-                "criticality": check.get("criticality", "error"),
-                "filter": check.get("filter"),
-                "check": {
-                    "function": check_inner.get("function"),
-                    "arguments": {**base_args, "column": col},
-                },
-            }
-            if "user_metadata" in check:
-                expanded["user_metadata"] = check["user_metadata"]
-            result.append(expanded)
-    return result
 
 
 def compute_rule_set_fingerprint(checks: list[dict]) -> str:
     """Compute a deterministic SHA-256 hash of the complete rule set.
 
     The hash is order-independent: individual rule fingerprints are sorted before combining.
-    Checks with for_each_column are expanded to one rule per column before hashing, so that
-    the same logical rule set yields the same fingerprint whether expressed as one unexpanded
-    dict or as multiple expanded dicts.
+    for_each_column is included in each rule's fingerprint (sorted for determinism).
 
     Args:
         checks: List of check dictionaries.
@@ -112,8 +71,7 @@ def compute_rule_set_fingerprint(checks: list[dict]) -> str:
     Returns:
         A hex-encoded SHA-256 hash string representing the entire rule set.
     """
-    canonical = expand_checks_for_each_column(checks)
-    individual_fps = sorted(compute_rule_fingerprint(c) for c in canonical)
+    individual_fps = sorted(compute_rule_fingerprint(c) for c in checks)
     combined = json.dumps(individual_fps, sort_keys=True)
     return hashlib.sha256(combined.encode()).hexdigest()
 

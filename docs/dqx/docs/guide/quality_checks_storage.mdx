@@ -20,8 +20,8 @@ For the save methods to work, checks must be defined declaratively as metadata (
 If you create checks as a list of `DQRule` objects, you can convert them to metadata format and back using the methods described [here](/docs/reference/quality_checks/#converting-checks-between-formats).
 </Admonition>
 
-<Admonition type="info" title="Table storage: for_each_column expansion">
-You can use `for_each_column` in your checks. When saving with `DQEngine.save_checks` to **Delta tables** or **Lakebase tables**, DQX expands each `for_each_column` check into individual rules — one row per column — before writing. When loading, you receive the expanded format (one check per column). Manually created tables can use either the compact format (one row with `for_each_column`) or the expanded format.
+<Admonition type="info" title="Table storage: for_each_column preserved">
+You can use `for_each_column` in your checks. When saving with `DQEngine.save_checks` to **Delta tables** or **Lakebase tables**, DQX stores checks in compact format — one row per check, with `for_each_column` preserved. When loading, you receive the same format. Manually created tables can use either the compact format (one row with `for_each_column`) or the expanded format (one row per column).
 </Admonition>
 
 <Tabs>
@@ -86,7 +86,7 @@ You can use `for_each_column` in your checks. When saving with `DQEngine.save_ch
 Quality rules can be stored in a Delta table as showcased above using `DQEngine`.
 You can also store them directly in a Delta table using Spark DataFrame API.
 
-When using `DQEngine.save_checks`, you can pass checks with `for_each_column`; DQX expands them into individual rules (one row per column) before writing to the table. When creating a DataFrame manually (without DQX), provide rows in the expanded format — one row per column.
+When using `DQEngine.save_checks`, you can pass checks with `for_each_column`; DQX stores them in compact format (one row per check). When creating a DataFrame manually (without DQX), you can use either compact format (one row with `for_each_column`) or expanded format (one row per column).
 
 <Tabs>
   <TabItem value="Python" label="Python" default>
@@ -104,8 +104,8 @@ When using `DQEngine.save_checks`, you can pass checks with `for_each_column`; D
       "user_metadata MAP<STRING, STRING>"
     )
 
-    # Option 1: use DQEngine.save_checks — you can pass for_each_column, it gets expanded
-    # Option 2: manual DataFrame — use expanded format (one row per column)
+    # Option 1: use DQEngine.save_checks — you can pass for_each_column, stored in compact format
+    # Option 2: manual DataFrame — use compact (one row with for_each_column) or expanded format (one row per column)
     checks = [
       [
         None,
@@ -236,7 +236,7 @@ The following backend configuration are currently supported:
     * `rule_set_fingerprint`: (optional) Optional SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.            
 * `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
     * `location`: Unity Catalog Volume file path (JSON or YAML).
-* `LakebaseChecksStorageConfig`: Lakebase table. Containing fields:
+* `LakebaseChecksStorageConfig`: Lakebase table. Uses the same structure and compact format as Delta tables (`for_each_column` preserved). Containing fields:
     * `instance_name`: name of the Lakebase instance, e.g., "my-instance".
     * `user`: user to connect to the Lakebase instance, e.g., "user@domain.com" or Databricks service principal client ID.
     * `location`: fully-qualified table name in the format "database.schema.table".

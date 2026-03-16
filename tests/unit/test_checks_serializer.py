@@ -94,8 +94,8 @@ def test_compute_rule_fingerprint_includes_filter():
     assert compute_rule_fingerprint(base) != compute_rule_fingerprint(with_filter)
 
 
-def test_compute_rule_fingerprint_ignores_for_each_column():
-    """for_each_column is excluded from the fingerprint — callers must expand before fingerprinting."""
+def test_compute_rule_fingerprint_includes_for_each_column():
+    """for_each_column is included in the fingerprint; adding it changes the fingerprint."""
     base = {
         "name": "r",
         "criticality": "error",
@@ -105,7 +105,7 @@ def test_compute_rule_fingerprint_ignores_for_each_column():
         **base,
         "check": {**base["check"], "for_each_column": ["a", "b"]},
     }
-    assert compute_rule_fingerprint(base) == compute_rule_fingerprint(with_for_each_column)
+    assert compute_rule_fingerprint(base) != compute_rule_fingerprint(with_for_each_column)
 
 
 def test_compute_rule_fingerprint_excludes_user_metadata():
@@ -205,36 +205,6 @@ def test_compute_rule_set_fingerprint_different_sets_different_output():
     fingerprint_2 = compute_rule_set_fingerprint(set2)
     fingerprint_3 = compute_rule_set_fingerprint(set3)
     assert len({fingerprint_1, fingerprint_2, fingerprint_3}) == 3
-
-
-def test_compute_rule_set_fingerprint_for_each_column_same_as_expanded():
-    """Unexpanded (one dict with for_each_column) and expanded (multiple dicts) yield the same rule_set_fingerprint."""
-    unexpanded = [
-        {
-            "name": "cols_not_null",
-            "criticality": "error",
-            "check": {
-                "function": "is_not_null",
-                "arguments": {},
-                "for_each_column": ["col_a", "col_b"],
-            },
-        },
-    ]
-    expanded = [
-        {
-            "name": "cols_not_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"column": "col_a"}},
-        },
-        {
-            "name": "cols_not_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"column": "col_b"}},
-        },
-    ]
-    fp_unexpanded = compute_rule_set_fingerprint(unexpanded)
-    fp_expanded = compute_rule_set_fingerprint(expanded)
-    assert fp_unexpanded == fp_expanded
 
 
 def test_compute_rule_fingerprint_matches_dq_rule_rule_fingerprint():

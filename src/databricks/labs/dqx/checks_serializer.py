@@ -20,7 +20,6 @@ from databricks.labs.dqx.rule import (
     CHECK_FUNC_REGISTRY,
     compute_rule_fingerprint,
     compute_rule_set_fingerprint,
-    expand_checks_for_each_column,
     normalize_bound_args,
 )
 from databricks.labs.dqx.utils import safe_json_load
@@ -38,8 +37,7 @@ logger = logging.getLogger(__name__)
 class ChecksNormalizer:
     """
     Handles normalization and denormalization of check dictionaries.
-    E.g. responsible for converting Decimal values to/from serializable format
-    and expanding for_each_column rules into one dict per column.
+    E.g. responsible for converting Decimal values to/from serializable format.
     """
 
     @staticmethod
@@ -89,14 +87,6 @@ class ChecksNormalizer:
             List of check dictionaries with special markers converted to objects.
         """
         return [ChecksNormalizer.denormalize_value(check) for check in checks]
-
-    @staticmethod
-    def expand_for_each_column(checks: list[dict]) -> list[dict]:
-        """Expand any check with for_each_column into one dict per column.
-
-        Delegates to expand_checks_for_each_column in rule.py.
-        """
-        return expand_checks_for_each_column(checks)
 
 
 class FileFormatSerializer(ABC):
@@ -474,11 +464,10 @@ class DataFrameConverter:
         rule_set_fingerprint = (
             rule_set_fingerprint if rule_set_fingerprint is not None else compute_rule_set_fingerprint(checks)
         )
-        expanded = ChecksNormalizer.expand_for_each_column(normalized_for_serialization)
 
         created_at = datetime.now(timezone.utc)
         dq_rule_rows = []
-        for check in expanded:
+        for check in normalized_for_serialization:
             check_inner = check.get("check") or {}
             func_args = check_inner.get("arguments") or {}
             # Values are already normalized by ChecksNormalizer.normalize; json.dumps for MAP<STRING, STRING>

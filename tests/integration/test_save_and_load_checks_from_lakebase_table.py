@@ -308,34 +308,23 @@ def test_save_and_load_checks_from_lakebase_rule_set_fingerprint_already_exists(
     compare_checks(checks, TEST_CHECKS[0:2])
 
 
-def test_save_checks_for_each_column_and_expanded_have_same_rule_set_fingerprint(
+def test_save_checks_for_each_column_idempotency(
     ws, spark, make_lakebase_instance, lakebase_client_id, make_random
 ):
-    """A for_each_column check and its manually-expanded equivalents produce the same rule_set_fingerprint.
-
-    Verified via idempotency: if both forms hash identically, the second save is a no-op, so loading
-    returns exactly 2 rows (from the first save only, not 4).
-    """
+    """A for_each_column check produces deterministic fingerprint; saving twice is idempotent (second save skipped)."""
     dq_engine = DQEngine(ws, spark)
     instance = make_lakebase_instance()
     location = _create_lakebase_location(instance.database_name, make_random)
 
     config = LakebaseChecksStorageConfig(location=location, client_id=lakebase_client_id, instance_name=instance.name)
 
-    unexpanded = [{"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"]}}]
-    expanded = [
-        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "col1"}}},
-        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "col2"}}},
-    ]
+    compact = [{"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["col1", "col2"]}}]
 
-    dq_engine.save_checks(checks=unexpanded, config=config)
-    # Expanded form has the same rule_set_fingerprint — idempotency guard should skip this save
-    dq_engine.save_checks(checks=expanded, config=config)
+    dq_engine.save_checks(checks=compact, config=config)
+    dq_engine.save_checks(checks=compact, config=config)  # same fingerprint — idempotency guard skips
 
     checks = dq_engine.load_checks(config=config)
-    assert (
-        len(checks) == 2
-    ), f"Expected 2 checks (idempotency guard should have skipped the second save), got {len(checks)}"
+    assert len(checks) == 1, f"Expected 1 compact check (idempotency), got {len(checks)}"
 
 
 def _create_legacy_lakebase_table(ws, spark, config: LakebaseChecksStorageConfig, rows: list[dict]) -> None:

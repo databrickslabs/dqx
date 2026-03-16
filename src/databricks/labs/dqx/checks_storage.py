@@ -365,12 +365,8 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         run_config_name = config.run_config_name
         rule_set_fingerprint = compute_rule_set_fingerprint(normalized_for_serialization)
 
-        # Expand for_each_column rules so each row represents a single column rule,
-        # matching the per-rule fingerprint semantics of the Delta table storage
-        expanded = ChecksNormalizer.expand_for_each_column(normalized_for_serialization)
-
         normalized_checks = []
-        for check in expanded:
+        for check in normalized_for_serialization:
             user_metadata = check.get("user_metadata")
             normalized_check = {
                 "name": check.get("name"),
