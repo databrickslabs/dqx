@@ -308,9 +308,7 @@ def test_save_and_load_checks_from_lakebase_rule_set_fingerprint_already_exists(
     compare_checks(checks, TEST_CHECKS[0:2])
 
 
-def test_save_checks_for_each_column_idempotency(
-    ws, spark, make_lakebase_instance, lakebase_client_id, make_random
-):
+def test_save_checks_for_each_column_idempotency(ws, spark, make_lakebase_instance, lakebase_client_id, make_random):
     """A for_each_column check produces deterministic fingerprint; saving twice is idempotent (second save skipped)."""
     dq_engine = DQEngine(ws, spark)
     instance = make_lakebase_instance()

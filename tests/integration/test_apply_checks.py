@@ -7178,12 +7178,10 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
             filter="b = 1",
         ),
     ]
-    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint(checks)
+
     checked = dq_engine.apply_checks(test_df, checks)
 
-    result_errors = checked.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
-    result_warnings = checked.select(F.explode(F.col("_warnings")).alias("dq")).select(F.expr("dq.*"))
-
+    checks_with_fingerprints = generate_checks_with_rule_and_set_fingerprint(checks)
     expected_errors = spark.createDataFrame(
         [
             [
@@ -7243,6 +7241,9 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
         ],
         dq_result_schema.elementType,
     )
+
+    result_errors = checked.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
+    result_warnings = checked.select(F.explode(F.col("_warnings")).alias("dq")).select(F.expr("dq.*"))
 
     assert_df_equality(result_errors, expected_errors, ignore_nullable=True)
     assert_df_equality(result_warnings, expected_warnings, ignore_nullable=True)
