@@ -86,7 +86,7 @@ def test_profiler(spark, ws):
         DQProfile(
             name='is_not_empty',
             column='t2',
-            description="Column t2 has 0% of empty values (allowed 1.0%)",
+            description=None,
             parameters={'trim_strings': True},
         ),
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
@@ -99,7 +99,7 @@ def test_profiler(spark, ws):
                 "max": datetime(2023, 1, 9, 0, 0, tzinfo=timezone.utc),
             },
         ),
-        DQProfile(name="is_not_null", column="s1.s2.ns2", description=None, parameters=None),
+        DQProfile(name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={'trim_strings': True}),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -186,7 +186,9 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
             description='Real min/max values were used',
             parameters={'max': Decimal('333323.00'), 'min': Decimal('1.23')},
         ),
-        DQProfile(name='is_not_empty', column='t2', description=None, parameters={'trim_strings': True}), # t2 contains null values
+        DQProfile(
+            name='is_not_empty', column='t2', description=None, parameters={'trim_strings': True}
+        ),  # t2 contains null values
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -197,7 +199,9 @@ def test_profiler_rounding_midnight_behavior(spark, ws):
                 "max": datetime(2023, 1, 8, 0, 0, tzinfo=timezone.utc),
             },
         ),
-        DQProfile(name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={'trim_strings': True}), # s1.s2.ns2 contains non-null and non-empty values
+        DQProfile(
+            name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={'trim_strings': True}
+        ),  # s1.s2.ns2 contains non-null and non-empty values
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -298,7 +302,7 @@ def test_profiler_non_default_profile_options(spark, ws):
             filter="t1 > 0",
         ),
         DQProfile(
-            name='is_not_empty', # Column t2 contains null values
+            name='is_not_empty',  # Column t2 contains null values
             column='t2',
             description=None,
             parameters={'trim_strings': False},
@@ -309,7 +313,10 @@ def test_profiler_non_default_profile_options(spark, ws):
             name="min_max",
             column="s1.ns1",
             description="Real min/max values were used",
-            parameters={'max': datetime(2023, 1, 8, 10, 0, 11, tzinfo=timezone.utc), 'min': datetime(2023, 1, 6, 10, 0, 11, tzinfo=timezone.utc)},
+            parameters={
+                'max': datetime(2023, 1, 8, 10, 0, 11, tzinfo=timezone.utc),
+                'min': datetime(2023, 1, 6, 10, 0, 11, tzinfo=timezone.utc),
+            },
             filter="t1 > 0",
         ),
         DQProfile(
@@ -405,7 +412,9 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         DQProfile(
             name="min_max", column="t1", description="Real min/max values were used", parameters={"min": 1, "max": 3}
         ),
-        DQProfile(name='is_not_empty', column='t2', description=None, parameters={'trim_strings': False}), # t2 contains null values
+        DQProfile(
+            name='is_not_empty', column='t2', description=None, parameters={'trim_strings': False}
+        ),  # t2 contains null values
         DQProfile(name="is_not_null", column="s1.ns1", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -416,7 +425,9 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
                 'min': datetime(2023, 1, 6, 10, 0, 11, tzinfo=timezone.utc),
             },
         ),
-        DQProfile(name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={"trim_strings": False}),
+        DQProfile(
+            name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={"trim_strings": False}
+        ),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -510,7 +521,9 @@ def test_profiler_non_default_profile_options_with_rounding_enabled(spark, ws):
             description="Real min/max values were used",
             parameters={'max': datetime.max, 'min': datetime(2023, 1, 6).replace(tzinfo=timezone.utc)},
         ),
-        DQProfile(name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={"trim_strings": False}),
+        DQProfile(
+            name="is_not_null_or_empty", column="s1.s2.ns2", description=None, parameters={"trim_strings": False}
+        ),
         DQProfile(name="is_not_null", column="s1.s2.ns3", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -1479,7 +1492,7 @@ def test_profile_with_dataset_filter(spark, ws):
             filter="machine_id IN ('MCH-002', 'MCH-003') AND maintenance_type = 'preventive'",
         ),
         DQProfile(
-            name="is_not_null_or_empty", # maintenance_type is guaranteed to be not null or empty with the filter
+            name="is_not_null_or_empty",  # maintenance_type is guaranteed to be not null or empty with the filter
             column="maintenance_type",
             description=None,
             parameters={"trim_strings": True},
@@ -1631,14 +1644,14 @@ def test_profile_with_no_filter(spark, ws):
 
     expected_profiles = [
         DQProfile(
-            name="is_not_null_or_empty", # machine_id contains no null or empty values
+            name="is_not_null_or_empty",  # machine_id contains no null or empty values
             column="machine_id",
             description=None,
             parameters={"trim_strings": True},
             filter=None,
         ),
         DQProfile(
-            name="is_not_empty", # maintenance_type contains a null value
+            name="is_not_empty",  # maintenance_type contains a null value
             column="maintenance_type",
             description=None,
             parameters={"trim_strings": True},
