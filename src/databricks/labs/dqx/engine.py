@@ -144,7 +144,7 @@ class DQEngineCore(DQEngineCoreBase):
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
         all_check_dicts = [c.to_dict() for c in checks]
-        rule_set_fingerprint = compute_rule_set_fingerprint(all_check_dicts)
+        rule_set_fingerprint = compute_rule_set_fingerprint(all_check_dicts) if all_check_dicts else None
 
         result_df = self._create_results_array(
             df,
@@ -747,7 +747,7 @@ class DQEngine(DQEngineBase):
             target_streaming_query = output_streaming_query
 
         assert checks is not None  # guaranteed: either provided or loaded from checks_location above
-        rule_set_fingerprint = compute_rule_set_fingerprint([c.to_dict() for c in checks])
+        rule_set_fingerprint = compute_rule_set_fingerprint([c.to_dict() for c in checks]) if checks else None
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
@@ -855,7 +855,7 @@ class DQEngine(DQEngineBase):
             target_streaming_query = output_streaming_query
 
         assert checks is not None  # guaranteed: either provided or loaded from checks_location above
-        rule_set_fingerprint = compute_rule_set_fingerprint(checks)
+        rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
