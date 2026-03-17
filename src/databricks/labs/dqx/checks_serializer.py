@@ -375,13 +375,15 @@ class DataFrameConverter:
         """
         filtered_df = df.where(F.col("run_config_name") == run_config_name)
 
-        # Filter by fingerprint or to the latest batch by created_at
+        # Filter by fingerprint or to the latest batch by created_at.
+        # Use desc_nulls_last() so legacy rows with NULL created_at/rule_set_fingerprint
+        # do not sort ahead of versioned rows in descending order.
         if not rule_set_fingerprint:
             result = (
                 filtered_df.select(F.col("rule_set_fingerprint"))
                 .orderBy(
-                    F.col("created_at").desc(),
-                    F.col("rule_set_fingerprint").desc(),
+                    F.col("created_at").desc_nulls_last(),
+                    F.col("rule_set_fingerprint").desc_nulls_last(),
                 )
                 .limit(1)
                 .collect()

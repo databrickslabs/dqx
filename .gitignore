@@ -177,7 +177,6 @@ dev/cleanup.py
 .cursor/
 .claude/
 
-
 # docgen
 docs/dqx/docs/reference/api
 !docs/dqx/docs/reference/api/index.mdx
