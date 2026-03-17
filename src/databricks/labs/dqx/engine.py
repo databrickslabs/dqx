@@ -731,6 +731,8 @@ class DQEngine(DQEngineBase):
             output_streaming_query = save_dataframe_as_table(checked_df, output_config)
             target_streaming_query = output_streaming_query
 
+        rule_set_fingerprint = compute_rule_set_fingerprint([c.to_dict() for c in checks])
+
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
             listener = self.get_streaming_metrics_listener(
@@ -738,8 +740,9 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
-                target_query_id=target_streaming_query.id,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
+                target_query_id=target_streaming_query.id,
             )
             self.spark.streams.addListener(listener)
 
@@ -755,6 +758,7 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
             )
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_save_in_table")
@@ -819,6 +823,8 @@ class DQEngine(DQEngineBase):
             output_streaming_query = save_dataframe_as_table(checked_df, output_config)
             target_streaming_query = output_streaming_query
 
+        rule_set_fingerprint = compute_rule_set_fingerprint(checks)
+
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
             listener = self.get_streaming_metrics_listener(
@@ -826,8 +832,9 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
-                target_query_id=target_streaming_query.id,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
+                target_query_id=target_streaming_query.id,
             )
             self.spark.streams.addListener(listener)
 
@@ -843,6 +850,7 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
             )
 
     @telemetry_logger("engine", "apply_checks_and_save_in_tables")
@@ -1022,6 +1030,7 @@ class DQEngine(DQEngineBase):
         product_name: str = "dqx",
         assume_user: bool = True,
         install_folder: str | None = None,
+        rule_set_fingerprint: str | None = None,
     ):
         """
         Persist result DataFrames using explicit configs or the named run configuration.
@@ -1043,6 +1052,7 @@ class DQEngine(DQEngineBase):
             product_name: Product/installation identifier used to resolve installation paths for config loading in install_folder is not provided (use "dqx" if not provided).
             assume_user: Whether to assume a per-user installation when loading the run configuration (use *True* if not provided, skipped if install_folder is provided).
             install_folder: Custom workspace installation folder. Required if DQX is installed in a custom folder.
+            rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set used. Included in summary metrics when metrics_config is provided.
 
         Returns:
             None
@@ -1095,6 +1105,7 @@ class DQEngine(DQEngineBase):
                 output_config=output_config,
                 quarantine_config=quarantine_config,
                 metrics_config=metrics_config,
+                rule_set_fingerprint=rule_set_fingerprint,
                 target_query_id=target_query.id,
             )
             self.spark.streams.addListener(listener)
@@ -1109,6 +1120,7 @@ class DQEngine(DQEngineBase):
                 metrics_config=metrics_config,
                 output_config=output_config,
                 quarantine_config=quarantine_config,
+                rule_set_fingerprint=rule_set_fingerprint,
             )
 
     @telemetry_logger("engine", "load_checks")
@@ -1178,6 +1190,7 @@ class DQEngine(DQEngineBase):
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
         checks_location: str | None = None,
+        rule_set_fingerprint: str | None = None,
     ) -> None:
         """
         Save data quality summary metrics to a table.
@@ -1192,6 +1205,8 @@ class DQEngine(DQEngineBase):
             output_config: Optional output configuration with valid records location (included in metrics for traceability).
             quarantine_config: Optional quarantine configuration with invalid records location (included in metrics for traceability).
             checks_location: Location of the checks files (e.g., absolute workspace or volume directory, or delta table).
+            rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set used for this run. Enables correlation with
+                checks storage and filtering metrics by rule set version.
 
         Note:
             The observation must have been triggered by an action (e.g., count(), write()) on the observed
@@ -1211,6 +1226,7 @@ class DQEngine(DQEngineBase):
                 output_location=output_config.location if output_config else None,
                 quarantine_location=quarantine_config.location if quarantine_config else None,
                 checks_location=checks_location,
+                rule_set_fingerprint=rule_set_fingerprint,
                 user_metadata=self._engine.engine_user_metadata,
             )
 
@@ -1225,6 +1241,7 @@ class DQEngine(DQEngineBase):
         output_config: OutputConfig | None = None,
         quarantine_config: OutputConfig | None = None,
         checks_location: str | None = None,
+        rule_set_fingerprint: str | None = None,
         target_query_id: str | None = None,
     ) -> StreamingMetricsListener:
         """
@@ -1236,6 +1253,7 @@ class DQEngine(DQEngineBase):
             output_config: Optional configuration for output data containing location.
             quarantine_config: Optional configuration for quarantine data containing location.
             checks_location: Optional location of the checks files (e.g., absolute workspace or volume directory, or delta table).
+            rule_set_fingerprint: Optional SHA-256 fingerprint of the rule set used for this run.
             target_query_id: Optional query ID of the specific streaming query to monitor. If provided, metrics will be collected only for this query.
 
         Returns:
@@ -1263,6 +1281,7 @@ class DQEngine(DQEngineBase):
             output_location=output_config.location if output_config else None,
             quarantine_location=quarantine_config.location if quarantine_config else None,
             checks_location=checks_location,
+            rule_set_fingerprint=rule_set_fingerprint,
             user_metadata=self._engine.engine_user_metadata,
         )
         return StreamingMetricsListener(metrics_config, metrics_observation, self.spark, target_query_id)
