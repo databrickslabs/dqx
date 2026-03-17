@@ -41,7 +41,7 @@ def test_null_or_empty_text_no_nulls_no_empties_returns_not_null_or_empty(mock_d
         mock_df,
         "col",
         column_type,
-        {"null_count": 0, "empty_count": 0, "total_count": 10},
+        {"count_null": 0, "empty_count": 0, "count": 10},
         {"max_null_ratio": 0.0, "max_empty_ratio": 0.0},
     )
     assert profile == DQProfile(
@@ -54,7 +54,7 @@ def test_null_or_empty_text_nulls_and_empties_within_threshold_has_description(m
         mock_df,
         "col",
         T.StringType(),
-        {"null_count": 1, "empty_count": 1, "total_count": 10},
+        {"count_null": 1, "empty_count": 1, "count": 10},
         {"max_null_ratio": 0.2, "max_empty_ratio": 0.2},
     )
     assert profile is not None
@@ -68,7 +68,7 @@ def test_null_or_empty_text_nulls_exceed_threshold_empty_ok_returns_is_not_empty
         mock_df,
         "col",
         T.StringType(),
-        {"null_count": 5, "empty_count": 0, "total_count": 10},
+        {"count_null": 5, "empty_count": 0, "count": 10},
         {"max_null_ratio": 0.3, "max_empty_ratio": 0.0},
     )
     assert profile is not None
@@ -81,7 +81,7 @@ def test_null_or_empty_text_empties_exceed_threshold_null_ok_returns_is_not_null
         mock_df,
         "col",
         T.StringType(),
-        {"null_count": 0, "empty_count": 5, "total_count": 10},
+        {"count_null": 0, "empty_count": 5, "count": 10},
         {"max_null_ratio": 0.0, "max_empty_ratio": 0.3},
     )
     assert profile is not None
@@ -94,7 +94,7 @@ def test_null_or_empty_text_both_exceed_threshold_returns_none(mock_df):
         mock_df,
         "col",
         T.StringType(),
-        {"null_count": 5, "empty_count": 4, "total_count": 10},
+        {"count_null": 5, "empty_count": 4, "count": 10},
         {"max_null_ratio": 0.3, "max_empty_ratio": 0.3},
     )
     assert profile is None
@@ -105,7 +105,7 @@ def test_null_or_empty_text_trim_strings_false_propagated(mock_df):
         mock_df,
         "col",
         T.StringType(),
-        {"null_count": 0, "empty_count": 0, "total_count": 5},
+        {"count_null": 0, "empty_count": 0, "count": 5},
         {"max_null_ratio": 0.0, "max_empty_ratio": 0.0, "trim_strings": False},
     )
     assert profile is not None
@@ -117,7 +117,7 @@ def test_null_or_empty_text_filter_propagated(mock_df):
         mock_df,
         "col",
         T.StringType(),
-        {"null_count": 0, "empty_count": 0, "total_count": 5},
+        {"count_null": 0, "empty_count": 0, "count": 5},
         {"max_null_ratio": 0.0, "max_empty_ratio": 0.0, "filter": "x > 0"},
     )
     assert profile is not None
@@ -129,7 +129,7 @@ def test_null_or_empty_text_empty_dataframe_returns_none(mock_df):
         mock_df,
         "col",
         T.StringType(),
-        {"null_count": 0, "empty_count": 0, "total_count": 0},
+        {"count_null": 0, "empty_count": 0, "count": 0},
         {},
     )
     assert profile is None
@@ -145,7 +145,7 @@ def test_null_or_empty_non_text_no_nulls_returns_is_not_null(mock_df):
         mock_df,
         "age",
         T.IntegerType(),
-        {"null_count": 0, "total_count": 10},
+        {"count_null": 0, "count": 10},
         {"max_null_ratio": 0.0},
     )
     assert profile == DQProfile(name="is_not_null", column="age", description=None, parameters=None, filter=None)
@@ -156,7 +156,7 @@ def test_null_or_empty_non_text_nulls_within_threshold_has_description(mock_df):
         mock_df,
         "age",
         T.IntegerType(),
-        {"null_count": 1, "total_count": 10},
+        {"count_null": 1, "count": 10},
         {"max_null_ratio": 0.2},
     )
     assert profile is not None
@@ -170,7 +170,7 @@ def test_null_or_empty_non_text_nulls_exceed_threshold_returns_none(mock_df):
         mock_df,
         "age",
         T.IntegerType(),
-        {"null_count": 5, "total_count": 10},
+        {"count_null": 5, "count": 10},
         {"max_null_ratio": 0.3},
     )
     assert profile is None
@@ -182,7 +182,7 @@ def test_null_or_empty_non_text_types_no_nulls_return_is_not_null(mock_df, colum
         mock_df,
         "col",
         column_type,
-        {"null_count": 0, "total_count": 5},
+        {"count_null": 0, "count": 5},
         {"max_null_ratio": 0.0},
     )
     assert profile is not None
@@ -209,18 +209,17 @@ def _make_mock_df(columns: list, distinct_values: list) -> DataFrame:
 
 @pytest.mark.parametrize("column_type", [T.DoubleType(), T.FloatType(), T.BooleanType(), T.DateType()])
 def test_is_in_unsupported_type_returns_none(mock_df, column_type):
-    assert make_is_in_profile(mock_df, "col", column_type, {"total_count": 10}, {}) is None
+    assert make_is_in_profile(mock_df, "col", column_type, {"count": 10}, {}) is None
 
 
 def test_is_in_total_count_zero_returns_none(mock_df):
-    assert make_is_in_profile(mock_df, "col", T.IntegerType(), {"total_count": 0}, {}) is None
+    assert make_is_in_profile(mock_df, "col", T.IntegerType(), {"count": 0}, {}) is None
 
 
 def test_is_in_no_distinct_values_returns_none():
     df = _make_mock_df(["col"], [])
     assert (
-        make_is_in_profile(df, "col", T.StringType(), {"total_count": 3}, {"max_in_count": 10, "distinct_ratio": 1.0})
-        is None
+        make_is_in_profile(df, "col", T.StringType(), {"count": 3}, {"max_in_count": 10, "distinct_ratio": 1.0}) is None
     )
 
 
@@ -230,7 +229,7 @@ def test_is_in_conditions_met_returns_profile():
         df,
         "status",
         T.IntegerType(),
-        {"total_count": 5},
+        {"count": 5},
         {"max_in_count": 10, "distinct_ratio": 1.0},
     )
     assert profile is not None
@@ -246,7 +245,7 @@ def test_is_in_distinct_count_exceeds_max_in_count_returns_none():
         df,
         "col",
         T.IntegerType(),
-        {"total_count": 100},
+        {"count": 100},
         {"max_in_count": 10, "distinct_ratio": 1.0},
     )
     assert profile is None
@@ -259,7 +258,7 @@ def test_is_in_distinct_ratio_exceeds_threshold_returns_none():
         df,
         "col",
         T.StringType(),
-        {"total_count": 10},
+        {"count": 10},
         {"max_in_count": 20, "distinct_ratio": 0.5},
     )
     assert profile is None
@@ -271,7 +270,7 @@ def test_is_in_filter_propagated():
         df,
         "col",
         T.StringType(),
-        {"total_count": 5},
+        {"count": 5},
         {"max_in_count": 10, "distinct_ratio": 1.0, "filter": "x > 0"},
     )
     assert profile is not None
@@ -360,4 +359,33 @@ def test_min_max_with_outlier_removal_stddev_zero_returns_real_min_max(mock_df):
     assert profile is not None
     assert profile.name == "min_max"
     assert profile.parameters == {"min": 5, "max": 5}
+    assert profile.description == "Real min/max values were used"
+
+
+def test_min_max_empty_outlier_columns_applies_outlier_removal_to_all_columns(mock_df):
+    # empty outlier_columns with remove_outliers=True must apply to all columns (regression test for issue #1)
+    # mean=50, stddev=10, sigmas=3 → bounds [20, 80] which cap the real range [1, 100]
+    profile = make_min_max_profile(
+        mock_df,
+        "amount",
+        T.IntegerType(),
+        {"count_non_null": 10, "min": 1, "max": 100, "mean": 50.0, "stddev": 10.0},
+        {"remove_outliers": True, "outlier_columns": []},
+    )
+    assert profile is not None
+    assert profile.parameters == {"min": 20, "max": 80}
+    assert "sigmas" in profile.description
+
+
+def test_min_max_column_not_in_outlier_columns_skips_outlier_removal(mock_df):
+    # when outlier_columns is set but does not include this column, use real min/max
+    profile = make_min_max_profile(
+        mock_df,
+        "amount",
+        T.IntegerType(),
+        {"count_non_null": 10, "min": 1, "max": 100, "mean": 50.0, "stddev": 10.0},
+        {"remove_outliers": True, "outlier_columns": ["other_col"]},
+    )
+    assert profile is not None
+    assert profile.parameters == {"min": 1, "max": 100}
     assert profile.description == "Real min/max values were used"

@@ -33,8 +33,8 @@ class DQProfileType:
               when profiler_options["trim_strings"] is True). Used for distinct/min/max etc.
             - column_name: Name of the column being profiled.
             - column_type: Spark DataType of the column (e.g. StringType(), LongType()).
-            - profiler_metrics: Column-level statistics from the profiler (e.g. total_count,
-              null_count, empty_count, count_non_null). Same key set as summary_stats[column_name].
+            - profiler_metrics: Column-level statistics from the profiler (e.g. count,
+              count_null, empty_count, count_non_null). Same key set as summary_stats[column_name].
             - profiler_options: Profiler options for this run (e.g. max_null_ratio,
               max_empty_ratio, max_in_count, trim_strings, filter).
     """

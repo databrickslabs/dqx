@@ -388,8 +388,8 @@ class DQProfiler(DQEngineBase):
                 column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
 
             count_non_null = column_df.count()
-            metrics["total_count"] = total_count
-            metrics["null_count"] = total_count - count_non_null
+            metrics["count"] = total_count
+            metrics["count_null"] = total_count - count_non_null
             metrics["count_non_null"] = count_non_null
             if is_text:
                 metrics["empty_count"] = column_df.filter(F.col(column_label) == "").count()

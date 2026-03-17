@@ -74,7 +74,7 @@ def make_is_in_profile(
     if not _supports_distinct(column_type):
         return None
 
-    total_count = profiler_metrics.get("total_count", 0)
+    total_count = profiler_metrics.get("count", 0)
     if total_count == 0:
         return None
 
@@ -82,8 +82,8 @@ def make_is_in_profile(
     max_distinct_ratio = profiler_options.get("distinct_ratio", 0.0)
 
     col = df.columns[0]
-    distinct_df = df.select(col).distinct()
-    distinct_count = distinct_df.count()
+    distinct_values = [row[0] for row in df.select(col).distinct().collect()]
+    distinct_count = len(distinct_values)
     if distinct_count == 0:
         # The df passed here has nulls already dropped by the caller. If distinct_count is 0,
         # the column is entirely null — no valid values to build an allowlist from.
@@ -91,8 +91,7 @@ def make_is_in_profile(
 
     distinct_ratio = (1.0 * distinct_count) / total_count
 
-    if distinct_count <= max_in_count and distinct_ratio <= max_distinct_ratio:
-        distinct_values = [row[0] for row in distinct_df.collect()]
+    if distinct_count < max_in_count and distinct_ratio < max_distinct_ratio:
         return DQProfile(
             name="is_in",
             column=column_name,
@@ -167,11 +166,11 @@ def _make_null_or_empty_profile(
     Returns:
         A DQProfile if the correct conditions are met, otherwise None
     """
-    total_count = profiler_metrics.get("total_count", 0)
+    total_count = profiler_metrics.get("count", 0)
     if total_count == 0:
         return None
 
-    null_count = profiler_metrics.get("null_count", 0)
+    null_count = profiler_metrics.get("count_null", 0)
     null_ratio = null_count / total_count
     empty_count = profiler_metrics.get("empty_count", 0)
     empty_ratio = empty_count / total_count
@@ -239,8 +238,8 @@ def _make_null_profile(
     Returns:
         A DQProfile if the correct conditions are met, otherwise None
     """
-    null_count = profiler_metrics.get("null_count", 0)
-    total_count = profiler_metrics.get("total_count", 0)
+    null_count = profiler_metrics.get("count_null", 0)
+    total_count = profiler_metrics.get("count", 0)
     if total_count == 0:
         return None
     null_ratio = null_count / total_count
@@ -303,7 +302,7 @@ def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool
 
     outlier_columns = profiler_options.get("outlier_columns", [])
     if not outlier_columns:
-        return False
+        return True  # empty list means apply to all columns
     return column_name in outlier_columns
 
 
@@ -436,6 +435,8 @@ def _make_min_max_profile_without_outlier_removal(
         else:
             min_value = aggregates["min_value"]
             max_value = aggregates["max_value"]
+        profiler_metrics["min"] = min_value
+        profiler_metrics["max"] = max_value
 
     return DQProfile(
         name="min_max",

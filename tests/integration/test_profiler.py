@@ -763,7 +763,7 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
     ]
 
     assert len(stats.keys()) > 0
-    assert stats["category"]["total_count"] == 10
+    assert stats["category"]["count"] == 10
     assert profiles == expected_profiles
 
 
@@ -1894,7 +1894,7 @@ def test_profile_table_with_pk_detection(spark, ws, make_schema, make_random):
     ]
 
     assert len(stats.keys()) > 0
-    assert stats["order_id"]["total_count"] == 5  # Verify we got all records
+    assert stats["order_id"]["count"] == 5  # Verify we got all records
     assert profiles == expected_profiles
 
 
