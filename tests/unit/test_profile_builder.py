@@ -447,3 +447,31 @@ def test_min_max_column_not_in_outlier_columns_skips_outlier_removal(mock_df):
     assert profile is not None
     assert profile.parameters == {"min": 1, "max": 100}
     assert profile.description == "Real min/max values were used"
+
+
+def test_min_max_rounding_zero_min_is_not_skipped(mock_df):
+    # regression: falsy check `if not value` would skip rounding when min=0.0,
+    # leaving a float instead of the expected int. Fixed by `if value is None`.
+    profile = make_min_max_profile(
+        mock_df,
+        "amount",
+        T.IntegerType(),
+        {"count_non_null": 5, "min": 0, "max": 10},
+        {"remove_outliers": False, "round": True},
+    )
+    assert profile is not None
+    assert profile.parameters["min"] == 0
+    assert isinstance(profile.parameters["min"], int)
+
+
+def test_min_max_rounding_disabled_returns_float_as_is(mock_df):
+    profile = make_min_max_profile(
+        mock_df,
+        "amount",
+        T.DoubleType(),
+        {"count_non_null": 5, "min": 1.2, "max": 9.9},
+        {"remove_outliers": False, "round": False},
+    )
+    assert profile is not None
+    assert profile.parameters["min"] == 1.2
+    assert profile.parameters["max"] == 9.9

@@ -18,7 +18,7 @@ from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
 from databricks.labs.dqx.profiler.profile import DQProfile
-from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY
+from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
 
@@ -362,7 +362,7 @@ class DQProfiler(DQEngineBase):
         total_count: int,
     ) -> None:
         """
-        Builds a list of DQProfiles by iterating through DQProfileType builders.
+        Builds a list of DQProfiles by iterating through DQProfileBuilder builders.
 
         This method mutates *summary_stats* in place: it writes per-column metrics
         (e.g. count, count_null, count_non_null, empty_count, and min/max when a
@@ -387,7 +387,7 @@ class DQProfiler(DQEngineBase):
 
             column_df = df.select(field_name).dropna()
             column_label = column_df.columns[0]
-            is_text = isinstance(field_type, (T.CharType, T.StringType, T.VarcharType))
+            is_text = isinstance(field_type, TEXT_TYPES)
             if is_text and trim_strings:
                 column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
 
@@ -397,6 +397,8 @@ class DQProfiler(DQEngineBase):
             metrics["count_non_null"] = count_non_null
             if is_text:
                 metrics["empty_count"] = column_df.filter(F.col(column_label) == "").count()
+            else:
+                metrics["empty_count"] = 0
 
             self._build_profiles_for_column(column_df, field_name, field_type, metrics, opts, dq_rules)
 
@@ -411,12 +413,23 @@ class DQProfiler(DQEngineBase):
         opts: dict[str, Any],
         dq_rules: list[DQProfile],
     ) -> None:
-        """Run registered profile builders for a column and append profiles; update metrics for min_max once (one min_max profile per column)."""
+        """Run registered profile builders for a column and append profiles.
+
+        Builders are invoked in PROFILE_BUILDER_REGISTRY insertion order (null_or_empty →
+        is_in → min_max). Preserving that order matters: the min_max builder reads summary-stats
+        metrics written by earlier passes, so it must run last among the built-in builders.
+
+        After a min_max profile is produced, its resolved min/max values are written back into
+        *metrics* so that downstream consumers (e.g. LLM primary-key detection) can read them
+        without triggering a second Spark action.
+        """
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
             profile = profile_type.builder(column_df, field_name, field_type, metrics, opts)
             if not profile:
                 continue
             dq_rules.append(profile)
+            # Write resolved min/max back into metrics so callers (e.g. summary_stats consumers)
+            # can access the final values without re-running Spark aggregates.
             if profile.name == "min_max" and profile.parameters:
                 if profile.parameters.get("min") is not None:
                     metrics["min"] = profile.parameters.get("min")

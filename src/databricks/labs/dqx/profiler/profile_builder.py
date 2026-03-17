@@ -8,16 +8,19 @@ from typing import Any
 from pyspark.sql import DataFrame
 from pyspark.sql import types as T, functions as F
 from databricks.labs.dqx.errors import InvalidParameterError
-from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileType
+from databricks.labs.dqx.profiler.profile import DQProfile, DQProfileBuilder
 
+# Type alias for annotations; use TEXT_TYPES for isinstance() checks.
+TextType = T.CharType | T.StringType | T.VarcharType
+TEXT_TYPES: tuple[type[TextType], ...] = (T.CharType, T.StringType, T.VarcharType)
 
-PROFILE_BUILDER_REGISTRY: dict[str, DQProfileType] = {}
+PROFILE_BUILDER_REGISTRY: dict[str, DQProfileBuilder] = {}
 logger = logging.getLogger(__name__)
 
 
 def register_profile_builder(profile_type: str) -> Callable:
     def wrapper(builder_func: Callable) -> Callable:
-        PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileType(name=profile_type, builder=builder_func)
+        PROFILE_BUILDER_REGISTRY[profile_type] = DQProfileBuilder(name=profile_type, builder=builder_func)
         return builder_func
 
     return wrapper
@@ -149,7 +152,7 @@ def _is_text(column_type: T.DataType) -> bool:
     Returns:
         True if the column is a Spark text type, otherwise False
     """
-    return isinstance(column_type, (T.CharType, T.StringType, T.VarcharType))
+    return isinstance(column_type, TEXT_TYPES)
 
 
 def _make_null_or_empty_profile(
@@ -271,7 +274,7 @@ def _supports_distinct(column_type: T.DataType) -> bool:
     Returns:
         True if the column supports distinct operations, otherwise False
     """
-    return isinstance(column_type, (T.CharType, T.IntegerType, T.LongType, T.StringType, T.VarcharType))
+    return isinstance(column_type, (T.IntegerType, T.LongType) + TEXT_TYPES)
 
 
 def _supports_min_max(column_type: T.DataType) -> bool:
@@ -562,7 +565,7 @@ def _round_value(value: Any, rounding_direction: str, profiler_options: dict[str
     Returns:
         The rounded value, or the original value if rounding is not enabled.
     """
-    if not value or not profiler_options.get("round", False):
+    if value is None or not profiler_options.get("round", False):
         return value
 
     if isinstance(value, datetime.datetime):

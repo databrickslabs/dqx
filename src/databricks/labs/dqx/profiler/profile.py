@@ -18,8 +18,8 @@ class DQProfile:
 
 
 @dataclass(frozen=True)
-class DQProfileType:
-    """Data quality profile type: a named builder that may produce a DQProfile for a column.
+class DQProfileBuilder:
+    """Data quality profile builder class: a named builder that may produce a DQProfile for a column.
 
     Attributes:
         name: Profile type identifier (e.g. "null_or_empty", "is_in", "min_max"). Used to
