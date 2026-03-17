@@ -127,7 +127,7 @@ class DQDltGenerator(DQEngineBase):
             A string representing the Lakeflow Pipelines rule.
         """
         trim_strings = params.get("trim_strings", True)
-        # Valid when null or non-empty: column is null or (trim(column) <> '' or column <> '')
+        # Nulls are allowed; only non-null values must be non-empty
         if trim_strings:
             return f"({column} is null or trim({column}) <> '')"
         return f"({column} is null or {column} <> '')"

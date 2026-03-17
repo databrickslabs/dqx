@@ -85,6 +85,8 @@ def make_is_in_profile(
     distinct_df = df.select(col).distinct()
     distinct_count = distinct_df.count()
     if distinct_count == 0:
+        # The df passed here has nulls already dropped by the caller. If distinct_count is 0,
+        # the column is entirely null — no valid values to build an allowlist from.
         return None
 
     distinct_ratio = (1.0 * distinct_count) / total_count

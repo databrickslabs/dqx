@@ -218,7 +218,10 @@ def test_is_in_total_count_zero_returns_none(mock_df):
 
 def test_is_in_no_distinct_values_returns_none():
     df = _make_mock_df(["col"], [])
-    assert make_is_in_profile(df, "col", T.StringType(), {"total_count": 3}, {"max_in_count": 10, "distinct_ratio": 1.0}) is None
+    assert (
+        make_is_in_profile(df, "col", T.StringType(), {"total_count": 3}, {"max_in_count": 10, "distinct_ratio": 1.0})
+        is None
+    )
 
 
 def test_is_in_conditions_met_returns_profile():

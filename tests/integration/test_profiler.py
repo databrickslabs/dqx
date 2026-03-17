@@ -1296,9 +1296,7 @@ def test_profile_tables_for_patterns_with_partial_opts_match(spark, ws, make_sch
         ],
         table2_name: [
             # category: 20% nulls > 1% default threshold, 0% empties <= 1% default → is_not_empty
-            DQProfile(
-                name="is_not_empty", column="category", description=None, parameters={"trim_strings": True}
-            ),
+            DQProfile(name="is_not_empty", column="category", description=None, parameters={"trim_strings": True}),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
                 name="min_max",

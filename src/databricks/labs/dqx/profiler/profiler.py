@@ -383,14 +383,15 @@ class DQProfiler(DQEngineBase):
 
             column_df = df.select(field_name).dropna()
             column_label = column_df.columns[0]
-            if isinstance(field_type, T.StringType) and trim_strings:
+            is_text = isinstance(field_type, (T.CharType, T.StringType, T.VarcharType))
+            if is_text and trim_strings:
                 column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
 
             count_non_null = column_df.count()
             metrics["total_count"] = total_count
             metrics["null_count"] = total_count - count_non_null
             metrics["count_non_null"] = count_non_null
-            if isinstance(field_type, T.StringType):
+            if is_text:
                 metrics["empty_count"] = column_df.filter(F.col(column_label) == "").count()
 
             for profile_type in PROFILE_BUILDER_REGISTRY.values():
