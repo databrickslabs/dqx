@@ -475,3 +475,33 @@ def test_min_max_rounding_disabled_returns_float_as_is(mock_df):
     assert profile is not None
     assert profile.parameters["min"] == 1.2
     assert profile.parameters["max"] == 9.9
+
+
+def test_min_max_rounding_enabled_floors_float_min_and_ceils_float_max(mock_df):
+    # regression: when min/max came from summary-stats metrics (fast path), round=True was
+    # silently ignored for float types. Values must be floor/ceil'd just as the Spark fallback does.
+    profile = make_min_max_profile(
+        mock_df,
+        "price",
+        T.DoubleType(),
+        {"count_non_null": 5, "min": 1.2, "max": 9.9},
+        {"remove_outliers": False, "round": True},
+    )
+    assert profile is not None
+    assert profile.parameters["min"] == 1.0
+    assert profile.parameters["max"] == 10.0
+
+
+def test_min_max_rounding_enabled_for_decimal_type(mock_df):
+    import decimal
+
+    profile = make_min_max_profile(
+        mock_df,
+        "amount",
+        T.DecimalType(10, 2),
+        {"count_non_null": 5, "min": decimal.Decimal("1.20"), "max": decimal.Decimal("9.90")},
+        {"remove_outliers": False, "round": True},
+    )
+    assert profile is not None
+    assert profile.parameters["min"] == decimal.Decimal("1")
+    assert profile.parameters["max"] == decimal.Decimal("10")

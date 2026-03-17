@@ -423,26 +423,25 @@ def _make_min_max_profile_without_outlier_removal(
             logger.info(f"Can't get min/max for field {column_name}")
             return None
         if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
-            min_value = _round_value(
-                datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=datetime.timezone.utc
-                ),
-                "down",
-                profiler_options,
+            min_value = datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=datetime.timezone.utc
             )
-            max_value = _round_value(
-                datetime.datetime.strptime(aggregates["max_value"], "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=datetime.timezone.utc
-                ),
-                "up",
-                profiler_options,
+            max_value = datetime.datetime.strptime(aggregates["max_value"], "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=datetime.timezone.utc
             )
-        elif isinstance(column_type, T.IntegralType):
-            min_value = int(_round_value(aggregates["min_value"], "down", profiler_options))
-            max_value = int(_round_value(aggregates["max_value"], "up", profiler_options))
         else:
             min_value = aggregates["min_value"]
             max_value = aggregates["max_value"]
+
+    # Apply type-specific rounding/casting uniformly, regardless of whether values came from
+    # summary-stats metrics or the Spark fallback above. This ensures round=True is honoured for
+    # all numeric types (float, decimal, int) and for timestamps.
+    if isinstance(column_type, T.IntegralType):
+        min_value = int(_round_value(min_value, "down", profiler_options))
+        max_value = int(_round_value(max_value, "up", profiler_options))
+    else:
+        min_value = _round_value(min_value, "down", profiler_options)
+        max_value = _round_value(max_value, "up", profiler_options)
 
     return DQProfile(
         name="min_max",
