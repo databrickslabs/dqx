@@ -15,7 +15,7 @@ from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
-from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
 from databricks.labs.dqx.profiler.profile import DQProfile
 from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY
@@ -535,14 +535,16 @@ class DQProfiler(DQEngineBase):
     @staticmethod
     def _do_cast(value: str | None, typ: T.DataType) -> Any | None:
         """
-        Casts a string value to a specified PySpark data type.
+        Casts a string value from Spark's DataFrame.summary() output to a typed Python value.
 
         Args:
-            value: The string value to cast. Can be None.
+            value: The string value to cast. Can be None or empty.
             typ: The PySpark data type to cast the value to.
 
         Returns:
-            The casted value, or None if the input value is None.
+            The casted value, or None if the input is None/empty or the type is unsupported.
+            Unsupported types (e.g. DateType, TimestampType, BooleanType) return None so that
+            profile builders fall back to Spark aggregate actions for min/max computation.
         """
         if not value:
             return None
@@ -553,7 +555,9 @@ class DQProfiler(DQEngineBase):
         if isinstance(typ, T.DecimalType):
             context = Context(prec=typ.precision)
             return Decimal(value, context)
-        if isinstance(typ, T.StringType):
+        if isinstance(typ, (T.StringType, T.CharType, T.VarcharType)):
             return value
 
-        raise InvalidParameterError(f"Unsupported data type for casting: {typ}")
+        # For unsupported types (e.g. DateType, TimestampType, BooleanType), return None.
+        # Profile builders handle missing min/max by falling back to Spark aggregate actions.
+        return None

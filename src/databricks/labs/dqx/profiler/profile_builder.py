@@ -91,7 +91,7 @@ def make_is_in_profile(
 
     distinct_ratio = (1.0 * distinct_count) / total_count
 
-    if total_count <= max_in_count and distinct_ratio <= max_distinct_ratio:
+    if distinct_count <= max_in_count and distinct_ratio <= max_distinct_ratio:
         distinct_values = [row[0] for row in distinct_df.collect()]
         return DQProfile(
             name="is_in",

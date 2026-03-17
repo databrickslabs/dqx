@@ -239,8 +239,9 @@ def test_is_in_conditions_met_returns_profile():
     assert set(profile.parameters["in"]) == {1, 2, 3}
 
 
-def test_is_in_total_count_exceeds_max_in_count_returns_none():
-    df = _make_mock_df(["col"], [1, 2, 3])
+def test_is_in_distinct_count_exceeds_max_in_count_returns_none():
+    # 11 distinct values, max_in_count=10 → distinct_count > max_in_count → None
+    df = _make_mock_df(["col"], list(range(11)))
     profile = make_is_in_profile(
         df,
         "col",
