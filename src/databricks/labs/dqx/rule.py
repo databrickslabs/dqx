@@ -37,12 +37,25 @@ __all__ = [
 def compute_rule_fingerprint(check_dict: dict) -> str:
     """Compute a deterministic SHA-256 hash of a single rule definition.
 
+    Normalizes the check dict before hashing so the same logical rule yields the same
+    fingerprint regardless of storage backend or code path (Delta, Lakebase, engine).
+    Normalization turns variants into a single canonical form.
+    After normalization, all equivalent rules hash to the same fingerprint.
+    
     Args:
         check_dict: Dictionary representing a single check rule.
 
     Returns:
         A hex-encoded SHA-256 hash string.
     """
+    def _normalize_value_for_serialization(val: Any) -> Any:
+        """Recursively normalize a value for JSON/serialization. Idempotent."""
+        if isinstance(val, dict):
+            return {k: _normalize_value_for_serialization(v) for k, v in val.items()}
+        return normalize_bound_args(val)
+
+    check_dict = _normalize_value_for_serialization(check_dict)
+    
     check_inner = check_dict.get("check") or {}
     for_each_column = check_inner.get("for_each_column")
     # Normalize to list: Spark ArrayType or other sources may return non-list iterables

@@ -298,7 +298,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         return _before_connect
 
-    def get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
+    def _get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
         """
         Create a SQLAlchemy engine for the Lakebase instance.
 
@@ -363,7 +363,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         created_at = datetime.now(timezone.utc)
         run_config_name = config.run_config_name
-        rule_set_fingerprint = compute_rule_set_fingerprint(normalized_for_serialization)
+        rule_set_fingerprint = compute_rule_set_fingerprint(checks)
 
         normalized_checks = []
         for check in normalized_for_serialization:
@@ -614,7 +614,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = self.engine
         engine_created_internally = False
         if not engine:
-            engine = self.get_engine(config)
+            engine = self._get_engine(config)
             engine_created_internally = True
 
         try:
@@ -656,7 +656,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = self.engine
         engine_created_internally = False
         if not engine:
-            engine = self.get_engine(config)
+            engine = self._get_engine(config)
             engine_created_internally = True
 
         try:

@@ -366,45 +366,6 @@ def test_save_checks_for_each_column_idempotency(ws, spark, make_lakebase_instan
     assert len(checks) == 1, f"Expected 1 compact check (idempotency), got {len(checks)}"
 
 
-def _create_legacy_lakebase_table(ws, spark, config: LakebaseChecksStorageConfig, rows: list[dict]) -> None:
-    """Create a Lakebase table with the legacy schema (no versioning columns) and insert rows."""
-    handler = LakebaseChecksStorageHandler(ws, spark)
-    engine = handler.get_engine(config)
-    tbl = f'"{config.schema_name}"."{config.table_name}"'
-    with engine.begin() as conn:
-        if not conn.dialect.has_schema(conn, config.schema_name):
-            conn.execute(CreateSchema(config.schema_name))
-        conn.execute(
-            text(
-                f"""
-            CREATE TABLE IF NOT EXISTS {tbl} (
-                name VARCHAR(255),
-                criticality VARCHAR(50) DEFAULT 'error',
-                "check" JSONB,
-                filter TEXT,
-                run_config_name VARCHAR(255) DEFAULT 'default',
-                user_metadata JSONB
-            )
-        """
-            )
-        )
-        for row in rows:
-            check_json = json.dumps(row.get("check", {}))
-            conn.execute(
-                text(
-                    f'INSERT INTO {tbl} (name, criticality, "check", filter, run_config_name) '
-                    "VALUES (:n, :c, CAST(:check_json AS jsonb), :f, :r)"
-                ),
-                {
-                    "n": row.get("name"),
-                    "c": row.get("criticality", "error"),
-                    "check_json": check_json,
-                    "f": row.get("filter"),
-                    "r": row.get("run_config_name", "default"),
-                },
-            )
-
-
 def test_save_to_legacy_lakebase_table_adds_versioning_columns(
     ws, spark, make_lakebase_instance, lakebase_client_id, make_random
 ):
