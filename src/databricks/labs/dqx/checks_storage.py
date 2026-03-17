@@ -169,6 +169,14 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
               checks (via Delta replaceWhere). If the fingerprint matches, no write is performed.
             - **append**: If the fingerprint differs, appends the new checks as additional rows for this
               run_config_name (multiple versions accumulate). If the fingerprint matches, no write is performed.
+
+            Concurrency: The idempotency check is not atomic for Delta tables. The check-then-write sequence
+            (read fingerprint → skip if found → write) is not wrapped in a transaction, so two concurrent
+            callers saving the same rule set may both pass the check and both write, producing duplicate rows
+            in append mode or redundant overwrites in overwrite mode. This is benign in practice because
+            duplicate rows with the same fingerprint are functionally equivalent and the load path always
+            returns the latest version. For strict once-only guarantees use a single writer or apply
+            external coordination (e.g. a Databricks job with a single task).
         """
 
         if not checks:
