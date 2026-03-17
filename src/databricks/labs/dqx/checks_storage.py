@@ -124,7 +124,6 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         if not self._table_exists(config.location):
             raise NotFound(f"Checks table '{config.location}' does not exist in the workspace")
 
-        self._ensure_versioning_columns(config.location)
         rules_df = self.spark.read.table(config.location)
         return (
             DataFrameConverter.from_dataframe(
@@ -298,7 +297,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         return _before_connect
 
-    def _get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
+    def get_engine(self, config: LakebaseChecksStorageConfig) -> Engine:
         """
         Create a SQLAlchemy engine for the Lakebase instance.
 
@@ -319,30 +318,34 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         return engine
 
     @staticmethod
-    def get_table_definition(schema_name: str, table_name: str) -> Table:
+    def get_table_definition(schema_name: str, table_name: str, versioning: bool = True) -> Table:
         """
         Create a SQLAlchemy table definition for storing DQ rules (checks) in Lakebase.
 
         Args:
             schema_name: The schema where the checks table is located.
             table_name: The table where the checks are stored.
+            versioning: If True (default), include versioning columns (created_at, rule_fingerprint,
+                rule_set_fingerprint). Pass False for legacy tables that predate versioning support.
 
         Returns:
             SQLAlchemy table definition for the Lakebase instance.
         """
-        return Table(
-            table_name,
-            MetaData(schema=schema_name),
+        columns = [
             Column("name", String(255)),
             Column("criticality", String(50), server_default="error"),
             Column("check", JSONB),
             Column("filter", Text),
             Column("run_config_name", String(255), server_default="default"),
             Column("user_metadata", JSONB),
-            Column("created_at", DateTime),
-            Column("rule_fingerprint", String(64)),
-            Column("rule_set_fingerprint", String(64)),
-        )
+        ]
+        if versioning:
+            columns += [
+                Column("created_at", DateTime),
+                Column("rule_fingerprint", String(64)),
+                Column("rule_set_fingerprint", String(64)),
+            ]
+        return Table(table_name, MetaData(schema=schema_name), *columns)
 
     @staticmethod
     def _normalize_checks(checks: list[dict], config: LakebaseChecksStorageConfig) -> list[dict]:
@@ -498,11 +501,15 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         if not inspector.has_table(config.table_name, schema=config.schema_name):
             raise NotFound(f"Table '{config.location}' does not exist in the Lakebase instance")
 
-        LakebaseChecksStorageHandler._ensure_versioning_columns(engine, config)
+        has_versioning = LakebaseChecksStorageHandler._rule_set_columns_exists(
+            engine, config.schema_name, config.table_name
+        )
+        table = self.get_table_definition(config.schema_name, config.table_name, versioning=has_versioning)
 
-        table = self.get_table_definition(config.schema_name, config.table_name)
-
-        if config.rule_set_fingerprint:
+        if not has_versioning:
+            # Legacy table without versioning columns; load all rows for run_config_name.
+            stmt = select(table).where(table.c.run_config_name == config.run_config_name)
+        elif config.rule_set_fingerprint:
             logger.info(f"Filtering checks by rule_set_fingerprint='{config.rule_set_fingerprint}'")
             stmt = select(table).where(
                 table.c.rule_set_fingerprint == config.rule_set_fingerprint,
@@ -532,7 +539,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
                     table.c.run_config_name == config.run_config_name,
                 )
             else:
-                # Legacy-only table (all rows have NULL fingerprint); load all rows for run_config.
+                # All rows have NULL fingerprint; load all rows for run_config.
                 stmt = select(table).where(table.c.run_config_name == config.run_config_name)
 
         with engine.connect() as conn:
@@ -614,7 +621,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = self.engine
         engine_created_internally = False
         if not engine:
-            engine = self._get_engine(config)
+            engine = self.get_engine(config)
             engine_created_internally = True
 
         try:
@@ -656,7 +663,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
         engine = self.engine
         engine_created_internally = False
         if not engine:
-            engine = self._get_engine(config)
+            engine = self.get_engine(config)
             engine_created_internally = True
 
         try:

@@ -1,15 +1,14 @@
 """Unit tests for checks_serializer fingerprinting and conversion."""
 
 import re
-
-from databricks.labs.dqx.check_funcs import is_not_null
-from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
-from databricks.labs.dqx.rule import DQRowRule, compute_rule_fingerprint
 from datetime import datetime, timezone
 from unittest.mock import create_autospec
+
 from pyspark.sql import SparkSession
 
-from databricks.labs.dqx.checks_serializer import DataFrameConverter
+from databricks.labs.dqx.check_funcs import is_not_null
+from databricks.labs.dqx.checks_serializer import DataFrameConverter, compute_rule_set_fingerprint
+from databricks.labs.dqx.rule import DQRowRule, compute_rule_fingerprint
 
 
 def _hex_sha256_pattern() -> re.Pattern[str]:
@@ -244,8 +243,8 @@ def test_to_dataframe_uses_current_utc_time_when_created_at_is_none():
 
     after = datetime.now(timezone.utc)
     rows = spark.createDataFrame.call_args.args[0]
-    ts = rows[0][6]
-    assert before <= ts <= after
+    created_at_value = rows[0][6]
+    assert before <= created_at_value <= after
 
 
 def test_to_dataframe_all_rows_share_same_created_at():

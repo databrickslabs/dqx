@@ -375,26 +375,28 @@ class DataFrameConverter:
         """
         filtered_df = df.where(F.col("run_config_name") == run_config_name)
 
-        # Filter by fingerprint or to the latest batch by created_at.
-        # Use desc_nulls_last() so legacy rows with NULL created_at/rule_set_fingerprint
-        # do not sort ahead of versioned rows in descending order.
-        if not rule_set_fingerprint:
-            result = (
-                filtered_df.select(F.col("rule_set_fingerprint"))
-                .orderBy(
-                    F.col("created_at").desc_nulls_last(),
-                    F.col("rule_set_fingerprint").desc_nulls_last(),
+        has_versioning = "rule_set_fingerprint" in df.columns
+        if has_versioning:
+            # Filter by fingerprint or to the latest batch by created_at.
+            # Use desc_nulls_last() so legacy rows with NULL created_at/rule_set_fingerprint
+            # do not sort ahead of versioned rows in descending order.
+            if not rule_set_fingerprint:
+                result = (
+                    filtered_df.select(F.col("rule_set_fingerprint"))
+                    .orderBy(
+                        F.col("created_at").desc_nulls_last(),
+                        F.col("rule_set_fingerprint").desc_nulls_last(),
+                    )
+                    .limit(1)
+                    .collect()
                 )
-                .limit(1)
-                .collect()
-            )
-            if not result:
-                return []
-            rule_set_fingerprint = result[0][0]
+                if not result:
+                    return []
+                rule_set_fingerprint = result[0][0]
 
-        # Legacy tables may have NULL rule_set_fingerprint; load all rows for run_config_name
-        if rule_set_fingerprint is not None:
-            filtered_df = filtered_df.where(F.col("rule_set_fingerprint") == rule_set_fingerprint)
+            # May be None for legacy rows with NULL rule_set_fingerprint; load all rows for run_config_name
+            if rule_set_fingerprint is not None:
+                filtered_df = filtered_df.where(F.col("rule_set_fingerprint") == rule_set_fingerprint)
 
         check_rows = filtered_df.collect()
         collect_limit = 500

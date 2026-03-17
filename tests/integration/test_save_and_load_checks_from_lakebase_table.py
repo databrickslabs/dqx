@@ -6,9 +6,9 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import MetaData, Table, Column, String, Text, insert
+
+from sqlalchemy import insert
 from sqlalchemy.schema import CreateSchema
-from sqlalchemy.dialects.postgresql import JSONB
 
 from databricks.labs.dqx.checks_serializer import ChecksNormalizer, compute_rule_set_fingerprint
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
@@ -289,38 +289,27 @@ def _create_lakebase_location(database_name, make_random):
 def _create_legacy_lakebase_table(ws, spark, config: LakebaseChecksStorageConfig, checks: list[dict]) -> None:
     """Create a Lakebase table with legacy schema (no versioning columns) and insert checks."""
     handler = LakebaseChecksStorageHandler(ws=ws, spark=spark)
-    engine = handler._get_engine(config)
-
-    legacy_table = Table(
-        config.table_name,
-        MetaData(schema=config.schema_name),
-        Column("name", String(255)),
-        Column("criticality", String(50), server_default="error"),
-        Column("check", JSONB),
-        Column("filter", Text),
-        Column("run_config_name", String(255), server_default="default"),
-        Column("user_metadata", JSONB),
+    engine = handler.get_engine(config)
+    legacy_table = LakebaseChecksStorageHandler.get_table_definition(
+        config.schema_name, config.table_name, versioning=False
     )
-
     with engine.begin() as conn:
         if not conn.dialect.has_schema(conn, config.schema_name):
             conn.execute(CreateSchema(config.schema_name))
         legacy_table.create(engine, checkfirst=True)
 
     normalized = ChecksNormalizer.normalize(checks)
-    rows = []
-    for check in normalized:
-        rows.append(
-            {
-                "name": check.get("name"),
-                "criticality": check.get("criticality", "error"),
-                "check": check.get("check") or {},
-                "filter": check.get("filter"),
-                "run_config_name": check.get("run_config_name", "default"),
-                "user_metadata": check.get("user_metadata"),
-            }
-        )
-
+    rows = [
+        {
+            "name": c.get("name"),
+            "criticality": c.get("criticality", "error"),
+            "check": c.get("check") or {},
+            "filter": c.get("filter"),
+            "run_config_name": c.get("run_config_name", "default"),
+            "user_metadata": c.get("user_metadata"),
+        }
+        for c in normalized
+    ]
     with engine.begin() as conn:
         conn.execute(insert(legacy_table), rows)
 
