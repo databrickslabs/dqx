@@ -855,7 +855,10 @@ class DQEngine(DQEngineBase):
             target_streaming_query = output_streaming_query
 
         assert checks is not None  # guaranteed: either provided or loaded from checks_location above
-        rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
+        dq_rule_checks = deserialize_checks(checks, custom_check_functions)
+        rule_set_fingerprint = (
+            compute_rule_set_fingerprint([r.to_dict() for r in dq_rule_checks]) if dq_rule_checks else None
+        )
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:

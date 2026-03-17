@@ -1,6 +1,8 @@
+import pyspark.sql.functions as F
 from chispa import assert_df_equality  # type: ignore [import-untyped]
+from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.rule import DQRowRule, compute_rule_set_fingerprint
 from databricks.labs.dqx import check_funcs
 from tests.integration.conftest import (
     REPORTING_COLUMNS,
@@ -337,3 +339,40 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
     )
 
     assert_df_equality(bad, expected_bad, ignore_nullable=True)
+
+
+def test_apply_checks_by_metadata_for_each_column_fingerprint_consistency(ws, spark):
+    """
+    rule_set_fingerprint in DataFrame result columns must equal the fingerprint computed
+    from the same checks after deserialization (expanded form). This verifies that the
+    fingerprint embedded by apply_checks_by_metadata is consistent with the one a caller
+    can independently compute via deserialize_checks + to_dict().
+    """
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[None, None]], "a: int, b: int")
+
+    # One compact check that expands to two rules: is_not_null(a) and is_not_null(b).
+    checks = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_not_null", "for_each_column": ["a", "b"]},
+        }
+    ]
+
+    result = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    # Fingerprint embedded in the DataFrame result column — computed from the expanded rules.
+    fingerprint_in_df = (
+        result.select(F.explode("_errors").alias("e")).select(F.col("e.rule_set_fingerprint")).first()[0]
+    )
+
+    # Reference fingerprint computed the same way: deserialize then to_dict().
+    expanded_rules = deserialize_checks(checks)
+    fingerprint_from_expanded = compute_rule_set_fingerprint([r.to_dict() for r in expanded_rules])
+
+    assert fingerprint_in_df == fingerprint_from_expanded, (
+        f"rule_set_fingerprint divergence detected for for_each_column checks.\n"
+        f"  Fingerprint in DataFrame result columns: {fingerprint_in_df!r}\n"
+        f"  Fingerprint from deserialized rules: {fingerprint_from_expanded!r}\n"
+        "These must be equal so that summary metrics and row-level results can be correlated."
+    )

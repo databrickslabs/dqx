@@ -1364,6 +1364,7 @@ def test_save_results_in_table_batch_with_metrics(
         output_config=output_config,
         quarantine_config=quarantine_config,
         metrics_config=metrics_config,
+        rule_set_fingerprint=TEST_CHECKS_RULE_SET_FINGERPRINT,
     )
 
     expected_metrics = [
@@ -1374,7 +1375,7 @@ def test_save_results_in_table_batch_with_metrics(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
-            "rule_set_fingerprint": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1389,7 +1390,7 @@ def test_save_results_in_table_batch_with_metrics(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
-            "rule_set_fingerprint": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1404,7 +1405,7 @@ def test_save_results_in_table_batch_with_metrics(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
-            "rule_set_fingerprint": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1419,7 +1420,7 @@ def test_save_results_in_table_batch_with_metrics(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
-            "rule_set_fingerprint": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1632,6 +1633,7 @@ def test_save_results_in_table_streaming_with_metrics(
         output_config=output_config,
         quarantine_config=quarantine_config,
         metrics_config=metrics_config,
+        rule_set_fingerprint=TEST_CHECKS_RULE_SET_FINGERPRINT,
     )
 
     time.sleep(30)
