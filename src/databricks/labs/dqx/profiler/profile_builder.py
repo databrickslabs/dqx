@@ -332,6 +332,7 @@ def _make_min_max_profile_with_outlier_removal(
     """
     column_alias = df.columns[0]
     if isinstance(column_type, T.DateType):
+        # Convert DateType to timestamp, then to bigint epoch seconds.
         cast_df = df.select(F.col(column_alias).cast("timestamp").cast("bigint").alias(column_alias))
         aggregates = _get_aggregates(cast_df, column_alias)
     elif isinstance(column_type, T.TimestampType):
