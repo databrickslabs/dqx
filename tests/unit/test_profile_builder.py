@@ -1,3 +1,4 @@
+import decimal
 from unittest.mock import create_autospec
 
 import pytest
@@ -493,8 +494,6 @@ def test_min_max_rounding_enabled_floors_float_min_and_ceils_float_max(mock_df):
 
 
 def test_min_max_rounding_enabled_for_decimal_type(mock_df):
-    import decimal
-
     profile = make_min_max_profile(
         mock_df,
         "amount",
