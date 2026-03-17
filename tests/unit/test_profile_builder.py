@@ -212,6 +212,15 @@ def test_is_in_unsupported_type_returns_none(mock_df, column_type):
     assert make_is_in_profile(mock_df, "col", column_type, {"count": 10}, {}) is None
 
 
+@pytest.mark.parametrize("column_type", [T.CharType(10), T.VarcharType(50)])
+def test_is_in_char_varchar_type_returns_profile(column_type):
+    df = _make_mock_df(["col"], ["a", "b", "c"])
+    profile = make_is_in_profile(df, "col", column_type, {"count": 10}, {"max_in_count": 10, "distinct_ratio": 1.0})
+    assert profile is not None
+    assert profile.name == "is_in"
+    assert set(profile.parameters["in"]) == {"a", "b", "c"}
+
+
 def test_is_in_total_count_zero_returns_none(mock_df):
     assert make_is_in_profile(mock_df, "col", T.IntegerType(), {"count": 0}, {}) is None
 

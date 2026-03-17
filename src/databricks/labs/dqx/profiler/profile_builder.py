@@ -270,7 +270,7 @@ def _supports_distinct(column_type: T.DataType) -> bool:
     Returns:
         True if the column supports distinct operations, otherwise False
     """
-    return isinstance(column_type, (T.IntegerType, T.LongType, T.StringType))
+    return isinstance(column_type, (T.CharType, T.IntegerType, T.LongType, T.StringType, T.VarcharType))
 
 
 def _supports_min_max(column_type: T.DataType) -> bool:
@@ -295,6 +295,9 @@ def _remove_outliers(column_name: str, profiler_options: dict[str, Any]) -> bool
     Args:
         column_name: Input column name
         profiler_options: Configuration options for the DQProfiler
+
+    Returns:
+        True if outlier removal should be applied to this column, otherwise False.
     """
     remove_outliers = profiler_options.get("remove_outliers", True)
     if not remove_outliers:
@@ -334,8 +337,9 @@ def _make_min_max_profile_with_outlier_removal(
         # Convert DateType to timestamp, then to bigint epoch seconds.
         cast_df = df.select(F.col(column_alias).cast("timestamp").cast("bigint").alias(column_alias))
         aggregates = _get_aggregates(cast_df, column_alias)
-    elif isinstance(column_type, T.TimestampType):
-        cast_df = df.select(F.col(column_alias).cast("bigint").alias(column_alias))
+    elif isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
+        # Cast to timestamp first for TimestampNTZType compatibility (e.g. Spark Connect), then to bigint epoch.
+        cast_df = df.select(F.col(column_alias).cast("timestamp").cast("bigint").alias(column_alias))
         aggregates = _get_aggregates(cast_df, column_alias)
     else:
         aggregates = {
@@ -405,7 +409,7 @@ def _make_min_max_profile_without_outlier_removal(
     if min_value is None or max_value is None:
         col = df.columns[0]
         agg_df = df.agg(F.min(col).alias("min_value"), F.max(col).alias("max_value"))
-        if isinstance(column_type, T.TimestampType):
+        if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
             agg_df = agg_df.select(
                 F.date_format("min_value", "yyyy-MM-dd HH:mm:ss").alias("min_value"),
                 F.date_format("max_value", "yyyy-MM-dd HH:mm:ss").alias("max_value"),
@@ -414,7 +418,7 @@ def _make_min_max_profile_without_outlier_removal(
         if not aggregates or aggregates.get("min_value") is None:
             logger.info(f"Can't get min/max for field {column_name}")
             return None
-        if isinstance(column_type, T.TimestampType):
+        if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
             min_value = _round_value(
                 datetime.datetime.strptime(aggregates["min_value"], "%Y-%m-%d %H:%M:%S").replace(
                     tzinfo=datetime.timezone.utc
@@ -435,6 +439,8 @@ def _make_min_max_profile_without_outlier_removal(
         else:
             min_value = aggregates["min_value"]
             max_value = aggregates["max_value"]
+        # Cache computed values back into metrics so that other builders in the same
+        # column pass can reuse them without triggering another Spark action.
         profiler_metrics["min"] = min_value
         profiler_metrics["max"] = max_value
 
@@ -534,7 +540,7 @@ def _adjust_min_max_limits(
             datetime.datetime.fromtimestamp(int(max_value), tz=datetime.timezone.utc).date(),
         )
 
-    if isinstance(column_type, T.TimestampType):
+    if isinstance(column_type, (T.TimestampType, T.TimestampNTZType)):
         min_value = datetime.datetime.fromtimestamp(int(min_value), tz=datetime.timezone.utc)
         max_value = datetime.datetime.fromtimestamp(int(max_value), tz=datetime.timezone.utc)
         return _round_value(min_value, "down", profiler_options), _round_value(max_value, "up", profiler_options)

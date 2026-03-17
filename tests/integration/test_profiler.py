@@ -456,10 +456,11 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         DQProfile(
             name="min_max",
             column="s1.ns1",
-            description="Real min/max values were used",
+            # 9999-12-31 is an outlier; with num_sigmas=1 max is capped at avg+1σ (real min kept).
+            description="Real min value was used. Max was capped by 1 sigmas. avg=85582778411.0, stddev=145335926001.69772, max=253402250411",
             parameters={
-                'max': datetime(9999, 12, 31, 10, 0, 11, tzinfo=timezone.utc),
                 'min': datetime(2023, 1, 6, 10, 0, 11, tzinfo=timezone.utc),
+                'max': datetime(9287, 7, 10, 4, 33, 32, tzinfo=timezone.utc),
             },
         ),
         DQProfile(
@@ -469,8 +470,9 @@ def test_profiler_non_default_profile_options_remove_outliers_no_outlier_columns
         DQProfile(
             name="min_max",
             column="s1.s2.ns3",
-            description="Real min/max values were used",
-            parameters={"min": date(2023, 1, 6), "max": date(9999, 12, 31)},
+            # 9999-12-31 is an outlier; with num_sigmas=1 max is capped at avg+1σ (real min kept).
+            description="Real min value was used. Max was capped by 1 sigmas. avg=85582742400.0, stddev=145335926001.69772, max=253402214400",
+            parameters={"min": date(2023, 1, 6), "max": date(9287, 7, 9)},
         ),
     ]
     assert len(stats.keys()) > 0
