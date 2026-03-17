@@ -411,18 +411,17 @@ class DQProfiler(DQEngineBase):
         opts: dict[str, Any],
         dq_rules: list[DQProfile],
     ) -> None:
-        """Run registered profile builders for a column and append profiles; update metrics for min_max."""
+        """Run registered profile builders for a column and append profiles; update metrics for min_max once (one min_max profile per column)."""
         for profile_type in PROFILE_BUILDER_REGISTRY.values():
             profile = profile_type.builder(column_df, field_name, field_type, metrics, opts)
             if not profile:
                 continue
             dq_rules.append(profile)
-
             if profile.name == "min_max" and profile.parameters:
                 if profile.parameters.get("min") is not None:
-                    metrics["min"] = profile.parameters["min"]
+                    metrics["min"] = profile.parameters.get("min")
                 if profile.parameters.get("max") is not None:
-                    metrics["max"] = profile.parameters["max"]
+                    metrics["max"] = profile.parameters.get("max")
 
     def _add_llm_primary_key_for_dataframe(
         self, df: DataFrame, dq_rules: list[DQProfile], summary_stats: dict[str, Any], opts: dict[str, Any]
