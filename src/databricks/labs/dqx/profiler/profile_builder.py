@@ -197,14 +197,15 @@ def _make_null_or_empty_profile(
         )
 
     if not_null:
+        # Empty ratio exceeds max_empty_ratio, so is_not_null_or_empty is too strict; use is_not_null instead.
+        description = (
+            f"Column {column_name} has {null_ratio * 100:.1f}% of null values (allowed {max_null_ratio * 100:.1f}%); "
+            f"empty value check skipped: {empty_ratio * 100:.1f}% empty (exceeds {max_empty_ratio * 100:.1f}% threshold)"
+        )
         return DQProfile(
             name="is_not_null",
             column=column_name,
-            description=(
-                f"Column {column_name} has {null_ratio * 100:.1f}% of null values (allowed {max_null_ratio * 100:.1f}%)"
-                if null_count > 0
-                else None
-            ),
+            description=description,
             filter=profiler_options.get("filter", None),
         )
 
@@ -330,7 +331,7 @@ def _make_min_max_profile_with_outlier_removal(
         profiler_options: Configuration options for the DQProfiler
 
     Returns:
-        A 'min_max' DQProfile
+        A 'min_max' DQProfile, or None if min/max limits cannot be determined.
     """
     column_alias = df.columns[0]
     if isinstance(column_type, T.DateType):

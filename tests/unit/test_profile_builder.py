@@ -10,6 +10,7 @@ from databricks.labs.dqx.profiler.profile_builder import (
     make_is_in_profile,
     make_min_max_profile,
     make_null_or_empty_profile,
+    register_profile_builder,
 )
 
 
@@ -28,6 +29,51 @@ def test_profile_builder_registry_contains_expected_builders():
     assert "null_or_empty" in PROFILE_BUILDER_REGISTRY
     assert "is_in" in PROFILE_BUILDER_REGISTRY
     assert "min_max" in PROFILE_BUILDER_REGISTRY
+
+
+def test_register_profile_builder_registers_and_builder_is_callable():
+    sentinel = object()
+
+    @register_profile_builder("_test_custom")
+    def _custom_builder(*_):
+        return sentinel  # type: ignore[return-value]
+
+    try:
+        assert "_test_custom" in PROFILE_BUILDER_REGISTRY
+        assert PROFILE_BUILDER_REGISTRY["_test_custom"].builder is _custom_builder
+        assert PROFILE_BUILDER_REGISTRY["_test_custom"].builder(None, "", None, {}, {}) is sentinel
+    finally:
+        PROFILE_BUILDER_REGISTRY.pop("_test_custom", None)
+
+
+def test_register_profile_builder_overwrites_existing_registration():
+    first = object()
+    second = object()
+
+    @register_profile_builder("_test_overwrite")
+    def _builder_v1(*_):
+        return first  # type: ignore[return-value]
+
+    @register_profile_builder("_test_overwrite")
+    def _builder_v2(*_):
+        return second  # type: ignore[return-value]
+
+    try:
+        assert PROFILE_BUILDER_REGISTRY["_test_overwrite"].builder is _builder_v2
+        assert PROFILE_BUILDER_REGISTRY["_test_overwrite"].builder(None, "", None, {}, {}) is second
+    finally:
+        PROFILE_BUILDER_REGISTRY.pop("_test_overwrite", None)
+
+
+def test_register_profile_builder_returns_original_function():
+    @register_profile_builder("_test_return")
+    def _my_builder(*_):
+        return None
+
+    try:
+        assert _my_builder.__name__ == "_my_builder"
+    finally:
+        PROFILE_BUILDER_REGISTRY.pop("_test_return", None)
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +133,9 @@ def test_null_or_empty_text_empties_exceed_threshold_null_ok_returns_is_not_null
     assert profile is not None
     assert profile.name == "is_not_null"
     assert profile.parameters is None
+    assert profile.description is not None
+    assert "empty" in profile.description
+    assert "50.0%" in profile.description  # empty_ratio=5/10=50%, threshold=30%
 
 
 def test_null_or_empty_text_both_exceed_threshold_returns_none(mock_df):
