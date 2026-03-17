@@ -352,12 +352,14 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark_keep_alive, ma
     schema_name = make_schema(catalog_name=catalog_name).name
     metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
 
-    custom_metrics = [
-        "avg(case when dq_errors is not null then age else null end) as avg_error_age",
-        "sum(case when dq_warnings is not null then salary else null end) as total_warning_salary",
-    ]
     observer_name = "test_observer"
-    observer = DQMetricsObserver(name=observer_name, custom_metrics=custom_metrics)
+    observer = DQMetricsObserver(
+        name=observer_name,
+        custom_metrics=[
+            "avg(case when dq_errors is not null then age else null end) as avg_error_age",
+            "sum(case when dq_warnings is not null then salary else null end) as total_warning_salary",
+        ],
+    )
 
     user_metadata = {"key1": "value1", "key2": "value2"}
 
