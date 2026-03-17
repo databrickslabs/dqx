@@ -177,3 +177,81 @@ def test_ensure_versioning_columns_adds_only_missing_columns():
     sql_str = spark.sql.call_args.args[0]
     assert "created_at" in sql_str
     assert "rule_fingerprint" not in sql_str
+
+
+def test_save_in_append_mode_with_none_config_fingerprint_writes_to_new_table():
+    """config.rule_set_fingerprint=None (the default) does not suppress save() when the table is new.
+
+    save() always computes rule_set_fingerprint from the checks content.  config.rule_set_fingerprint
+    is a load-time filter, not a save-time override — setting it to None must never be interpreted
+    as "no version known, skip the write".
+    """
+    spark = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    ws.tables.get.side_effect = NotFound("table not found")  # _table_exists → False
+
+    handler = TableChecksStorageHandler(ws, spark)
+    config = TableChecksStorageConfig(
+        location="catalog.schema.table",
+        run_config_name="default",
+        mode="append",
+        rule_set_fingerprint=None,  # explicit default — must not suppress the write
+    )
+
+    handler.save(_SIMPLE_CHECK, config)
+
+    # saveAsTable must be called: the None config fingerprint is irrelevant to save()
+    spark.createDataFrame.return_value.write.saveAsTable.assert_called_once()
+
+
+def test_save_in_append_mode_skips_write_when_computed_fingerprint_already_exists():
+    """save() is idempotent: a second call with identical checks is skipped.
+
+    Idempotency is keyed on the fingerprint *computed from the checks content*, not on
+    config.rule_set_fingerprint.  When the table already contains a matching fingerprint,
+    saveAsTable must NOT be called again regardless of the config fingerprint value.
+    """
+    spark = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    # _table_exists → True (ws.tables.get does not raise)
+    spark.read.table.return_value.schema.fields = [_MockField(c) for c in _VERSIONING_COLUMNS]
+    # isEmpty() returns False → fingerprint already in table → idempotency guard fires
+    spark.read.table.return_value.filter.return_value.isEmpty.return_value = False
+
+    handler = TableChecksStorageHandler(ws, spark)
+    config = TableChecksStorageConfig(
+        location="catalog.schema.table",
+        run_config_name="default",
+        mode="append",
+        rule_set_fingerprint=None,
+    )
+
+    handler.save(_SIMPLE_CHECK, config)
+
+    spark.createDataFrame.return_value.write.saveAsTable.assert_not_called()
+
+
+def test_save_in_append_mode_proceeds_when_computed_fingerprint_differs_from_existing():
+    """save() appends a new version when the computed fingerprint is not yet in the table.
+
+    Demonstrates that config.rule_set_fingerprint=None means "no filter at load time", not
+    "skip the write".  A new fingerprint (different checks content) always triggers a write.
+    """
+    spark = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    # _table_exists → True
+    spark.read.table.return_value.schema.fields = [_MockField(c) for c in _VERSIONING_COLUMNS]
+    # isEmpty() returns True → no matching fingerprint in table → write proceeds
+    spark.read.table.return_value.filter.return_value.isEmpty.return_value = True
+
+    handler = TableChecksStorageHandler(ws, spark)
+    config = TableChecksStorageConfig(
+        location="catalog.schema.table",
+        run_config_name="default",
+        mode="append",
+        rule_set_fingerprint=None,
+    )
+
+    handler.save(_SIMPLE_CHECK, config)
+
+    spark.createDataFrame.return_value.write.saveAsTable.assert_called_once()

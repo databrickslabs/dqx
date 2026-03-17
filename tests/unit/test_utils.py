@@ -355,6 +355,33 @@ def test_normalize_bound_args_complex_column_allowed_when_opted_in():
     assert "try_element_at" in result
 
 
+def test_complex_column_serialized_for_fingerprinting_is_not_round_trip_safe():
+    """Serializing a complex Column with allow_simple_expressions_only=False is a one-way operation.
+
+    The resulting string contains the expression details but is NOT a valid simple column name.
+    Round-tripping it through normalize_bound_args (default allow_simple_expressions_only=True)
+    returns it as a plain string — it is never reconstructed as the original Column expression.
+    This confirms that dicts produced by DQRule.to_dict() (which uses allow_simple_expressions_only=False)
+    cannot be fed back into apply_checks_by_metadata to recover the original Column behaviour.
+    """
+    complex_col = F.try_element_at("arr_col", F.lit(1))
+
+    serialized = normalize_bound_args(complex_col, allow_simple_expressions_only=False)
+
+    # Result is a string containing expression details, not a Column object
+    assert isinstance(serialized, str)
+    assert "try_element_at" in serialized
+
+    # The string is NOT a valid simple column reference (contains special chars like parentheses)
+    assert not is_simple_column_expression(serialized)
+
+    # Round-trip: normalize_bound_args treats the string as a plain column-name string,
+    # it does NOT reconstruct the original Column expression
+    round_tripped = normalize_bound_args(serialized)
+    assert isinstance(round_tripped, str)
+    assert round_tripped == serialized  # unchanged — no reconstruction happened
+
+
 def test_normalize_bound_args_struct_type():
     """StructType is normalized to simpleString for fingerprinting (e.g. has_valid_schema with df.schema)."""
     schema = StructType([StructField("id", IntegerType()), StructField("name", StringType())])
