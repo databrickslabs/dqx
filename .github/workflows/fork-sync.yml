@@ -2,14 +2,19 @@
 # Acceptance, anomaly, and performance workflows are skipped for PRs from forks.
 # This workflow pushes the fork's code to a branch here so those tests can run on the new PR.
 #
-# Requires: "Require approval for first-time contributors" or similar may need to be
-# configured for fork PRs. Uses pull_request_target for base-repo GITHUB_TOKEN write access.
+# Note: Uses pull_request_target for base-repo GITHUB_TOKEN write access.
+# Fork PRs from first-time contributors may need maintainer approval (Actions tab) before running.
 
 name: fork-sync
 
 on:
   pull_request_target:
     types: [opened, synchronize, ready_for_review]
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main]
 
 permissions:
   contents: write
