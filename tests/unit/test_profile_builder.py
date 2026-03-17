@@ -345,3 +345,19 @@ def test_min_max_supported_numeric_types_return_profile(mock_df, column_type):
     )
     assert profile is not None
     assert profile.name == "min_max"
+
+
+def test_min_max_with_outlier_removal_stddev_zero_returns_real_min_max(mock_df):
+    # stddev=0 means all values are identical; sigma bounds collapse to mean.
+    # None of the sigma-capping branches fire, so real min/max are used.
+    profile = make_min_max_profile(
+        mock_df,
+        "amount",
+        T.IntegerType(),
+        {"count_non_null": 10, "min": 5, "max": 5, "mean": 5.0, "stddev": 0.0},
+        {"remove_outliers": True, "outlier_columns": ["amount"]},
+    )
+    assert profile is not None
+    assert profile.name == "min_max"
+    assert profile.parameters == {"min": 5, "max": 5}
+    assert profile.description == "Real min/max values were used"
