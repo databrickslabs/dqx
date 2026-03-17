@@ -2,9 +2,13 @@
 
 import re
 
-from databricks.labs.dqx.check_funcs import is_not_null
+from databricks.labs.dqx.check_funcs import is_not_null, is_not_null_and_not_empty
 from databricks.labs.dqx.rule import DQRowRule
-from databricks.labs.dqx.rule_fingerprint import compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata
+from databricks.labs.dqx.rule_fingerprint import (
+    compute_rule_fingerprint,
+    compute_rule_set_fingerprint,
+    compute_rule_set_fingerprint_by_metadata,
+)
 
 
 def _hex_sha256_pattern() -> re.Pattern[str]:
@@ -217,3 +221,64 @@ def test_compute_rule_fingerprint_different_filters_differ():
         "check": {"function": "is_not_null", "arguments": {"column": "id"}},
     }
     assert compute_rule_fingerprint(check_no_filter) != compute_rule_fingerprint(check_with_filter)
+
+
+def test_compute_rule_set_fingerprint_deterministic():
+    """compute_rule_set_fingerprint on DQRule objects is deterministic."""
+    rules = [
+        DQRowRule(name="id_not_null", criticality="error", check_func=is_not_null, column="id"),
+        DQRowRule(name="name_not_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="name"),
+    ]
+    fp1 = compute_rule_set_fingerprint(rules)
+    fp2 = compute_rule_set_fingerprint(rules)
+    assert fp1 == fp2
+    assert re.fullmatch(r"[a-f0-9]{64}", fp1)
+
+
+def test_compute_rule_set_fingerprint_order_independent():
+    """compute_rule_set_fingerprint is order-independent for DQRule objects."""
+    rule_a = DQRowRule(name="a_not_null", criticality="error", check_func=is_not_null, column="a")
+    rule_b = DQRowRule(name="b_not_empty", criticality="warn", check_func=is_not_null_and_not_empty, column="b")
+    assert compute_rule_set_fingerprint([rule_a, rule_b]) == compute_rule_set_fingerprint([rule_b, rule_a])
+
+
+def test_compute_rule_set_fingerprint_different_rules_differ():
+    """Different rule sets produce different fingerprints."""
+    rules_v1 = [DQRowRule(name="a", criticality="error", check_func=is_not_null, column="a")]
+    rules_v2 = [DQRowRule(name="b", criticality="error", check_func=is_not_null, column="b")]
+    assert compute_rule_set_fingerprint(rules_v1) != compute_rule_set_fingerprint(rules_v2)
+
+
+def test_compute_rule_set_fingerprint_matches_metadata_variant():
+    """compute_rule_set_fingerprint on DQRule objects matches compute_rule_set_fingerprint_by_metadata
+    on the equivalent dict representation."""
+    rules = [
+        DQRowRule(name="id_not_null", criticality="error", check_func=is_not_null, column="id"),
+    ]
+    fp_from_rules = compute_rule_set_fingerprint(rules)
+    fp_from_metadata = compute_rule_set_fingerprint_by_metadata([r.to_dict() for r in rules])
+    assert fp_from_rules == fp_from_metadata
+
+
+def test_compute_rule_set_fingerprint_empty_list():
+    """Empty rule list produces a deterministic fingerprint (hash of empty sorted list)."""
+    fp = compute_rule_set_fingerprint([])
+    assert re.fullmatch(r"[a-f0-9]{64}", fp)
+    assert fp == compute_rule_set_fingerprint([])
+
+
+def test_compute_rule_fingerprint_none_arguments_same_as_empty():
+    """None arguments and empty dict arguments produce the same fingerprint."""
+    check_none_args = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": None},
+    }
+    check_empty_args = {
+        "criticality": "error",
+        "check": {"function": "is_not_null"},
+    }
+    # Both resolve to None via `check_inner.get("arguments")` when arguments is absent,
+    # vs explicitly None — both are falsy-equivalent in the canonical form.
+    fp_none = compute_rule_fingerprint(check_none_args)
+    fp_empty = compute_rule_fingerprint(check_empty_args)
+    assert fp_none == fp_empty

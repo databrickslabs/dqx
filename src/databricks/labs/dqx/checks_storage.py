@@ -367,7 +367,10 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         # Skip save if rule_set_fingerprint already exists in existing table
         if self._table_exists(config.location):
             existing_df = self.spark.read.table(config.location)
-            self._ensure_versioning_columns(config.location, existing_df)
+            columns_added = self._ensure_versioning_columns(config.location, existing_df)
+            if columns_added:
+                # Schema changed — re-read so the DataFrame includes the new columns.
+                existing_df = self.spark.read.table(config.location)
             exists = not existing_df.filter(
                 (F.col("run_config_name") == config.run_config_name)
                 & (F.col("rule_set_fingerprint") == rule_set_fingerprint)
@@ -401,25 +404,29 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
         except NotFound:
             return False
 
-    def _ensure_versioning_columns(self, location: str, existing_df: DataFrame | None = None) -> None:
+    def _ensure_versioning_columns(self, location: str, existing_df: DataFrame | None = None) -> bool:
         """Add missing versioning columns to an existing Delta table.
 
         Args:
             location: Full table name (e.g., "catalog.schema.table").
             existing_df: Optional pre-read DataFrame for the table. When provided, its schema is
                 used instead of re-reading the table, avoiding a redundant read.
+
+        Returns:
+            True if columns were added, False if all versioning columns already existed.
         """
         df = existing_df if existing_df is not None else self.spark.read.table(location)
         existing_columns = {f.name for f in df.schema.fields}
         missing = [col for col in _VERSIONING_COLUMNS if col not in existing_columns]
         if not missing:
-            return
+            return False
 
         quoted = ".".join(f"`{part}`" for part in location.replace("`", "").split("."))
         for col in missing:
             col_type = _VERSIONING_COLUMN_TYPES_DELTA[col]
             self.spark.sql(f"ALTER TABLE {quoted} ADD COLUMN {col} {col_type}")
         logger.info(f"Added versioning columns {missing} to table '{location}'.")
+        return True
 
 
 class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageConfig]):
