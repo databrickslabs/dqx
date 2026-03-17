@@ -262,9 +262,9 @@ def test_compute_rule_set_fingerprint_matches_metadata_variant():
 
 def test_compute_rule_set_fingerprint_empty_list():
     """Empty rule list produces a deterministic fingerprint (hash of empty sorted list)."""
-    fp = compute_rule_set_fingerprint([])
-    assert re.fullmatch(r"[a-f0-9]{64}", fp)
-    assert fp == compute_rule_set_fingerprint([])
+    fingerprint = compute_rule_set_fingerprint([])
+    assert re.fullmatch(r"[a-f0-9]{64}", fingerprint)
+    assert fingerprint == compute_rule_set_fingerprint([])
 
 
 def test_compute_rule_fingerprint_none_arguments_same_as_empty():
