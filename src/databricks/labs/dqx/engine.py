@@ -676,13 +676,14 @@ class DQEngine(DQEngineBase):
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
     def apply_checks_and_save_in_table(
         self,
-        checks: list[DQRule],
         input_config: InputConfig,
         output_config: OutputConfig,
+        checks: list[DQRule] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
         checks_location: str | None = None,
+        run_config_name: str = "default",
     ) -> None:
         """
         Apply data quality checks to input data and save results.
@@ -697,15 +698,29 @@ class DQEngine(DQEngineBase):
         tracked and written using *metrics_config*.
 
         Args:
-            checks: List of *DQRule* checks to apply.
             input_config: Input configuration (e.g., table/view or file location and read options).
             output_config: Output configuration (e.g., table name, mode, and write options).
+            checks: Optional list of *DQRule* checks to apply. If not provided, checks_location must be provided.
             quarantine_config: Optional configuration for writing invalid records.
             metrics_config: Optional configuration for writing summary metrics.
             ref_dfs: Optional reference DataFrames used by checks.
-            checks_location: Optional location of the checks. Used for reporting in the summary metrics table only.
+            checks_location: Optional location of the checks.  At least one of the parameters 'checks' or 'checks_location' must be provided.
+                - If 'checks' parameter is provided, it is only used for reporting purposes
+                - If 'checks' parameter is not provided, it is used for loading checks from the storage.
+            run_config_name: Name of the run configuration to use when loading checks from a table.
         """
         logger.info(f"Applying checks to {input_config.location}")
+
+        if checks is None and checks_location is None:
+            raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
+
+        if checks is None and checks_location:
+            storage_handler, storage_config = self._checks_handler_factory.create_for_location(
+                location=checks_location, run_config_name=run_config_name
+            )
+            # raise an error if checks location not found
+            checks_metadata = storage_handler.load(storage_config)
+            checks = deserialize_checks(checks_metadata)
 
         df = read_input_data(self.spark, input_config)
 
@@ -764,14 +779,15 @@ class DQEngine(DQEngineBase):
     @telemetry_logger("engine", "apply_checks_by_metadata_and_save_in_table")
     def apply_checks_by_metadata_and_save_in_table(
         self,
-        checks: list[dict],
         input_config: InputConfig,
         output_config: OutputConfig,
+        checks: list[dict] | None = None,
         quarantine_config: OutputConfig | None = None,
         metrics_config: OutputConfig | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
         checks_location: str | None = None,
+        run_config_name: str = "default",  # required for checks stored in a table
     ) -> None:
         """
         Apply metadata-defined data quality checks to input data and save results.
@@ -783,21 +799,35 @@ class DQEngine(DQEngineBase):
         If *quarantine_config* is not provided, write all rows (including result columns) using *output_config*.
 
         Args:
-            checks: List of dicts describing checks. Each check dictionary must contain the following:
+            input_config: Input configuration (e.g., table/view or file location and read options).
+            output_config: Output configuration (e.g., table name, mode, and write options).
+            checks: Optional list of dicts containing checks to apply. If not provided, checks_location must be provided.
+                Each check dictionary must contain the following:
                 - *check* - A check definition including check function and arguments to use.
                 - *name* - Optional name for the resulting column. Auto-generated if not provided.
                 - *criticality* - Optional; either *error* (rows go only to the "bad" DataFrame) or *warn*
                   (rows appear in both DataFrames).
-            input_config: Input configuration (e.g., table/view or file location and read options).
-            output_config: Output configuration (e.g., table name, mode, and write options).
             quarantine_config: Optional configuration for writing invalid records.
             metrics_config: Optional configuration for writing summary metrics.
             custom_check_functions: Optional mapping of custom check function names
                 to callables/modules (e.g., globals()).
             ref_dfs: Optional reference DataFrames used by checks.
-            checks_location: Optional location of the checks. Used for reporting in the summary metrics table only.
+            checks_location: Optional location of the checks. At least one of the parameters 'checks' or 'checks_location' must be provided.
+                - If 'checks' param is provided, the parameter is only used for reporting purposes.
+                - If 'checks' param is not provided, the parameter is used for loading checks from the storage.
+            run_config_name: Name of the run configuration to use when loading checks from a table.
         """
         logger.info(f"Applying checks to {input_config.location}")
+
+        if checks is None and checks_location is None:
+            raise InvalidParameterError("Either 'checks_location' or 'checks' must be provided")
+
+        if checks is None and checks_location:
+            storage_handler, storage_config = self._checks_handler_factory.create_for_location(
+                location=checks_location, run_config_name=run_config_name
+            )
+            # raise an error if checks location not found
+            checks = storage_handler.load(storage_config)
 
         df = read_input_data(self.spark, input_config)
 

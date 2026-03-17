@@ -104,6 +104,12 @@ Bootstrap rule candidates:
 * Use the profiler to generate initial quality rules for new datasets and periodically re-profile existing datasets to detect changes or shifts in data distributions.
 * Leverage AI-assisted quality rule generation to translate technical or business requirements expressed in natural language into DQX-specific rules, accelerating rule creation.
 
+<Admonition type="tip" title="Bootstrap in Pre-Production">
+Perform all rule bootstrapping (profiling, AI-assisted rule generation) in lower, pre-production environments using representative sample data.
+Promote the resulting validated rules to production rather than running the profiler or LLM-based generation directly in production.
+This avoids the need for special-purpose compute (profiler clusters) and external AI/LLM dependencies in your production environment, reducing cost, complexity, and operational risk.
+</Admonition>
+
 Continuously refine and tune rules:
 * Monitor data quality metrics (pass/fail rates, trends, and anomalies) to identify areas for improvement and reduce false positives while maintaining strong coverage.
 * Add or tune checks (e.g. update thresholds) immediately when production issues are detected, preventing recurring data failures.
