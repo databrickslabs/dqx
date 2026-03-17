@@ -116,16 +116,16 @@ class ProfilerRunner:
             product: Product name for the installation.
             max_parallelism: Maximum number of parallel threads to use for profiling.
         """
-        options = [
-            {
-                "table": "*",  # Matches all tables
-                "options": {
-                    "sample_fraction": run_config.profiler_config.sample_fraction,
-                    "sample_seed": run_config.profiler_config.sample_seed,
-                    "limit": run_config.profiler_config.limit,
-                },
-            }
-        ]
+        pattern_options = {
+            "sample_fraction": run_config.profiler_config.sample_fraction,
+            "sample_seed": run_config.profiler_config.sample_seed,
+            "limit": run_config.profiler_config.limit,
+        }
+        if run_config.profiler_config.max_null_ratio is not None:
+            pattern_options["max_null_ratio"] = run_config.profiler_config.max_null_ratio
+        if run_config.profiler_config.max_empty_ratio is not None:
+            pattern_options["max_empty_ratio"] = run_config.profiler_config.max_empty_ratio
+        options = [{"table": "*", "options": pattern_options}]
         logger.info(f"Using options: \n{options}")
 
         # Include tables matching the patterns, but skip existing output and quarantine tables.
