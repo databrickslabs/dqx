@@ -84,6 +84,9 @@ def make_is_in_profile(
     col = df.columns[0]
     distinct_df = df.select(col).distinct()
     distinct_count = distinct_df.count()
+    if distinct_count == 0:
+        return None
+
     distinct_ratio = (1.0 * distinct_count) / total_count
 
     if total_count <= max_in_count and distinct_ratio <= max_distinct_ratio:

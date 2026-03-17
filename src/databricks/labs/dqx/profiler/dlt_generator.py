@@ -113,11 +113,31 @@ class DQDltGenerator(DQEngineBase):
         msg += " <> ''"
         return msg
 
+    @staticmethod
+    def _dlt_generate_is_not_empty(column: str, **params: dict):
+        """
+        Generates a Lakeflow Pipelines (formerly Delta Live Table (DLT)) rule to check if a column's
+        value is not empty (nulls are allowed).
+
+        Args:
+            column: The name of the column to check.
+            params: Additional parameters, including whether to trim strings.
+
+        Returns:
+            A string representing the Lakeflow Pipelines rule.
+        """
+        trim_strings = params.get("trim_strings", True)
+        # Valid when null or non-empty: column is null or (trim(column) <> '' or column <> '')
+        if trim_strings:
+            return f"({column} is null or trim({column}) <> '')"
+        return f"({column} is null or {column} <> '')"
+
     _checks_mapping = {
         "is_not_null": lambda column, **params: f"{column} is not null",
         "is_in": _dlt_generate_is_in,
         "min_max": _dlt_generate_min_max,
         "is_not_null_or_empty": _dlt_generate_is_not_null_or_empty,
+        "is_not_empty": _dlt_generate_is_not_empty,
     }
 
     def _generate_dlt_rules_python_dict(self, rules: list[DQProfile]) -> dict:

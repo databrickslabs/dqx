@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
@@ -571,9 +572,14 @@ def test_profiler_when_numeric_field_is_empty(spark, ws):
         ),
     ]
 
-    for profile in profiles:
-        if profile.name == "is_unique":
-            profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+    profiles = [
+        (
+            dataclasses.replace(profile, parameters={"nulls_distinct": profile.parameters.get("nulls_distinct")})
+            if profile.name == "is_unique"
+            else profile
+        )
+        for profile in profiles
+    ]
 
     assert len(stats.keys()) > 0
     assert profiles == expected_profiles
@@ -648,7 +654,7 @@ def test_profile_table(spark, ws, make_schema, make_random):
         DQProfile(
             name="min_max", column="id", description="Real min/max values were used", parameters={"min": 1, "max": 4}
         ),
-        DQProfile(name="is_not_null_or_empty", column="name", description=None, parameters={"trim_strings": True}),
+        DQProfile(name="is_not_empty", column="name", description=None, parameters={"trim_strings": True}),
         DQProfile(name="is_not_null", column="amount", description=None, parameters=None),
         DQProfile(
             name="min_max",
@@ -704,11 +710,12 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
     }
     stats, profiles = profiler.profile_table(InputConfig(location=table_name), options=custom_opts)
     expected_profiles = [
+        # category: 20% nulls <= 50% threshold, 0% empties <= 1% default threshold → is_not_null_or_empty
         DQProfile(
-            name="is_not_null",
+            name="is_not_null_or_empty",
             column="category",
-            description="Column category has 20.0% of null values (allowed 50.0%)",
-            parameters=None,
+            description="Column category has 20.0% of null values and has 0.0% of empty values (allowed 50.0% of nulls and 1.0% of empty values)",
+            parameters={"trim_strings": False},
         ),
         DQProfile(name="is_not_null", column="value", description=None, parameters=None),
         DQProfile(
@@ -720,7 +727,7 @@ def test_profile_table_non_default_opts(spark, ws, make_schema, make_random):
     ]
 
     assert len(stats.keys()) > 0
-    assert stats["category"]["count"] == 10
+    assert stats["category"]["total_count"] == 10
     assert profiles == expected_profiles
 
 
@@ -820,8 +827,9 @@ def test_profile_tables_for_patterns(spark, ws, make_schema, make_random):
             ),
         ],
         table2_name: [
-            DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
-            DQProfile(name="is_not_null", column="col2", description=None, parameters=None),
+            # col1 and col2 are StringType with no nulls or empties → is_not_null_or_empty
+            DQProfile(name="is_not_null_or_empty", column="col1", description=None, parameters={"trim_strings": True}),
+            DQProfile(name="is_not_null_or_empty", column="col2", description=None, parameters={"trim_strings": True}),
             DQProfile(name="is_not_null", column="col3", description=None, parameters=None),
             DQProfile(
                 name="min_max",
@@ -1027,14 +1035,17 @@ def test_profile_tables_for_patterns_with_no_matched_options(spark, ws, make_sch
     profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
     expected_profiles = {
         table1_name: [
-            DQProfile(name='is_not_null', column='col1', description=None, parameters=None),
-            DQProfile(name="is_not_null_or_empty", column="col2", description=None, parameters={"trim_strings": True}),
-            DQProfile(name='is_not_null', column='col3', description=None, parameters=None),
+            # col1 and col3 have no nulls or empties → is_not_null_or_empty
+            DQProfile(name="is_not_null_or_empty", column="col1", description=None, parameters={"trim_strings": True}),
+            # col2 is all null → null_ratio exceeds threshold, empty_ratio is 0 → is_not_empty
+            DQProfile(name="is_not_empty", column="col2", description=None, parameters={"trim_strings": True}),
+            DQProfile(name="is_not_null_or_empty", column="col3", description=None, parameters={"trim_strings": True}),
         ],
         table2_name: [
-            DQProfile(name="is_not_null", column="col1", description=None, parameters=None),
-            DQProfile(name="is_not_null", column="col2", description=None, parameters=None),
-            DQProfile(name="is_not_null", column="col3", description=None, parameters=None),
+            # all cols have no nulls or empties → is_not_null_or_empty
+            DQProfile(name="is_not_null_or_empty", column="col1", description=None, parameters={"trim_strings": True}),
+            DQProfile(name="is_not_null_or_empty", column="col2", description=None, parameters={"trim_strings": True}),
+            DQProfile(name="is_not_null_or_empty", column="col3", description=None, parameters={"trim_strings": True}),
         ],
     }
     for table_name, (stats, profiles) in profiles.items():
@@ -1083,11 +1094,12 @@ def test_profile_tables_for_patterns_with_common_opts(spark, ws, make_schema, ma
     profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=options)
     expected_profiles = {
         table1_name: [
+            # category: 20% nulls <= 50% threshold, 0% empties <= 1% default threshold → is_not_null_or_empty
             DQProfile(
-                name="is_not_null",
+                name="is_not_null_or_empty",
                 column="category",
-                description="Column category has 20.0% of null values (allowed 50.0%)",
-                parameters=None,
+                description="Column category has 20.0% of null values and has 0.0% of empty values (allowed 50.0% of nulls and 1.0% of empty values)",
+                parameters={"trim_strings": False},
             ),
             DQProfile(
                 name="is_not_null",
@@ -1104,10 +1116,10 @@ def test_profile_tables_for_patterns_with_common_opts(spark, ws, make_schema, ma
         ],
         table2_name: [
             DQProfile(
-                name="is_not_null",
+                name="is_not_null_or_empty",
                 column="category",
-                description="Column category has 20.0% of null values (allowed 50.0%)",
-                parameters=None,
+                description="Column category has 20.0% of null values and has 0.0% of empty values (allowed 50.0% of nulls and 1.0% of empty values)",
+                parameters={"trim_strings": False},
             ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
@@ -1179,11 +1191,12 @@ def test_profile_tables_for_patterns_with_different_opts(spark, ws, make_schema,
 
     expected_profiles = {
         table1_name: [
+            # category: 20% nulls <= 50% threshold, 0% empties <= 1% default → is_not_null_or_empty, trim_strings=False
             DQProfile(
-                name="is_not_null",
+                name="is_not_null_or_empty",
                 column="category",
-                description="Column category has 20.0% of null values (allowed 50.0%)",
-                parameters=None,
+                description="Column category has 20.0% of null values and has 0.0% of empty values (allowed 50.0% of nulls and 1.0% of empty values)",
+                parameters={"trim_strings": False},
             ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
@@ -1194,8 +1207,9 @@ def test_profile_tables_for_patterns_with_different_opts(spark, ws, make_schema,
             ),
         ],
         table2_name: [
+            # category: 20% nulls > 1% default threshold, 0% empties <= 1% default → is_not_empty
             DQProfile(
-                name="is_not_null_or_empty",
+                name="is_not_empty",
                 column="category",
                 description=None,
                 parameters={"trim_strings": True},
@@ -1265,11 +1279,12 @@ def test_profile_tables_for_patterns_with_partial_opts_match(spark, ws, make_sch
     profiles = profiler.profile_tables_for_patterns(patterns=[table1_name, table2_name], options=table_opts)
     expected_profiles = {
         table1_name: [
+            # category: 20% nulls <= 50% threshold, 0% empties <= 1% default → is_not_null_or_empty, trim_strings=False
             DQProfile(
-                name="is_not_null",
+                name="is_not_null_or_empty",
                 column="category",
-                description="Column category has 20.0% of null values (allowed 50.0%)",
-                parameters=None,
+                description="Column category has 20.0% of null values and has 0.0% of empty values (allowed 50.0% of nulls and 1.0% of empty values)",
+                parameters={"trim_strings": False},
             ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
@@ -1280,8 +1295,9 @@ def test_profile_tables_for_patterns_with_partial_opts_match(spark, ws, make_sch
             ),
         ],
         table2_name: [
+            # category: 20% nulls > 1% default threshold, 0% empties <= 1% default → is_not_empty
             DQProfile(
-                name="is_not_null_or_empty", column="category", description=None, parameters={"trim_strings": True}
+                name="is_not_empty", column="category", description=None, parameters={"trim_strings": True}
             ),
             DQProfile(name="is_not_null", column="value", description=None, parameters=None),
             DQProfile(
@@ -1751,7 +1767,7 @@ def test_profiler_with_pk_detection(spark, ws):
             description='Real min/max values were used',
             parameters={'max': 90, 'min': 45},
         ),
-        DQProfile(name='is_not_null', column='status', description=None, parameters=None),
+        DQProfile(name='is_not_null_or_empty', column='status', description=None, parameters={'trim_strings': True}),
         DQProfile(
             name='is_unique',
             column='order_id',
@@ -1760,9 +1776,14 @@ def test_profiler_with_pk_detection(spark, ws):
         ),
     ]
 
-    for profile in profiles:
-        if profile.name == "is_unique":
-            profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+    profiles = [
+        (
+            dataclasses.replace(profile, parameters={"nulls_distinct": profile.parameters.get("nulls_distinct")})
+            if profile.name == "is_unique"
+            else profile
+        )
+        for profile in profiles
+    ]
 
     assert len(stats.keys()) > 0
     assert profiles == expected_profiles
@@ -1820,7 +1841,7 @@ def test_profile_table_with_pk_detection(spark, ws, make_schema, make_random):
             description="Real min/max values were used",
             parameters={"min": 45, "max": 90},
         ),
-        DQProfile(name="is_not_null", column="status", description=None, parameters=None),
+        DQProfile(name="is_not_null_or_empty", column="status", description=None, parameters={"trim_strings": True}),
         DQProfile(
             name='is_unique',
             column='order_id',
@@ -1829,12 +1850,17 @@ def test_profile_table_with_pk_detection(spark, ws, make_schema, make_random):
         ),
     ]
 
-    for profile in profiles:
-        if profile.name == "is_unique":
-            profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+    profiles = [
+        (
+            dataclasses.replace(profile, parameters={"nulls_distinct": profile.parameters.get("nulls_distinct")})
+            if profile.name == "is_unique"
+            else profile
+        )
+        for profile in profiles
+    ]
 
     assert len(stats.keys()) > 0
-    assert stats["order_id"]["count"] == 5  # Verify we got all records
+    assert stats["order_id"]["total_count"] == 5  # Verify we got all records
     assert profiles == expected_profiles
 
 
@@ -1884,7 +1910,7 @@ def test_profile_tables_for_patterns_with_pk_detection(spark, ws, make_schema, m
             description='Real min/max values were used',
             parameters={'max': 90, 'min': 45},
         ),
-        DQProfile(name='is_not_null', column='status', description=None, parameters=None),
+        DQProfile(name='is_not_null_or_empty', column='status', description=None, parameters={'trim_strings': True}),
         DQProfile(
             name='is_unique',
             column='order_id',
@@ -1896,9 +1922,14 @@ def test_profile_tables_for_patterns_with_pk_detection(spark, ws, make_schema, m
     for table_name, (stats, profiles) in profiles.items():
         assert len(stats.keys()) > 0, "Stats did not match expected"
 
-        for profile in profiles:
-            if profile.name == "is_unique":
-                profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
+        profiles = [
+            (
+                dataclasses.replace(profile, parameters={"nulls_distinct": profile.parameters.get("nulls_distinct")})
+                if profile.name == "is_unique"
+                else profile
+            )
+            for profile in profiles
+        ]
 
         assert profiles == expected_profiles, "Profiles did not match expected"
 
@@ -1932,8 +1963,9 @@ def test_profiler_with_pk_detection_null_distinct(spark, ws):
     actual_pk_profile = None
     for profile in profiles:
         if profile.name == "is_unique":
-            profile.parameters = {"nulls_distinct": profile.parameters.get("nulls_distinct")}
-            actual_pk_profile = profile
+            actual_pk_profile = dataclasses.replace(
+                profile, parameters={"nulls_distinct": profile.parameters.get("nulls_distinct")}
+            )
 
     expected_pk_profile = DQProfile(
         name='is_unique',
