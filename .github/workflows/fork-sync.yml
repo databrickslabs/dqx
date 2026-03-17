@@ -1,0 +1,68 @@
+# Sync fork PRs to a branch in this repo and open a test PR.
+# Acceptance, anomaly, and performance workflows are skipped for PRs from forks.
+# This workflow pushes the fork's code to a branch here so those tests can run on the new PR.
+#
+# Requires: "Require approval for first-time contributors" or similar may need to be
+# configured for fork PRs. Uses pull_request_target for base-repo GITHUB_TOKEN write access.
+
+name: fork-sync
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: fork-sync-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  sync-fork-to-branch:
+    if: github.event.pull_request.head.repo.fork && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitHub CLI
+        uses: cli/cli-action@v2
+        with:
+          version: latest
+
+      - name: Fetch PR branch from fork
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr checkout ${{ github.event.pull_request.number }}
+
+      - name: Configure git
+        run: |
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+
+      - name: Push to sync branch and create test PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNC_BRANCH: "fork-test/pr-${{ github.event.pull_request.number }}"
+        run: |
+          set -e
+          git checkout -B "$SYNC_BRANCH"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$SYNC_BRANCH"
+
+          # Create PR if it does not exist
+          EXISTING=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || true)
+          if [ -z "$EXISTING" ]; then
+            gh pr create \
+              --base "${{ github.event.pull_request.base.ref }}" \
+              --head "$SYNC_BRANCH" \
+              --title "Fork test: PR #${{ github.event.pull_request.number }}" \
+              --body "Automated sync from fork PR for CI testing.
+
+          Original PR: ${{ github.event.pull_request.html_url }}
+
+          All tests, including acceptance, anomaly, and performance tests, run on this PR (they are skipped for fork PRs)."
+          fi
