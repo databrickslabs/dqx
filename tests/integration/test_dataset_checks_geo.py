@@ -19,7 +19,7 @@ def test_are_polygons_mutually_disjoint_pass(skip_if_runtime_not_geo_compatible,
 
     condition, apply_method = are_polygons_mutually_disjoint("geom")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("geom", condition)
 
     checked_schema = "geom: string, geom_not_mutually_disjoint: string"
@@ -52,7 +52,7 @@ def test_are_polygons_mutually_disjoint_fail(skip_if_runtime_not_geo_compatible,
 
     condition, apply_method = are_polygons_mutually_disjoint("geom")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("geom", condition)
 
     checked_schema = "geom: string, geom_not_mutually_disjoint: string"
@@ -88,7 +88,7 @@ def test_are_polygons_mutually_disjoint_touching(skip_if_runtime_not_geo_compati
 
     condition, apply_method = are_polygons_mutually_disjoint("geom")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("geom", condition)
 
     checked_schema = "geom: string, geom_not_mutually_disjoint: string"
@@ -127,7 +127,7 @@ def test_are_polygons_mutually_disjoint_with_row_filter(skip_if_runtime_not_geo_
 
     condition, apply_method = are_polygons_mutually_disjoint("geom", row_filter="category = 'A'")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("category", "geom", condition)
 
     checked_schema = "category: string, geom: string, geom_not_mutually_disjoint: string"
@@ -163,7 +163,7 @@ def test_are_polygons_mutually_disjoint_single_polygon(skip_if_runtime_not_geo_c
 
     condition, apply_method = are_polygons_mutually_disjoint("geom")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("geom", condition)
 
     checked_schema = "geom: string, geom_not_mutually_disjoint: string"
@@ -184,7 +184,7 @@ def test_are_polygons_mutually_disjoint_empty_df(skip_if_runtime_not_geo_compati
 
     condition, apply_method = are_polygons_mutually_disjoint("geom")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("geom", condition)
 
     checked_schema = "geom: string, geom_not_mutually_disjoint: string"
@@ -207,7 +207,7 @@ def test_are_polygons_mutually_disjoint_all_overlap(skip_if_runtime_not_geo_comp
 
     condition, apply_method = are_polygons_mutually_disjoint("geom")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("geom", condition)
 
     checked_schema = "geom: string, geom_not_mutually_disjoint: string"
@@ -245,7 +245,7 @@ def test_are_polygons_mutually_disjoint_duplicates(skip_if_runtime_not_geo_compa
 
     condition, apply_method = are_polygons_mutually_disjoint("geom")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("geom", condition)
 
     checked_schema = "geom: string, geom_not_mutually_disjoint: string"
@@ -281,7 +281,7 @@ def test_are_polygons_mutually_disjoint_row_filter_no_violations(skip_if_runtime
     # Only rows with category='A' are considered; they are disjoint.
     condition, apply_method = are_polygons_mutually_disjoint("geom", row_filter="category = 'A'")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("category", "geom", condition)
 
     checked_schema = "category: string, geom: string, geom_not_mutually_disjoint: string"
@@ -312,7 +312,7 @@ def test_are_polygons_mutually_disjoint_row_filter_complex(skip_if_runtime_not_g
     # Filter: active = True AND id > 1 -> only row 3. Single row always passes.
     condition, apply_method = are_polygons_mutually_disjoint("geom", row_filter="active = True AND id > 1")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("id", "geom", condition)
 
     checked_schema = "id: int, geom: string, geom_not_mutually_disjoint: string"
@@ -343,7 +343,7 @@ def test_are_polygons_mutually_disjoint_row_filter_numeric(skip_if_runtime_not_g
     # Filter: val >= 10.0 -> rows with 10.0 and 20.0. They overlap.
     condition, apply_method = are_polygons_mutually_disjoint("geom", row_filter="val >= 10.0")
 
-    actual_apply_df = apply_method(test_df, spark, {})
+    actual_apply_df = apply_method(df=test_df)
     actual = actual_apply_df.select("val", "geom", condition)
 
     checked_schema = "val: double, geom: string, geom_not_mutually_disjoint: string"
