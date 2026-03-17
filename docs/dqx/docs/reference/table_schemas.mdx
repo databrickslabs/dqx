@@ -24,37 +24,38 @@ When **quarantine is configured**: Rows with errors go to the quarantine table; 
 
 ## Table relationships
 
-The following diagram shows how tables relate via `run_id`, `rule_fingerprint`, and `rule_set_fingerprint`:
+The following EDR diagram shows how tables relate:
 
-```
-                    ┌──────────────────────┐
-                    │  SUMMARY_METRICS     │
-                    │  run_id (PK)         │
-                    │  rule_set_fingerprint│
-                    │  checks_location     │
-                    │  output_location     │
-                    │  quarantine_location │
-                    └─────────┬────────────┘
-                              │ run_id
-              ┌───────────────┼───────────────┐
-              ▼               ▼               │
-    ┌─────────────────┐ ┌──────────────────┐  │
-    │  OUTPUT_TABLE   │ │ QUARANTINE_TABLE │  │
-    │  _errors[]      │ │ _errors[]        │  │ rule_set_fingerprint
-    │  _warnings[]    │ │ _warnings[]      │  │
-    │  (run_id in     │ │ (run_id in       │  │
-    │   each item)    │ │  each item)      │  │
-    └────────┬────────┘ └────────┬─────────┘  │
-             │ rule_fingerprint  │            │
-             │ rule_set_fingerprint           │
-             └────────────┬───────────────────┘
-                          ▼
-                ┌─────────────────────────┐
-                │   CHECKS_TABLE          │
-                │   rule_fingerprint      │
-                │   rule_set_fingerprint  │
-                │   name, check, ...      │
-                └─────────────────────────┘
+```mermaid
+erDiagram
+    SUMMARY_METRICS["Summary Metrics (Optional)"] {
+        run_id string PK
+        rule_set_fingerprint string
+        checks_location string
+        output_location string
+        quarantine_location string
+        run_time timestamp
+    }
+    OUTPUT_TABLE["Output"] {
+        _errors array
+        _warnings array
+    }
+    QUARANTINE_TABLE["Quarantine (Optional)"] {
+        _errors array
+        _warnings array
+    }
+    CHECKS_TABLE["Checks (Optional)"] {
+        rule_fingerprint string
+        rule_set_fingerprint string
+        name string
+        check struct
+        created_at timestamp
+    }
+    SUMMARY_METRICS ||--o{ OUTPUT_TABLE : "run_id"
+    SUMMARY_METRICS ||--o{ QUARANTINE_TABLE : "run_id"
+    SUMMARY_METRICS }o--|| CHECKS_TABLE : "checks_location, rule_set_fingerprint"
+    OUTPUT_TABLE }o--|| CHECKS_TABLE : "rule_set_fingerprint, rule_fingerprint"
+    QUARANTINE_TABLE }o--|| CHECKS_TABLE : "rule_set_fingerprint, rule_fingerprint"
 ```
 
 - **Summary metrics → Output/Quarantine**: Join on `run_id` (present in each `_errors` and `_warnings` item).
@@ -93,7 +94,7 @@ When storing checks in Delta or Lakebase tables (see [Loading and Storing Qualit
 | ---------------------- | ------------------------------------------------------------ | --------------------------------------------------------------------------- |
 | `name`                 | STRING                                                       | Name of the check.                                                          |
 | `criticality`          | STRING                                                       | `error` or `warn`.                                                          |
-| `check`                | STRUCT&lt;function STRING, for_each_column ARRAY&lt;STRING&gt;, arguments MAP&lt;STRING, STRING&gt;&gt; | Check definition: function name, optional for_each_column, arguments. |
+| `check`                | STRUCT&lt;function STRING, for_each_column ARRAY&lt;STRING&gt;, arguments MAP&lt;STRING, STRING&gt;&gt; | Check definition: function name, columns, arguments etc. |
 | `filter`               | STRING                                                       | Optional filter expression.                                                 |
 | `run_config_name`      | STRING                                                       | Run configuration name for filtering (e.g. input table or job name).        |
 | `user_metadata`        | MAP&lt;STRING, STRING&gt;                                    | Optional user-defined metadata.                                             |
@@ -116,7 +117,7 @@ Summary metrics are optional. When enabled (see [Summary Metrics](/docs/guide/su
 | `rule_set_fingerprint` | STRING               | SHA-256 hash of the rule set; links to checks table.                        |
 | `metric_name`          | STRING               | Metric name (e.g. `input_row_count`, `error_row_count`).                    |
 | `metric_value`         | STRING               | Metric value (stored as string).                                            |
-| `run_time`             | TIMESTAMP            | When the run completed.                                                     |
+| `run_time`             | TIMESTAMP            | When the run completed / check applied.                                     |
 | `error_column_name`    | STRING               | Name of the error column (default: `_errors`).                              |
 | `warning_column_name`  | STRING               | Name of the warning column (default: `_warnings`).                          |
 | `user_metadata`        | MAP&lt;STRING, STRING&gt; | Optional run-level metadata.                                           |

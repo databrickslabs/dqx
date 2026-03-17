@@ -69,6 +69,19 @@ To check the search functionality, run the following command:
 make docs-serve
 ```
 
+## Diagrams
+
+Use [Mermaid](https://mermaid.js.org/) for entity-relationship or flow diagrams. Wrap code in a `mermaid` code block:
+
+````md
+```mermaid
+erDiagram
+    ENTITY_A ||--o{ ENTITY_B : "relationship"
+```
+````
+
+See [Table Schemas and Data Flow](/docs/reference/table_schemas) for an example. Mermaid is enabled via `@docusaurus/theme-mermaid` (version must match `@docusaurus/core`).
+
 ## Adding images
 
 To add images to your documentation, place the image files in the `static/img` directory.
