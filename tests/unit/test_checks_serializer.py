@@ -5,6 +5,11 @@ import re
 from databricks.labs.dqx.check_funcs import is_not_null
 from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
 from databricks.labs.dqx.rule import DQRowRule, compute_rule_fingerprint
+from datetime import datetime, timezone
+from unittest.mock import create_autospec
+from pyspark.sql import SparkSession
+
+from databricks.labs.dqx.checks_serializer import DataFrameConverter
 
 
 def _hex_sha256_pattern() -> re.Pattern[str]:
@@ -213,3 +218,46 @@ def test_compute_rule_fingerprint_matches_dq_rule_rule_fingerprint():
     from_dict = compute_rule_fingerprint(rule.to_dict())
     from_rule = rule.rule_fingerprint
     assert from_dict == from_rule
+
+
+_SIMPLE_CHECKS = [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}]
+_FIXED_TS = datetime(2024, 6, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+
+def test_to_dataframe_uses_injected_created_at():
+    """When created_at is provided, every row uses that exact timestamp."""
+    spark = create_autospec(SparkSession)
+
+    DataFrameConverter.to_dataframe(spark, _SIMPLE_CHECKS, created_at=_FIXED_TS)
+
+    rows = spark.createDataFrame.call_args.args[0]
+    # created_at is the 7th element (index 6) in each row tuple
+    assert all(row[6] == _FIXED_TS for row in rows)
+
+
+def test_to_dataframe_uses_current_utc_time_when_created_at_is_none():
+    """When created_at is not supplied, the timestamp defaults to datetime.now(utc)."""
+    spark = create_autospec(SparkSession)
+    before = datetime.now(timezone.utc)
+
+    DataFrameConverter.to_dataframe(spark, _SIMPLE_CHECKS, created_at=None)
+
+    after = datetime.now(timezone.utc)
+    rows = spark.createDataFrame.call_args.args[0]
+    ts = rows[0][6]
+    assert before <= ts <= after
+
+
+def test_to_dataframe_all_rows_share_same_created_at():
+    """All rows in a single call carry the same created_at so they form one logical batch."""
+    spark = create_autospec(SparkSession)
+    multi_checks = [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
+        {"criticality": "warn", "check": {"function": "is_not_null", "arguments": {"column": "name"}}},
+    ]
+
+    DataFrameConverter.to_dataframe(spark, multi_checks, created_at=_FIXED_TS)
+
+    rows = spark.createDataFrame.call_args.args[0]
+    assert len(rows) == 2
+    assert rows[0][6] == rows[1][6] == _FIXED_TS
