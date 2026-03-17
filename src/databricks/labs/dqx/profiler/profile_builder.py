@@ -440,10 +440,6 @@ def _make_min_max_profile_without_outlier_removal(
         else:
             min_value = aggregates["min_value"]
             max_value = aggregates["max_value"]
-        # Cache computed values back into metrics so that other builders in the same
-        # column pass can reuse them without triggering another Spark action.
-        profiler_metrics["min"] = min_value
-        profiler_metrics["max"] = max_value
 
     return DQProfile(
         name="min_max",

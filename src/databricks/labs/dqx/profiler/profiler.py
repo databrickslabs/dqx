@@ -364,6 +364,10 @@ class DQProfiler(DQEngineBase):
         """
         Builds a list of DQProfiles by iterating through DQProfileType builders.
 
+        This method mutates *summary_stats* in place: it writes per-column metrics
+        (e.g. count, count_null, count_non_null, empty_count, and min/max when a
+        min_max profile is produced) into summary_stats[field_name].
+
         Args:
             df: Input DataFrame to profile.
             df_cols: List of columns to profile.
@@ -398,6 +402,12 @@ class DQProfiler(DQEngineBase):
                 profile = profile_type.builder(column_df, field_name, field_type, metrics, opts)
                 if profile:
                     dq_rules.append(profile)
+
+                    if profile.name == "min_max" and profile.parameters:
+                        if profile.parameters.get("min") is not None:
+                            metrics["min"] = profile.parameters["min"]
+                        if profile.parameters.get("max") is not None:
+                            metrics["max"] = profile.parameters["max"]
 
         self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
 
