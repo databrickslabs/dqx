@@ -651,52 +651,56 @@ class DQProfiler(DQEngineBase):
                 dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
             elif typ == T.TimestampType():
                 dst = dst.select(F.col(column).cast("bigint").alias(column))
-            # Add percentiles (p10, p90) using approx_percentile for faster computation
-            pct_exprs = [
-                F.min(column),
-                F.max(column),
-                F.mean(column),
-                F.stddev(column),
-                F.expr("approx_percentile(col, array(0.1, 0.25, 0.5, 0.75, 0.9))").alias("percentiles"),
-            ]
-            result = dst.agg(*pct_exprs).collect()
-            if result and result[0]:
-                row = result[0]
-                # Extract percentiles from array
-                pct_array = row["percentiles"] if row["percentiles"] else []
-                if len(pct_array) >= 5:
-                    metrics["p10"] = pct_array[0]
-                    metrics["p25"] = pct_array[1]
-                    metrics["p50"] = pct_array[2]
-                    metrics["p75"] = pct_array[3]
-                    metrics["p90"] = pct_array[4]
-                # Build min/max/mean/stddev tuple for _get_min_max
-                mn_mx = [(row["min(col)"], row["max(col)"], row["avg(col)"], row["stddev(col)"])]
+            if isinstance(typ, T.NumericType):
+                # Add percentiles (p10, p90) using approx_percentile for faster computation
+                pct_exprs = [
+                    F.min(column).alias("min_col"),
+                    F.max(column).alias("max_col"),
+                    F.mean(column).alias("avg_col"),
+                    F.stddev(column).alias("stddev_col"),
+                    F.expr(f"approx_percentile({column}, array(0.1, 0.25, 0.5, 0.75, 0.9))").alias("percentiles"),
+                ]
+                result = dst.agg(*pct_exprs).collect()
+                if result and result[0]:
+                    row = result[0]
+                    # Extract percentiles from array
+                    pct_array = row["percentiles"] if row["percentiles"] else []
+                    if len(pct_array) >= 5:
+                        metrics["p10"] = pct_array[0]
+                        metrics["p25"] = pct_array[1]
+                        metrics["p50"] = pct_array[2]
+                        metrics["p75"] = pct_array[3]
+                        metrics["p90"] = pct_array[4]
+                    # Build min/max/mean/stddev tuple for _get_min_max using aliases
+                    mn_mx = [(row["min_col"], row["max_col"], row["avg_col"], row["stddev_col"])]
+                else:
+                    mn_mx = []
             else:
+                result = None
                 mn_mx = []
+            if result is None:
+                mn_mx_df = dst.agg(F.min(column).alias('min_value'), F.max(column).alias('max_value'))
+                if typ == T.TimestampType():
+                    mn_mx_df = mn_mx_df.withColumn(
+                        "min_value", F.date_format("min_value", "yyyy-MM-dd HH:mm:ss")
+                    ).withColumn("max_value", F.date_format("max_value", "yyyy-MM-dd HH:mm:ss"))
+                mn_mx = mn_mx_df.collect()
+                if mn_mx and len(mn_mx) > 0:
+                    if typ == T.TimestampType():
+                        metrics['min'] = datetime.datetime.strptime(mn_mx[0][0], "%Y-%m-%d %H:%M:%S")
+                        metrics['max'] = datetime.datetime.strptime(mn_mx[0][1], "%Y-%m-%d %H:%M:%S")
+                    else:
+                        metrics["min"] = mn_mx[0][0]
+                        metrics["max"] = mn_mx[0][1]
+                    min_limit = self._round_value(metrics.get("min"), "down", opts)
+                    max_limit = self._round_value(metrics.get("max"), "up", opts)
+                    descr = "Real min/max values were used"
+                else:
+                    logger.info(f"Can't get min/max for field {col_name}")
             descr, max_limit, min_limit = self._get_min_max(
                 col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
             )
-        else:
-            mn_mx_df = dst.agg(F.min(column).alias('min_value'), F.max(column).alias('max_value'))
-            if typ == T.TimestampType():
-                mn_mx_df = mn_mx_df.withColumn(
-                    "min_value", F.date_format("min_value", "yyyy-MM-dd HH:mm:ss")
-                ).withColumn("max_value", F.date_format("max_value", "yyyy-MM-dd HH:mm:ss"))
-            mn_mx = mn_mx_df.collect()
-            if mn_mx and len(mn_mx) > 0:
-                if typ == T.TimestampType():
-                    metrics['min'] = datetime.datetime.strptime(mn_mx[0][0], "%Y-%m-%d %H:%M:%S")
-                    metrics['max'] = datetime.datetime.strptime(mn_mx[0][1], "%Y-%m-%d %H:%M:%S")
-                else:
-                    metrics["min"] = mn_mx[0][0]
-                    metrics["max"] = mn_mx[0][1]
-                min_limit = self._round_value(metrics.get("min"), "down", opts)
-                max_limit = self._round_value(metrics.get("max"), "up", opts)
-                descr = "Real min/max values were used"
-            else:
-                logger.info(f"Can't get min/max for field {col_name}")
-        if descr and min_limit and max_limit:
+        if descr is not None and min_limit is not None and max_limit is not None:
             # Build parameters including percentiles if available
             params = {"min": min_limit, "max": max_limit}
             # Add percentiles to parameters if they were computed
@@ -705,7 +709,7 @@ class DQProfiler(DQEngineBase):
             if "p25" in metrics:
                 params["p25"] = self._round_value(metrics.get("p25"), "down", opts)
             if "p50" in metrics:
-                params["p50"] = self._round_value(metrics.get("p50"), "nearest", opts)
+                params["p50"] = self._round_value(metrics.get("p50"), "down", opts)
             if "p75" in metrics:
                 params["p75"] = self._round_value(metrics.get("p75"), "up", opts)
             if "p90" in metrics:
