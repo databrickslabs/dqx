@@ -746,6 +746,7 @@ class DQEngine(DQEngineBase):
             output_streaming_query = save_dataframe_as_table(checked_df, output_config)
             target_streaming_query = output_streaming_query
 
+        assert checks is not None  # guaranteed: either provided or loaded from checks_location above
         rule_set_fingerprint = compute_rule_set_fingerprint([c.to_dict() for c in checks])
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
@@ -853,6 +854,7 @@ class DQEngine(DQEngineBase):
             output_streaming_query = save_dataframe_as_table(checked_df, output_config)
             target_streaming_query = output_streaming_query
 
+        assert checks is not None  # guaranteed: either provided or loaded from checks_location above
         rule_set_fingerprint = compute_rule_set_fingerprint(checks)
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
