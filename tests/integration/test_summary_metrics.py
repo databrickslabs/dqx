@@ -346,7 +346,8 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
-def test_save_summary_metrics_custom_metrics_and_params(ws, spark, make_schema, make_random):
+def test_save_summary_metrics_custom_metrics_and_params(ws, spark_keep_alive, make_schema, make_random):
+    spark = spark_keep_alive.spark
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"

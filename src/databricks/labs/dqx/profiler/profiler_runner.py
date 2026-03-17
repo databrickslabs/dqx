@@ -64,16 +64,18 @@ class ProfilerRunner:
         assert run_config.input_config  # should be validated before
 
         df = read_input_data(self.spark, run_config.input_config)
-        summary_stats, profiles = self.profiler.profile(
-            df,
-            options={
-                "sample_fraction": run_config.profiler_config.sample_fraction,
-                "sample_seed": run_config.profiler_config.sample_seed,
-                "limit": run_config.profiler_config.limit,
-                "filter": run_config.profiler_config.filter,
-                "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,
-            },
-        )
+        options = {
+            "sample_fraction": run_config.profiler_config.sample_fraction,
+            "sample_seed": run_config.profiler_config.sample_seed,
+            "limit": run_config.profiler_config.limit,
+            "filter": run_config.profiler_config.filter,
+            "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,
+        }
+        if run_config.profiler_config.max_null_ratio is not None:
+            options["max_null_ratio"] = run_config.profiler_config.max_null_ratio
+        if run_config.profiler_config.max_empty_ratio is not None:
+            options["max_empty_ratio"] = run_config.profiler_config.max_empty_ratio
+        summary_stats, profiles = self.profiler.profile(df, options=options)
         checks = generator.generate_dq_rules(profiles)  # use default criticality "error"
         logger.info(f"Using options: \n{run_config.profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
