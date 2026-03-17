@@ -17,7 +17,10 @@ from pyspark.sql.streaming import StreamingQuery
 from databricks.labs.dqx.base import DQEngineBase, DQEngineCoreBase
 from databricks.labs.dqx.checks_resolver import resolve_custom_check_functions_from_path
 from databricks.labs.dqx.checks_serializer import deserialize_checks
-from databricks.labs.dqx.rule import compute_rule_set_fingerprint
+from databricks.labs.dqx.rule_fingerprint import (
+    compute_rule_set_fingerprint,
+    compute_rule_set_fingerprint_by_metadata,
+)
 from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.checks_storage import (
     FileChecksStorageHandler,
@@ -143,8 +146,7 @@ class DQEngineCore(DQEngineCoreBase):
         warning_checks = self._get_check_columns(checks, Criticality.WARN.value)
         error_checks = self._get_check_columns(checks, Criticality.ERROR.value)
 
-        all_check_dicts = [c.to_dict() for c in checks]
-        rule_set_fingerprint = compute_rule_set_fingerprint(all_check_dicts) if all_check_dicts else None
+        rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
 
         result_df = self._create_results_array(
             df,
@@ -244,7 +246,6 @@ class DQEngineCore(DQEngineCoreBase):
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
-
         return self.apply_checks(df, dq_rule_checks, ref_dfs)
 
     def apply_checks_by_metadata_and_split(
@@ -747,7 +748,7 @@ class DQEngine(DQEngineBase):
             target_streaming_query = output_streaming_query
 
         assert checks is not None  # guaranteed: either provided or loaded from checks_location above
-        rule_set_fingerprint = compute_rule_set_fingerprint([c.to_dict() for c in checks]) if checks else None
+        rule_set_fingerprint = compute_rule_set_fingerprint(checks) if checks else None
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates
         if self._engine.observer and metrics_config and target_streaming_query is not None:
@@ -855,9 +856,8 @@ class DQEngine(DQEngineBase):
             target_streaming_query = output_streaming_query
 
         assert checks is not None  # guaranteed: either provided or loaded from checks_location above
-        dq_rule_checks = deserialize_checks(checks, custom_check_functions)
         rule_set_fingerprint = (
-            compute_rule_set_fingerprint([r.to_dict() for r in dq_rule_checks]) if dq_rule_checks else None
+            compute_rule_set_fingerprint_by_metadata(checks, custom_check_functions) if checks else None
         )
 
         # Add listener for streaming metrics, targeting the specific query to avoid duplicates

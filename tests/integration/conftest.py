@@ -14,7 +14,7 @@ from databricks.sdk.service.workspace import ImportFormat
 from databricks.labs.blueprint.installation import Installation
 from databricks.labs.pytester.fixtures.baseline import factory
 from databricks.labs.dqx.checks_serializer import serialize_checks
-from databricks.labs.dqx.rule import compute_rule_fingerprint, compute_rule_set_fingerprint
+from databricks.labs.dqx.rule_fingerprint import compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
 from databricks.labs.dqx.config import InputConfig, OutputConfig, InstallationChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine
@@ -574,7 +574,7 @@ def assert_output_df(spark, expected_output, output_config):
 def generate_checks_with_rule_and_set_fingerprint_from_rules(rules: list[DQRule]) -> list[dict]:
     """Generate check dicts with rule_fingerprint and rule_set_fingerprint from DQRule instances."""
     checks_dict = serialize_checks(rules)
-    rule_set_fingerprint = compute_rule_set_fingerprint(checks_dict)
+    rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks_dict)
     return [
         {**check, "rule_fingerprint": compute_rule_fingerprint(check), "rule_set_fingerprint": rule_set_fingerprint}
         for check in checks_dict
@@ -584,7 +584,7 @@ def generate_checks_with_rule_and_set_fingerprint_from_rules(rules: list[DQRule]
 def generate_checks_with_rule_and_set_fingerprint_from_dicts(checks: list[dict]) -> list[dict]:
     """Generate check dicts with rule_fingerprint and rule_set_fingerprint from check dicts."""
     checks_dict = [dict(check) for check in checks]
-    rule_set_fingerprint = compute_rule_set_fingerprint(checks_dict)
+    rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks_dict)
     return [
         {**check, "rule_fingerprint": compute_rule_fingerprint(check), "rule_set_fingerprint": rule_set_fingerprint}
         for check in checks_dict

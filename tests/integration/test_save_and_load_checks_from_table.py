@@ -6,7 +6,8 @@ from decimal import Decimal
 import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 
-from databricks.labs.dqx.checks_serializer import DataFrameConverter, compute_rule_set_fingerprint
+from databricks.labs.dqx.checks_storage import DataFrameConverter
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.config import (
     TableChecksStorageConfig,
     InstallationChecksStorageConfig,
@@ -545,7 +546,7 @@ def test_load_checks_from_table_with_new_schema_and_rule_set_fingerprint(ws, mak
     engine = DQEngine(ws, spark)
     config = TableChecksStorageConfig(
         location=table_name,
-        rule_set_fingerprint=compute_rule_set_fingerprint(INPUT_CHECKS[:1]),
+        rule_set_fingerprint=compute_rule_set_fingerprint_by_metadata(INPUT_CHECKS[:1]),
     )
     loaded_checks = engine.load_checks(config=config)
 
@@ -584,7 +585,7 @@ def test_save_and_load_checks_from_delta_table_with_rule_set_fingerprint(ws, mak
 
     config_load = TableChecksStorageConfig(
         location=table_name,
-        rule_set_fingerprint=compute_rule_set_fingerprint(INPUT_CHECKS[:1]),
+        rule_set_fingerprint=compute_rule_set_fingerprint_by_metadata(INPUT_CHECKS[:1]),
     )
     checks = engine.load_checks(config=config_load)
 

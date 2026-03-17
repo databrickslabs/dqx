@@ -251,25 +251,42 @@ You can find details on how to define checks [here](/docs/guide/quality_checks_d
 
 ## Calculating rule set fingerprint manually
 
-When loading from Delta or Lakebase tables, you typically pass a `run_config_name` for filtering. 
-Alternatively, you can filter by `rule_set_fingerprint` to load a specific version of the rule set. 
+When loading from Delta or Lakebase tables, you typically pass a `run_config_name` for filtering.
+Alternatively, you can filter by `rule_set_fingerprint` to load a specific version of the rule set.
 You can also use the fingerprint to verify that the current rule set matches the one used to apply the checks.
 
-To compute the fingerprint manually, use the `compute_rule_set_fingerprint` function:
+The `rule_fingerprint` module provides two functions to compute the rule set fingerprint:
+
+### From metadata
+
+Use `compute_rule_set_fingerprint_by_metadata` when you have checks as a list of dictionaries (e.g. from YAML or JSON).
 
 ```python
-from databricks.labs.dqx.rule import compute_rule_set_fingerprint
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.config import TableChecksStorageConfig
 
 checks: list[dict] = [
     {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
     {"criticality": "warn", "check": {"function": "is_not_null_and_not_empty", "for_each_column": ["col1", "col2"], "arguments": {}}},
 ]
-fingerprint = compute_rule_set_fingerprint(checks)
+fingerprint = compute_rule_set_fingerprint_by_metadata(checks)
 # e.g. "9664332437da274d921cefac60bd509e0aa383292ba695341e1f3fbc2a716e48"
 
 # Use when loading
 loaded_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", rule_set_fingerprint=fingerprint))
+```
+
+### From DQRule objects
+
+Use `compute_rule_set_fingerprint` when you already have a list of `DQRule` objects (e.g. after building rules programmatically or deserializing).
+
+```python
+from databricks.labs.dqx.rule import DQRule
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint
+from databricks.labs.dqx.checks_serializer import deserialize_checks
+
+rules: list[DQRule] = [...]  # your DQRule instances
+fingerprint = compute_rule_set_fingerprint(rules)
 ```
 
 The fingerprint is a deterministic SHA-256 hash of the rule set. The order of checks does not matter. `for_each_column` is included in the fingerprint (sorted for determinism).

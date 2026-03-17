@@ -20,7 +20,6 @@ __all__ = [
     "CHECK_FUNC_REGISTRY",
     "CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION",
     "compute_rule_fingerprint",
-    "compute_rule_set_fingerprint",
     "Criticality",
     "DQDatasetRule",
     "DQForEachColRule",
@@ -32,64 +31,6 @@ __all__ = [
     "register_for_original_columns_preselection",
     "register_rule",
 ]
-
-
-def compute_rule_fingerprint(check_dict: dict) -> str:
-    """Compute a deterministic SHA-256 hash of a single rule definition.
-
-    Normalizes the check dict before hashing so the same logical rule yields the same
-    fingerprint regardless of storage backend or code path (Delta, Lakebase, engine).
-    Normalization turns variants into a single canonical form.
-    After normalization, all equivalent rules hash to the same fingerprint.
-
-    Args:
-        check_dict: Dictionary representing a single check rule.
-
-    Returns:
-        A hex-encoded SHA-256 hash string.
-    """
-
-    def _normalize_value_for_serialization(val: Any) -> Any:
-        """Recursively normalize a value for JSON/serialization. Idempotent."""
-        if isinstance(val, dict):
-            return {k: _normalize_value_for_serialization(v) for k, v in val.items()}
-        return normalize_bound_args(val)
-
-    check_dict = _normalize_value_for_serialization(check_dict)
-
-    check_inner = check_dict.get("check") or {}
-    for_each_column = check_inner.get("for_each_column")
-    # Normalize to list: Spark ArrayType or other sources may return non-list iterables
-    if for_each_column is not None and not isinstance(for_each_column, list):
-        for_each_column = list(for_each_column)
-    fingerprint_data = {
-        "name": check_dict.get("name"),
-        "criticality": check_dict.get("criticality", "error"),
-        "function": check_inner.get("function"),
-        "arguments": check_inner.get("arguments"),
-        "filter": check_dict.get("filter"),
-        "for_each_column": sorted(for_each_column) if for_each_column else None,
-    }
-    canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
-    return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def compute_rule_set_fingerprint(checks: list[dict]) -> str:
-    """Compute a deterministic SHA-256 hash of the complete rule set.
-
-    The hash is order-independent: individual rule fingerprints are sorted before combining.
-    for_each_column is included in each rule's fingerprint (sorted for determinism).
-
-    Args:
-        checks: List of check dictionaries.
-
-    Returns:
-        A hex-encoded SHA-256 hash string representing the entire rule set.
-    """
-    individual_fps = sorted(compute_rule_fingerprint(c) for c in checks)
-    combined = json.dumps(individual_fps, sort_keys=True)
-    return hashlib.sha256(combined.encode()).hexdigest()
-
 
 CHECK_FUNC_REGISTRY: dict[str, str] = {}
 CHECK_FUNC_REGISTRY_ORIGINAL_COLUMNS_PRESELECTION: set[str] = set()
@@ -529,3 +470,43 @@ class DQForEachColRule(DQRuleTypeMixin):
                     )
                 )
         return rules
+
+
+def compute_rule_fingerprint(check_dict: dict) -> str:
+    """Compute a deterministic SHA-256 hash of a single rule definition.
+
+    Normalizes the check dict before hashing so the same logical rule yields the same
+    fingerprint regardless of storage backend or code path (Delta, Lakebase, engine).
+    Normalization turns variants into a single canonical form.
+    After normalization, all equivalent rules hash to the same fingerprint.
+
+    Args:
+        check_dict: Dictionary representing a single check rule.
+
+    Returns:
+        A hex-encoded SHA-256 hash string.
+    """
+
+    def _normalize_value_for_serialization(val: Any) -> Any:
+        """Recursively normalize a value for JSON/serialization. Idempotent."""
+        if isinstance(val, dict):
+            return {k: _normalize_value_for_serialization(v) for k, v in val.items()}
+        return normalize_bound_args(val)
+
+    check_dict = _normalize_value_for_serialization(check_dict)
+
+    check_inner = check_dict.get("check") or {}
+    for_each_column = check_inner.get("for_each_column")
+    # Normalize to list: Spark ArrayType or other sources may return non-list iterables
+    if for_each_column is not None and not isinstance(for_each_column, list):
+        for_each_column = list(for_each_column)
+    fingerprint_data = {
+        "name": check_dict.get("name"),
+        "criticality": check_dict.get("criticality", "error"),
+        "function": check_inner.get("function"),
+        "arguments": check_inner.get("arguments"),
+        "filter": check_dict.get("filter"),
+        "for_each_column": sorted(for_each_column) if for_each_column else None,
+    }
+    canonical = json.dumps(fingerprint_data, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode()).hexdigest()

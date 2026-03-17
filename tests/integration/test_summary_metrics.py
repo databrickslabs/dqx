@@ -7,7 +7,8 @@ import pytest
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
 from databricks.sdk.errors import NotFound
-from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint, deserialize_checks
+from databricks.labs.dqx.checks_serializer import deserialize_checks
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
 from databricks.labs.dqx.reporting_columns import ColumnArguments
@@ -36,7 +37,7 @@ TEST_CHECKS = [
         "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
     },
 ]
-TEST_CHECKS_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint(TEST_CHECKS)
+TEST_CHECKS_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(TEST_CHECKS)
 TEST_OBSERVER_NAME = "test_observer"
 
 
@@ -1552,7 +1553,7 @@ def test_apply_checks_and_save_in_table_writes_rule_set_fingerprint(
     output_config = OutputConfig(location=output_table_name, mode="overwrite")
     metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
 
-    expected_fingerprint = compute_rule_set_fingerprint(TEST_CHECKS)
+    expected_fingerprint = compute_rule_set_fingerprint_by_metadata(TEST_CHECKS)
 
     if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
         checks = deserialize_checks(TEST_CHECKS)

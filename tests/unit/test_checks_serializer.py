@@ -7,8 +7,10 @@ from unittest.mock import create_autospec
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.check_funcs import is_not_null
-from databricks.labs.dqx.checks_serializer import DataFrameConverter, compute_rule_set_fingerprint
-from databricks.labs.dqx.rule import DQRowRule, compute_rule_fingerprint
+from databricks.labs.dqx.checks_serializer import deserialize_checks
+from databricks.labs.dqx.checks_storage import DataFrameConverter
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.rule_fingerprint import compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata
 
 
 def _hex_sha256_pattern() -> re.Pattern[str]:
@@ -123,7 +125,7 @@ def test_compute_rule_fingerprint_excludes_user_metadata():
     assert compute_rule_fingerprint(base) == compute_rule_fingerprint(with_meta)
 
 
-def test_compute_rule_set_fingerprint_returns_64_char_hex():
+def test_compute_rule_set_fingerprint_by_metadata_returns_64_char_hex():
     """Rule set fingerprint is a 64-character lowercase hex string (SHA-256)."""
     checks = [
         {
@@ -132,11 +134,11 @@ def test_compute_rule_set_fingerprint_returns_64_char_hex():
             "check": {"function": "is_not_null", "arguments": {"column": "id"}},
         },
     ]
-    fingerprint = compute_rule_set_fingerprint(checks)
+    fingerprint = compute_rule_set_fingerprint_by_metadata(checks)
     assert _hex_sha256_pattern().match(fingerprint), f"Expected 64-char hex, got {fingerprint!r}"
 
 
-def test_compute_rule_set_fingerprint_deterministic():
+def test_compute_rule_set_fingerprint_by_metadata_deterministic():
     """Same list of checks produces the same rule set fingerprint every time."""
     checks = [
         {
@@ -150,10 +152,10 @@ def test_compute_rule_set_fingerprint_deterministic():
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
         },
     ]
-    assert compute_rule_set_fingerprint(checks) == compute_rule_set_fingerprint(checks)
+    assert compute_rule_set_fingerprint_by_metadata(checks) == compute_rule_set_fingerprint_by_metadata(checks)
 
 
-def test_compute_rule_set_fingerprint_order_independent():
+def test_compute_rule_set_fingerprint_by_metadata_order_independent():
     """Same rules in different order produce the same rule set fingerprint."""
     check_a = {
         "name": "a",
@@ -165,19 +167,19 @@ def test_compute_rule_set_fingerprint_order_independent():
         "criticality": "warn",
         "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
     }
-    fp_ab = compute_rule_set_fingerprint([check_a, check_b])
-    fp_ba = compute_rule_set_fingerprint([check_b, check_a])
+    fp_ab = compute_rule_set_fingerprint_by_metadata([check_a, check_b])
+    fp_ba = compute_rule_set_fingerprint_by_metadata([check_b, check_a])
     assert fp_ab == fp_ba
 
 
-def test_compute_rule_set_fingerprint_empty_list():
+def test_compute_rule_set_fingerprint_by_metadata_empty_list():
     """Empty list produces a deterministic fingerprint (hash of empty/sorted list)."""
-    fingerprint = compute_rule_set_fingerprint([])
+    fingerprint = compute_rule_set_fingerprint_by_metadata([])
     assert _hex_sha256_pattern().match(fingerprint)
-    assert fingerprint == compute_rule_set_fingerprint([])
+    assert fingerprint == compute_rule_set_fingerprint_by_metadata([])
 
 
-def test_compute_rule_set_fingerprint_different_sets_different_output():
+def test_compute_rule_set_fingerprint_by_metadata_different_sets_different_output():
     """Different rule sets produce different fingerprints."""
     set1 = [
         {
@@ -205,10 +207,34 @@ def test_compute_rule_set_fingerprint_different_sets_different_output():
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
         },
     ]
-    fingerprint_1 = compute_rule_set_fingerprint(set1)
-    fingerprint_2 = compute_rule_set_fingerprint(set2)
-    fingerprint_3 = compute_rule_set_fingerprint(set3)
+    fingerprint_1 = compute_rule_set_fingerprint_by_metadata(set1)
+    fingerprint_2 = compute_rule_set_fingerprint_by_metadata(set2)
+    fingerprint_3 = compute_rule_set_fingerprint_by_metadata(set3)
     assert len({fingerprint_1, fingerprint_2, fingerprint_3}) == 3
+
+
+def test_compute_rule_set_fingerprint_by_metadata_compact_and_expanded_same():
+    """Compact (for_each_column) and expanded metadata produce the same fingerprint.
+
+    The thin wrapper deserializes first, which expands for_each_column, so both forms
+    yield identical fingerprints.
+    """
+    compact = [
+        {
+            "name": "rule_fec",
+            "criticality": "warn",
+            "check": {
+                "function": "is_not_null",
+                "arguments": {},
+                "for_each_column": ["x", "y"],
+            },
+        },
+    ]
+    rules = deserialize_checks(compact)
+    expanded_metadata = [r.to_dict() for r in rules]
+    fp_compact = compute_rule_set_fingerprint_by_metadata(compact)
+    fp_expanded = compute_rule_set_fingerprint_by_metadata(expanded_metadata)
+    assert fp_compact == fp_expanded
 
 
 def test_compute_rule_fingerprint_matches_dq_rule_rule_fingerprint():

@@ -2,7 +2,8 @@ import pyspark.sql.functions as F
 from chispa import assert_df_equality  # type: ignore [import-untyped]
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
-from databricks.labs.dqx.rule import DQRowRule, compute_rule_set_fingerprint
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx import check_funcs
 from tests.integration.conftest import (
     REPORTING_COLUMNS,
@@ -368,7 +369,7 @@ def test_apply_checks_by_metadata_for_each_column_fingerprint_consistency(ws, sp
 
     # Reference fingerprint computed the same way: deserialize then to_dict().
     expanded_rules = deserialize_checks(checks)
-    fingerprint_from_expanded = compute_rule_set_fingerprint([r.to_dict() for r in expanded_rules])
+    fingerprint_from_expanded = compute_rule_set_fingerprint_by_metadata([r.to_dict() for r in expanded_rules])
 
     assert fingerprint_in_df == fingerprint_from_expanded, (
         f"rule_set_fingerprint divergence detected for for_each_column checks.\n"

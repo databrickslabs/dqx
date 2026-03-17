@@ -3,8 +3,8 @@
 import re
 
 from databricks.labs.dqx.check_funcs import is_not_null
-from databricks.labs.dqx.checks_serializer import compute_rule_set_fingerprint
-from databricks.labs.dqx.rule import DQRowRule, compute_rule_fingerprint
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx.rule_fingerprint import compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata
 
 
 def _hex_sha256_pattern() -> re.Pattern[str]:
@@ -24,16 +24,16 @@ def test_compute_rule_fingerprint_same_rule_same_fingerprint():
     assert _hex_sha256_pattern().match(fp1)
 
 
-def test_compute_rule_set_fingerprint_same_set_same_fingerprint():
+def test_compute_rule_set_fingerprint_by_metadata_same_set_same_fingerprint():
     """Same rule set produces the same rule_set_fingerprint (determinism)."""
     checks = [
         {"name": "a", "criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}},
         {"name": "b", "criticality": "warn", "check": {"function": "is_not_null", "arguments": {"column": "name"}}},
     ]
-    assert compute_rule_set_fingerprint(checks) == compute_rule_set_fingerprint(checks)
+    assert compute_rule_set_fingerprint_by_metadata(checks) == compute_rule_set_fingerprint_by_metadata(checks)
 
 
-def test_compute_rule_set_fingerprint_for_each_column_deterministic():
+def test_compute_rule_set_fingerprint_by_metadata_for_each_column_deterministic():
     """for_each_column is included in fingerprint; same compact check yields same rule_set_fingerprint."""
     checks = [
         {
@@ -46,10 +46,10 @@ def test_compute_rule_set_fingerprint_for_each_column_deterministic():
             },
         },
     ]
-    assert compute_rule_set_fingerprint(checks) == compute_rule_set_fingerprint(checks)
+    assert compute_rule_set_fingerprint_by_metadata(checks) == compute_rule_set_fingerprint_by_metadata(checks)
 
 
-def test_compute_rule_set_fingerprint_order_independent():
+def test_compute_rule_set_fingerprint_by_metadata_order_independent():
     """Rule set fingerprint is order-independent: same rules in different order give same hash."""
     rule_check_first = {
         "name": "rule_first",
@@ -61,8 +61,8 @@ def test_compute_rule_set_fingerprint_order_independent():
         "criticality": "warn",
         "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "label"}},
     }
-    fp_ab = compute_rule_set_fingerprint([rule_check_first, rule_check_second])
-    fp_ba = compute_rule_set_fingerprint([rule_check_second, rule_check_first])
+    fp_ab = compute_rule_set_fingerprint_by_metadata([rule_check_first, rule_check_second])
+    fp_ba = compute_rule_set_fingerprint_by_metadata([rule_check_second, rule_check_first])
     assert fp_ab == fp_ba
 
 
@@ -80,7 +80,7 @@ def test_compute_rule_fingerprint_includes_for_each_column():
     compact_ac = [
         {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["a", "c"], "arguments": {}}},
     ]
-    assert compute_rule_set_fingerprint(compact_ab) != compute_rule_set_fingerprint(compact_ac)
+    assert compute_rule_set_fingerprint_by_metadata(compact_ab) != compute_rule_set_fingerprint_by_metadata(compact_ac)
 
 
 def test_compute_rule_fingerprint_empty_for_each_column_same_as_none():
@@ -160,7 +160,7 @@ def test_compute_rule_fingerprint_user_metadata_excluded():
     assert fp_with == fp_different == fp_without
 
 
-def test_compute_rule_set_fingerprint_user_metadata_only_change_same_fingerprint():
+def test_compute_rule_set_fingerprint_by_metadata_user_metadata_only_change_same_fingerprint():
     """Changing user_metadata across the entire rule set does not change the set fingerprint."""
     checks_v1 = [
         {
@@ -189,7 +189,7 @@ def test_compute_rule_set_fingerprint_user_metadata_only_change_same_fingerprint
             "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
         },
     ]
-    assert compute_rule_set_fingerprint(checks_v1) == compute_rule_set_fingerprint(checks_v2)
+    assert compute_rule_set_fingerprint_by_metadata(checks_v1) == compute_rule_set_fingerprint_by_metadata(checks_v2)
 
 
 def test_compute_rule_fingerprint_different_functions_differ():

@@ -10,7 +10,8 @@ import pytest
 from sqlalchemy import insert
 from sqlalchemy.schema import CreateSchema
 
-from databricks.labs.dqx.checks_serializer import ChecksNormalizer, compute_rule_set_fingerprint
+from databricks.labs.dqx.checks_serializer import ChecksNormalizer
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.config import InstallationChecksStorageConfig, LakebaseChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.checks_storage import LakebaseChecksStorageHandler
@@ -352,7 +353,7 @@ def test_save_and_load_checks_from_lakebase_with_rule_set_fingerprint(
         location=lakebase_location,
         client_id=lakebase_client_id,
         instance_name=instance.name,
-        rule_set_fingerprint=compute_rule_set_fingerprint(TEST_CHECKS[0:2]),
+        rule_set_fingerprint=compute_rule_set_fingerprint_by_metadata(TEST_CHECKS[0:2]),
     )
     checks = dq_engine.load_checks(config=config_load)
 

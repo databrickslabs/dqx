@@ -4,7 +4,7 @@ from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import WorkspaceFileChecksStorageConfig
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
-from databricks.labs.dqx.rule import compute_rule_set_fingerprint
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from tests.integration.conftest import (
     assert_quarantine_and_output_dfs,
     assert_output_df,
@@ -13,7 +13,7 @@ from tests.integration.conftest import (
     WORKFLOW_CHECKS,
 )
 
-_WORKFLOW_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint(WORKFLOW_CHECKS)
+_WORKFLOW_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(WORKFLOW_CHECKS)
 
 
 def test_quality_checker_workflow_with_metrics(spark, setup_workflows_with_metrics, expected_quality_checking_output):

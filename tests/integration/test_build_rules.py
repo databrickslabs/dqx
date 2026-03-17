@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pyspark.sql.functions as F
 
-from databricks.labs.dqx.checks_serializer import DataFrameConverter
+from databricks.labs.dqx.checks_storage import DataFrameConverter
 
 SCHEMA = "a: int, b: int, c: int"
 
