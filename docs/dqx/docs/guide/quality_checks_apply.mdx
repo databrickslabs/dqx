@@ -1056,4 +1056,41 @@ The `results_df` will contain the following columns:
 +------------------+-----------------------+----------+--------------------+-------------+-------------------------------+--------------------------------------+----------------+------------------------------------------------------------------+------------------------------------------------------------------+
 ```
 
-An example of how to provide user metadata can be found in the [Additional Configuration](/docs/guide/additional_configuration) section.
+### Retrieving definition of checks applied
+
+DQX provides full traceability across all layers:
+1. **Summary table → checks table**: Use `checks_location` and `rule_set_fingerprint` from the summary table to load the exact rule set from the checks table and see which rules were applied for that run.
+2. **Summary table → row-level results**: Use `run_id` from the summary table to filter the output or quarantine table and drill down to which rows failed which checks.
+3. **Row-level results → checks table**: Use `rule_fingerprint` and `rule_set_fingerprint` from each result row to join with the checks table and retrieve the exact check definition (function, arguments, filter, etc.) for that failure.
+
+The example below shows how to get rule definitions for failed checks using detailed results and the checks table.
+DQX automatically generates rule and rule set fingerprints to make this possible. The fingerprints in the detailed results match those stored in the summary metrics table and the checks table.
+If you store checks in files instead of a table, you can calculate the fingerprints as described in [Loading quality checks from a storage](/docs/guide/quality_checks_storage#calculating-rule-set-fingerprint-manually).
+
+
+```python
+from pyspark.sql import functions as F
+
+# Checks table (e.g. from DQEngine.save_checks)
+checks_table = "main.default.dqx_checks_table"
+run_config_name = "main.default.input_table"
+
+checks_df = spark.table(checks_table).filter(
+    F.col("run_config_name") == run_config_name
+).select(
+    F.col("name").alias("check_name"),
+    F.col("criticality").alias("check_criticality"),
+    F.col("check").alias("check_definition"),
+    F.col("filter").alias("check_filter"),
+    F.col("rule_fingerprint"),
+    F.col("rule_set_fingerprint"),
+  )
+
+results_with_checks = results_df.join(
+    checks_df,
+    on=["rule_fingerprint", "rule_set_fingerprint"],
+    how="left",
+)
+
+results_with_checks.select("name", "message", "check_name", "check_definition", "check_criticality", "check_filter").show()
+```

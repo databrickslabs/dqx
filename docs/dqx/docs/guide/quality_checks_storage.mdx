@@ -249,15 +249,42 @@ The following backend configuration are currently supported:
 
 You can find details on how to define checks [here](/docs/guide/quality_checks_definition).
 
-## Calculating rule set fingerprint manually
+## Calculating fingerprints manually
 
 When loading from Delta or Lakebase tables, you typically pass a `run_config_name` for filtering.
 Alternatively, you can filter by `rule_set_fingerprint` to load a specific version of the rule set.
 You can also use the fingerprint to verify that the current rule set matches the one used to apply the checks.
 
-The `rule_fingerprint` module provides two functions to compute the rule set fingerprint:
+### Single rule fingerprint
 
-### From metadata
+Use `compute_rule_fingerprint` to compute the fingerprint of a single rule from its metadata (dict). This is useful when joining row-level results with the checks table or when you need to identify a specific rule.
+
+```python
+from databricks.labs.dqx.rule_fingerprint import compute_rule_fingerprint
+
+check: dict = {
+    "criticality": "error",
+    "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+}
+fingerprint = compute_rule_fingerprint(check)
+# e.g. "f921efe3649267b67b9563861e0eee3adcbccd1ae8f38f86ac1467aeffea75eb"
+```
+
+When you have a `DQRule` instance, use the `rule_fingerprint` property instead:
+
+```python
+from databricks.labs.dqx.rule import DQRowRule
+from databricks.labs.dqx import check_funcs
+
+rule = DQRowRule(check_func=check_funcs.is_not_null, column="id", criticality="error")
+fingerprint = rule.rule_fingerprint  # same as compute_rule_fingerprint(rule.to_dict())
+```
+
+### Rule set fingerprint
+
+The `rule_fingerprint` module provides two functions to compute the rule set fingerprint (fingerprint for set of rules that are applied together):
+
+#### From metadata
 
 Use `compute_rule_set_fingerprint_by_metadata` when you have checks as a list of dictionaries (e.g. from YAML or JSON).
 
@@ -276,7 +303,7 @@ fingerprint = compute_rule_set_fingerprint_by_metadata(checks)
 loaded_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="catalog.schema.checks_table", rule_set_fingerprint=fingerprint))
 ```
 
-### From DQRule objects
+#### From DQRule objects
 
 Use `compute_rule_set_fingerprint` when you already have a list of `DQRule` objects (e.g. after building rules programmatically or deserializing).
 
