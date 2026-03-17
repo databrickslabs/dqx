@@ -228,7 +228,7 @@ The following backend configuration are currently supported:
     * `location`: table fully qualified name.
     * `run_config_name`: (optional) run configuration name to load (it can be any string), e.g. input table or job name (use "default" if not provided).
     * `mode`: (optional) write mode for saving checks (`overwrite` or `append`, default is `append`). **overwrite**: replaces all rows for this run_config_name when the fingerprint differs; skips when fingerprint exists. **append**: adds new rows when fingerprint differs (multiple versions accumulate); skips when fingerprint exists.
-    * `rule_set_fingerprint`: (optional) Optional SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.            
+    * `rule_set_fingerprint`: (optional) SHA-256 fingerprint of the rule set to load. When provided, loads rules matching this specific fingerprint instead of the latest batch.            
 * `VolumeFileChecksStorageConfig`: Unity Catalog Volume (JSON/YAML file). Containing fields:
     * `location`: Unity Catalog Volume file path (JSON or YAML).
 * `LakebaseChecksStorageConfig`: Lakebase table. Uses the same structure and compact format as Delta tables (`for_each_column` preserved). Containing fields:
@@ -273,3 +273,7 @@ loaded_checks = dq_engine.load_checks(config=TableChecksStorageConfig(location="
 ```
 
 The fingerprint is a deterministic SHA-256 hash of the rule set. The order of checks does not matter. `for_each_column` is included in the fingerprint (sorted for determinism).
+
+<Admonition type="info" title="What is not included in the fingerprint">
+`user_metadata` is intentionally **not** included in the fingerprint. Two rule sets that differ only in `user_metadata` values will produce the same fingerprint. As a result, calling `save_checks` with a checks payload that is identical to an already-saved version — except for `user_metadata` — will be treated as a no-op and **no new version will be written**. If you need to record a new version, change the rule logic (function, arguments, filter, name, or criticality).
+</Admonition>

@@ -81,3 +81,139 @@ def test_compute_rule_fingerprint_includes_for_each_column():
         {"criticality": "error", "check": {"function": "is_not_null", "for_each_column": ["a", "c"], "arguments": {}}},
     ]
     assert compute_rule_set_fingerprint(compact_ab) != compute_rule_set_fingerprint(compact_ac)
+
+
+def test_compute_rule_fingerprint_empty_for_each_column_same_as_none():
+    """Empty for_each_column list and None both produce the same fingerprint.
+
+    The normalization `sorted(fec) if fec else None` treats [] and None identically
+    (both are falsy), so they are canonicalized to None before hashing.
+    """
+    check_empty_list = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": [], "arguments": {"column": "id"}},
+    }
+    check_none = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": None, "arguments": {"column": "id"}},
+    }
+    check_absent = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+    }
+    fp_empty = compute_rule_fingerprint(check_empty_list)
+    fp_none = compute_rule_fingerprint(check_none)
+    fp_absent = compute_rule_fingerprint(check_absent)
+    assert fp_empty == fp_none == fp_absent
+
+
+def test_compute_rule_fingerprint_missing_criticality_same_as_explicit_error():
+    """A rule with no criticality key hashes the same as one with criticality='error'.
+
+    check_dict.get('criticality', 'error') returns the default only when the key
+    is absent, so missing and explicit 'error' are indistinguishable in the hash.
+    """
+    check_missing = {"check": {"function": "is_not_null", "arguments": {"column": "id"}}}
+    check_explicit = {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "id"}}}
+    assert compute_rule_fingerprint(check_missing) == compute_rule_fingerprint(check_explicit)
+
+
+def test_compute_rule_fingerprint_for_each_column_order_independent():
+    """for_each_column column order does not affect the fingerprint (columns are sorted)."""
+    check_ab = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": ["a", "b"], "arguments": {}},
+    }
+    check_ba = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "for_each_column": ["b", "a"], "arguments": {}},
+    }
+    assert compute_rule_fingerprint(check_ab) == compute_rule_fingerprint(check_ba)
+
+
+def test_compute_rule_fingerprint_user_metadata_excluded():
+    """user_metadata is not part of the fingerprint.
+
+    Two rules that differ only in user_metadata must produce identical fingerprints so
+    that a metadata-only update does not create a new version in storage.
+    """
+    check_with_metadata = {
+        "name": "id_not_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        "user_metadata": {"owner": "alice", "team": "data-eng"},
+    }
+    check_different_metadata = {
+        "name": "id_not_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+        "user_metadata": {"owner": "bob"},
+    }
+    check_no_metadata = {
+        "name": "id_not_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+    }
+    fp_with = compute_rule_fingerprint(check_with_metadata)
+    fp_different = compute_rule_fingerprint(check_different_metadata)
+    fp_without = compute_rule_fingerprint(check_no_metadata)
+    assert fp_with == fp_different == fp_without
+
+
+def test_compute_rule_set_fingerprint_user_metadata_only_change_same_fingerprint():
+    """Changing user_metadata across the entire rule set does not change the set fingerprint."""
+    checks_v1 = [
+        {
+            "name": "a_not_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+            "user_metadata": {"version": "1"},
+        },
+        {
+            "name": "b_not_empty",
+            "criticality": "warn",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
+            "user_metadata": {"owner": "alice"},
+        },
+    ]
+    checks_v2 = [
+        {
+            "name": "a_not_null",
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "a"}},
+            "user_metadata": {"version": "2", "owner": "bob"},
+        },
+        {
+            "name": "b_not_empty",
+            "criticality": "warn",
+            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "b"}},
+        },
+    ]
+    assert compute_rule_set_fingerprint(checks_v1) == compute_rule_set_fingerprint(checks_v2)
+
+
+def test_compute_rule_fingerprint_different_functions_differ():
+    """Two rules identical except for their check function produce different fingerprints."""
+    check_not_null = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+    }
+    check_not_empty = {
+        "criticality": "error",
+        "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "id"}},
+    }
+    assert compute_rule_fingerprint(check_not_null) != compute_rule_fingerprint(check_not_empty)
+
+
+def test_compute_rule_fingerprint_different_filters_differ():
+    """Two rules identical except for their filter produce different fingerprints."""
+    check_no_filter = {
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+    }
+    check_with_filter = {
+        "criticality": "error",
+        "filter": "country = 'PL'",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+    }
+    assert compute_rule_fingerprint(check_no_filter) != compute_rule_fingerprint(check_with_filter)

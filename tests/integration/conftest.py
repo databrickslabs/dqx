@@ -484,21 +484,24 @@ def expected_quality_checking_output(spark) -> DataFrame:
     )
 
 
+WORKFLOW_CHECKS = [
+    {
+        "name": "id_is_not_null",
+        "criticality": "error",
+        "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+    },
+    {
+        "name": "name_is_not_null_and_not_empty",
+        "criticality": "error",
+        "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
+    },
+]
+
+
 def _setup_quality_checks(ctx, spark, ws):
     config = ctx.config
     checks_location = config.get_run_config().checks_location
-    checks = [
-        {
-            "name": "id_is_not_null",
-            "criticality": "error",
-            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
-        },
-        {
-            "name": "name_is_not_null_and_not_empty",
-            "criticality": "error",
-            "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
-        },
-    ]
+    checks = WORKFLOW_CHECKS
     config = InstallationChecksStorageConfig(
         location=checks_location,
         product_name=ctx.installation.product(),
@@ -591,21 +594,14 @@ def generate_checks_with_rule_and_set_fingerprint_from_dicts(checks: list[dict])
 def get_rule_fingerprint_from_checks(
     versioning_rules_checks: list[dict] | None, check_name: str, criticality: str
 ) -> str | None:
-    """
-    Helper function to extract the rule_fingerprint from the versioning rules checks
-    based on the check name, function, criticality and column (if applicable).
-    versioning_rules_checks: list of versioning rules checks
-    check_name: name of the check
-    criticality: criticality of the check (e.g. "error", "warn")
-
-    """
-    rule_dict = {}
+    """Extract the rule_fingerprint for the first check matching name and criticality."""
     if not versioning_rules_checks:
         return None
-    for check in versioning_rules_checks:
-        if check.get("name") == check_name and check.get("criticality") == criticality:
-            rule_dict = check
-    return rule_dict.get("rule_fingerprint", None)
+    match = next(
+        (c for c in versioning_rules_checks if c.get("name") == check_name and c.get("criticality") == criticality),
+        None,
+    )
+    return match.get("rule_fingerprint") if match else None
 
 
 def get_rule_set_fingerprint_from_checks(versioning_rules_checks: list[dict] | None) -> str | None:

@@ -255,3 +255,33 @@ def test_save_in_append_mode_proceeds_when_computed_fingerprint_differs_from_exi
     handler.save(_SIMPLE_CHECK, config)
 
     spark.createDataFrame.return_value.write.saveAsTable.assert_called_once()
+
+
+def test_save_skips_write_when_only_user_metadata_differs():
+    """save() is idempotent when only user_metadata changes.
+
+    user_metadata is intentionally excluded from the rule fingerprint so that
+    metadata-only updates (e.g. changing an owner tag) do not produce a new version.
+    When the table already contains the computed fingerprint, saveAsTable must NOT
+    be called regardless of user_metadata differences.
+    """
+    spark = create_autospec(SparkSession)
+    ws = create_autospec(WorkspaceClient)
+    spark.read.table.return_value.schema.fields = [_MockField(c) for c in _VERSIONING_COLUMNS]
+    # isEmpty() returns False → computed fingerprint already exists in the table
+    spark.read.table.return_value.filter.return_value.isEmpty.return_value = False
+
+    handler = TableChecksStorageHandler(ws, spark)
+    config = TableChecksStorageConfig(location="catalog.schema.table", run_config_name="default", mode="append")
+
+    # Same logical check as _SIMPLE_CHECK but with user_metadata added
+    check_with_metadata = [
+        {
+            "criticality": "error",
+            "check": {"function": "is_not_null", "arguments": {"column": "id"}},
+            "user_metadata": {"owner": "alice", "team": "data-eng"},
+        }
+    ]
+    handler.save(check_with_metadata, config)
+
+    spark.createDataFrame.return_value.write.saveAsTable.assert_not_called()

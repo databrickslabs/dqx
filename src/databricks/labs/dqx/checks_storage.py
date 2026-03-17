@@ -70,7 +70,20 @@ from databricks.labs.dqx.telemetry import telemetry_logger
 logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseChecksStorageConfig)
 
-_VERSIONING_COLUMNS = ("created_at", "rule_fingerprint", "rule_set_fingerprint")
+# Maps each versioning column to its SQL type for Delta (Spark SQL) and Lakebase (PostgreSQL).
+# The iteration order is preserved; add new columns here only — _ensure_versioning_columns
+# in both storage handlers derive everything from this mapping.
+_VERSIONING_COLUMN_TYPES_DELTA = {
+    "created_at": "TIMESTAMP",
+    "rule_fingerprint": "STRING",
+    "rule_set_fingerprint": "STRING",
+}
+_VERSIONING_COLUMN_TYPES_LAKEBASE = {
+    "created_at": "TIMESTAMP",
+    "rule_fingerprint": "VARCHAR(255)",
+    "rule_set_fingerprint": "VARCHAR(255)",
+}
+_VERSIONING_COLUMNS = tuple(_VERSIONING_COLUMN_TYPES_DELTA)
 
 
 class ChecksStorageHandler(ABC, Generic[T]):
@@ -227,7 +240,7 @@ class TableChecksStorageHandler(ChecksStorageHandler[TableChecksStorageConfig]):
 
         quoted = ".".join(f"`{part}`" for part in location.replace("`", "").split("."))
         for col in missing:
-            col_type = "TIMESTAMP" if col == "created_at" else "STRING"
+            col_type = _VERSIONING_COLUMN_TYPES_DELTA[col]
             self.spark.sql(f"ALTER TABLE {quoted} ADD COLUMN {col} {col_type}")
         logger.info(f"Added versioning columns {missing} to table '{location}'.")
 
@@ -481,8 +494,7 @@ class LakebaseChecksStorageHandler(ChecksStorageHandler[LakebaseChecksStorageCon
 
         tbl = f'"{config.schema_name}"."{config.table_name}"'
         with engine.begin() as conn:
-            for col in _VERSIONING_COLUMNS:
-                col_type = "TIMESTAMP" if col == "created_at" else "VARCHAR(255)"
+            for col, col_type in _VERSIONING_COLUMN_TYPES_LAKEBASE.items():
                 conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {col_type}"))
         logger.info(f"Added versioning columns {list(_VERSIONING_COLUMNS)} to table '{config.location}'.")
 
