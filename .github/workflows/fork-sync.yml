@@ -56,6 +56,6 @@ jobs:
             gh pr create --repo "$GITHUB_REPOSITORY" \
               --base "${{ github.event.pull_request.base.ref }}" \
               --head "$SYNC_BRANCH" \
-              --title "Fork test: PR #${{ github.event.pull_request.number }}" \
+              --title "Fork test: PR #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}" \
               --body "$BODY"
           fi
