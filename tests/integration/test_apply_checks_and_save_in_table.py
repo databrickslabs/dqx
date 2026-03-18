@@ -2,7 +2,6 @@ import tempfile
 import pytest
 from pyspark.sql.functions import col, lit, when
 from pyspark.sql import Column
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.config import (
@@ -15,7 +14,13 @@ from databricks.labs.dqx.config import (
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
-from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, RUN_ID, REPORTING_COLUMNS
+from tests.integration.conftest import (
+    EXTRA_PARAMS,
+    RUN_TIME,
+    RUN_ID,
+    REPORTING_COLUMNS,
+    assert_df_equality_ignore_fingerprints as assert_df_equality,
+)
 
 from tests.constants import TEST_CATALOG
 

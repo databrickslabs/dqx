@@ -1,7 +1,6 @@
 import copy
 
 import pytest
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.blueprint.parallel import ManyError
 
 from databricks.labs.dqx.checks_storage import InstallationChecksStorageHandler
@@ -19,6 +18,7 @@ from tests.integration.conftest import (
     assert_output_df,
     assert_quarantine_and_output_dfs,
     setup_custom_check_func,
+    assert_df_equality_ignore_fingerprints as assert_df_equality,
 )
 
 from tests.constants import TEST_CATALOG
