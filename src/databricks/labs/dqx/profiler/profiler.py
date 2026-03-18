@@ -1,12 +1,7 @@
-import datetime
-import decimal
-import math
 import uuid
 import logging
 import os
 from concurrent import futures
-from dataclasses import dataclass
-from datetime import timezone
 from decimal import Decimal, Context
 from difflib import SequenceMatcher
 from fnmatch import fnmatch
@@ -22,9 +17,10 @@ from databricks.labs.dqx.base import DQEngineBase
 from databricks.labs.dqx.config import InputConfig, LLMModelConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.io import read_input_data, STORAGE_PATH_PATTERN
+from databricks.labs.dqx.profiler.profile import DQProfile
+from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY, TEXT_TYPES
 from databricks.labs.dqx.utils import list_tables
 from databricks.labs.dqx.telemetry import telemetry_logger
-from databricks.labs.dqx.errors import InvalidParameterError
 
 try:
     from databricks.labs.dqx.llm.llm_engine import DQLLMEngine
@@ -34,15 +30,6 @@ except ImportError:
     LLM_ENABLED = False
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class DQProfile:
-    name: str
-    column: str
-    description: str | None = None
-    parameters: dict[str, Any] | None = None
-    filter: str | None = None
 
 
 class DQProfiler(DQEngineBase):
@@ -373,18 +360,81 @@ class DQProfiler(DQEngineBase):
         opts: dict[str, Any],
         summary_stats: dict[str, Any],
         total_count: int,
-    ):
-        # TODO: think, how we can do it in fewer passes. Maybe only for specific things, like, min_max, etc.
+    ) -> None:
+        """
+        Builds a list of DQProfiles by iterating through DQProfileBuilder builders.
+
+        This method mutates *summary_stats* in place: it writes per-column metrics
+        (e.g. count, count_null, count_non_null, empty_count, and min/max when a
+        min_max profile is produced) into summary_stats[field_name].
+
+        Args:
+            df: Input DataFrame to profile.
+            df_cols: List of columns to profile.
+            dq_rules: List to store the generated data quality rules.
+            opts: Dictionary of options for profiling.
+            summary_stats: Summary statistics dictionary to update with profiler results.
+            total_count: Total number of rows in the input DataFrame.
+        """
+        trim_strings = opts.get("trim_strings", True)
+
         for field in self.get_columns_or_fields(df_cols):
             field_name = field.name
-            typ = field.dataType
+            field_type = field.dataType
             if field_name not in summary_stats:
                 summary_stats[field_name] = {}
             metrics = summary_stats[field_name]
 
-            self._calculate_metrics(df, dq_rules, field_name, metrics, opts, total_count, typ)
+            column_df = df.select(field_name).dropna()
+            column_label = column_df.columns[0]
+            is_text = isinstance(field_type, TEXT_TYPES)
+            if is_text and trim_strings:
+                column_df = column_df.select(F.trim(F.col(column_label)).alias(column_label))
+
+            count_non_null = column_df.count()
+            metrics["count"] = total_count
+            metrics["count_null"] = total_count - count_non_null
+            metrics["count_non_null"] = count_non_null
+            if is_text:
+                metrics["empty_count"] = column_df.filter(F.col(column_label) == "").count()
+            else:
+                metrics["empty_count"] = 0
+
+            self._build_profiles_for_column(column_df, field_name, field_type, metrics, opts, dq_rules)
 
         self._add_llm_primary_key_for_dataframe(df, dq_rules, summary_stats, opts)
+
+    def _build_profiles_for_column(
+        self,
+        column_df: DataFrame,
+        field_name: str,
+        field_type: T.DataType,
+        metrics: dict[str, Any],
+        opts: dict[str, Any],
+        dq_rules: list[DQProfile],
+    ) -> None:
+        """Run registered profile builders for a column and append profiles.
+
+        Builders are invoked in PROFILE_BUILDER_REGISTRY insertion order (null_or_empty →
+        is_in → min_max). Preserving that order matters: the min_max builder reads summary-stats
+        metrics written by earlier passes, so it must run last among the built-in builders.
+
+        After a min_max profile is produced, its resolved min/max values are written back into
+        *metrics* so that downstream consumers (e.g. LLM primary-key detection) can read them
+        without triggering a second Spark action.
+        """
+        for profile_type in PROFILE_BUILDER_REGISTRY.values():
+            profile = profile_type.builder(column_df, field_name, field_type, metrics, opts)
+            if not profile:
+                continue
+            dq_rules.append(profile)
+            # Write resolved min/max back into metrics so callers (e.g. summary_stats consumers)
+            # can access the final values without re-running Spark aggregates.
+            if profile.name == "min_max" and profile.parameters:
+                if profile.parameters.get("min") is not None:
+                    metrics["min"] = profile.parameters.get("min")
+                if profile.parameters.get("max") is not None:
+                    metrics["max"] = profile.parameters.get("max")
 
     def _add_llm_primary_key_for_dataframe(
         self, df: DataFrame, dq_rules: list[DQProfile], summary_stats: dict[str, Any], opts: dict[str, Any]
@@ -441,95 +491,6 @@ class DQProfiler(DQEngineBase):
                     }
                     logger.info(f"✅ LLM-based primary key detected for DataFrame: {valid_columns}")
 
-    def _calculate_metrics(
-        self,
-        df: DataFrame,
-        dq_rules: list[DQProfile],
-        field_name: str,
-        metrics: dict[str, Any],
-        opts: dict[str, Any],
-        total_count: int,
-        typ: T.DataType,
-    ):
-        """
-        Calculates various metrics for a given DataFrame column and updates the data quality rules.
-
-        Args:
-            df: The DataFrame containing the data.
-            dq_rules: A list to store the generated data quality rules.
-            field_name: The name of the column to calculate metrics for.
-            metrics: A dictionary to store the calculated metrics.
-            opts: A dictionary of options for metric calculation.
-            total_count: The total number of rows in the DataFrame.
-            typ: The data type of the column.
-        """
-        max_nulls = opts.get("max_null_ratio", 0)
-        trim_strings = opts.get("trim_strings", True)
-
-        dst = df.select(field_name).dropna()
-        if typ == T.StringType() and trim_strings:
-            col_name = dst.columns[0]
-            dst = dst.select(F.trim(F.col(col_name)).alias(col_name))
-
-        metrics["count"] = total_count
-        count_non_null = dst.count()
-        metrics["count_non_null"] = count_non_null
-        metrics["count_null"] = total_count - count_non_null
-        if count_non_null >= (total_count * (1 - max_nulls)):
-            if count_non_null != total_count:
-                null_percentage = 1 - (1.0 * count_non_null) / total_count
-                dq_rules.append(
-                    DQProfile(
-                        name="is_not_null",
-                        column=field_name,
-                        description=f"Column {field_name} has {null_percentage * 100:.1f}% of null values "
-                        f"(allowed {max_nulls * 100:.1f}%)",
-                        filter=opts.get("filter", None),
-                    )
-                )
-            else:
-                dq_rules.append(
-                    DQProfile(
-                        name="is_not_null",
-                        column=field_name,
-                        filter=opts.get("filter", None),
-                    )
-                )
-        if self._type_supports_distinct(typ):
-            dst2 = dst.dropDuplicates()
-            cnt = dst2.count()
-            if 0 < cnt < total_count * opts["distinct_ratio"] and cnt < opts["max_in_count"]:
-                dq_rules.append(
-                    DQProfile(
-                        name="is_in",
-                        column=field_name,
-                        parameters={"in": [row[0] for row in dst2.collect()]},
-                        filter=opts.get("filter", None),
-                    )
-                )
-
-        if (
-            typ == T.StringType()
-            and not any(  # does not make sense to add is_not_null_or_empty if is_not_null already exists
-                rule.name == "is_not_null" and rule.column == field_name for rule in dq_rules
-            )
-        ):
-            dst2 = dst.filter(F.col(field_name) == "")
-            cnt = dst2.count()
-            if cnt <= (metrics["count"] * opts.get("max_empty_ratio", 0)):
-                dq_rules.append(
-                    DQProfile(
-                        name="is_not_null_or_empty",
-                        column=field_name,
-                        parameters={"trim_strings": trim_strings},
-                        filter=opts.get("filter", None),
-                    )
-                )
-        if metrics["count_non_null"] > 0 and self._type_supports_min_max(typ):
-            rule = self._extract_min_max(dst, field_name, typ, metrics, opts)
-            if rule:
-                dq_rules.append(rule)
-
     def _get_df_summary_as_dict(self, df: DataFrame) -> dict[str, Any]:
         """
         Generate summary for DataFrame and return it as a dictionary with column name as a key, and dict of metric/value.
@@ -585,215 +546,6 @@ class DQProfiler(DQEngineBase):
         else:
             sm_dict[metric_name][metric] = None
 
-    def _round_value(self, value: Any, direction: str, opts: dict[str, Any]) -> Any:
-        """
-        Rounds a value based on the specified direction and options.
-
-        Args:
-            value: The value to round.
-            direction: The direction to round the value ("up" or "down").
-            opts: A dictionary of options, including whether to round the value.
-
-        Returns:
-            The rounded value, or the original value if rounding is not enabled.
-        """
-        if not value or not opts.get("round", False):
-            return value
-
-        if isinstance(value, datetime.datetime):
-            return self._round_datetime(value, direction)
-
-        if isinstance(value, float):
-            return self._round_float(value, direction)
-
-        if isinstance(value, int):
-            return value  # already rounded
-
-        if isinstance(value, decimal.Decimal):
-            return self._round_decimal(value, direction)
-
-        return value
-
-    def _extract_min_max(
-        self,
-        dst: DataFrame,
-        col_name: str,
-        typ: T.DataType,
-        metrics: dict[str, Any],
-        opts: dict[str, Any] | None = None,
-    ) -> DQProfile | None:
-        """
-        Generates a data quality profile rule for column value ranges.
-
-        Args:
-            dst: A single-column DataFrame containing the data to analyze.
-            col_name: The name of the column to generate the rule for.
-            typ: The data type of the column.
-            metrics: A dictionary to store the calculated metrics.
-            opts: Optional dictionary of options for rule generation.
-
-        Returns:
-            A DQProfile object representing the min/max rule, or None if no rule is generated.
-        """
-        descr = None
-        min_limit = None
-        max_limit = None
-
-        if opts is None:
-            opts = {}
-
-        outlier_cols = opts.get("outlier_columns", [])
-        column = dst.columns[0]
-        if opts.get("remove_outliers", True) and (
-            len(outlier_cols) == 0 or col_name in outlier_cols
-        ):  # detect outliers
-            if typ == T.DateType():
-                dst = dst.select(F.col(column).cast("timestamp").cast("bigint").alias(column))
-            elif typ == T.TimestampType():
-                dst = dst.select(F.col(column).cast("bigint").alias(column))
-            # TODO: do summary instead? to get percentiles, etc.?
-            mn_mx = dst.agg(F.min(column), F.max(column), F.mean(column), F.stddev(column)).collect()
-            descr, max_limit, min_limit = self._get_min_max(
-                col_name, descr, max_limit, metrics, min_limit, mn_mx, opts, typ
-            )
-        else:
-            mn_mx_df = dst.agg(F.min(column).alias('min_value'), F.max(column).alias('max_value'))
-            if typ == T.TimestampType():
-                mn_mx_df = mn_mx_df.withColumn(
-                    "min_value", F.date_format("min_value", "yyyy-MM-dd HH:mm:ss")
-                ).withColumn("max_value", F.date_format("max_value", "yyyy-MM-dd HH:mm:ss"))
-            mn_mx = mn_mx_df.collect()
-            if mn_mx and len(mn_mx) > 0:
-                if typ == T.TimestampType():
-                    metrics['min'] = datetime.datetime.strptime(mn_mx[0][0], "%Y-%m-%d %H:%M:%S")
-                    metrics['max'] = datetime.datetime.strptime(mn_mx[0][1], "%Y-%m-%d %H:%M:%S")
-                else:
-                    metrics["min"] = mn_mx[0][0]
-                    metrics["max"] = mn_mx[0][1]
-                min_limit = self._round_value(metrics.get("min"), "down", opts)
-                max_limit = self._round_value(metrics.get("max"), "up", opts)
-                descr = "Real min/max values were used"
-            else:
-                logger.info(f"Can't get min/max for field {col_name}")
-        if descr and min_limit and max_limit:
-            return DQProfile(
-                name="min_max",
-                column=col_name,
-                parameters={"min": min_limit, "max": max_limit},
-                description=descr,
-                filter=opts.get("filter", None),
-            )
-
-        return None
-
-    def _get_min_max(
-        self,
-        col_name: str,
-        descr: str | None,
-        max_limit: Any | None,
-        metrics: dict[str, Any],
-        min_limit: Any | None,
-        mn_mx: list,
-        opts: dict[str, Any],
-        typ: T.DataType,
-    ):
-        """
-        Calculates the minimum and maximum limits for a column based on the provided metrics and options.
-
-        Args:
-            col_name: The name of the column.
-            descr: The description of the min/max calculation.
-            max_limit: The maximum limit for the column.
-            metrics: A dictionary to store the calculated metrics.
-            min_limit: The minimum limit for the column.
-            mn_mx: A list containing the min, max, mean, and stddev values for the column.
-            opts: A dictionary of options for the min/max calculation.
-            typ: The data type of the column.
-
-        Returns:
-            A tuple containing the description, maximum limit, and minimum limit.
-        """
-        if mn_mx and len(mn_mx) > 0:
-            metrics["min"] = mn_mx[0][0]
-            metrics["max"] = mn_mx[0][1]
-            sigmas = opts.get("sigmas", 3)
-            avg = mn_mx[0][2]
-            stddev = mn_mx[0][3]
-
-            if avg is None or stddev is None:
-                return descr, max_limit, min_limit
-
-            if isinstance(typ, T.DecimalType):
-                context = Context(prec=typ.precision)
-                sigmas = Decimal(sigmas, context)
-                stddev = Decimal(stddev, context)
-                avg = Decimal(avg, context)
-
-            min_limit = avg - sigmas * stddev
-            max_limit = avg + sigmas * stddev
-            if min_limit > mn_mx[0][0] and max_limit < mn_mx[0][1]:
-                descr = (
-                    f"Range doesn't include outliers, capped by {sigmas} sigmas. avg={avg}, "
-                    f"stddev={stddev}, min={metrics.get('min')}, max={metrics.get('max')}"
-                )
-            elif min_limit < mn_mx[0][0] and max_limit > mn_mx[0][1]:  #
-                min_limit = mn_mx[0][0]
-                max_limit = mn_mx[0][1]
-                descr = "Real min/max values were used"
-            elif min_limit < mn_mx[0][0]:
-                min_limit = mn_mx[0][0]
-                descr = (
-                    f"Real min value was used. Max was capped by {sigmas} sigmas. avg={avg}, "
-                    f"stddev={stddev}, max={metrics.get('max')}"
-                )
-            elif max_limit > mn_mx[0][1]:
-                max_limit = mn_mx[0][1]
-                descr = (
-                    f"Real max value was used. Min was capped by {sigmas} sigmas. avg={avg}, "
-                    f"stddev={stddev}, min={metrics.get('min')}"
-                )
-            # we need to preserve type at the end
-            min_limit, max_limit = self._adjust_min_max_limits(min_limit, max_limit, avg, typ, metrics, opts)
-        else:
-            logger.info(f"Can't get min/max for field {col_name}")
-        return descr, max_limit, min_limit
-
-    def _adjust_min_max_limits(
-        self, min_limit: Any, max_limit: Any, avg: Any, typ: T.DataType, metrics: dict[str, Any], opts: dict[str, Any]
-    ) -> tuple[Any, Any]:
-        """
-        Adjusts the minimum and maximum limits based on the data type of the column.
-
-        Args:
-            min_limit: The minimum limit to adjust.
-            max_limit: The maximum limit to adjust.
-            avg: The average value of the column.
-            typ: The PySpark data type of the column.
-            metrics: A dictionary containing the calculated metrics.
-            opts: A dictionary of options for min/max limit adjustment.
-
-        Returns:
-            A tuple containing the adjusted minimum and maximum limits.
-        """
-        if isinstance(typ, T.IntegralType):
-            min_limit = int(self._round_value(min_limit, "down", opts))
-            max_limit = int(self._round_value(max_limit, "up", opts))
-        elif typ == T.DateType():
-            min_limit = datetime.date.fromtimestamp(int(min_limit))
-            max_limit = datetime.date.fromtimestamp(int(max_limit))
-            metrics["min"] = datetime.date.fromtimestamp(int(metrics["min"]))
-            metrics["max"] = datetime.date.fromtimestamp(int(metrics["max"]))
-            metrics["mean"] = datetime.date.fromtimestamp(int(avg))
-        elif typ == T.TimestampType():
-            min_limit = self._round_value(
-                datetime.datetime.fromtimestamp(int(min_limit), tz=timezone.utc), "down", opts
-            )
-            max_limit = self._round_value(datetime.datetime.fromtimestamp(int(max_limit), tz=timezone.utc), "up", opts)
-            metrics["min"] = datetime.datetime.fromtimestamp(int(metrics["min"]), tz=timezone.utc)
-            metrics["max"] = datetime.datetime.fromtimestamp(int(metrics["max"]), tz=timezone.utc)
-            metrics["mean"] = datetime.datetime.fromtimestamp(int(avg), tz=timezone.utc)
-        return min_limit, max_limit
-
     @staticmethod
     def _get_fields(col_name: str, schema: T.StructType) -> list[T.StructField]:
         """
@@ -818,100 +570,29 @@ class DQProfiler(DQEngineBase):
     @staticmethod
     def _do_cast(value: str | None, typ: T.DataType) -> Any | None:
         """
-        Casts a string value to a specified PySpark data type.
+        Casts a string value from Spark's DataFrame.summary() output to a typed Python value.
 
         Args:
-            value: The string value to cast. Can be None.
+            value: The string value to cast. Can be None or empty.
             typ: The PySpark data type to cast the value to.
 
         Returns:
-            The casted value, or None if the input value is None.
+            The casted value, or None if the input is None/empty or the type is unsupported.
+            Unsupported types (e.g. DateType, TimestampType, BooleanType) return None so that
+            profile builders fall back to Spark aggregate actions for min/max computation.
         """
         if not value:
             return None
         if isinstance(typ, T.IntegralType):
             return int(value)
-        if typ == T.DoubleType() or typ == T.FloatType():
+        if isinstance(typ, (T.DoubleType, T.FloatType)):
             return float(value)
         if isinstance(typ, T.DecimalType):
             context = Context(prec=typ.precision)
             return Decimal(value, context)
-        if typ == T.StringType():
+        if isinstance(typ, (T.StringType, T.CharType, T.VarcharType)):
             return value
 
-        raise InvalidParameterError(f"Unsupported data type for casting: {typ}")
-
-    @staticmethod
-    def _type_supports_distinct(typ: T.DataType) -> bool:
-        """
-        Checks if the given PySpark data type supports distinct operations.
-
-        Args:
-            typ: The PySpark data type to check.
-
-        Returns:
-            True if the data type supports distinct operations, False otherwise.
-        """
-        return typ == T.StringType() or typ == T.IntegerType() or typ == T.LongType()
-
-    @staticmethod
-    def _type_supports_min_max(typ: T.DataType) -> bool:
-        """
-        Checks if the given PySpark data type supports min and max operations.
-
-        Args:
-            typ: The PySpark data type to check.
-
-        Returns:
-            True if the data type supports min and max operations, False otherwise.
-        """
-        return isinstance(typ, T.NumericType) or typ == T.DateType() or typ == T.TimestampType()
-
-    @staticmethod
-    def _round_datetime(value: datetime.datetime, direction: str) -> datetime.datetime:
-        """
-        Rounds a datetime value to midnight based on the specified direction.
-
-        - "down" → truncate to midnight (00:00:00).
-        - "up" → return the next midnight unless value is already midnight.
-
-        Args:
-            value: The datetime value to round.
-            direction: The rounding direction ("up" or "down").
-
-        Returns:
-            The rounded datetime value.
-
-        Raises:
-            InvalidParameterError: If direction is not 'up' or 'down'.
-        """
-        midnight = value.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        if direction == "down":
-            return midnight
-
-        if direction == "up":
-            if midnight == value:
-                return value
-            try:
-                return midnight + datetime.timedelta(days=1)
-            except OverflowError:
-                logger.warning("Rounding datetime up caused overflow; returning datetime.max instead.")
-                return datetime.datetime.max
-        raise InvalidParameterError(f"Invalid rounding direction: {direction}. Use 'up' or 'down'.")
-
-    @staticmethod
-    def _round_float(value: float, direction: str) -> float:
-        if direction == "down":
-            return math.floor(value)
-        if direction == "up":
-            return math.ceil(value)
-        return value
-
-    @staticmethod
-    def _round_decimal(value: decimal.Decimal, direction: str) -> decimal.Decimal:
-        if direction == "down":
-            return value.to_integral_value(rounding=decimal.ROUND_FLOOR)
-        if direction == "up":
-            return value.to_integral_value(rounding=decimal.ROUND_CEILING)
-        return value
+        # For unsupported types (e.g. DateType, TimestampType, BooleanType), return None.
+        # Profile builders handle missing min/max by falling back to Spark aggregate actions.
+        return None

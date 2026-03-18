@@ -363,6 +363,28 @@ class DQGenerator(DQEngineBase):
         }
 
     @staticmethod
+    def dq_generate_is_not_empty(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check if a column's value is not empty (nulls are allowed).
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including whether to trim strings.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        return {
+            "check": {
+                "function": "is_not_empty",
+                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
+            },
+            "name": f"{column}_is_not_empty",
+            "criticality": criticality,
+        }
+
+    @staticmethod
     def dq_generate_is_unique(column: str, criticality: str = "error", **params: dict):
         """Generates a data quality rule to check if specified columns are unique.
 
@@ -404,5 +426,6 @@ class DQGenerator(DQEngineBase):
         "is_in": dq_generate_is_in,
         "min_max": dq_generate_min_max,
         "is_not_null_or_empty": dq_generate_is_not_null_or_empty,
+        "is_not_empty": dq_generate_is_not_empty,
         "is_unique": dq_generate_is_unique,
     }
