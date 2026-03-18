@@ -156,7 +156,7 @@ jobs:
           echo "Benchmark report updated at $OUT"
           echo "BENCHMARK_REPORT=$OUT" >> $GITHUB_ENV
 
-      # for troubleshooting issues only
+      # For troubleshooting and as fallback for fork PRs (where commit-back is skipped so we can manually commit the baseline)
       - name: Upload baseline artifacts
         uses: actions/upload-artifact@v4
         with:
