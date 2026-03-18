@@ -49,6 +49,8 @@ class DQRuleManager:
     run_time_overwrite: datetime | None
     run_id: str
     ref_dfs: dict[str, DataFrame] | None = None
+    rule_fingerprint: str | None = None
+    rule_set_fingerprint: str | None = None
 
     @cached_property
     def user_metadata(self) -> dict[str, str]:
@@ -156,6 +158,8 @@ class DQRuleManager:
             F.create_map(*[item for kv in self.user_metadata.items() for item in (F.lit(kv[0]), F.lit(kv[1]))]).alias(
                 "user_metadata"
             ),
+            F.lit(self.rule_fingerprint).alias("rule_fingerprint"),
+            F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
         ).cast(dq_result_item_schema)
 
     def _get_invalid_cols_message(self) -> str:

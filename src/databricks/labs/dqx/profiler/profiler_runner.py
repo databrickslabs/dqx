@@ -64,16 +64,18 @@ class ProfilerRunner:
         assert run_config.input_config  # should be validated before
 
         df = read_input_data(self.spark, run_config.input_config)
-        summary_stats, profiles = self.profiler.profile(
-            df,
-            options={
-                "sample_fraction": run_config.profiler_config.sample_fraction,
-                "sample_seed": run_config.profiler_config.sample_seed,
-                "limit": run_config.profiler_config.limit,
-                "filter": run_config.profiler_config.filter,
-                "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,
-            },
-        )
+        options = {
+            "sample_fraction": run_config.profiler_config.sample_fraction,
+            "sample_seed": run_config.profiler_config.sample_seed,
+            "limit": run_config.profiler_config.limit,
+            "filter": run_config.profiler_config.filter,
+            "llm_primary_key_detection": run_config.profiler_config.llm_primary_key_detection,
+        }
+        if run_config.profiler_config.max_null_ratio is not None:
+            options["max_null_ratio"] = run_config.profiler_config.max_null_ratio
+        if run_config.profiler_config.max_empty_ratio is not None:
+            options["max_empty_ratio"] = run_config.profiler_config.max_empty_ratio
+        summary_stats, profiles = self.profiler.profile(df, options=options)
         checks = generator.generate_dq_rules(profiles)  # use default criticality "error"
         logger.info(f"Using options: \n{run_config.profiler_config}")
         logger.info(f"Generated checks: \n{checks}")
@@ -114,16 +116,16 @@ class ProfilerRunner:
             product: Product name for the installation.
             max_parallelism: Maximum number of parallel threads to use for profiling.
         """
-        options = [
-            {
-                "table": "*",  # Matches all tables
-                "options": {
-                    "sample_fraction": run_config.profiler_config.sample_fraction,
-                    "sample_seed": run_config.profiler_config.sample_seed,
-                    "limit": run_config.profiler_config.limit,
-                },
-            }
-        ]
+        pattern_options = {
+            "sample_fraction": run_config.profiler_config.sample_fraction,
+            "sample_seed": run_config.profiler_config.sample_seed,
+            "limit": run_config.profiler_config.limit,
+        }
+        if run_config.profiler_config.max_null_ratio is not None:
+            pattern_options["max_null_ratio"] = run_config.profiler_config.max_null_ratio
+        if run_config.profiler_config.max_empty_ratio is not None:
+            pattern_options["max_empty_ratio"] = run_config.profiler_config.max_empty_ratio
+        options = [{"table": "*", "options": pattern_options}]
         logger.info(f"Using options: \n{options}")
 
         # Include tables matching the patterns, but skip existing output and quarantine tables.

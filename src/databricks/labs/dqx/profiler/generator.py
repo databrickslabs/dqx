@@ -160,13 +160,17 @@ class DQGenerator(DQEngineBase):
         contract_format: str = "odcs",
         generate_predefined_rules: bool = True,
         process_text_rules: bool = True,
+        generate_schema_validation: bool = True,
+        strict_schema_validation: bool = True,
         default_criticality: str = "error",
     ) -> list[dict]:
         """
         Generate DQX quality rules from a data contract specification.
 
-        Parses a data contract (currently supporting ODCS v3.0.x) and generates rules based on
+        Parses a data contract (ODCS v3.x; any apiVersion accepted by the library, e.g. v3.0.2, v3.1.0) and generates rules based on
         schema properties, explicit quality definitions, and text-based expectations.
+        When the contract defines a schema and generate_schema_validation is True, one dataset-level
+        has_valid_schema rule per schema is generated. strict_schema_validation is passed to the check.
 
         Args:
             contract: Pre-loaded DataContract object from datacontract-cli. Can be created with:
@@ -177,6 +181,8 @@ class DQGenerator(DQEngineBase):
             contract_format: Contract format specification (default is "odcs").
             generate_predefined_rules: Whether to generate rules from schema properties.
             process_text_rules: Whether to process text-based expectations using LLM.
+            generate_schema_validation: Whether to generate dataset-level has_valid_schema rules (default True).
+            strict_schema_validation: Passed as strict to has_valid_schema (default True = exact match; False = permissive).
             default_criticality: Default criticality for generated rules as "warn" or "error" (default is "error").
 
         Returns:
@@ -209,6 +215,8 @@ class DQGenerator(DQEngineBase):
             contract_format=contract_format,
             generate_predefined_rules=generate_predefined_rules,
             process_text_rules=process_text_rules,
+            generate_schema_validation=generate_schema_validation,
+            strict_schema_validation=strict_schema_validation,
             default_criticality=default_criticality,
         )
         logger.info(
@@ -355,6 +363,28 @@ class DQGenerator(DQEngineBase):
         }
 
     @staticmethod
+    def dq_generate_is_not_empty(column: str, criticality: str = "error", **params: dict):
+        """
+        Generates a data quality rule to check if a column's value is not empty (nulls are allowed).
+
+        Args:
+            column: The name of the column to check.
+            criticality: The criticality of the rule as "warn" or "error" (default is "error").
+            params: Additional parameters, including whether to trim strings.
+
+        Returns:
+            A dictionary representing the data quality rule.
+        """
+        return {
+            "check": {
+                "function": "is_not_empty",
+                "arguments": {"column": column, "trim_strings": params.get("trim_strings", True)},
+            },
+            "name": f"{column}_is_not_empty",
+            "criticality": criticality,
+        }
+
+    @staticmethod
     def dq_generate_is_unique(column: str, criticality: str = "error", **params: dict):
         """Generates a data quality rule to check if specified columns are unique.
 
@@ -396,5 +426,6 @@ class DQGenerator(DQEngineBase):
         "is_in": dq_generate_is_in,
         "min_max": dq_generate_min_max,
         "is_not_null_or_empty": dq_generate_is_not_null_or_empty,
+        "is_not_empty": dq_generate_is_not_empty,
         "is_unique": dq_generate_is_unique,
     }
