@@ -6,7 +6,10 @@ from unittest.mock import create_autospec
 from fastapi import HTTPException
 
 import pytest
-from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
+from fastapi.testclient import TestClient
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError
+from databricks_labs_dqx_app.backend.app import app
+from databricks_labs_dqx_app.backend.dependencies import get_config_serializer, get_engine, get_obo_ws
 from databricks_labs_dqx_app.backend.logger import CustomFormatter, setup_logger, get_logger
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.router import get_install_folder
@@ -364,3 +367,76 @@ class TestSettingsManager:
 
         # Empty string strips to empty string
         assert result.install_folder == ""
+
+
+# ============================================================================
+# Tests for router.py - save_run_checks
+# ============================================================================
+
+
+class _FakeRunConfig:
+    """Minimal fake run config with only the name attribute used by save_run_checks."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+
+class _FakeSerializer:
+    """Fake ConfigSerializer that returns a simple run config."""
+
+    def load_run_config(self, run_config_name: str, install_folder: str):
+        return _FakeRunConfig(run_config_name)
+
+
+class TestSaveRunChecks:
+    """Unit tests for save_run_checks error handling in the backend router."""
+
+    def test_maps_invalid_check_error_to_http_400(self, mock_workspace_client):
+        """When engine.save_checks raises InvalidCheckError, the route should map it to HTTP 400."""
+        class FakeEngine:
+            def save_checks(self, checks, config):
+                raise InvalidCheckError("invalid check structure")
+
+        app.dependency_overrides[get_obo_ws] = lambda: mock_workspace_client
+        app.dependency_overrides[get_engine] = lambda: FakeEngine()
+        app.dependency_overrides[get_config_serializer] = lambda: _FakeSerializer()
+
+        try:
+            client = TestClient(app)
+            response = client.post(
+                "/api/config/run/test_run/checks",
+                params={"path": "/dummy/install/folder"},
+                json={"checks": [{"this_is": "not_a_valid_check"}]},
+                headers={"X-Forwarded-Access-Token": "dummy"},
+            )
+            assert response.status_code == 400
+            assert "Invalid checks format" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_maps_invalid_config_error_to_http_400(self, mock_workspace_client):
+        """When engine.save_checks raises InvalidConfigError, the route should map it to HTTP 400."""
+        class FakeEngine:
+            def save_checks(self, checks, config):
+                raise InvalidConfigError("invalid configuration")
+
+        app.dependency_overrides[get_obo_ws] = lambda: mock_workspace_client
+        app.dependency_overrides[get_engine] = lambda: FakeEngine()
+        app.dependency_overrides[get_config_serializer] = lambda: _FakeSerializer()
+
+        try:
+            client = TestClient(app)
+            response = client.post(
+                "/api/config/run/test_run/checks",
+                params={"path": "/dummy/install/folder"},
+                json={
+                    "checks": [
+                        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {}}}
+                    ]
+                },
+                headers={"X-Forwarded-Access-Token": "dummy"},
+            )
+            assert response.status_code == 400
+            assert "Invalid configuration" in response.json()["detail"]
+        finally:
+            app.dependency_overrides.clear()

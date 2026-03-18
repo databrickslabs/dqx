@@ -12,7 +12,7 @@ from databricks.sdk.service.iam import User as UserOut
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .config import conf
-from .dependencies import get_engine, get_generator, get_obo_ws
+from .dependencies import get_config_serializer, get_engine, get_generator, get_obo_ws
 from .logger import logger
 from .models import (
     ChecksIn,
@@ -185,10 +185,10 @@ def save_run_checks(
     body: ChecksIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     engine: Annotated[DQEngine, Depends(get_engine)],
+    serializer: Annotated[ConfigSerializer, Depends(get_config_serializer)],
     path: str | None = Query(None, description="Path to the configuration folder"),
 ) -> ChecksOut:
     install_folder = get_install_folder(obo_ws, path)
-    serializer = ConfigSerializer(obo_ws)
     try:
         run_config = serializer.load_run_config(run_config_name=name, install_folder=install_folder)
     except (ResourceDoesNotExist, InvalidConfigError):
@@ -199,6 +199,8 @@ def save_run_checks(
         engine.save_checks(body.checks, checks_config)
     except InvalidCheckError as e:
         raise HTTPException(status_code=400, detail=f"Invalid checks format: {e}")
+    except InvalidConfigError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid configuration: {e}")
 
     return ChecksOut(checks=body.checks)
 
