@@ -11,23 +11,19 @@ on:
   pull_request_target:
     types: [opened, synchronize, ready_for_review]
     branches: [main]
-  merge_group:
-    types: [checks_requested]
-  push:
-    branches: [main]
 
 permissions:
   contents: write
   pull-requests: write
 
 concurrency:
-  group: fork-sync-${{ github.event.pull_request.number }}
+  group: fork-sync-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   sync-fork-to-branch:
-    if: github.event.pull_request.head.repo.fork && !github.event.pull_request.draft
-    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.fork && !github.event.pull_request.draft
+    runs-on: larger
     steps:
       - name: Checkout base repository
         uses: actions/checkout@v4
@@ -37,7 +33,7 @@ jobs:
       - name: Fetch PR branch from fork
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr checkout ${{ github.event.pull_request.number }}
+        run: gh pr checkout ${{ github.event.pull_request.number }} --repo ${{ github.repository }}
 
       - name: Configure git
         run: |
@@ -54,15 +50,16 @@ jobs:
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$SYNC_BRANCH"
 
           # Create PR if it does not exist
-          EXISTING=$(gh pr list --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || true)
+          EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || true)
           if [ -z "$EXISTING" ]; then
-            gh pr create \
+            BODY="Automated sync from fork PR for CI testing.
+
+Original PR: ${{ github.event.pull_request.html_url }}
+
+All tests, including acceptance, anomaly, and performance tests, run on this PR (they are skipped for fork PRs)."
+            gh pr create --repo "$GITHUB_REPOSITORY" \
               --base "${{ github.event.pull_request.base.ref }}" \
               --head "$SYNC_BRANCH" \
               --title "Fork test: PR #${{ github.event.pull_request.number }}" \
-              --body "Automated sync from fork PR for CI testing.
-
-          Original PR: ${{ github.event.pull_request.html_url }}
-
-          All tests, including acceptance, anomaly, and performance tests, run on this PR (they are skipped for fork PRs)."
+              --body "$BODY"
           fi

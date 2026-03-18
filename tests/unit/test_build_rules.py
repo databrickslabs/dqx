@@ -1739,12 +1739,17 @@ def test_convert_dq_rules_to_metadata_when_not_dq_rule() -> None:
 
 
 def test_dq_rules_to_dict_when_column_expression_is_complex() -> None:
-    with pytest.raises(InvalidParameterError, match="Unable to interpret column expression"):
-        DQRowRule(
-            criticality="error",
-            check_func=is_not_null_and_not_empty,
-            column=F.col("val") + F.lit(1),
-        ).to_dict()
+    # to_dict() uses allow_simple_expressions_only=False so it accepts complex Column expressions,
+    # serialising them as their string representation. Delta storage (to_dataframe) now builds from
+    # dicts directly (like file/Lakebase), so checks with complex column expressions as strings
+    # round-trip successfully.
+    result = DQRowRule(
+        criticality="error",
+        check_func=is_not_null_and_not_empty,
+        column=F.col("val") + F.lit(1),
+    ).to_dict()
+    assert result["check"]["function"] == "is_not_null_and_not_empty"
+    assert isinstance(result["check"]["arguments"]["column"], str)
 
 
 def test_dq_rules_to_dict_when_invalid_arg_type() -> None:
@@ -1933,3 +1938,34 @@ def test_metadata_round_trip_conversion_preserves_rules() -> None:
 def test_serialize_checks_to_bytes(checks, file_path_suffix, expected_output):
     result = ChecksSerializer.serialize_to_bytes(checks, file_path_suffix)
     assert result == expected_output
+
+
+def test_dq_rule_rule_fingerprint_returns_64_char_hex():
+    """DQRule.rule_fingerprint is a 64-character lowercase hex string (SHA-256)."""
+    rule = DQRowRule(check_func=is_not_null, column="id")
+    fingerprint = rule.rule_fingerprint
+    assert len(fingerprint) == 64
+    assert all(char in "0123456789abcdef" for char in fingerprint)
+
+
+def test_dq_rule_rule_fingerprint_deterministic():
+    """Same DQRule instance produces the same rule_fingerprint every time (cached)."""
+    rule = DQRowRule(name="id_not_null", criticality="error", check_func=is_not_null, column="id")
+    assert rule.rule_fingerprint == rule.rule_fingerprint
+
+
+def test_dq_rule_rule_fingerprint_different_rules_different_fingerprints():
+    """Different rules produce different rule_fingerprint values."""
+    rule_1 = DQRowRule(check_func=is_not_null, column="id")
+    rule_2 = DQRowRule(check_func=is_not_null, column="name")
+    rule_3 = DQRowRule(criticality="warn", check_func=is_not_null, column="id")
+    fp1, fp2, fp3 = rule_1.rule_fingerprint, rule_2.rule_fingerprint, rule_3.rule_fingerprint
+    assert len({fp1, fp2, fp3}) == 3
+
+
+def test_dq_dataset_rule_rule_fingerprint():
+    """DQDatasetRule has rule_fingerprint (same contract as DQRowRule)."""
+    rule = DQDatasetRule(check_func=is_unique, columns=["a", "b"])
+    fingerprint = rule.rule_fingerprint
+    assert len(fingerprint) == 64
+    assert all(char in "0123456789abcdef" for char in fingerprint)
