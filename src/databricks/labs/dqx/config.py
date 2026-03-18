@@ -81,6 +81,9 @@ class ProfilerConfig:
     llm_primary_key_detection: bool = (
         False  # whether to use LLM for primary key detection to generate uniqueness checks
     )
+    # Override profiler default thresholds
+    max_null_ratio: float | None = None
+    max_empty_ratio: float | None = None
 
 
 @dataclass
