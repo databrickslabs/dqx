@@ -52,14 +52,10 @@ jobs:
           # Create PR if it does not exist
           EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$SYNC_BRANCH" --state open --json number -q '.[0].number' 2>/dev/null || true)
           if [ -z "$EXISTING" ]; then
-            BODY="Automated sync from fork PR for CI testing.
-
-Original PR: ${{ github.event.pull_request.html_url }}
-
-All tests, including acceptance, anomaly, and performance tests, run on this PR (they are skipped for fork PRs)."
+            BODY=$(printf 'Automated sync from fork PR for CI testing.\n\nOriginal PR: %s\n\nAll tests, including acceptance, anomaly, and performance tests, run on this PR (they are skipped for fork PRs).' "${{ github.event.pull_request.html_url }}")
             gh pr create --repo "$GITHUB_REPOSITORY" \
               --base "${{ github.event.pull_request.base.ref }}" \
               --head "$SYNC_BRANCH" \
-              --title "Fork test: PR #${{ github.event.pull_request.number }}" \
+              --title "Fork test: PR #${{ github.event.pull_request.number }} - ${{ github.event.pull_request.title }}" \
               --body "$BODY"
           fi

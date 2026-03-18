@@ -4,6 +4,7 @@ from typing import Annotated
 
 from databricks.connect import DatabricksSession
 from databricks.labs.dqx.config import LLMModelConfig
+from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
@@ -125,6 +126,13 @@ def get_spark(
             .getOrCreate()
         )
     return session
+
+
+def get_config_serializer(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> ConfigSerializer:
+    """Create a ConfigSerializer for loading/saving workspace configuration."""
+    return ConfigSerializer(obo_ws)
 
 
 def get_engine(
