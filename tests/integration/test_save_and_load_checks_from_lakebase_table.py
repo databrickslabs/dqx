@@ -298,6 +298,8 @@ def _create_legacy_lakebase_table(ws, spark, config: LakebaseChecksStorageConfig
     with engine.begin() as conn:
         if not conn.dialect.has_schema(conn, config.schema_name):
             conn.execute(CreateSchema(config.schema_name))
+
+    with engine.begin() as conn:
         legacy_table.create(engine, checkfirst=True)
 
     normalized = ChecksNormalizer.normalize(checks)
