@@ -282,8 +282,9 @@ def test_profiler_workflow_save_to_lakebase(
 
 
 def _create_lakebase_location(database_name, make_random):
+    schema_name = f"dqx_checks_{make_random(10).lower()}"
     table_name = f"checks_{make_random(10).lower()}"
-    location = f"{database_name}.config.{table_name}"
+    location = f"{database_name}.{schema_name}.{table_name}"
     return location
 
 

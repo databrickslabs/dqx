@@ -1,4 +1,6 @@
 from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum
 from typing import Any
 from pathlib import Path
 from unittest.mock import Mock
@@ -22,6 +24,7 @@ from databricks.labs.dqx.utils import (
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
 from databricks.labs.dqx.config import InputConfig
+from databricks.labs.dqx.pii.nlp_engine_config import NLPEngineConfig
 
 
 def test_get_column_name():
@@ -319,6 +322,7 @@ def test_is_simple_column_expression(column: str, expected: bool):
         (123, 123),
         (45.67, 45.67),
         (True, True),
+        (False, False),
         # Dates
         (date(2023, 1, 1), "2023-01-01"),
         (datetime(2023, 1, 1, 12, 0, 0), "2023-01-01 12:00:00"),
@@ -327,7 +331,7 @@ def test_is_simple_column_expression(column: str, expected: bool):
         ((4, 5, 6), [4, 5, 6]),
         # PySpark Column
         (F.col("col_name"), "col_name"),
-        (F.col("col_name"), "col_name"),
+        (F.col("a").alias("b"), "b"),
     ],
 )
 def test_normalize_bound_args(input_value: Any, expected_output: Any):
@@ -398,10 +402,50 @@ def test_normalize_bound_args_dict():
     assert result == {"nested": {"a": 1, "b": "x"}}
 
 
+def test_normalize_bound_args_set():
+    """Set is recursively normalized to list for fingerprinting."""
+    result = normalize_bound_args({1, 2, 3})
+    assert sorted(result) == [1, 2, 3]
+
+
+def test_normalize_bound_args_decimal():
+    """Decimal is normalized to __decimal__ format for round-trip serialization."""
+    result = normalize_bound_args(Decimal("123.45"))
+    assert result == {"__decimal__": "123.45"}
+
+
+def test_normalize_bound_args_nested_collections():
+    """Nested dict/list/set with Decimal and Enum are recursively normalized."""
+
+    class TestEnum(Enum):
+        X = "x"
+
+    result = normalize_bound_args({"a": [Decimal("1.0"), TestEnum.X], "b": {1, 2}})
+    assert result["a"] == [{"__decimal__": "1.0"}, "x"]
+    assert sorted(result["b"]) == [1, 2]
+
+
 def test_normalize_bound_args_frozenset():
     """Frozenset is recursively normalized for fingerprinting."""
     result = normalize_bound_args(frozenset({1, 2, 3}))
     assert sorted(result) == [1, 2, 3]
+
+
+def test_normalize_bound_args_enum():
+    """Enum (e.g. NLPEngineConfig, Criticality) is normalized to its value for fingerprinting."""
+
+    class TestEnum(Enum):
+        FOO = "foo_value"
+        BAR = {"key": "val"}
+
+    assert normalize_bound_args(TestEnum.FOO) == "foo_value"
+    assert normalize_bound_args(TestEnum.BAR) == {"key": "val"}
+
+
+def test_normalize_bound_args_nlp_engine_config():
+    """NLPEngineConfig enum from PII module is normalized (used by does_not_contain_pii)."""
+    result = normalize_bound_args(NLPEngineConfig.SPACY_SMALL)
+    assert result == {"nlp_engine_name": "spacy", "models": [{"lang_code": "en", "model_name": "en_core_web_sm"}]}
 
 
 def test_get_reference_dataframes_with_missing_ref_tables(mock_spark) -> None:

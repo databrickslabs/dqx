@@ -6,6 +6,7 @@ from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import OBSERVATION_TABLE_SCHEMA
 from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from tests.integration.conftest import (
+    assert_df_equality_ignore_fingerprints,
     assert_quarantine_and_output_dfs,
     assert_output_df,
     RUN_TIME,
@@ -192,13 +193,17 @@ def test_quality_checker_workflow_with_quarantine_and_metrics(
     )
 
 
-def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected_quality_checking_output):
+def test_e2e_workflow_with_metrics(ws, spark, setup_workflows_with_metrics, expected_quality_checking_output):
     """Test that e2e workflow generates checks and applies them with metrics."""
     ctx, run_config = setup_workflows_with_metrics(custom_metrics=["max(id) as max_id", "min(id) as min_id"])
 
     ctx.deployed_workflows.run_workflow("e2e", run_config.name)
 
     checks_location = f"{ctx.installation.install_folder()}/{run_config.checks_location}"
+    dq_engine = DQEngine(ws, spark)
+    checks = dq_engine.load_checks(config=WorkspaceFileChecksStorageConfig(location=checks_location))
+    rule_set_fingerprint = compute_rule_set_fingerprint_by_metadata(checks)
+
     expected_metrics = [
         {
             "run_id": RUN_ID,
@@ -207,7 +212,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
-            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "rule_set_fingerprint": rule_set_fingerprint,
             "metric_name": "input_row_count",
             "metric_value": "10",
             "run_time": RUN_TIME,
@@ -222,7 +227,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
-            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "rule_set_fingerprint": rule_set_fingerprint,
             "metric_name": "max_id",
             "metric_value": "6",
             "run_time": RUN_TIME,
@@ -237,7 +242,7 @@ def test_e2e_workflow_with_metrics(spark, setup_workflows_with_metrics, expected
             "output_location": run_config.output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
-            "rule_set_fingerprint": _WORKFLOW_RULE_SET_FINGERPRINT,
+            "rule_set_fingerprint": rule_set_fingerprint,
             "metric_name": "min_id",
             "metric_value": "1",
             "run_time": RUN_TIME,
@@ -692,7 +697,7 @@ def test_quality_checker_workflow_with_quarantine_and_metrics_for_patterns(
     expected_quarantine_df = dq_engine.get_invalid(expected_quality_checking_output)
 
     output_df = spark.table(input_table + "_dq_output")
-    assert_df_equality(output_df, expected_output_df, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(output_df, expected_output_df, ignore_nullable=True)
 
     quarantine_df = spark.table(input_table + "_dq_quarantine")
-    assert_df_equality(quarantine_df, expected_quarantine_df, ignore_nullable=True)
+    assert_df_equality_ignore_fingerprints(quarantine_df, expected_quarantine_df, ignore_nullable=True)

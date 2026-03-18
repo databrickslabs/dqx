@@ -20,6 +20,12 @@ install_logger()
 logging.captureWarnings(True)
 warnings_logger = logging.getLogger("py.warnings")
 warnings_logger.setLevel(logging.INFO)
+# Ensure captured warnings display the message correctly (avoids "%s" placeholder in some envs)
+if not warnings_logger.handlers:
+    _wh = logging.StreamHandler()
+    _wh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    warnings_logger.addHandler(_wh)
+    warnings_logger.propagate = False
 
 # Configure logger levels
 logging.getLogger("databricks").setLevel(logging.INFO)
