@@ -107,9 +107,10 @@ This is a good way to gather early feedback without needing to meet all Definiti
 <Admonition type="warning" title="Special cases">
 * Draft PRs — Integration and end-to-end (e2e) tests are not run automatically on Draft PRs. These tests will only execute once the PR is marked as "Ready for Review".
 * Forked PRs — The following applies for PRs opened from forks (external contributors scenario):
-    * Project maintainers must approve Github workflows. This includes running unit tests, builds, and other automated checks.
-    * Integration, end-to-end (e2e) and performance tests are not run. You can run the tests using [Databricks Free Edition](https://www.databricks.com/learn/free-edition) with the exception of Lakebase tests, which require a standard workspace. When using Databricks Free you can ignore the Lakebase tests.
-    * Project maintainers will run the tests manually before merging the code.
+    * Project maintainers must approve Github workflows before they run.
+    * Once approved, integration, end-to-end (e2e) and performance tests run automatically, the same as for non-fork PRs.
+    * You can also run the tests locally using [Databricks Free Edition](https://www.databricks.com/learn/free-edition) with the exception of Lakebase tests, which require a standard workspace. When using Databricks Free you can ignore the Lakebase tests.
+    * The performance workflow cannot commit the benchmark baseline back to a fork branch. The baseline is instead uploaded as a workflow artifact — see [Updating Baseline and Reports](#updating-baseline-and-reports).
 
 In all cases, the full test suite is executed on code merged into `main` branch as part of the nightly CI/CD pipeline.
 </Admonition>
@@ -362,6 +363,15 @@ git reset --soft $(git merge-base origin/main HEAD)  # point to the common ances
 git commit -S --reuse-message=ORIG_HEAD
 git push --force-with-lease origin HEAD
 ```
+
+<Admonition type="note" title="Fork PRs">
+The baseline is also uploaded as a workflow artifact (`baseline-artifacts`) in the GitHub Actions run.
+To apply it manually (relevant for forks where we don't auto-commit the baseline):
+1. Download the `baseline-artifacts` artifact from the GitHub Actions run.
+2. Copy `baseline.json` to `tests/perf/.benchmarks/baseline.json` in your branch.
+3. Commit and GPG-sign it: `git commit -S -m "Add pytest-benchmark performance baseline"`.
+4. Push to your fork branch.
+</Admonition>
 
 ## Troubleshooting
 
