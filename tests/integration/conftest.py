@@ -432,6 +432,9 @@ def _setup_workflows_deps(
     # ensure tests are deterministic
     run_config.profiler_config.sample_fraction = 1.0
     run_config.profiler_config.sample_seed = 100
+    # relax null/empty thresholds so the profiler generates is_not_null / is_not_null_or_empty
+    run_config.profiler_config.max_null_ratio = 0.25
+    run_config.profiler_config.max_empty_ratio = 0.25
 
     ctx.installation.save(ctx.config)
 
