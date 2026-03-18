@@ -271,7 +271,7 @@ class InstallationService:
     @classmethod
     def current(cls, ws: WorkspaceClient, install_folder: str | None = None):
         """
-        Creates a current InstallationService instance based on the current workspace client.
+        Creates a current InstallationService instance based on the current workspace client and install folder.
 
         Args:
             ws: The WorkspaceClient instance.
