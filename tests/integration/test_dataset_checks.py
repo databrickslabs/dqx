@@ -3011,8 +3011,20 @@ def test_has_valid_schema_with_specified_columns(spark):
 
     expected_condition_df = spark.createDataFrame(
         [
-            ["str1", 1, 100.0, "extra", None],
-            ["str2", 2, 200.0, "data", None],
+            [
+                "str1",
+                1,
+                100.0,
+                "extra",
+                "Schema validation failed: Column 'c' in expected schema not present in checked data; Column 'e' in expected schema not present in checked data",
+            ],
+            [
+                "str2",
+                2,
+                200.0,
+                "data",
+                "Schema validation failed: Column 'c' in expected schema not present in checked data; Column 'e' in expected schema not present in checked data",
+            ],
         ],
         "a string, b int, c double, d string, has_invalid_schema string",
     )
