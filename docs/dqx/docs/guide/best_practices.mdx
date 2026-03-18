@@ -23,7 +23,7 @@ checks: list[dict] = dq_engine.load_checks(config=TableChecksStorageConfig(locat
 dq_engine.save_checks(checks, config=TableChecksStorageConfig(location="catalog.schema.checks_table", run_config_name="main.default.input_table", mode="overwrite"))
 ```
 
-See more in [Storing Checks](/docs/guide/quality_checks_storage/). For schema details, see [Table Schemas and Data Flow](/docs/reference/table_schemas).
+See more in [Storing Checks](/docs/guide/quality_checks_storage/). For schema details, see [Table Schemas and Relationships](/docs/reference/table_schemas).
 
 ### Ensure Proper Governance of Checks Storage
 
@@ -183,7 +183,7 @@ Deploy checks across environments systematically:
 * Use environment-specific configs when promoting checks from dev → qa → prod.
 * Treat data quality rules as living assets: review regularly and evolve alongside the data products they protect.
 
-DQX tracks rules automatically. When you save checks to Delta or Lakebase tables, it adds `rule_fingerprint`, `rule_set_fingerprint`, and `created_at`. The same `rule_set_fingerprint` is written to the [Summary Metrics](/docs/guide/summary_metrics#metrics-table-schema) table and row-level results (output or quarantine table) when you apply checks, so you can correlate metrics with the exact rule set version that produced them. From the summary table, use `run_id` to drill down to row-level results in the output or quarantine tables, and use `checks_location` with `rule_set_fingerprint` to identify which rules were applied. See [Loading and Storing Quality Checks](/docs/guide/quality_checks_storage) and [Tracking from the summary table](/docs/guide/summary_metrics#tracking-from-the-summary-table) for details. For full schema reference and table relationships, see [Table Schemas and Data Flow](/docs/reference/table_schemas).
+DQX tracks rules automatically. When you save checks to Delta or Lakebase tables, it adds `rule_fingerprint`, `rule_set_fingerprint`, and `created_at`. The same `rule_set_fingerprint` is written to the [Summary Metrics](/docs/guide/summary_metrics#metrics-table-schema) table and row-level results (output or quarantine table) when you apply checks, so you can correlate metrics with the exact rule set version that produced them. From the summary table, use `run_id` to drill down to row-level results in the output or quarantine tables, and use `checks_location` with `rule_set_fingerprint` to identify which rules were applied. See [Loading and Storing Quality Checks](/docs/guide/quality_checks_storage) and [Tracking from the summary table](/docs/guide/summary_metrics#tracking-from-the-summary-table) for details. For full schema reference and table relationships, see [Table Schemas and Relationships](/docs/reference/table_schemas).
 
 ### Pin DQX Version
 

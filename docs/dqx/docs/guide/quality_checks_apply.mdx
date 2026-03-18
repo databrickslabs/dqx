@@ -981,7 +981,7 @@ For detailed information about summary metrics, including examples and best prac
 
 ## Detailed quality checking results
 
-Detailed row-level quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data. For full schema reference of output, quarantine, and result columns, see [Table Schemas and Data Flow](/docs/reference/table_schemas).
+Detailed row-level quality check results are added as additional columns to the output or quarantine (if defined) DataFrame or tables (if saved). These columns capture the outcomes of the checks performed on the input data. For full schema reference of output, quarantine, and result columns, see [Table Schemas and Relationships](/docs/reference/table_schemas).
 The result columns are named `_error` and `_warning` by default, but you can customize them as described in the [additional configuration](/docs/guide/additional_configuration) section.
 
 The result columns can be used to monitor and track data quality issues and for further processing, such as using in a dashboard, or other downstream applications.
@@ -1065,7 +1065,7 @@ DQX provides full traceability across all layers:
 
 The example below shows how to get rule definitions for failed checks using detailed results and the checks table.
 DQX automatically generates rule and rule set fingerprints to make this possible. The fingerprints in the detailed results match those stored in the summary metrics table and the checks table.
-If you store checks in files instead of a table, you can calculate the fingerprints as described in [Loading quality checks from a storage](/docs/guide/quality_checks_storage#calculating-rule-set-fingerprint-manually).
+If you store checks in files instead of a table, you can calculate the fingerprints as described in [Loading quality checks from a storage](/docs/guide/quality_checks_storage#calculating-fingerprints-manually).
 
 
 ```python
