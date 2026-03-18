@@ -10,7 +10,7 @@ from databricks.labs.dqx.anomaly.transformers import (
     reconstruct_column_infos,
 )
 
-from tests.unit.test_anomaly_test_helpers import STANDARD_REGION_PRODUCT_FEATURES
+from tests.unit.anomaly_test_constants import STANDARD_REGION_PRODUCT_FEATURES
 
 
 # ============================================================================
