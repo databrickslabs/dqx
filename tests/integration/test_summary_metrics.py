@@ -8,6 +8,7 @@ from chispa.dataframe_comparer import assert_df_equality  # type: ignore
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.checks_serializer import deserialize_checks
+from databricks.labs.dqx.rule_fingerprint import compute_rule_set_fingerprint_by_metadata
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.metrics_observer import DQMetricsObserver, OBSERVATION_TABLE_SCHEMA
 from databricks.labs.dqx.reporting_columns import ColumnArguments
@@ -36,6 +37,7 @@ TEST_CHECKS = [
         "check": {"function": "is_not_null_and_not_empty", "arguments": {"column": "name"}},
     },
 ]
+TEST_CHECKS_RULE_SET_FINGERPRINT = compute_rule_set_fingerprint_by_metadata(TEST_CHECKS)
 TEST_OBSERVER_NAME = "test_observer"
 
 
@@ -288,6 +290,7 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -302,6 +305,7 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -316,6 +320,7 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -330,6 +335,7 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -346,17 +352,20 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
     assert_df_equality(expected_metrics_df, actual_metrics_df)
 
 
-def test_save_summary_metrics_custom_metrics_and_params(ws, spark, make_schema, make_random):
+def test_save_summary_metrics_custom_metrics_and_params(ws, spark_keep_alive, make_schema, make_random):
+    spark = spark_keep_alive.spark
     catalog_name = TEST_CATALOG
     schema_name = make_schema(catalog_name=catalog_name).name
     metrics_table_name = f"{catalog_name}.{schema_name}.metrics_{make_random(6).lower()}"
 
-    custom_metrics = [
-        "avg(case when dq_errors is not null then age else null end) as avg_error_age",
-        "sum(case when dq_warnings is not null then salary else null end) as total_warning_salary",
-    ]
     observer_name = "test_observer"
-    observer = DQMetricsObserver(name=observer_name, custom_metrics=custom_metrics)
+    observer = DQMetricsObserver(
+        name=observer_name,
+        custom_metrics=[
+            "avg(case when dq_errors is not null then age else null end) as avg_error_age",
+            "sum(case when dq_warnings is not null then salary else null end) as total_warning_salary",
+        ],
+    )
 
     user_metadata = {"key1": "value1", "key2": "value2"}
 
@@ -405,6 +414,7 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark, make_schema, 
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(extra_params_custom.run_time_overwrite),
@@ -419,6 +429,7 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark, make_schema, 
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(extra_params_custom.run_time_overwrite),
@@ -433,6 +444,7 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark, make_schema, 
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(extra_params_custom.run_time_overwrite),
@@ -447,6 +459,7 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark, make_schema, 
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(extra_params_custom.run_time_overwrite),
@@ -461,6 +474,7 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark, make_schema, 
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "avg_error_age",
             "metric_value": "35.0",
             "run_time": datetime.fromisoformat(extra_params_custom.run_time_overwrite),
@@ -475,6 +489,7 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark, make_schema, 
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
             "run_time": datetime.fromisoformat(extra_params_custom.run_time_overwrite),
@@ -579,6 +594,7 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -593,6 +609,7 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -607,6 +624,7 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -621,6 +639,7 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -635,6 +654,7 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "avg_error_age",
             "metric_value": "35.0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -649,6 +669,7 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": checks_location,
+            "rule_set_fingerprint": None,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -720,6 +741,7 @@ def test_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -734,6 +756,7 @@ def test_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "error_row_count",
             "metric_value": "0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -748,6 +771,7 @@ def test_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -762,6 +786,7 @@ def test_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "valid_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -776,6 +801,7 @@ def test_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "avg_error_age",
             "metric_value": None,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -790,6 +816,7 @@ def test_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "total_warning_salary",
             "metric_value": None,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -875,6 +902,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -889,6 +917,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "error_row_count",
             "metric_value": "0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -903,6 +932,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -917,6 +947,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "valid_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -931,6 +962,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "avg_error_age",
             "metric_value": None,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -945,6 +977,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "total_warning_salary",
             "metric_value": None,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1027,6 +1060,7 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1041,6 +1075,7 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1055,6 +1090,7 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1069,6 +1105,7 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1083,6 +1120,7 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "avg_error_age",
             "metric_value": "35.0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1097,6 +1135,7 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1185,6 +1224,7 @@ def test_observer_metrics_output_with_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1199,6 +1239,7 @@ def test_observer_metrics_output_with_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1213,6 +1254,7 @@ def test_observer_metrics_output_with_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1227,6 +1269,7 @@ def test_observer_metrics_output_with_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1241,6 +1284,7 @@ def test_observer_metrics_output_with_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "avg_error_age",
             "metric_value": "35.0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1255,6 +1299,7 @@ def test_observer_metrics_output_with_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1323,6 +1368,7 @@ def test_save_results_in_table_batch_with_metrics(
         output_config=output_config,
         quarantine_config=quarantine_config,
         metrics_config=metrics_config,
+        rule_set_fingerprint=TEST_CHECKS_RULE_SET_FINGERPRINT,
     )
 
     expected_metrics = [
@@ -1333,6 +1379,7 @@ def test_save_results_in_table_batch_with_metrics(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1347,6 +1394,7 @@ def test_save_results_in_table_batch_with_metrics(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1361,6 +1409,7 @@ def test_save_results_in_table_batch_with_metrics(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1375,6 +1424,7 @@ def test_save_results_in_table_batch_with_metrics(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1395,6 +1445,140 @@ def test_save_results_in_table_batch_with_metrics(
     assert (
         spark.table(quarantine_config.location).count() == 2
     ), f"Quarantine table {quarantine_config.location} has {spark.table(quarantine_config.location).count()} rows"
+
+
+def test_save_results_in_table_batch_with_rule_set_fingerprint(
+    skip_if_classic_compute, spark, ws, make_schema, make_random
+):
+    """Verify that rule_set_fingerprint passed to save_results_in_table is written to the metrics table."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    quarantine_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    observer = DQMetricsObserver(name="test_save_batch_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [2, "Bob", 25, 45000],
+            [None, "Charlie", 35, 60000],
+            [4, None, 28, 55000],
+        ],
+        TEST_SCHEMA,
+    )
+
+    output_df, quarantine_df, observation = dq_engine.apply_checks_by_metadata_and_split(test_df, TEST_CHECKS)
+
+    output_config = OutputConfig(location=output_table_name)
+    quarantine_config = OutputConfig(location=quarantine_table_name, mode="overwrite")
+    metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
+
+    rule_set_fingerprint = "abc123def456789012345678901234567890123456789012345678901234abcd"
+
+    dq_engine.save_results_in_table(
+        output_df=output_df,
+        quarantine_df=quarantine_df,
+        observation=observation,
+        output_config=output_config,
+        quarantine_config=quarantine_config,
+        metrics_config=metrics_config,
+        rule_set_fingerprint=rule_set_fingerprint,
+    )
+
+    actual_metrics_df = spark.table(metrics_table_name)
+    actual_fingerprints = actual_metrics_df.select("rule_set_fingerprint").distinct().collect()
+    assert len(actual_fingerprints) == 1
+    assert actual_fingerprints[0]["rule_set_fingerprint"] == rule_set_fingerprint
+
+
+def test_save_summary_metrics_with_rule_set_fingerprint(ws, spark, make_schema, make_random):
+    """Verify that rule_set_fingerprint passed to save_summary_metrics is written to the metrics table."""
+    schema_name = make_schema(catalog_name=TEST_CATALOG).name
+    metrics_table_name = f"{TEST_CATALOG}.{schema_name}.metrics_{make_random(6).lower()}"
+
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [[1, "Alice", 30, 50000], [2, "Bob", 25, 45000]],
+        TEST_SCHEMA,
+    )
+    checked_df, observation = dq_engine.apply_checks_by_metadata(test_df, TEST_CHECKS)
+    checked_df.count()
+
+    metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
+    rule_set_fingerprint = "fingerprint_sha256_64chars_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+    dq_engine.save_summary_metrics(
+        observed_metrics=observation.get,
+        metrics_config=metrics_config,
+        rule_set_fingerprint=rule_set_fingerprint,
+    )
+
+    actual_metrics_df = spark.table(metrics_table_name)
+    actual_fingerprints = actual_metrics_df.select("rule_set_fingerprint").distinct().collect()
+    assert len(actual_fingerprints) == 1
+    assert actual_fingerprints[0]["rule_set_fingerprint"] == rule_set_fingerprint
+
+
+@pytest.mark.parametrize(
+    "apply_checks_method",
+    [DQEngine.apply_checks_and_save_in_table, DQEngine.apply_checks_by_metadata_and_save_in_table],
+)
+def test_apply_checks_and_save_in_table_writes_rule_set_fingerprint(
+    skip_if_classic_compute, apply_checks_method, spark, ws, make_schema, make_random
+):
+    """Verify that apply_checks_and_save_in_table / apply_checks_by_metadata_and_save_in_table write non-null rule_set_fingerprint."""
+    catalog_name = TEST_CATALOG
+    schema_name = make_schema(catalog_name=catalog_name).name
+    input_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    output_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+    metrics_table_name = f"{catalog_name}.{schema_name}.{make_random(6).lower()}"
+
+    observer = DQMetricsObserver(name="test_observer")
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, observer=observer, extra_params=EXTRA_PARAMS)
+
+    test_df = spark.createDataFrame(
+        [
+            [1, "Alice", 30, 50000],
+            [2, "Bob", 25, 45000],
+            [None, "Charlie", 35, 60000],
+            [4, None, 28, 55000],
+        ],
+        TEST_SCHEMA,
+    )
+    test_df.write.saveAsTable(input_table_name)
+
+    input_config = InputConfig(location=input_table_name)
+    output_config = OutputConfig(location=output_table_name, mode="overwrite")
+    metrics_config = OutputConfig(location=metrics_table_name, mode="overwrite")
+
+    expected_fingerprint = compute_rule_set_fingerprint_by_metadata(TEST_CHECKS)
+
+    if apply_checks_method == DQEngine.apply_checks_and_save_in_table:
+        checks = deserialize_checks(TEST_CHECKS)
+        dq_engine.apply_checks_and_save_in_table(
+            checks=checks,
+            input_config=input_config,
+            output_config=output_config,
+            metrics_config=metrics_config,
+        )
+    else:
+        dq_engine.apply_checks_by_metadata_and_save_in_table(
+            checks=TEST_CHECKS,
+            input_config=input_config,
+            output_config=output_config,
+            metrics_config=metrics_config,
+        )
+
+    actual_metrics_df = spark.table(metrics_table_name)
+    actual_fingerprints = actual_metrics_df.select("rule_set_fingerprint").distinct().collect()
+    assert len(actual_fingerprints) == 1
+    assert actual_fingerprints[0]["rule_set_fingerprint"] is not None
+    assert actual_fingerprints[0]["rule_set_fingerprint"] == expected_fingerprint
 
 
 @pytest.mark.parametrize(
@@ -1453,6 +1637,7 @@ def test_save_results_in_table_streaming_with_metrics(
         output_config=output_config,
         quarantine_config=quarantine_config,
         metrics_config=metrics_config,
+        rule_set_fingerprint=TEST_CHECKS_RULE_SET_FINGERPRINT,
     )
 
     time.sleep(30)
@@ -1464,6 +1649,7 @@ def test_save_results_in_table_streaming_with_metrics(
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1478,6 +1664,7 @@ def test_save_results_in_table_streaming_with_metrics(
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1492,6 +1679,7 @@ def test_save_results_in_table_streaming_with_metrics(
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1506,6 +1694,7 @@ def test_save_results_in_table_streaming_with_metrics(
             "output_location": output_config.location,
             "quarantine_location": quarantine_config.location,
             "checks_location": None,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1604,6 +1793,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
             "output_location": output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1618,6 +1808,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
             "output_location": output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1632,6 +1823,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
             "output_location": output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1646,6 +1838,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
             "output_location": output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1660,6 +1853,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
             "output_location": output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "avg_error_age",
             "metric_value": "35.0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1674,6 +1868,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
             "output_location": output_config.location,
             "quarantine_location": None,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1773,6 +1968,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1787,6 +1983,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "error_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1801,6 +1998,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "warning_row_count",
             "metric_value": "1",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1815,6 +2013,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "valid_row_count",
             "metric_value": "2",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1829,6 +2028,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "avg_error_age",
             "metric_value": "35.0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1843,6 +2043,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": checks_location,
+            "rule_set_fingerprint": TEST_CHECKS_RULE_SET_FINGERPRINT,
             "metric_name": "total_warning_salary",
             "metric_value": "55000",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1931,6 +2132,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1945,6 +2147,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "error_row_count",
             "metric_value": "0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1959,6 +2162,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1973,6 +2177,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "valid_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -1987,6 +2192,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "avg_error_age",
             "metric_value": None,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -2001,6 +2207,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": None,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "total_warning_salary",
             "metric_value": None,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -2104,6 +2311,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "input_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -2118,6 +2326,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "error_row_count",
             "metric_value": "0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -2132,6 +2341,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "warning_row_count",
             "metric_value": "0",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -2146,6 +2356,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "valid_row_count",
             "metric_value": "4",
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -2160,6 +2371,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "avg_error_age",
             "metric_value": None,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
@@ -2174,6 +2386,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
             "output_location": output_table_name,
             "quarantine_location": quarantine_table_name,
             "checks_location": None,
+            "rule_set_fingerprint": None,
             "metric_name": "total_warning_salary",
             "metric_value": None,
             "run_time": datetime.fromisoformat(EXTRA_PARAMS.run_time_overwrite),
