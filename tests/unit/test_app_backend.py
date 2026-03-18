@@ -385,7 +385,7 @@ class _FakeRunConfig:
 class _FakeSerializer:
     """Fake ConfigSerializer that returns a simple run config."""
 
-    def load_run_config(self, run_config_name: str, install_folder: str):  # pylint: disable=unused-argument
+    def load_run_config(self, run_config_name: str, _install_folder: str):
         return _FakeRunConfig(run_config_name)
 
 
