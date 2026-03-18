@@ -1,17 +1,14 @@
 import logging
 
-from databricks.labs.blueprint.entrypoint import get_logger, is_in_debug
+from databricks.labs.blueprint.entrypoint import is_in_debug
 from databricks.labs.blueprint.tui import Prompts
 from databricks.sdk import WorkspaceClient
 
 from databricks.labs.dqx.__about__ import __version__
 from databricks.labs.dqx.installer.install import InstallationService
 
-logger = logging.getLogger(__name__)
-
 
 if __name__ == "__main__":
-    logger = get_logger(__file__)
     if is_in_debug():
         logging.getLogger("databricks").setLevel(logging.DEBUG)
 

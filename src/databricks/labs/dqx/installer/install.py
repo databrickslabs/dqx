@@ -271,14 +271,14 @@ class InstallationService:
     @classmethod
     def current(cls, ws: WorkspaceClient, install_folder: str | None = None):
         """
-        Creates a current WorkspaceInstallation instance based on the current workspace client.
+        Creates a current InstallationService instance based on the current workspace client.
 
         Args:
             ws: The WorkspaceClient instance.
             install_folder: Optional custom workspace folder path for the installation.
 
         Returns:
-            A WorkspaceInstallation instance.
+            An InstallationService instance.
         """
         product_info = ProductInfo.from_class(WorkspaceConfig)
         if install_folder:
