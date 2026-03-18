@@ -385,7 +385,7 @@ class _FakeRunConfig:
 class _FakeSerializer:
     """Fake ConfigSerializer that returns a simple run config."""
 
-    def load_run_config(self, run_config_name: str, _install_folder: str):
+    def load_run_config(self, run_config_name: str, *args, **kwargs):
         return _FakeRunConfig(run_config_name)
 
 
