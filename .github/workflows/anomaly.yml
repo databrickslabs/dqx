@@ -1,7 +1,7 @@
 name: anomaly
 
 on:
-  pull_request:
+  pull_request_target:
     types: [ opened, synchronize, ready_for_review ]
   merge_group:
     types: [ checks_requested ]
@@ -15,18 +15,19 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
   anomaly-tests:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
     environment: tool
     runs-on: larger
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Install Python
@@ -76,7 +77,7 @@ jobs:
           # Set cluster ID without printing to logs
           echo "DATABRICKS_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
           echo "DATABRICKS_DQX_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-DQX-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
-          
+
           # Set warehouse ID without printing to logs
           echo "DATABRICKS_WAREHOUSE_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
@@ -104,13 +105,14 @@ jobs:
           use_oidc: true
 
   anomaly-tests-serverless:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
     environment: tool
     runs-on: larger
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Install Python

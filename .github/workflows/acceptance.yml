@@ -1,7 +1,7 @@
 name: acceptance
 
 on:
-  pull_request:
+  pull_request_target:
     types: [ opened, synchronize, ready_for_review ]
   merge_group:
     types: [ checks_requested ]
@@ -15,22 +15,20 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
 
   integration:
-    # Only run this job for PRs from branches on the main repository and not from forks.
-    # Workflows triggered by PRs from forks don't have access to the tool environment.
-    # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
     environment: tool
     runs-on: larger
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Install Python
@@ -83,10 +81,7 @@ jobs:
           use_oidc: true
 
   integration_serverless:
-    # Only run this job for PRs from branches on the main repository and not from forks.
-    # Workflows triggered by PRs from forks don't have access to the tool environment.
-    # PRs from forks to be tested by the reviewer(s) / maintainer(s) before merging.
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
     environment: tool
     runs-on: larger
     env:
@@ -95,6 +90,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Install Python
@@ -141,13 +137,14 @@ jobs:
           use_oidc: true
 
   e2e:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
     environment: tool
     runs-on: larger
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Install Python
@@ -159,7 +156,7 @@ jobs:
 
       - name: Install hatch
         run: pip install hatch==1.16.5
-      
+
       - name: Install dbt
         run: |
           pip install dbt-core==1.10.9 dbt-databricks==1.10.9
@@ -189,13 +186,13 @@ jobs:
           timeout: 2h
           codegen_path: tests/e2e/.codegen.json
         env:
-          REF_NAME: ${{ github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch
+          REF_NAME: ${{ github.event.pull_request.number }}/merge # NOTE: end-to-end tests use this to pip install from the current PR branch
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
 
   e2e_serverless:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
     environment: tool
     runs-on: larger
     env:
@@ -204,6 +201,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Install Python
@@ -245,7 +243,7 @@ jobs:
           timeout: 2h
           codegen_path: tests/e2e/.codegen.json
         env:
-          REF_NAME: ${{ github.ref_name }} # NOTE: end-to-end tests use this to pip install from the current PR branch
+          REF_NAME: ${{ github.event.pull_request.number }}/merge # NOTE: end-to-end tests use this to pip install from the current PR branch
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
