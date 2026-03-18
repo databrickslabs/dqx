@@ -3,11 +3,11 @@
 import base64
 import logging
 from unittest.mock import create_autospec
-from fastapi import HTTPException
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError
+
 from databricks_labs_dqx_app.backend.app import app
 from databricks_labs_dqx_app.backend.dependencies import get_config_serializer, get_engine, get_obo_ws
 from databricks_labs_dqx_app.backend.logger import CustomFormatter, setup_logger, get_logger
@@ -15,6 +15,7 @@ from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.router import get_install_folder
 from databricks_labs_dqx_app.backend.settings import SettingsManager
 
+from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceDoesNotExist
 from databricks.sdk.service.iam import User
@@ -384,7 +385,7 @@ class _FakeRunConfig:
 class _FakeSerializer:
     """Fake ConfigSerializer that returns a simple run config."""
 
-    def load_run_config(self, run_config_name: str, install_folder: str):
+    def load_run_config(self, run_config_name: str, install_folder: str):  # pylint: disable=unused-argument
         return _FakeRunConfig(run_config_name)
 
 
@@ -393,13 +394,23 @@ class TestSaveRunChecks:
 
     def test_maps_invalid_check_error_to_http_400(self, mock_workspace_client):
         """When engine.save_checks raises InvalidCheckError, the route should map it to HTTP 400."""
+
         class FakeEngine:
             def save_checks(self, checks, config):
                 raise InvalidCheckError("invalid check structure")
 
-        app.dependency_overrides[get_obo_ws] = lambda: mock_workspace_client
-        app.dependency_overrides[get_engine] = lambda: FakeEngine()
-        app.dependency_overrides[get_config_serializer] = lambda: _FakeSerializer()
+        def _override_obo_ws():
+            return mock_workspace_client
+
+        def _override_engine():
+            return FakeEngine()
+
+        def _override_serializer():
+            return _FakeSerializer()
+
+        app.dependency_overrides[get_obo_ws] = _override_obo_ws
+        app.dependency_overrides[get_engine] = _override_engine
+        app.dependency_overrides[get_config_serializer] = _override_serializer
 
         try:
             client = TestClient(app)
@@ -416,24 +427,30 @@ class TestSaveRunChecks:
 
     def test_maps_invalid_config_error_to_http_400(self, mock_workspace_client):
         """When engine.save_checks raises InvalidConfigError, the route should map it to HTTP 400."""
+
         class FakeEngine:
             def save_checks(self, checks, config):
                 raise InvalidConfigError("invalid configuration")
 
-        app.dependency_overrides[get_obo_ws] = lambda: mock_workspace_client
-        app.dependency_overrides[get_engine] = lambda: FakeEngine()
-        app.dependency_overrides[get_config_serializer] = lambda: _FakeSerializer()
+        def _override_obo_ws():
+            return mock_workspace_client
+
+        def _override_engine():
+            return FakeEngine()
+
+        def _override_serializer():
+            return _FakeSerializer()
+
+        app.dependency_overrides[get_obo_ws] = _override_obo_ws
+        app.dependency_overrides[get_engine] = _override_engine
+        app.dependency_overrides[get_config_serializer] = _override_serializer
 
         try:
             client = TestClient(app)
             response = client.post(
                 "/api/config/run/test_run/checks",
                 params={"path": "/dummy/install/folder"},
-                json={
-                    "checks": [
-                        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {}}}
-                    ]
-                },
+                json={"checks": [{"criticality": "error", "check": {"function": "is_not_null", "arguments": {}}}]},
                 headers={"X-Forwarded-Access-Token": "dummy"},
             )
             assert response.status_code == 400
