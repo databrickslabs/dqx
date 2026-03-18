@@ -647,7 +647,9 @@ class DQEngine(DQEngineBase):
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         log_dataframe_telemetry(self.ws, self.spark, df)
-        return self._engine.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs, variables)
+        return self._engine.apply_checks_by_metadata(
+            df, checks, custom_check_functions, ref_dfs, variables=variables
+        )
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
     def apply_checks_by_metadata_and_split(
@@ -679,7 +681,9 @@ class DQEngine(DQEngineBase):
             quality summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
         log_dataframe_telemetry(self.ws, self.spark, df)
-        return self._engine.apply_checks_by_metadata_and_split(df, checks, custom_check_functions, ref_dfs, variables)
+        return self._engine.apply_checks_by_metadata_and_split(
+            df, checks, custom_check_functions, ref_dfs, variables=variables
+        )
 
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
     def apply_checks_and_save_in_table(
@@ -814,7 +818,11 @@ class DQEngine(DQEngineBase):
 
         if quarantine_config:
             check_result = self.apply_checks_by_metadata_and_split(
-                df, checks, custom_check_functions, ref_dfs, variables
+                df,
+                checks=checks,
+                custom_check_functions=custom_check_functions,
+                ref_dfs=ref_dfs,
+                variables=variables,
             )
             if self._engine.observer:
                 good_df, bad_df, batch_observation = check_result
@@ -824,7 +832,13 @@ class DQEngine(DQEngineBase):
             quarantine_streaming_query = save_dataframe_as_table(bad_df, quarantine_config)
             target_streaming_query = quarantine_streaming_query
         else:
-            check_result = self.apply_checks_by_metadata(df, checks, custom_check_functions, ref_dfs, variables)
+            check_result = self.apply_checks_by_metadata(
+                df,
+                checks=checks,
+                custom_check_functions=custom_check_functions,
+                ref_dfs=ref_dfs,
+                variables=variables,
+            )
             if self._engine.observer:
                 checked_df, batch_observation = check_result
             else:
@@ -999,7 +1013,12 @@ class DQEngine(DQEngineBase):
         Returns:
             ChecksValidationStatus indicating the validation result.
         """
-        return DQEngineCore.validate_checks(checks, custom_check_functions, validate_custom_check_functions, variables)
+        return DQEngineCore.validate_checks(
+            checks,
+            custom_check_functions,
+            validate_custom_check_functions,
+            variables=variables,
+        )
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
         """
