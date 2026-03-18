@@ -11,10 +11,6 @@ on:
   pull_request_target:
     types: [opened, synchronize, ready_for_review]
     branches: [main]
-  merge_group:
-    types: [checks_requested]
-  push:
-    branches: [main]
 
 permissions:
   contents: write
