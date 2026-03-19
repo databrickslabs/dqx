@@ -1,1 +1,1 @@
-command: ["uv", "run", "mcp-dqx"]
+command: ["python", "server/main.py"]
