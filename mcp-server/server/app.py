@@ -1,47 +1,52 @@
 """
-FastAPI application configuration for the DQX MCP server.
+FastMCP application configuration for the DQX MCP server.
 
-Sets up the FastMCP server, loads DQX tools, and creates a combined
-FastAPI application that serves both MCP protocol routes and custom endpoints.
+Key learnings applied from biomni-mcp-server:
+- Use stateless_http=True + json_response=True for Genie Code compatibility
+- Add CORSMiddleware for OPTIONS preflight requests from workspace origin
+- Use pure ASGI middleware (not BaseHTTPMiddleware) to avoid streaming timeouts
+- OBO: extract X-Forwarded-Access-Token, store in contextvars, create per-request client lazily
 """
 
-from fastapi import FastAPI, Request
+import logging
+
 from fastmcp import FastMCP
+from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from .tools import load_tools
-from .utils import header_store
+from .utils import OBOAuthMiddleware
+
+logger = logging.getLogger(__name__)
 
 mcp_server = FastMCP(name="mcp-dqx")
 
 load_tools(mcp_server)
 
-mcp_app = mcp_server.http_app()
-
-app = FastAPI(
-    title="DQX MCP Server",
-    description="DQX MCP Server - AI agent tools for data quality checks",
-    version="0.1.0",
-    lifespan=mcp_app.lifespan,
+# Get the ASGI app — stateless_http + json_response for Genie Code compatibility
+combined_app = mcp_server.http_app(
+    stateless_http=True,
+    json_response=True,
 )
 
 
-@app.get("/", include_in_schema=False)
-async def serve_index():
-    return {"message": "DQX MCP Server is running", "status": "healthy"}
+# Add health check route
+async def health_check(request: Request) -> JSONResponse:
+    return JSONResponse({"message": "DQX MCP Server is running", "status": "healthy"})
 
 
-combined_app = FastAPI(
-    title="DQX MCP Server",
-    routes=[
-        *mcp_app.routes,
-        *app.routes,
-    ],
-    lifespan=mcp_app.lifespan,
+combined_app.routes.insert(0, Route("/", health_check))
+
+# Add OBO middleware (pure ASGI — no BaseHTTPMiddleware to avoid streaming timeouts)
+combined_app.add_middleware(OBOAuthMiddleware)
+
+# Add CORS middleware — Genie Code sends OPTIONS preflight from workspace origin
+combined_app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
 )
-
-
-@combined_app.middleware("http")
-async def capture_headers(request: Request, call_next):
-    """Middleware to capture request headers for authentication."""
-    header_store.set(dict(request.headers))
-    return await call_next(request)

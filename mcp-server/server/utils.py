@@ -1,41 +1,98 @@
+"""
+Utility functions for the DQX MCP server.
+
+Key patterns applied from biomni-mcp-server:
+- Pure ASGI middleware for OBO (not BaseHTTPMiddleware — avoids streaming timeouts)
+- Lazy WorkspaceClient creation per-request using contextvars
+- auth_type="pat" to avoid conflict with auto-injected SP env vars
+"""
+
 import contextvars
 import logging
 import os
 from typing import Any
 
+from starlette.types import ASGIApp, Receive, Scope, Send
+
 logger = logging.getLogger(__name__)
 
-header_store = contextvars.ContextVar("header_store")
+# ── OBO Auth via contextvars ──────────────────────────────────────────
 
-_ws = None
+# Store the user token per-request (not the WorkspaceClient — create lazily)
+_user_token_var: contextvars.ContextVar[tuple[str, str] | None] = contextvars.ContextVar(
+    "user_token", default=None
+)
+
+# Service principal client singleton (fallback when no user token)
+_sp_client = None
+
+
+class OBOAuthMiddleware:
+    """Pure ASGI middleware for on-behalf-of authentication.
+
+    Extracts X-Forwarded-Access-Token from Databricks Apps proxy headers
+    and stores it in a context var. WorkspaceClient is created lazily
+    only when get_workspace_client() is called (zero overhead for tools
+    that don't need it).
+
+    Using pure ASGI (not BaseHTTPMiddleware) is critical — BaseHTTPMiddleware
+    buffers response bodies which causes MCP streaming timeouts.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        user_token = headers.get(b"x-forwarded-access-token", b"").decode() or None
+
+        if user_token:
+            host = os.environ.get("DATABRICKS_HOST", "")
+            _user_token_var.set((host, user_token))
+        else:
+            _user_token_var.set(None)
+
+        await self.app(scope, receive, send)
+
+
+def get_workspace_client():
+    """Get a WorkspaceClient for the current request.
+
+    Returns an OBO client (user's identity) if running in a Databricks App
+    with a forwarded token, otherwise falls back to the service principal.
+
+    Uses auth_type="pat" to avoid conflict with auto-injected
+    DATABRICKS_CLIENT_ID/SECRET env vars in the App container.
+    """
+    from databricks.sdk import WorkspaceClient
+    from databricks.sdk.config import Config
+
+    token_info = _user_token_var.get(None)
+    if token_info is not None:
+        host, token = token_info
+        cfg = Config(host=host, token=token, auth_type="pat")
+        return WorkspaceClient(config=cfg)
+
+    # Fallback: service principal (auto-detected from env vars)
+    global _sp_client
+    if _sp_client is None:
+        _sp_client = WorkspaceClient()
+    return _sp_client
+
+
+# ── Spark + DQX component factories ──────────────────────────────────
+# Note: Spark session via databricks-connect is shared (serverless).
+# The WorkspaceClient used for profiler/generator/engine should be
+# per-request for OBO, but Spark itself is connection-pooled.
+
 _spark = None
 _profiler = None
 _generator = None
 _engine = None
-
-
-def get_workspace_client():
-    from databricks.sdk import WorkspaceClient
-
-    is_databricks_app = "DATABRICKS_APP_NAME" in os.environ
-    if not is_databricks_app:
-        return WorkspaceClient()
-
-    headers = header_store.get({})
-    token = headers.get("x-forwarded-access-token")
-    if not token:
-        return WorkspaceClient()
-
-    return WorkspaceClient(token=token, auth_type="pat")
-
-
-def _get_ws():
-    global _ws
-    if _ws is None:
-        from databricks.sdk import WorkspaceClient
-
-        _ws = WorkspaceClient()
-    return _ws
 
 
 def _get_spark():
@@ -57,30 +114,24 @@ def _get_spark():
 
 
 def _get_profiler():
-    global _profiler
-    if _profiler is None:
-        from databricks.labs.dqx.profiler.profiler import DQProfiler
+    from databricks.labs.dqx.profiler.profiler import DQProfiler
 
-        _profiler = DQProfiler(workspace_client=_get_ws(), spark=_get_spark())
-    return _profiler
+    return DQProfiler(workspace_client=get_workspace_client(), spark=_get_spark())
 
 
 def _get_generator():
-    global _generator
-    if _generator is None:
-        from databricks.labs.dqx.profiler.generator import DQGenerator
+    from databricks.labs.dqx.profiler.generator import DQGenerator
 
-        _generator = DQGenerator(workspace_client=_get_ws(), spark=_get_spark())
-    return _generator
+    return DQGenerator(workspace_client=get_workspace_client(), spark=_get_spark())
 
 
 def _get_engine():
-    global _engine
-    if _engine is None:
-        from databricks.labs.dqx.engine import DQEngine
+    from databricks.labs.dqx.engine import DQEngine
 
-        _engine = DQEngine(workspace_client=_get_ws(), spark=_get_spark())
-    return _engine
+    return DQEngine(workspace_client=get_workspace_client(), spark=_get_spark())
+
+
+# ── JSON serialization helpers ────────────────────────────────────────
 
 
 def make_json_safe(value: Any) -> Any:
