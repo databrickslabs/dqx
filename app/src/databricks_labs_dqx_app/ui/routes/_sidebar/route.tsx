@@ -1,7 +1,7 @@
 import SidebarLayout from "@/components/apx/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
-import { FileCode, Settings } from "lucide-react";
+import { BookCheck, FileCode, Search, Settings } from "lucide-react";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -28,6 +28,18 @@ function Layout() {
       label: "Runs",
       icon: <FileCode size={16} />,
       match: (path: string) => path.startsWith("/runs"),
+    },
+    {
+      to: "/rules",
+      label: "Rules",
+      icon: <BookCheck size={16} />,
+      match: (path: string) => path.startsWith("/rules"),
+    },
+    {
+      to: "/discovery",
+      label: "Discovery",
+      icon: <Search size={16} />,
+      match: (path: string) => path.startsWith("/discovery"),
     },
   ];
 

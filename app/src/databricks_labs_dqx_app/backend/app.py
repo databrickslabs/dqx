@@ -4,21 +4,33 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .config import conf
+from .dependencies import get_migration_runner
 from .logger import logger
-from .router import api
+from .routes import api_router
 from .utils import add_not_found_handler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting app with configuration:\n{conf.model_dump_json(indent=2)}")
+
+    try:
+        runner = get_migration_runner()
+        applied = runner.run_all()
+        if applied:
+            logger.info("Applied %d database migration(s)", applied)
+        else:
+            logger.info("Database schema is up to date")
+    except Exception as e:
+        logger.warning("Could not run database migrations (will retry on first request): %s", e)
+
     yield
 
 
 app = FastAPI(title=f"{conf.app_name}", lifespan=lifespan)
 
 # Configure route for the backend API (/api) using fastapi
-app.include_router(api)
+app.include_router(api_router)
 
 # Configure route for the UI (static files)
 # Mount static files for the UI only if the dist directory exists (e.g., after build)

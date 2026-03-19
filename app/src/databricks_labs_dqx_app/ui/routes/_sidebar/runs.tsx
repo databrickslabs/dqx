@@ -6,12 +6,12 @@ import {
 } from "@tanstack/react-router";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
-  useConfigSuspense,
   useConfig,
   useSaveRunConfig,
   useDeleteRunConfig,
   RunConfig,
 } from "@/lib/api";
+import { useConfigSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import { Button } from "@/components/ui/button";
 import {
@@ -78,7 +78,7 @@ function RunsPage() {
 
   // We use the non-suspense hook here just to get data for the "Add Run" logic
   // so the header doesn't suspend.
-  const { data: configData } = useConfig(undefined, selector());
+  const { data: configData } = useConfig(selector());
   const { mutateAsync: saveRun } = useSaveRunConfig();
 
   // Derived from configData if available, or empty list
@@ -350,7 +350,7 @@ function RunsSidebarList({
   currentRunName?: string;
   isDeleting?: boolean;
 }) {
-  const { data: configData } = useConfigSuspense(undefined, selector());
+  const { data: configData } = useConfigSuspense(selector());
 
   const runConfigs = configData.config.run_configs || [];
   const hasRuns = runConfigs.length > 0;
@@ -415,10 +415,7 @@ function RunEditorContainer({
   onAddRun: () => void;
   onDeletingChange: (isDeleting: boolean) => void;
 }) {
-  const { data: configData, refetch } = useConfigSuspense(
-    undefined,
-    selector(),
-  );
+  const { data: configData, refetch } = useConfigSuspense(selector());
   const { mutateAsync: saveRun, isPending: isSaving } = useSaveRunConfig();
   const { mutateAsync: deleteRun, isPending: isDeleting } =
     useDeleteRunConfig();

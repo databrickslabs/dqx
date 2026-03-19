@@ -3,12 +3,12 @@ import { Suspense, useState, useEffect } from "react";
 import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
 import {
-  useConfigSuspense,
   useGetSettingsSuspense,
   useSaveSettings,
   useSaveConfig,
   WorkspaceConfigInput,
 } from "@/lib/api";
+import { useConfigSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
 import {
   Card,
@@ -178,7 +178,7 @@ function ConfigLocationSettings({ onSettingsSaved }: { onSettingsSaved?: () => v
 function GeneralSettingsData() {
   const {
     data: { config },
-  } = useConfigSuspense(undefined, selector());
+  } = useConfigSuspense(selector());
 
   return (
     <div className="grid gap-4 md:grid-cols-3">
@@ -250,7 +250,7 @@ function GeneralSettingsData() {
 function RunConfigsData() {
   const {
     data: { config },
-  } = useConfigSuspense(undefined, selector());
+  } = useConfigSuspense(selector());
 
   if (!config.run_configs || config.run_configs.length === 0) {
     return (
@@ -366,7 +366,7 @@ function RunConfigsData() {
 function ClusterOverridesCard() {
   const {
     data: { config },
-  } = useConfigSuspense(undefined, selector());
+  } = useConfigSuspense(selector());
 
   if (
     !config.profiler_override_clusters &&
@@ -421,7 +421,7 @@ function ClusterOverridesCard() {
 function RunConfigCount() {
   const {
     data: { config },
-  } = useConfigSuspense(undefined, selector());
+  } = useConfigSuspense(selector());
   return <>({config.run_configs?.length || 0})</>;
 }
 
@@ -443,7 +443,7 @@ function SectionError({
 }
 
 function YamlConfigEditor() {
-  const { data: configOut } = useConfigSuspense(undefined, selector());
+  const { data: configOut } = useConfigSuspense(selector());
   // Fetch settings as well to display the path
   const { data: settings } = useGetSettingsSuspense(selector());
 

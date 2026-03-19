@@ -12,8 +12,11 @@ import { Route as rootRouteImport } from './../routes/__root'
 import { Route as SidebarRouteRouteImport } from './../routes/_sidebar/route'
 import { Route as IndexRouteImport } from './../routes/index'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
+import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
+import { Route as SidebarDiscoveryRouteImport } from './../routes/_sidebar/discovery'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
+import { Route as SidebarRulesGenerateRouteImport } from './../routes/_sidebar/rules.generate'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
 import { Route as SidebarRunsRunNameRouteImport } from './../routes/_sidebar/runs.$runName'
 
@@ -31,15 +34,30 @@ const SidebarRunsRoute = SidebarRunsRouteImport.update({
   path: '/runs',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
+const SidebarRulesRoute = SidebarRulesRouteImport.update({
+  id: '/rules',
+  path: '/rules',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
 const SidebarProfileRoute = SidebarProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarDiscoveryRoute = SidebarDiscoveryRouteImport.update({
+  id: '/discovery',
+  path: '/discovery',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarConfigRoute = SidebarConfigRouteImport.update({
   id: '/config',
   path: '/config',
   getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarRulesGenerateRoute = SidebarRulesGenerateRouteImport.update({
+  id: '/generate',
+  path: '/generate',
+  getParentRoute: () => SidebarRulesRoute,
 } as any)
 const SidebarRunsIndexRoute = SidebarRunsIndexRouteImport.update({
   id: '/',
@@ -55,7 +73,10 @@ const SidebarRunsRunNameRoute = SidebarRunsRunNameRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/config': typeof SidebarConfigRoute
+  '/discovery': typeof SidebarDiscoveryRoute
   '/profile': typeof SidebarProfileRoute
+  '/rules': typeof SidebarRulesRouteWithChildren
+  '/rules/generate': typeof SidebarRulesGenerateRoute
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs/$runName': typeof SidebarRunsRunNameRoute
   '/runs/': typeof SidebarRunsIndexRoute
@@ -63,7 +84,10 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/config': typeof SidebarConfigRoute
+  '/discovery': typeof SidebarDiscoveryRoute
   '/profile': typeof SidebarProfileRoute
+  '/rules': typeof SidebarRulesRouteWithChildren
+  '/rules/generate': typeof SidebarRulesGenerateRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
   '/runs': typeof SidebarRunsIndexRoute
 }
@@ -72,7 +96,10 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/_sidebar': typeof SidebarRouteRouteWithChildren
   '/_sidebar/config': typeof SidebarConfigRoute
+  '/_sidebar/discovery': typeof SidebarDiscoveryRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
+  '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
+  '/_sidebar/rules/generate': typeof SidebarRulesGenerateRoute
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs/$runName': typeof SidebarRunsRunNameRoute
   '/_sidebar/runs/': typeof SidebarRunsIndexRoute
@@ -82,18 +109,32 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/config'
+    | '/discovery'
     | '/profile'
+    | '/rules'
+    | '/rules/generate'
     | '/runs'
     | '/runs/$runName'
     | '/runs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/config' | '/profile' | '/runs/$runName' | '/runs'
+  to:
+    | '/'
+    | '/config'
+    | '/discovery'
+    | '/profile'
+    | '/rules'
+    | '/rules/generate'
+    | '/runs/$runName'
+    | '/runs'
   id:
     | '__root__'
     | '/'
     | '/_sidebar'
     | '/_sidebar/config'
+    | '/_sidebar/discovery'
     | '/_sidebar/profile'
+    | '/_sidebar/rules'
+    | '/_sidebar/rules/generate'
     | '/_sidebar/runs'
     | '/_sidebar/runs/$runName'
     | '/_sidebar/runs/'
@@ -127,11 +168,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarRunsRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
+    '/_sidebar/rules': {
+      id: '/_sidebar/rules'
+      path: '/rules'
+      fullPath: '/rules'
+      preLoaderRoute: typeof SidebarRulesRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
     '/_sidebar/profile': {
       id: '/_sidebar/profile'
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof SidebarProfileRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/discovery': {
+      id: '/_sidebar/discovery'
+      path: '/discovery'
+      fullPath: '/discovery'
+      preLoaderRoute: typeof SidebarDiscoveryRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/config': {
@@ -140,6 +195,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/config'
       preLoaderRoute: typeof SidebarConfigRouteImport
       parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/rules/generate': {
+      id: '/_sidebar/rules/generate'
+      path: '/generate'
+      fullPath: '/rules/generate'
+      preLoaderRoute: typeof SidebarRulesGenerateRouteImport
+      parentRoute: typeof SidebarRulesRoute
     }
     '/_sidebar/runs/': {
       id: '/_sidebar/runs/'
@@ -158,6 +220,18 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface SidebarRulesRouteChildren {
+  SidebarRulesGenerateRoute: typeof SidebarRulesGenerateRoute
+}
+
+const SidebarRulesRouteChildren: SidebarRulesRouteChildren = {
+  SidebarRulesGenerateRoute: SidebarRulesGenerateRoute,
+}
+
+const SidebarRulesRouteWithChildren = SidebarRulesRoute._addFileChildren(
+  SidebarRulesRouteChildren,
+)
+
 interface SidebarRunsRouteChildren {
   SidebarRunsRunNameRoute: typeof SidebarRunsRunNameRoute
   SidebarRunsIndexRoute: typeof SidebarRunsIndexRoute
@@ -174,13 +248,17 @@ const SidebarRunsRouteWithChildren = SidebarRunsRoute._addFileChildren(
 
 interface SidebarRouteRouteChildren {
   SidebarConfigRoute: typeof SidebarConfigRoute
+  SidebarDiscoveryRoute: typeof SidebarDiscoveryRoute
   SidebarProfileRoute: typeof SidebarProfileRoute
+  SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
 }
 
 const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarConfigRoute: SidebarConfigRoute,
+  SidebarDiscoveryRoute: SidebarDiscoveryRoute,
   SidebarProfileRoute: SidebarProfileRoute,
+  SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
 }
 

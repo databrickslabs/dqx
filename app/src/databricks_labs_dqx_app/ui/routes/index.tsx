@@ -1,53 +1,14 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import Navbar from "@/components/apx/Navbar";
 import { motion } from "motion/react";
-import { Settings, FileCode, FolderCog, Loader2 } from "lucide-react";
-import { useConfig, useSaveConfig, getConfigQueryKey } from "@/lib/api";
-import { useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { useState } from "react";
+import { FileCode } from "lucide-react";
 
 export const Route = createFileRoute("/")({
   component: () => <Index />,
 });
 
 function Index() {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const [isCreating, setIsCreating] = useState(false);
-
-  const configQuery = useConfig(undefined, {
-    query: { retry: false },
-  });
-
-  const { mutateAsync: saveConfig } = useSaveConfig();
-
-  const configExists = configQuery.isSuccess;
-  const configLoading = configQuery.isLoading;
-
-  const handleCreateConfig = async () => {
-    setIsCreating(true);
-    try {
-      await saveConfig({
-        data: {
-          config: {
-            run_configs: [],
-          },
-        },
-      });
-      await queryClient.invalidateQueries({ queryKey: getConfigQueryKey() });
-      toast.success("Configuration created successfully");
-      navigate({ to: "/config" });
-    } catch (error) {
-      toast.error("Failed to create configuration. Please try again.");
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  const buttonDisabled = configLoading || isCreating;
-
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden">
       <Navbar />
@@ -95,59 +56,24 @@ function Index() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8, delay: 0.6, ease: "easeOut" }}
-            className="pt-4 flex flex-col items-center gap-3"
+            className="pt-4"
           >
             <motion.div
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
             >
-              {configLoading ? (
-                <Button
-                  size="lg"
-                  variant="default"
-                  className="text-lg px-8 py-6"
-                  disabled
-                >
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Checking configuration...
-                </Button>
-              ) : configExists ? (
-                <Button
-                  size="lg"
-                  variant="default"
-                  className="text-lg px-8 py-6"
-                  asChild
-                >
-                  <Link to="/runs">
-                    <FileCode className="mr-2 h-5 w-5" />
-                    Create rules
-                  </Link>
-                </Button>
-              ) : (
-                <Button
-                  size="lg"
-                  variant="default"
-                  className="text-lg px-8 py-6"
-                  disabled={buttonDisabled}
-                  onClick={handleCreateConfig}
-                >
-                  {isCreating ? (
-                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  ) : (
-                    <Settings className="mr-2 h-5 w-5" />
-                  )}
-                  {isCreating ? "Creating..." : "Create new config"}
-                </Button>
-              )}
+              <Button
+                size="lg"
+                variant="default"
+                className="text-lg px-8 py-6"
+                asChild
+              >
+                <Link to="/runs">
+                  <FileCode className="mr-2 h-5 w-5" />
+                  Get started
+                </Link>
+              </Button>
             </motion.div>
-
-            <Link
-              to="/config"
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors inline-flex items-center gap-1.5"
-            >
-              <FolderCog className="h-3.5 w-3.5" />
-              Customize install location
-            </Link>
           </motion.div>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { Suspense, useMemo } from "react";
 import { Link, useLocation } from "@tanstack/react-router";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
-import { useCurrentUserSuspense } from "@/lib/api";
+import { useCurrentUserSuspense } from "@/hooks/use-suspense-queries";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";

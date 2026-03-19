@@ -28,7 +28,9 @@ function SidebarLayout({ children }: SidebarLayoutProps) {
             <Logo />
           </div>
         </SidebarHeader>
-        <SidebarContent>{children}</SidebarContent>
+        <SidebarContent className="flex flex-col justify-between">
+          {children}
+        </SidebarContent>
         <SidebarFooter>
           <SidebarUserFooter />
         </SidebarFooter>

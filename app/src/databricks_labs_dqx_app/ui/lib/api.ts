@@ -25,16 +25,36 @@ import type {
 import * as axios from "axios";
 import type { AxiosError, AxiosRequestConfig, AxiosResponse } from "axios";
 
-export type ChecksInChecksItem = { [key: string]: unknown };
+export type AnomalyConfigColumns = string[] | null;
 
-export interface ChecksIn {
-  checks: ChecksInChecksItem[];
+export type AnomalyConfigSegmentBy = string[] | null;
+
+export type AnomalyConfigModelName = string | null;
+
+export type AnomalyConfigRegistryTable = string | null;
+
+export interface AnomalyConfig {
+  columns?: AnomalyConfigColumns;
+  segment_by?: AnomalyConfigSegmentBy;
+  model_name?: AnomalyConfigModelName;
+  registry_table?: AnomalyConfigRegistryTable;
 }
 
-export type ChecksOutChecksItem = { [key: string]: unknown };
+export type CatalogOutComment = string | null;
 
-export interface ChecksOut {
-  checks: ChecksOutChecksItem[];
+export interface CatalogOut {
+  name: string;
+  comment?: CatalogOutComment;
+}
+
+export type ColumnOutComment = string | null;
+
+export interface ColumnOut {
+  name: string;
+  type_name: string;
+  comment?: ColumnOutComment;
+  nullable?: boolean;
+  position?: number;
 }
 
 export type ComplexValueDisplay = string | null;
@@ -63,6 +83,32 @@ export interface ConfigOut {
   config: WorkspaceConfigOutput;
 }
 
+export type DryRunInChecksItem = { [key: string]: unknown };
+
+export interface DryRunIn {
+  /** Fully qualified table name to run checks against */
+  table_fqn: string;
+  /** List of check metadata dictionaries */
+  checks: DryRunInChecksItem[];
+  /**
+   * Number of rows to sample
+   * @maximum 1000
+   */
+  sample_size?: number;
+}
+
+export type DryRunOutErrorSummaryItem = { [key: string]: unknown };
+
+export type DryRunOutSampleInvalidItem = { [key: string]: unknown };
+
+export interface DryRunOut {
+  total_rows: number;
+  valid_rows: number;
+  invalid_rows: number;
+  error_summary: DryRunOutErrorSummaryItem[];
+  sample_invalid: DryRunOutSampleInvalidItem[];
+}
+
 export type ExtraParamsResultColumnNames = { [key: string]: string };
 
 export type ExtraParamsUserMetadata = { [key: string]: string };
@@ -78,9 +124,16 @@ export interface ExtraParams {
   run_id_overwrite?: ExtraParamsRunIdOverwrite;
 }
 
+/**
+ * Optional fully qualified table name for schema context
+ */
+export type GenerateChecksInTableFqn = string | null;
+
 export interface GenerateChecksIn {
   /** Natural language description of data quality requirements */
   user_input: string;
+  /** Optional fully qualified table name for schema context */
+  table_fqn?: GenerateChecksInTableFqn;
 }
 
 export type GenerateChecksOutChecksItem = { [key: string]: unknown };
@@ -90,6 +143,8 @@ export interface GenerateChecksOut {
   yaml_output: string;
   /** Generated checks as a list of dictionaries */
   checks: GenerateChecksOutChecksItem[];
+  /** Validation errors if any */
+  validation_errors?: string[];
 }
 
 export interface HTTPValidationError {
@@ -109,7 +164,6 @@ export interface InputConfig {
 }
 
 export interface InstallationSettings {
-  /** Path to the folder containing config.yml */
   install_folder: string;
 }
 
@@ -142,11 +196,17 @@ export interface OutputConfig {
   mode?: string;
   options?: OutputConfigOptions;
   trigger?: OutputConfigTrigger;
+  partition_by?: string[];
+  cluster_by?: string[];
 }
 
 export type ProfilerConfigSampleSeed = number | null;
 
 export type ProfilerConfigFilter = string | null;
+
+export type ProfilerConfigMaxNullRatio = number | null;
+
+export type ProfilerConfigMaxEmptyRatio = number | null;
 
 export interface ProfilerConfig {
   summary_stats_file?: string;
@@ -155,6 +215,29 @@ export interface ProfilerConfig {
   limit?: number;
   filter?: ProfilerConfigFilter;
   llm_primary_key_detection?: boolean;
+  max_null_ratio?: ProfilerConfigMaxNullRatio;
+  max_empty_ratio?: ProfilerConfigMaxEmptyRatio;
+}
+
+export type RuleCatalogEntryOutChecksItem = { [key: string]: unknown };
+
+export type RuleCatalogEntryOutCreatedBy = string | null;
+
+export type RuleCatalogEntryOutCreatedAt = string | null;
+
+export type RuleCatalogEntryOutUpdatedBy = string | null;
+
+export type RuleCatalogEntryOutUpdatedAt = string | null;
+
+export interface RuleCatalogEntryOut {
+  table_fqn: string;
+  checks: RuleCatalogEntryOutChecksItem[];
+  version: number;
+  status: string;
+  created_by?: RuleCatalogEntryOutCreatedBy;
+  created_at?: RuleCatalogEntryOutCreatedAt;
+  updated_by?: RuleCatalogEntryOutUpdatedBy;
+  updated_at?: RuleCatalogEntryOutUpdatedAt;
 }
 
 export type RunConfigInputConfig = InputConfig | null;
@@ -172,6 +255,8 @@ export type RunConfigWarehouseId = string | null;
 export type RunConfigReferenceTables = { [key: string]: InputConfig };
 
 export type RunConfigCustomCheckFunctions = { [key: string]: string };
+
+export type RunConfigAnomalyConfig = AnomalyConfig | null;
 
 export type RunConfigLakebaseInstanceName = string | null;
 
@@ -191,6 +276,7 @@ export interface RunConfig {
   warehouse_id?: RunConfigWarehouseId;
   reference_tables?: RunConfigReferenceTables;
   custom_check_functions?: RunConfigCustomCheckFunctions;
+  anomaly_config?: RunConfigAnomalyConfig;
   lakebase_instance_name?: RunConfigLakebaseInstanceName;
   lakebase_client_id?: RunConfigLakebaseClientId;
   lakebase_port?: RunConfigLakebasePort;
@@ -202,6 +288,40 @@ export interface RunConfigIn {
 
 export interface RunConfigOut {
   config: RunConfig;
+}
+
+export type SaveRulesInChecksItem = { [key: string]: unknown };
+
+export interface SaveRulesIn {
+  /** Fully qualified table name (catalog.schema.table) */
+  table_fqn: string;
+  /** List of check metadata dictionaries */
+  checks: SaveRulesInChecksItem[];
+}
+
+export type SchemaOutComment = string | null;
+
+export interface SchemaOut {
+  name: string;
+  catalog_name: string;
+  comment?: SchemaOutComment;
+}
+
+export interface SetStatusIn {
+  /** New status: draft | pending_approval | approved | rejected */
+  status: string;
+}
+
+export type TableOutTableType = string | null;
+
+export type TableOutComment = string | null;
+
+export interface TableOut {
+  name: string;
+  catalog_name: string;
+  schema_name: string;
+  table_type?: TableOutTableType;
+  comment?: TableOutComment;
 }
 
 export type UserActive = boolean | null;
@@ -238,6 +358,11 @@ export interface User {
   roles?: UserRoles;
   schemas?: UserSchemas;
   user_name?: UserUserName;
+}
+
+export interface UserRoleOut {
+  email: string;
+  role: string;
 }
 
 export type UserSchema = (typeof UserSchema)[keyof typeof UserSchema];
@@ -287,6 +412,13 @@ export type WorkspaceConfigInputE2eOverrideClustersAnyOf = {
 export type WorkspaceConfigInputE2eOverrideClusters =
   WorkspaceConfigInputE2eOverrideClustersAnyOf | null;
 
+export type WorkspaceConfigInputAnomalyOverrideClustersAnyOf = {
+  [key: string]: string;
+};
+
+export type WorkspaceConfigInputAnomalyOverrideClusters =
+  WorkspaceConfigInputAnomalyOverrideClustersAnyOf | null;
+
 export type WorkspaceConfigInputProfilerSparkConfAnyOf = {
   [key: string]: string;
 };
@@ -306,6 +438,13 @@ export type WorkspaceConfigInputE2eSparkConfAnyOf = { [key: string]: string };
 export type WorkspaceConfigInputE2eSparkConf =
   WorkspaceConfigInputE2eSparkConfAnyOf | null;
 
+export type WorkspaceConfigInputAnomalySparkConfAnyOf = {
+  [key: string]: string;
+};
+
+export type WorkspaceConfigInputAnomalySparkConf =
+  WorkspaceConfigInputAnomalySparkConfAnyOf | null;
+
 export type WorkspaceConfigInputCustomMetrics = string[] | null;
 
 export interface WorkspaceConfigInput {
@@ -317,9 +456,11 @@ export interface WorkspaceConfigInput {
   profiler_override_clusters?: WorkspaceConfigInputProfilerOverrideClusters;
   quality_checker_override_clusters?: WorkspaceConfigInputQualityCheckerOverrideClusters;
   e2e_override_clusters?: WorkspaceConfigInputE2eOverrideClusters;
+  anomaly_override_clusters?: WorkspaceConfigInputAnomalyOverrideClusters;
   profiler_spark_conf?: WorkspaceConfigInputProfilerSparkConf;
   quality_checker_spark_conf?: WorkspaceConfigInputQualityCheckerSparkConf;
   e2e_spark_conf?: WorkspaceConfigInputE2eSparkConf;
+  anomaly_spark_conf?: WorkspaceConfigInputAnomalySparkConf;
   profiler_max_parallelism?: number;
   quality_checker_max_parallelism?: number;
   custom_metrics?: WorkspaceConfigInputCustomMetrics;
@@ -351,6 +492,13 @@ export type WorkspaceConfigOutputE2eOverrideClustersAnyOf = {
 export type WorkspaceConfigOutputE2eOverrideClusters =
   WorkspaceConfigOutputE2eOverrideClustersAnyOf | null;
 
+export type WorkspaceConfigOutputAnomalyOverrideClustersAnyOf = {
+  [key: string]: string;
+};
+
+export type WorkspaceConfigOutputAnomalyOverrideClusters =
+  WorkspaceConfigOutputAnomalyOverrideClustersAnyOf | null;
+
 export type WorkspaceConfigOutputProfilerSparkConfAnyOf = {
   [key: string]: string;
 };
@@ -370,6 +518,13 @@ export type WorkspaceConfigOutputE2eSparkConfAnyOf = { [key: string]: string };
 export type WorkspaceConfigOutputE2eSparkConf =
   WorkspaceConfigOutputE2eSparkConfAnyOf | null;
 
+export type WorkspaceConfigOutputAnomalySparkConfAnyOf = {
+  [key: string]: string;
+};
+
+export type WorkspaceConfigOutputAnomalySparkConf =
+  WorkspaceConfigOutputAnomalySparkConfAnyOf | null;
+
 export type WorkspaceConfigOutputCustomMetrics = string[] | null;
 
 export interface WorkspaceConfigOutput {
@@ -381,63 +536,25 @@ export interface WorkspaceConfigOutput {
   profiler_override_clusters?: WorkspaceConfigOutputProfilerOverrideClusters;
   quality_checker_override_clusters?: WorkspaceConfigOutputQualityCheckerOverrideClusters;
   e2e_override_clusters?: WorkspaceConfigOutputE2eOverrideClusters;
+  anomaly_override_clusters?: WorkspaceConfigOutputAnomalyOverrideClusters;
   profiler_spark_conf?: WorkspaceConfigOutputProfilerSparkConf;
   quality_checker_spark_conf?: WorkspaceConfigOutputQualityCheckerSparkConf;
   e2e_spark_conf?: WorkspaceConfigOutputE2eSparkConf;
+  anomaly_spark_conf?: WorkspaceConfigOutputAnomalySparkConf;
   profiler_max_parallelism?: number;
   quality_checker_max_parallelism?: number;
   custom_metrics?: WorkspaceConfigOutputCustomMetrics;
   llm_config?: LLMConfig;
 }
 
-export type ConfigParams = {
+export type ListRulesParams = {
   /**
-   * Path to the configuration folder
+   * Filter by status
    */
-  path?: string | null;
+  status?: string | null;
 };
 
-export type SaveConfigParams = {
-  /**
-   * Path to the configuration folder
-   */
-  path?: string | null;
-};
-
-export type GetRunConfigParams = {
-  /**
-   * Path to the configuration folder
-   */
-  path?: string | null;
-};
-
-export type DeleteRunConfigParams = {
-  /**
-   * Path to the configuration folder
-   */
-  path?: string | null;
-};
-
-export type SaveRunConfigParams = {
-  /**
-   * Path to the configuration folder
-   */
-  path?: string | null;
-};
-
-export type GetRunChecksParams = {
-  /**
-   * Path to the configuration folder
-   */
-  path?: string | null;
-};
-
-export type SaveRunChecksParams = {
-  /**
-   * Path to the configuration folder
-   */
-  path?: string | null;
-};
+export type DeleteRules200 = { [key: string]: string };
 
 /**
  * @summary Version
@@ -445,11 +562,11 @@ export type SaveRunChecksParams = {
 export const version = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<VersionOut>> => {
-  return axios.default.get(`/api/version`, options);
+  return axios.default.get(`/api/v1/version`, options);
 };
 
 export const getVersionQueryKey = () => {
-  return [`/api/version`] as const;
+  return [`/api/v1/version`] as const;
 };
 
 export const getVersionQueryOptions = <
@@ -694,11 +811,11 @@ export function useVersionSuspense<
 export const currentUser = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<User>> => {
-  return axios.default.get(`/api/current-user`, options);
+  return axios.default.get(`/api/v1/current-user`, options);
 };
 
 export const getCurrentUserQueryKey = () => {
-  return [`/api/current-user`] as const;
+  return [`/api/v1/current-user`] as const;
 };
 
 export const getCurrentUserQueryOptions = <
@@ -942,16 +1059,3346 @@ export function useCurrentUserSuspense<
 }
 
 /**
+ * @summary Me Role
+ */
+export const currentUserRole = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<UserRoleOut>> => {
+  return axios.default.get(`/api/v1/current-user/role`, options);
+};
+
+export const getCurrentUserRoleQueryKey = () => {
+  return [`/api/v1/current-user/role`] as const;
+};
+
+export const getCurrentUserRoleQueryOptions = <
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof currentUserRole>>, TError, TData>
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getCurrentUserRoleQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof currentUserRole>>> = ({
+    signal,
+  }) => currentUserRole({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof currentUserRole>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type CurrentUserRoleQueryResult = NonNullable<
+  Awaited<ReturnType<typeof currentUserRole>>
+>;
+export type CurrentUserRoleQueryError = AxiosError<HTTPValidationError>;
+
+export function useCurrentUserRole<
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof currentUserRole>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof currentUserRole>>,
+          TError,
+          Awaited<ReturnType<typeof currentUserRole>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useCurrentUserRole<
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof currentUserRole>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof currentUserRole>>,
+          TError,
+          Awaited<ReturnType<typeof currentUserRole>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useCurrentUserRole<
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof currentUserRole>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Me Role
+ */
+
+export function useCurrentUserRole<
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof currentUserRole>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getCurrentUserRoleQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getCurrentUserRoleSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(options?: {
+  query?: Partial<
+    UseSuspenseQueryOptions<
+      Awaited<ReturnType<typeof currentUserRole>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getCurrentUserRoleQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof currentUserRole>>> = ({
+    signal,
+  }) => currentUserRole({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof currentUserRole>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type CurrentUserRoleSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof currentUserRole>>
+>;
+export type CurrentUserRoleSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useCurrentUserRoleSuspense<
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof currentUserRole>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useCurrentUserRoleSuspense<
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof currentUserRole>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useCurrentUserRoleSuspense<
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof currentUserRole>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Me Role
+ */
+
+export function useCurrentUserRoleSuspense<
+  TData = Awaited<ReturnType<typeof currentUserRole>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof currentUserRole>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getCurrentUserRoleSuspenseQueryOptions(options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Load workspace config from application state (admin only).
+ * @summary Get Config
+ */
+export const config = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ConfigOut>> => {
+  return axios.default.get(`/api/v1/config`, options);
+};
+
+export const getConfigQueryKey = () => {
+  return [`/api/v1/config`] as const;
+};
+
+export const getConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getConfigQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof config>>> = ({
+    signal,
+  }) => config({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof config>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ConfigQueryResult = NonNullable<Awaited<ReturnType<typeof config>>>;
+export type ConfigQueryError = AxiosError<HTTPValidationError>;
+
+export function useConfig<
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof config>>,
+          TError,
+          Awaited<ReturnType<typeof config>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useConfig<
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof config>>,
+          TError,
+          Awaited<ReturnType<typeof config>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useConfig<
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Config
+ */
+
+export function useConfig<
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getConfigQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getConfigSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(options?: {
+  query?: Partial<
+    UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getConfigQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof config>>> = ({
+    signal,
+  }) => config({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof config>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ConfigSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof config>>
+>;
+export type ConfigSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useConfigSuspense<
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useConfigSuspense<
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useConfigSuspense<
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Config
+ */
+
+export function useConfigSuspense<
+  TData = Awaited<ReturnType<typeof config>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getConfigSuspenseQueryOptions(options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Save workspace config to application state (admin only).
+ * @summary Save Config
+ */
+export const saveConfig = (
+  configIn: ConfigIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ConfigOut>> => {
+  return axios.default.post(`/api/v1/config`, configIn, options);
+};
+
+export const getSaveConfigMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveConfig>>,
+    TError,
+    { data: ConfigIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveConfig>>,
+  TError,
+  { data: ConfigIn },
+  TContext
+> => {
+  const mutationKey = ["saveConfig"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveConfig>>,
+    { data: ConfigIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveConfig(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveConfig>>
+>;
+export type SaveConfigMutationBody = ConfigIn;
+export type SaveConfigMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Save Config
+ */
+export const useSaveConfig = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveConfig>>,
+      TError,
+      { data: ConfigIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveConfig>>,
+  TError,
+  { data: ConfigIn },
+  TContext
+> => {
+  const mutationOptions = getSaveConfigMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Get a single run config by name (admin only).
+ * @summary Get Run Config
+ */
+export const getRunConfig = (
+  name: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunConfigOut>> => {
+  return axios.default.get(`/api/v1/config/run/${name}`, options);
+};
+
+export const getGetRunConfigQueryKey = (name?: string) => {
+  return [`/api/v1/config/run/${name}`] as const;
+};
+
+export const getGetRunConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRunConfigQueryKey(name);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunConfig>>> = ({
+    signal,
+  }) => getRunConfig(name, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!name,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRunConfig>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRunConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunConfig>>
+>;
+export type GetRunConfigQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetRunConfig<
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunConfig>>,
+          TError,
+          Awaited<ReturnType<typeof getRunConfig>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunConfig<
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRunConfig>>,
+          TError,
+          Awaited<ReturnType<typeof getRunConfig>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunConfig<
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Run Config
+ */
+
+export function useGetRunConfig<
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRunConfigQueryOptions(name, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetRunConfigSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunConfig>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRunConfigQueryKey(name);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunConfig>>> = ({
+    signal,
+  }) => getRunConfig(name, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getRunConfig>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRunConfigSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRunConfig>>
+>;
+export type GetRunConfigSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetRunConfigSuspense<
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunConfig>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunConfigSuspense<
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunConfig>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRunConfigSuspense<
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunConfig>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Run Config
+ */
+
+export function useGetRunConfigSuspense<
+  TData = Awaited<ReturnType<typeof getRunConfig>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  name: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRunConfig>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRunConfigSuspenseQueryOptions(name, options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Delete a run config by name (admin only).
+ * @summary Delete Run Config
+ */
+export const deleteRunConfig = (
+  name: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ConfigOut>> => {
+  return axios.default.delete(`/api/v1/config/run/${name}`, options);
+};
+
+export const getDeleteRunConfigMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRunConfig>>,
+    TError,
+    { name: string },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteRunConfig>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationKey = ["deleteRunConfig"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteRunConfig>>,
+    { name: string }
+  > = (props) => {
+    const { name } = props ?? {};
+
+    return deleteRunConfig(name, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteRunConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteRunConfig>>
+>;
+
+export type DeleteRunConfigMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Delete Run Config
+ */
+export const useDeleteRunConfig = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteRunConfig>>,
+      TError,
+      { name: string },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteRunConfig>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationOptions = getDeleteRunConfigMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Save a run config — creates or updates by name (admin only).
+ * @summary Save Run Config
+ */
+export const saveRunConfig = (
+  runConfigIn: RunConfigIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunConfigOut>> => {
+  return axios.default.post(`/api/v1/config/run`, runConfigIn, options);
+};
+
+export const getSaveRunConfigMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveRunConfig>>,
+    TError,
+    { data: RunConfigIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveRunConfig>>,
+  TError,
+  { data: RunConfigIn },
+  TContext
+> => {
+  const mutationKey = ["saveRunConfig"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveRunConfig>>,
+    { data: RunConfigIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveRunConfig(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveRunConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveRunConfig>>
+>;
+export type SaveRunConfigMutationBody = RunConfigIn;
+export type SaveRunConfigMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Save Run Config
+ */
+export const useSaveRunConfig = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveRunConfig>>,
+      TError,
+      { data: RunConfigIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveRunConfig>>,
+  TError,
+  { data: RunConfigIn },
+  TContext
+> => {
+  const mutationOptions = getSaveRunConfigMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * @summary List Catalogs
+ */
+export const listCatalogs = (
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<CatalogOut[]>> => {
+  return axios.default.get(`/api/v1/discovery/catalogs`, options);
+};
+
+export const getListCatalogsQueryKey = () => {
+  return [`/api/v1/discovery/catalogs`] as const;
+};
+
+export const getListCatalogsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(options?: {
+  query?: Partial<
+    UseQueryOptions<Awaited<ReturnType<typeof listCatalogs>>, TError, TData>
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListCatalogsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listCatalogs>>> = ({
+    signal,
+  }) => listCatalogs({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listCatalogs>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListCatalogsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCatalogs>>
+>;
+export type ListCatalogsQueryError = AxiosError<HTTPValidationError>;
+
+export function useListCatalogs<
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listCatalogs>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listCatalogs>>,
+          TError,
+          Awaited<ReturnType<typeof listCatalogs>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListCatalogs<
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listCatalogs>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listCatalogs>>,
+          TError,
+          Awaited<ReturnType<typeof listCatalogs>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListCatalogs<
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listCatalogs>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Catalogs
+ */
+
+export function useListCatalogs<
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listCatalogs>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListCatalogsQueryOptions(options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getListCatalogsSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(options?: {
+  query?: Partial<
+    UseSuspenseQueryOptions<
+      Awaited<ReturnType<typeof listCatalogs>>,
+      TError,
+      TData
+    >
+  >;
+  axios?: AxiosRequestConfig;
+}) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListCatalogsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listCatalogs>>> = ({
+    signal,
+  }) => listCatalogs({ signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof listCatalogs>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListCatalogsSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listCatalogs>>
+>;
+export type ListCatalogsSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useListCatalogsSuspense<
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listCatalogs>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListCatalogsSuspense<
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listCatalogs>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListCatalogsSuspense<
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listCatalogs>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Catalogs
+ */
+
+export function useListCatalogsSuspense<
+  TData = Awaited<ReturnType<typeof listCatalogs>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listCatalogs>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListCatalogsSuspenseQueryOptions(options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * @summary List Schemas
+ */
+export const listSchemas = (
+  catalog: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<SchemaOut[]>> => {
+  return axios.default.get(
+    `/api/v1/discovery/catalogs/${catalog}/schemas`,
+    options,
+  );
+};
+
+export const getListSchemasQueryKey = (catalog?: string) => {
+  return [`/api/v1/discovery/catalogs/${catalog}/schemas`] as const;
+};
+
+export const getListSchemasQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListSchemasQueryKey(catalog);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listSchemas>>> = ({
+    signal,
+  }) => listSchemas(catalog, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!catalog,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listSchemas>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListSchemasQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSchemas>>
+>;
+export type ListSchemasQueryError = AxiosError<HTTPValidationError>;
+
+export function useListSchemas<
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSchemas>>,
+          TError,
+          Awaited<ReturnType<typeof listSchemas>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListSchemas<
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listSchemas>>,
+          TError,
+          Awaited<ReturnType<typeof listSchemas>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListSchemas<
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Schemas
+ */
+
+export function useListSchemas<
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listSchemas>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListSchemasQueryOptions(catalog, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getListSchemasSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listSchemas>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListSchemasQueryKey(catalog);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listSchemas>>> = ({
+    signal,
+  }) => listSchemas(catalog, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof listSchemas>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListSchemasSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listSchemas>>
+>;
+export type ListSchemasSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useListSchemasSuspense<
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listSchemas>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListSchemasSuspense<
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listSchemas>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListSchemasSuspense<
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listSchemas>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Schemas
+ */
+
+export function useListSchemasSuspense<
+  TData = Awaited<ReturnType<typeof listSchemas>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listSchemas>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListSchemasSuspenseQueryOptions(catalog, options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * @summary List Tables
+ */
+export const listTables = (
+  catalog: string,
+  schema: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<TableOut[]>> => {
+  return axios.default.get(
+    `/api/v1/discovery/catalogs/${catalog}/schemas/${schema}/tables`,
+    options,
+  );
+};
+
+export const getListTablesQueryKey = (catalog?: string, schema?: string) => {
+  return [
+    `/api/v1/discovery/catalogs/${catalog}/schemas/${schema}/tables`,
+  ] as const;
+};
+
+export const getListTablesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTables>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListTablesQueryKey(catalog, schema);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listTables>>> = ({
+    signal,
+  }) => listTables(catalog, schema, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(catalog && schema),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listTables>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListTablesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listTables>>
+>;
+export type ListTablesQueryError = AxiosError<HTTPValidationError>;
+
+export function useListTables<
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTables>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listTables>>,
+          TError,
+          Awaited<ReturnType<typeof listTables>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListTables<
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTables>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listTables>>,
+          TError,
+          Awaited<ReturnType<typeof listTables>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListTables<
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTables>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Tables
+ */
+
+export function useListTables<
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listTables>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListTablesQueryOptions(catalog, schema, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getListTablesSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listTables>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListTablesQueryKey(catalog, schema);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listTables>>> = ({
+    signal,
+  }) => listTables(catalog, schema, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof listTables>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListTablesSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listTables>>
+>;
+export type ListTablesSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useListTablesSuspense<
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listTables>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListTablesSuspense<
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listTables>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListTablesSuspense<
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listTables>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Tables
+ */
+
+export function useListTablesSuspense<
+  TData = Awaited<ReturnType<typeof listTables>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listTables>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListTablesSuspenseQueryOptions(
+    catalog,
+    schema,
+    options,
+  );
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * @summary Get Table Columns
+ */
+export const getTableColumns = (
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ColumnOut[]>> => {
+  return axios.default.get(
+    `/api/v1/discovery/catalogs/${catalog}/schemas/${schema}/tables/${table}/columns`,
+    options,
+  );
+};
+
+export const getGetTableColumnsQueryKey = (
+  catalog?: string,
+  schema?: string,
+  table?: string,
+) => {
+  return [
+    `/api/v1/discovery/catalogs/${catalog}/schemas/${schema}/tables/${table}/columns`,
+  ] as const;
+};
+
+export const getGetTableColumnsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetTableColumnsQueryKey(catalog, schema, table);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTableColumns>>> = ({
+    signal,
+  }) => getTableColumns(catalog, schema, table, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!(catalog && schema && table),
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTableColumns>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetTableColumnsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTableColumns>>
+>;
+export type GetTableColumnsQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetTableColumns<
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getTableColumns>>,
+          TError,
+          Awaited<ReturnType<typeof getTableColumns>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetTableColumns<
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getTableColumns>>,
+          TError,
+          Awaited<ReturnType<typeof getTableColumns>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetTableColumns<
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Table Columns
+ */
+
+export function useGetTableColumns<
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetTableColumnsQueryOptions(
+    catalog,
+    schema,
+    table,
+    options,
+  );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetTableColumnsSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ??
+    getGetTableColumnsQueryKey(catalog, schema, table);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTableColumns>>> = ({
+    signal,
+  }) => getTableColumns(catalog, schema, table, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getTableColumns>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetTableColumnsSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTableColumns>>
+>;
+export type GetTableColumnsSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetTableColumnsSuspense<
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetTableColumnsSuspense<
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetTableColumnsSuspense<
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Table Columns
+ */
+
+export function useGetTableColumnsSuspense<
+  TData = Awaited<ReturnType<typeof getTableColumns>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  catalog: string,
+  schema: string,
+  table: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getTableColumns>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetTableColumnsSuspenseQueryOptions(
+    catalog,
+    schema,
+    table,
+    options,
+  );
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Generate data quality checks from natural language using AI-assisted generation.
+ * @summary Ai Generate Checks
+ */
+export const aiAssistedChecksGeneration = (
+  generateChecksIn: GenerateChecksIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<GenerateChecksOut>> => {
+  return axios.default.post(
+    `/api/v1/ai/generate-checks`,
+    generateChecksIn,
+    options,
+  );
+};
+
+export const getAiAssistedChecksGenerationMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+    TError,
+    { data: GenerateChecksIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+  TError,
+  { data: GenerateChecksIn },
+  TContext
+> => {
+  const mutationKey = ["aiAssistedChecksGeneration"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+    { data: GenerateChecksIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return aiAssistedChecksGeneration(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AiAssistedChecksGenerationMutationResult = NonNullable<
+  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>
+>;
+export type AiAssistedChecksGenerationMutationBody = GenerateChecksIn;
+export type AiAssistedChecksGenerationMutationError =
+  AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Ai Generate Checks
+ */
+export const useAiAssistedChecksGeneration = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+      TError,
+      { data: GenerateChecksIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
+  TError,
+  { data: GenerateChecksIn },
+  TContext
+> => {
+  const mutationOptions = getAiAssistedChecksGenerationMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * List all rule sets in the catalog, optionally filtered by status.
+ * @summary List Rules
+ */
+export const listRules = (
+  params?: ListRulesParams,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RuleCatalogEntryOut[]>> => {
+  return axios.default.get(`/api/v1/rules`, {
+    ...options,
+    params: { ...params, ...options?.params },
+  });
+};
+
+export const getListRulesQueryKey = (params?: ListRulesParams) => {
+  return [`/api/v1/rules`, ...(params ? [params] : [])] as const;
+};
+
+export const getListRulesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params?: ListRulesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListRulesQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listRules>>> = ({
+    signal,
+  }) => listRules(params, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listRules>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListRulesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRules>>
+>;
+export type ListRulesQueryError = AxiosError<HTTPValidationError>;
+
+export function useListRules<
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params: undefined | ListRulesParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRules>>,
+          TError,
+          Awaited<ReturnType<typeof listRules>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListRules<
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params?: ListRulesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listRules>>,
+          TError,
+          Awaited<ReturnType<typeof listRules>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListRules<
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params?: ListRulesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Rules
+ */
+
+export function useListRules<
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params?: ListRulesParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof listRules>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListRulesQueryOptions(params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getListRulesSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params?: ListRulesParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListRulesQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listRules>>> = ({
+    signal,
+  }) => listRules(params, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof listRules>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type ListRulesSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRules>>
+>;
+export type ListRulesSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useListRulesSuspense<
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params: undefined | ListRulesParams,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListRulesSuspense<
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params?: ListRulesParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useListRulesSuspense<
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params?: ListRulesParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary List Rules
+ */
+
+export function useListRulesSuspense<
+  TData = Awaited<ReturnType<typeof listRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  params?: ListRulesParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof listRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getListRulesSuspenseQueryOptions(params, options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Save (upsert) a rule set for a table.
+ * @summary Save Rules
+ */
+export const saveRules = (
+  saveRulesIn: SaveRulesIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
+  return axios.default.post(`/api/v1/rules`, saveRulesIn, options);
+};
+
+export const getSaveRulesMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveRules>>,
+    TError,
+    { data: SaveRulesIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveRules>>,
+  TError,
+  { data: SaveRulesIn },
+  TContext
+> => {
+  const mutationKey = ["saveRules"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveRules>>,
+    { data: SaveRulesIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveRules(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveRulesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveRules>>
+>;
+export type SaveRulesMutationBody = SaveRulesIn;
+export type SaveRulesMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Save Rules
+ */
+export const useSaveRules = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof saveRules>>,
+      TError,
+      { data: SaveRulesIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof saveRules>>,
+  TError,
+  { data: SaveRulesIn },
+  TContext
+> => {
+  const mutationOptions = getSaveRulesMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Get the rule set for a specific table.
+ * @summary Get Rules
+ */
+export const getRules = (
+  tableFqn: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
+  return axios.default.get(`/api/v1/rules/${tableFqn}`, options);
+};
+
+export const getGetRulesQueryKey = (tableFqn?: string) => {
+  return [`/api/v1/rules/${tableFqn}`] as const;
+};
+
+export const getGetRulesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRules>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRulesQueryKey(tableFqn);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRules>>> = ({
+    signal,
+  }) => getRules(tableFqn, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!tableFqn,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getRules>>, TError, TData> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+};
+
+export type GetRulesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRules>>
+>;
+export type GetRulesQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetRules<
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRules>>, TError, TData>
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRules>>,
+          TError,
+          Awaited<ReturnType<typeof getRules>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRules<
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRules>>, TError, TData>
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getRules>>,
+          TError,
+          Awaited<ReturnType<typeof getRules>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRules<
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRules>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Rules
+ */
+
+export function useGetRules<
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<Awaited<ReturnType<typeof getRules>>, TError, TData>
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRulesQueryOptions(tableFqn, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetRulesSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetRulesQueryKey(tableFqn);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRules>>> = ({
+    signal,
+  }) => getRules(tableFqn, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getRules>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetRulesSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRules>>
+>;
+export type GetRulesSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetRulesSuspense<
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRulesSuspense<
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetRulesSuspense<
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Rules
+ */
+
+export function useGetRulesSuspense<
+  TData = Awaited<ReturnType<typeof getRules>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  tableFqn: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getRules>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetRulesSuspenseQueryOptions(tableFqn, options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Delete the rule set for a table.
+ * @summary Delete Rules
+ */
+export const deleteRules = (
+  tableFqn: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<DeleteRules200>> => {
+  return axios.default.delete(`/api/v1/rules/${tableFqn}`, options);
+};
+
+export const getDeleteRulesMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteRules>>,
+    TError,
+    { tableFqn: string },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteRules>>,
+  TError,
+  { tableFqn: string },
+  TContext
+> => {
+  const mutationKey = ["deleteRules"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteRules>>,
+    { tableFqn: string }
+  > = (props) => {
+    const { tableFqn } = props ?? {};
+
+    return deleteRules(tableFqn, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteRulesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteRules>>
+>;
+
+export type DeleteRulesMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Delete Rules
+ */
+export const useDeleteRules = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof deleteRules>>,
+      TError,
+      { tableFqn: string },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof deleteRules>>,
+  TError,
+  { tableFqn: string },
+  TContext
+> => {
+  const mutationOptions = getDeleteRulesMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Submit a rule set for approval.
+ * @summary Submit For Approval
+ */
+export const submitRulesForApproval = (
+  tableFqn: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
+  return axios.default.post(
+    `/api/v1/rules/${tableFqn}/submit`,
+    undefined,
+    options,
+  );
+};
+
+export const getSubmitRulesForApprovalMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitRulesForApproval>>,
+    TError,
+    { tableFqn: string },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof submitRulesForApproval>>,
+  TError,
+  { tableFqn: string },
+  TContext
+> => {
+  const mutationKey = ["submitRulesForApproval"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof submitRulesForApproval>>,
+    { tableFqn: string }
+  > = (props) => {
+    const { tableFqn } = props ?? {};
+
+    return submitRulesForApproval(tableFqn, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SubmitRulesForApprovalMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitRulesForApproval>>
+>;
+
+export type SubmitRulesForApprovalMutationError =
+  AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Submit For Approval
+ */
+export const useSubmitRulesForApproval = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof submitRulesForApproval>>,
+      TError,
+      { tableFqn: string },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof submitRulesForApproval>>,
+  TError,
+  { tableFqn: string },
+  TContext
+> => {
+  const mutationOptions = getSubmitRulesForApprovalMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Approve a rule set (admin only).
+ * @summary Approve Rules
+ */
+export const approveRules = (
+  tableFqn: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
+  return axios.default.post(
+    `/api/v1/rules/${tableFqn}/approve`,
+    undefined,
+    options,
+  );
+};
+
+export const getApproveRulesMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveRules>>,
+    TError,
+    { tableFqn: string },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approveRules>>,
+  TError,
+  { tableFqn: string },
+  TContext
+> => {
+  const mutationKey = ["approveRules"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approveRules>>,
+    { tableFqn: string }
+  > = (props) => {
+    const { tableFqn } = props ?? {};
+
+    return approveRules(tableFqn, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApproveRulesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approveRules>>
+>;
+
+export type ApproveRulesMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Approve Rules
+ */
+export const useApproveRules = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof approveRules>>,
+      TError,
+      { tableFqn: string },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof approveRules>>,
+  TError,
+  { tableFqn: string },
+  TContext
+> => {
+  const mutationOptions = getApproveRulesMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Reject a rule set (admin only).
+ * @summary Reject Rules
+ */
+export const rejectRules = (
+  tableFqn: string,
+  setStatusIn: SetStatusIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
+  return axios.default.post(
+    `/api/v1/rules/${tableFqn}/reject`,
+    setStatusIn,
+    options,
+  );
+};
+
+export const getRejectRulesMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof rejectRules>>,
+    TError,
+    { tableFqn: string; data: SetStatusIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof rejectRules>>,
+  TError,
+  { tableFqn: string; data: SetStatusIn },
+  TContext
+> => {
+  const mutationKey = ["rejectRules"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof rejectRules>>,
+    { tableFqn: string; data: SetStatusIn }
+  > = (props) => {
+    const { tableFqn, data } = props ?? {};
+
+    return rejectRules(tableFqn, data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RejectRulesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof rejectRules>>
+>;
+export type RejectRulesMutationBody = SetStatusIn;
+export type RejectRulesMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Reject Rules
+ */
+export const useRejectRules = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof rejectRules>>,
+      TError,
+      { tableFqn: string; data: SetStatusIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof rejectRules>>,
+  TError,
+  { tableFqn: string; data: SetStatusIn },
+  TContext
+> => {
+  const mutationOptions = getRejectRulesMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Run checks against a sample of the table and return validation results.
+ * @summary Dry Run
+ */
+export const dryRun = (
+  dryRunIn: DryRunIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<DryRunOut>> => {
+  return axios.default.post(`/api/v1/dryrun`, dryRunIn, options);
+};
+
+export const getDryRunMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof dryRun>>,
+    TError,
+    { data: DryRunIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof dryRun>>,
+  TError,
+  { data: DryRunIn },
+  TContext
+> => {
+  const mutationKey = ["dryRun"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof dryRun>>,
+    { data: DryRunIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return dryRun(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DryRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof dryRun>>
+>;
+export type DryRunMutationBody = DryRunIn;
+export type DryRunMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Dry Run
+ */
+export const useDryRun = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof dryRun>>,
+      TError,
+      { data: DryRunIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof dryRun>>,
+  TError,
+  { data: DryRunIn },
+  TContext
+> => {
+  const mutationOptions = getDryRunMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
  * @summary Get Settings
  */
 export const getSettings = (
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<InstallationSettings>> => {
-  return axios.default.get(`/api/settings`, options);
+  return axios.default.get(`/api/v1/settings`, options);
 };
 
 export const getGetSettingsQueryKey = () => {
-  return [`/api/settings`] as const;
+  return [`/api/v1/settings`] as const;
 };
 
 export const getGetSettingsQueryOptions = <
@@ -1201,7 +4648,7 @@ export const saveSettings = (
   installationSettings: InstallationSettings,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<InstallationSettings>> => {
-  return axios.default.post(`/api/settings`, installationSettings, options);
+  return axios.default.post(`/api/v1/settings`, installationSettings, options);
 };
 
 export const getSaveSettingsMutationOptions = <
@@ -1272,1283 +4719,6 @@ export const useSaveSettings = <
   TContext
 > => {
   const mutationOptions = getSaveSettingsMutationOptions(options);
-
-  return useMutation(mutationOptions, queryClient);
-};
-
-/**
- * @summary Get Config
- */
-export const config = (
-  params?: ConfigParams,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<ConfigOut>> => {
-  return axios.default.get(`/api/config`, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
-};
-
-export const getConfigQueryKey = (params?: ConfigParams) => {
-  return [`/api/config`, ...(params ? [params] : [])] as const;
-};
-
-export const getConfigQueryOptions = <
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params?: ConfigParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-) => {
-  const { query: queryOptions, axios: axiosOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getConfigQueryKey(params);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof config>>> = ({
-    signal,
-  }) => config(params, { signal, ...axiosOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof config>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-};
-
-export type ConfigQueryResult = NonNullable<Awaited<ReturnType<typeof config>>>;
-export type ConfigQueryError = AxiosError<HTTPValidationError>;
-
-export function useConfig<
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params: undefined | ConfigParams,
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    > &
-      Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof config>>,
-          TError,
-          Awaited<ReturnType<typeof config>>
-        >,
-        "initialData"
-      >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useConfig<
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params?: ConfigParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    > &
-      Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof config>>,
-          TError,
-          Awaited<ReturnType<typeof config>>
-        >,
-        "initialData"
-      >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useConfig<
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params?: ConfigParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-/**
- * @summary Get Config
- */
-
-export function useConfig<
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params?: ConfigParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-} {
-  const queryOptions = getConfigQueryOptions(params, options);
-
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey;
-
-  return query;
-}
-
-export const getConfigSuspenseQueryOptions = <
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params?: ConfigParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-) => {
-  const { query: queryOptions, axios: axiosOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getConfigQueryKey(params);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof config>>> = ({
-    signal,
-  }) => config(params, { signal, ...axiosOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
-    Awaited<ReturnType<typeof config>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-};
-
-export type ConfigSuspenseQueryResult = NonNullable<
-  Awaited<ReturnType<typeof config>>
->;
-export type ConfigSuspenseQueryError = AxiosError<HTTPValidationError>;
-
-export function useConfigSuspense<
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params: undefined | ConfigParams,
-  options: {
-    query: Partial<
-      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useConfigSuspense<
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params?: ConfigParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useConfigSuspense<
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params?: ConfigParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-/**
- * @summary Get Config
- */
-
-export function useConfigSuspense<
-  TData = Awaited<ReturnType<typeof config>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  params?: ConfigParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<Awaited<ReturnType<typeof config>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-} {
-  const queryOptions = getConfigSuspenseQueryOptions(params, options);
-
-  const query = useSuspenseQuery(
-    queryOptions,
-    queryClient,
-  ) as UseSuspenseQueryResult<TData, TError> & {
-    queryKey: DataTag<QueryKey, TData, TError>;
-  };
-
-  query.queryKey = queryOptions.queryKey;
-
-  return query;
-}
-
-/**
- * @summary Save Config
- */
-export const saveConfig = (
-  configIn: ConfigIn,
-  params?: SaveConfigParams,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<ConfigOut>> => {
-  return axios.default.post(`/api/config`, configIn, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
-};
-
-export const getSaveConfigMutationOptions = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof saveConfig>>,
-    TError,
-    { data: ConfigIn; params?: SaveConfigParams },
-    TContext
-  >;
-  axios?: AxiosRequestConfig;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof saveConfig>>,
-  TError,
-  { data: ConfigIn; params?: SaveConfigParams },
-  TContext
-> => {
-  const mutationKey = ["saveConfig"];
-  const { mutation: mutationOptions, axios: axiosOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey }, axios: undefined };
-
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof saveConfig>>,
-    { data: ConfigIn; params?: SaveConfigParams }
-  > = (props) => {
-    const { data, params } = props ?? {};
-
-    return saveConfig(data, params, axiosOptions);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type SaveConfigMutationResult = NonNullable<
-  Awaited<ReturnType<typeof saveConfig>>
->;
-export type SaveConfigMutationBody = ConfigIn;
-export type SaveConfigMutationError = AxiosError<HTTPValidationError>;
-
-/**
- * @summary Save Config
- */
-export const useSaveConfig = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof saveConfig>>,
-      TError,
-      { data: ConfigIn; params?: SaveConfigParams },
-      TContext
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof saveConfig>>,
-  TError,
-  { data: ConfigIn; params?: SaveConfigParams },
-  TContext
-> => {
-  const mutationOptions = getSaveConfigMutationOptions(options);
-
-  return useMutation(mutationOptions, queryClient);
-};
-
-/**
- * @summary Get Run Config
- */
-export const getRunConfig = (
-  name: string,
-  params?: GetRunConfigParams,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<RunConfigOut>> => {
-  return axios.default.get(`/api/config/run/${name}`, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
-};
-
-export const getGetRunConfigQueryKey = (
-  name?: string,
-  params?: GetRunConfigParams,
-) => {
-  return [`/api/config/run/${name}`, ...(params ? [params] : [])] as const;
-};
-
-export const getGetRunConfigQueryOptions = <
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunConfigParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-) => {
-  const { query: queryOptions, axios: axiosOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetRunConfigQueryKey(name, params);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunConfig>>> = ({
-    signal,
-  }) => getRunConfig(name, params, { signal, ...axiosOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!name,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getRunConfig>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-};
-
-export type GetRunConfigQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getRunConfig>>
->;
-export type GetRunConfigQueryError = AxiosError<HTTPValidationError>;
-
-export function useGetRunConfig<
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params: undefined | GetRunConfigParams,
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
-    > &
-      Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getRunConfig>>,
-          TError,
-          Awaited<ReturnType<typeof getRunConfig>>
-        >,
-        "initialData"
-      >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useGetRunConfig<
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunConfigParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
-    > &
-      Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getRunConfig>>,
-          TError,
-          Awaited<ReturnType<typeof getRunConfig>>
-        >,
-        "initialData"
-      >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useGetRunConfig<
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunConfigParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-/**
- * @summary Get Run Config
- */
-
-export function useGetRunConfig<
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunConfigParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunConfig>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-} {
-  const queryOptions = getGetRunConfigQueryOptions(name, params, options);
-
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey;
-
-  return query;
-}
-
-export const getGetRunConfigSuspenseQueryOptions = <
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunConfigParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunConfig>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-) => {
-  const { query: queryOptions, axios: axiosOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetRunConfigQueryKey(name, params);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunConfig>>> = ({
-    signal,
-  }) => getRunConfig(name, params, { signal, ...axiosOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
-    Awaited<ReturnType<typeof getRunConfig>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-};
-
-export type GetRunConfigSuspenseQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getRunConfig>>
->;
-export type GetRunConfigSuspenseQueryError = AxiosError<HTTPValidationError>;
-
-export function useGetRunConfigSuspense<
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params: undefined | GetRunConfigParams,
-  options: {
-    query: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunConfig>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useGetRunConfigSuspense<
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunConfigParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunConfig>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useGetRunConfigSuspense<
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunConfigParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunConfig>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-/**
- * @summary Get Run Config
- */
-
-export function useGetRunConfigSuspense<
-  TData = Awaited<ReturnType<typeof getRunConfig>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunConfigParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunConfig>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-} {
-  const queryOptions = getGetRunConfigSuspenseQueryOptions(
-    name,
-    params,
-    options,
-  );
-
-  const query = useSuspenseQuery(
-    queryOptions,
-    queryClient,
-  ) as UseSuspenseQueryResult<TData, TError> & {
-    queryKey: DataTag<QueryKey, TData, TError>;
-  };
-
-  query.queryKey = queryOptions.queryKey;
-
-  return query;
-}
-
-/**
- * @summary Delete Run Config
- */
-export const deleteRunConfig = (
-  name: string,
-  params?: DeleteRunConfigParams,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<ConfigOut>> => {
-  return axios.default.delete(`/api/config/run/${name}`, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
-};
-
-export const getDeleteRunConfigMutationOptions = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof deleteRunConfig>>,
-    TError,
-    { name: string; params?: DeleteRunConfigParams },
-    TContext
-  >;
-  axios?: AxiosRequestConfig;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof deleteRunConfig>>,
-  TError,
-  { name: string; params?: DeleteRunConfigParams },
-  TContext
-> => {
-  const mutationKey = ["deleteRunConfig"];
-  const { mutation: mutationOptions, axios: axiosOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey }, axios: undefined };
-
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof deleteRunConfig>>,
-    { name: string; params?: DeleteRunConfigParams }
-  > = (props) => {
-    const { name, params } = props ?? {};
-
-    return deleteRunConfig(name, params, axiosOptions);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type DeleteRunConfigMutationResult = NonNullable<
-  Awaited<ReturnType<typeof deleteRunConfig>>
->;
-
-export type DeleteRunConfigMutationError = AxiosError<HTTPValidationError>;
-
-/**
- * @summary Delete Run Config
- */
-export const useDeleteRunConfig = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof deleteRunConfig>>,
-      TError,
-      { name: string; params?: DeleteRunConfigParams },
-      TContext
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof deleteRunConfig>>,
-  TError,
-  { name: string; params?: DeleteRunConfigParams },
-  TContext
-> => {
-  const mutationOptions = getDeleteRunConfigMutationOptions(options);
-
-  return useMutation(mutationOptions, queryClient);
-};
-
-/**
- * @summary Save Run Config
- */
-export const saveRunConfig = (
-  runConfigIn: RunConfigIn,
-  params?: SaveRunConfigParams,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<RunConfigOut>> => {
-  return axios.default.post(`/api/config/run`, runConfigIn, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
-};
-
-export const getSaveRunConfigMutationOptions = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof saveRunConfig>>,
-    TError,
-    { data: RunConfigIn; params?: SaveRunConfigParams },
-    TContext
-  >;
-  axios?: AxiosRequestConfig;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof saveRunConfig>>,
-  TError,
-  { data: RunConfigIn; params?: SaveRunConfigParams },
-  TContext
-> => {
-  const mutationKey = ["saveRunConfig"];
-  const { mutation: mutationOptions, axios: axiosOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey }, axios: undefined };
-
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof saveRunConfig>>,
-    { data: RunConfigIn; params?: SaveRunConfigParams }
-  > = (props) => {
-    const { data, params } = props ?? {};
-
-    return saveRunConfig(data, params, axiosOptions);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type SaveRunConfigMutationResult = NonNullable<
-  Awaited<ReturnType<typeof saveRunConfig>>
->;
-export type SaveRunConfigMutationBody = RunConfigIn;
-export type SaveRunConfigMutationError = AxiosError<HTTPValidationError>;
-
-/**
- * @summary Save Run Config
- */
-export const useSaveRunConfig = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof saveRunConfig>>,
-      TError,
-      { data: RunConfigIn; params?: SaveRunConfigParams },
-      TContext
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof saveRunConfig>>,
-  TError,
-  { data: RunConfigIn; params?: SaveRunConfigParams },
-  TContext
-> => {
-  const mutationOptions = getSaveRunConfigMutationOptions(options);
-
-  return useMutation(mutationOptions, queryClient);
-};
-
-/**
- * @summary Get Run Checks
- */
-export const getRunChecks = (
-  name: string,
-  params?: GetRunChecksParams,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<ChecksOut>> => {
-  return axios.default.get(`/api/config/run/${name}/checks`, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
-};
-
-export const getGetRunChecksQueryKey = (
-  name?: string,
-  params?: GetRunChecksParams,
-) => {
-  return [
-    `/api/config/run/${name}/checks`,
-    ...(params ? [params] : []),
-  ] as const;
-};
-
-export const getGetRunChecksQueryOptions = <
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunChecksParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunChecks>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-) => {
-  const { query: queryOptions, axios: axiosOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetRunChecksQueryKey(name, params);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunChecks>>> = ({
-    signal,
-  }) => getRunChecks(name, params, { signal, ...axiosOptions });
-
-  return {
-    queryKey,
-    queryFn,
-    enabled: !!name,
-    ...queryOptions,
-  } as UseQueryOptions<
-    Awaited<ReturnType<typeof getRunChecks>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-};
-
-export type GetRunChecksQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getRunChecks>>
->;
-export type GetRunChecksQueryError = AxiosError<HTTPValidationError>;
-
-export function useGetRunChecks<
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params: undefined | GetRunChecksParams,
-  options: {
-    query: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunChecks>>, TError, TData>
-    > &
-      Pick<
-        DefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getRunChecks>>,
-          TError,
-          Awaited<ReturnType<typeof getRunChecks>>
-        >,
-        "initialData"
-      >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): DefinedUseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useGetRunChecks<
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunChecksParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunChecks>>, TError, TData>
-    > &
-      Pick<
-        UndefinedInitialDataOptions<
-          Awaited<ReturnType<typeof getRunChecks>>,
-          TError,
-          Awaited<ReturnType<typeof getRunChecks>>
-        >,
-        "initialData"
-      >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useGetRunChecks<
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunChecksParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunChecks>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-/**
- * @summary Get Run Checks
- */
-
-export function useGetRunChecks<
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunChecksParams,
-  options?: {
-    query?: Partial<
-      UseQueryOptions<Awaited<ReturnType<typeof getRunChecks>>, TError, TData>
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-} {
-  const queryOptions = getGetRunChecksQueryOptions(name, params, options);
-
-  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
-    TData,
-    TError
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-
-  query.queryKey = queryOptions.queryKey;
-
-  return query;
-}
-
-export const getGetRunChecksSuspenseQueryOptions = <
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunChecksParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunChecks>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-) => {
-  const { query: queryOptions, axios: axiosOptions } = options ?? {};
-
-  const queryKey =
-    queryOptions?.queryKey ?? getGetRunChecksQueryKey(name, params);
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getRunChecks>>> = ({
-    signal,
-  }) => getRunChecks(name, params, { signal, ...axiosOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
-    Awaited<ReturnType<typeof getRunChecks>>,
-    TError,
-    TData
-  > & { queryKey: DataTag<QueryKey, TData, TError> };
-};
-
-export type GetRunChecksSuspenseQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getRunChecks>>
->;
-export type GetRunChecksSuspenseQueryError = AxiosError<HTTPValidationError>;
-
-export function useGetRunChecksSuspense<
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params: undefined | GetRunChecksParams,
-  options: {
-    query: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunChecks>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useGetRunChecksSuspense<
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunChecksParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunChecks>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-export function useGetRunChecksSuspense<
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunChecksParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunChecks>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-};
-/**
- * @summary Get Run Checks
- */
-
-export function useGetRunChecksSuspense<
-  TData = Awaited<ReturnType<typeof getRunChecks>>,
-  TError = AxiosError<HTTPValidationError>,
->(
-  name: string,
-  params?: GetRunChecksParams,
-  options?: {
-    query?: Partial<
-      UseSuspenseQueryOptions<
-        Awaited<ReturnType<typeof getRunChecks>>,
-        TError,
-        TData
-      >
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseSuspenseQueryResult<TData, TError> & {
-  queryKey: DataTag<QueryKey, TData, TError>;
-} {
-  const queryOptions = getGetRunChecksSuspenseQueryOptions(
-    name,
-    params,
-    options,
-  );
-
-  const query = useSuspenseQuery(
-    queryOptions,
-    queryClient,
-  ) as UseSuspenseQueryResult<TData, TError> & {
-    queryKey: DataTag<QueryKey, TData, TError>;
-  };
-
-  query.queryKey = queryOptions.queryKey;
-
-  return query;
-}
-
-/**
- * @summary Save Run Checks
- */
-export const saveRunChecks = (
-  name: string,
-  checksIn: ChecksIn,
-  params?: SaveRunChecksParams,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<ChecksOut>> => {
-  return axios.default.post(`/api/config/run/${name}/checks`, checksIn, {
-    ...options,
-    params: { ...params, ...options?.params },
-  });
-};
-
-export const getSaveRunChecksMutationOptions = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof saveRunChecks>>,
-    TError,
-    { name: string; data: ChecksIn; params?: SaveRunChecksParams },
-    TContext
-  >;
-  axios?: AxiosRequestConfig;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof saveRunChecks>>,
-  TError,
-  { name: string; data: ChecksIn; params?: SaveRunChecksParams },
-  TContext
-> => {
-  const mutationKey = ["saveRunChecks"];
-  const { mutation: mutationOptions, axios: axiosOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey }, axios: undefined };
-
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof saveRunChecks>>,
-    { name: string; data: ChecksIn; params?: SaveRunChecksParams }
-  > = (props) => {
-    const { name, data, params } = props ?? {};
-
-    return saveRunChecks(name, data, params, axiosOptions);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type SaveRunChecksMutationResult = NonNullable<
-  Awaited<ReturnType<typeof saveRunChecks>>
->;
-export type SaveRunChecksMutationBody = ChecksIn;
-export type SaveRunChecksMutationError = AxiosError<HTTPValidationError>;
-
-/**
- * @summary Save Run Checks
- */
-export const useSaveRunChecks = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof saveRunChecks>>,
-      TError,
-      { name: string; data: ChecksIn; params?: SaveRunChecksParams },
-      TContext
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof saveRunChecks>>,
-  TError,
-  { name: string; data: ChecksIn; params?: SaveRunChecksParams },
-  TContext
-> => {
-  const mutationOptions = getSaveRunChecksMutationOptions(options);
-
-  return useMutation(mutationOptions, queryClient);
-};
-
-/**
- * Generate data quality checks from natural language using AI-assisted generation.
- * @summary Ai Generate Checks
- */
-export const aiAssistedChecksGeneration = (
-  generateChecksIn: GenerateChecksIn,
-  options?: AxiosRequestConfig,
-): Promise<AxiosResponse<GenerateChecksOut>> => {
-  return axios.default.post(
-    `/api/ai-generate-checks`,
-    generateChecksIn,
-    options,
-  );
-};
-
-export const getAiAssistedChecksGenerationMutationOptions = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(options?: {
-  mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
-    TError,
-    { data: GenerateChecksIn },
-    TContext
-  >;
-  axios?: AxiosRequestConfig;
-}): UseMutationOptions<
-  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
-  TError,
-  { data: GenerateChecksIn },
-  TContext
-> => {
-  const mutationKey = ["aiAssistedChecksGeneration"];
-  const { mutation: mutationOptions, axios: axiosOptions } = options
-    ? options.mutation &&
-      "mutationKey" in options.mutation &&
-      options.mutation.mutationKey
-      ? options
-      : { ...options, mutation: { ...options.mutation, mutationKey } }
-    : { mutation: { mutationKey }, axios: undefined };
-
-  const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
-    { data: GenerateChecksIn }
-  > = (props) => {
-    const { data } = props ?? {};
-
-    return aiAssistedChecksGeneration(data, axiosOptions);
-  };
-
-  return { mutationFn, ...mutationOptions };
-};
-
-export type AiAssistedChecksGenerationMutationResult = NonNullable<
-  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>
->;
-export type AiAssistedChecksGenerationMutationBody = GenerateChecksIn;
-export type AiAssistedChecksGenerationMutationError =
-  AxiosError<HTTPValidationError>;
-
-/**
- * @summary Ai Generate Checks
- */
-export const useAiAssistedChecksGeneration = <
-  TError = AxiosError<HTTPValidationError>,
-  TContext = unknown,
->(
-  options?: {
-    mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
-      TError,
-      { data: GenerateChecksIn },
-      TContext
-    >;
-    axios?: AxiosRequestConfig;
-  },
-  queryClient?: QueryClient,
-): UseMutationResult<
-  Awaited<ReturnType<typeof aiAssistedChecksGeneration>>,
-  TError,
-  { data: GenerateChecksIn },
-  TContext
-> => {
-  const mutationOptions = getAiAssistedChecksGenerationMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };

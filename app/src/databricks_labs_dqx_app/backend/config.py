@@ -1,3 +1,4 @@
+import os
 from importlib import resources
 from pathlib import Path
 
@@ -24,6 +25,8 @@ class AppConfig(BaseSettings):
     )
     app_name: str = Field(default=app_name)
     api_prefix: str = Field(default="/api")
+    catalog: str = Field(default="dqx")
+    schema_name: str = Field(default="dqx_app", validation_alias="DQX_SCHEMA")
 
     @property
     def static_assets_path(self) -> Path:
@@ -31,3 +34,10 @@ class AppConfig(BaseSettings):
 
 
 conf = AppConfig()
+
+
+def get_sql_warehouse_path() -> str:
+    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID")
+    if not wh_id:
+        raise ValueError("SQL warehouse not configured. Set DATABRICKS_WAREHOUSE_ID.")
+    return f"/sql/1.0/warehouses/{wh_id}"

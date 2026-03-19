@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { Loader2 } from "lucide-react";
+import { currentUser } from "@/lib/api";
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -10,36 +11,25 @@ interface AuthGuardProps {
  * AuthGuard component that waits for Databricks authentication to be ready
  * before rendering the app. This handles the initial OAuth flow timing issue
  * where the X-Forwarded-Access-Token header is not immediately available.
- * 
- * The component polls /api/current-user (which requires authentication) until
- * it succeeds, confirming that the OAuth flow has completed and the app can
- * make authenticated API calls.
+ *
+ * Uses the orval-generated currentUser() function so the URL stays in sync
+ * with the backend OpenAPI spec.
  */
 export function AuthGuard({ children }: AuthGuardProps) {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  // Log when AuthGuard mounts
-  console.log("[DQX Auth] AuthGuard mounted - blocking app render until auth confirmed");
-
   useEffect(() => {
     let cancelled = false;
     let timeoutId: NodeJS.Timeout;
-    
+
     const checkAuth = async () => {
       try {
         console.log(`[DQX Auth] Checking authentication (attempt ${retryCount + 1}/15)...`);
-        
-        // Make a request to an endpoint that REQUIRES authentication
-        // Using /api/current-user because it requires the OBO token
-        const response = await axios.get("/api/current-user", {
-          // Ensure credentials are included
-          withCredentials: true,
-          // Add timeout
-          timeout: 10000,
-        });
-        
+
+        const response = await currentUser({ timeout: 10000 });
+
         if (!cancelled) {
           console.log("[DQX Auth] ✓ Authentication ready - logged in as:", response.data.user_name);
           setIsAuthReady(true);

@@ -4,14 +4,21 @@ from typing import Annotated
 
 from databricks.connect import DatabricksSession
 from databricks.labs.dqx.config import LLMModelConfig
-from databricks.labs.dqx.config_serializer import ConfigSerializer
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from fastapi import Depends, Header, HTTPException, status
 from pyspark.sql import SparkSession
 
+from .common.authentication.sql import SQLAuthentication
+from .common.connectors.sql import SQLConnector
+from .config import conf, get_sql_warehouse_path
 from .logger import logger
+from .migrations import MigrationRunner
+from .runtime import rt
+from .services.app_settings_service import AppSettingsService
+from .services.discovery import DiscoveryService
+from .services.rules_catalog_service import RulesCatalogService
 
 
 @contextmanager
@@ -128,11 +135,35 @@ def get_spark(
     return session
 
 
-def get_config_serializer(
-    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-) -> ConfigSerializer:
-    """Create a ConfigSerializer for loading/saving workspace configuration."""
-    return ConfigSerializer(obo_ws)
+def get_migration_runner() -> MigrationRunner:
+    """Create a MigrationRunner using app (SP) credentials.
+
+    Used at startup to ensure the database schema is current before any
+    request is served.  All DDL runs as the app service principal.
+    """
+    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    return MigrationRunner(
+        ws=rt.ws,
+        warehouse_id=wh_id,
+        catalog=conf.catalog,
+        schema=conf.schema_name,
+    )
+
+
+def get_app_settings_service() -> AppSettingsService:
+    """Create an AppSettingsService using app (SP) credentials.
+
+    Config is managed centrally by admins and stored in a Delta table,
+    not per-user workspace files.  All operations use the app's service
+    principal, not the calling user's OBO token.
+    """
+    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    return AppSettingsService(
+        ws=rt.ws,
+        warehouse_id=wh_id,
+        catalog=conf.catalog,
+        schema=conf.schema_name,
+    )
 
 
 def get_engine(
@@ -211,3 +242,44 @@ def get_generator(
         llm_model_config = LLMModelConfig()
 
     return DQGenerator(workspace_client=obo_ws, spark=spark, llm_model_config=llm_model_config)
+
+
+def get_rules_catalog_service() -> RulesCatalogService:
+    """Create a RulesCatalogService using app (SP) credentials.
+
+    Rules are stored centrally in a Delta table.  All operations use the
+    app's service principal, not the calling user's OBO token.
+    """
+    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    return RulesCatalogService(
+        ws=rt.ws,
+        warehouse_id=wh_id,
+        catalog=conf.catalog,
+        schema=conf.schema_name,
+    )
+
+
+def get_discovery_service(
+    obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+) -> DiscoveryService:
+    """Create a DiscoveryService using the OBO-authenticated WorkspaceClient."""
+    return DiscoveryService(obo_ws)
+
+
+def get_sql_connector(
+    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
+) -> SQLConnector:
+    """Create a SQLConnector using the OBO token and configured SQL warehouse."""
+    auth = SQLAuthentication(bearer=token)
+    host = os.environ.get("DATABRICKS_HOST", "")
+    if not host:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="DATABRICKS_HOST is not configured.",
+        )
+    http_path = get_sql_warehouse_path()
+    return SQLConnector(
+        access_token=auth.access_token,
+        server_hostname=host,
+        http_path=http_path,
+    )
