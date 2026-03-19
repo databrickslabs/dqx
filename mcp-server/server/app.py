@@ -1,7 +1,6 @@
 """
 FastMCP application configuration for the DQX MCP server.
 
-Key learnings applied from biomni-mcp-server:
 - Use stateless_http=True + json_response=True for Genie Code compatibility
 - Add CORSMiddleware for OPTIONS preflight requests from workspace origin
 - Use pure ASGI middleware (not BaseHTTPMiddleware) to avoid streaming timeouts
