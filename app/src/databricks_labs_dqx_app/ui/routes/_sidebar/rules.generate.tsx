@@ -28,6 +28,7 @@ import {
   useAiAssistedChecksGeneration,
   useDryRun,
   useSaveRules,
+  useSubmitRulesForApproval,
   type DryRunOut,
 } from "@/lib/api";
 
@@ -54,6 +55,7 @@ function GenerateRulesPage() {
   const generateMutation = useAiAssistedChecksGeneration();
   const dryRunMutation = useDryRun();
   const saveMutation = useSaveRules();
+  const submitMutation = useSubmitRulesForApproval();
 
   const hasChecks = checks.length > 0;
   const hasTable = tableFqn.split(".").length === 3;
@@ -116,7 +118,14 @@ function GenerateRulesPage() {
       await saveMutation.mutateAsync({
         data: { table_fqn: tableFqn, checks },
       });
-      toast.success("Rules saved successfully");
+      try {
+        await submitMutation.mutateAsync({ tableFqn });
+        toast.success("Rules saved and submitted for approval");
+      } catch {
+        toast.warning(
+          "Rules saved but approval submission failed — you can submit manually from the catalog",
+        );
+      }
       navigate({ to: "/rules" });
     } catch {
       toast.error("Failed to save rules");
@@ -125,7 +134,7 @@ function GenerateRulesPage() {
 
   const isGenerating = generateMutation.isPending;
   const isDryRunning = dryRunMutation.isPending;
-  const isSaving = saveMutation.isPending;
+  const isSaving = saveMutation.isPending || submitMutation.isPending;
   const isBusy = isGenerating || isDryRunning || isSaving;
 
   return (

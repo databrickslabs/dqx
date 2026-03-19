@@ -16,6 +16,7 @@ import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
 import { Route as SidebarDiscoveryRouteImport } from './../routes/_sidebar/discovery'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
+import { Route as SidebarRulesIndexRouteImport } from './../routes/_sidebar/rules.index'
 import { Route as SidebarRulesGenerateRouteImport } from './../routes/_sidebar/rules.generate'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
 import { Route as SidebarRunsRunNameRouteImport } from './../routes/_sidebar/runs.$runName'
@@ -54,6 +55,11 @@ const SidebarConfigRoute = SidebarConfigRouteImport.update({
   path: '/config',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
+const SidebarRulesIndexRoute = SidebarRulesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SidebarRulesRoute,
+} as any)
 const SidebarRulesGenerateRoute = SidebarRulesGenerateRouteImport.update({
   id: '/generate',
   path: '/generate',
@@ -76,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/discovery': typeof SidebarDiscoveryRoute
   '/profile': typeof SidebarProfileRoute
   '/rules': typeof SidebarRulesRouteWithChildren
+  '/rules/': typeof SidebarRulesIndexRoute
   '/rules/generate': typeof SidebarRulesGenerateRoute
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs/$runName': typeof SidebarRunsRunNameRoute
@@ -99,6 +106,7 @@ export interface FileRoutesById {
   '/_sidebar/discovery': typeof SidebarDiscoveryRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
+  '/_sidebar/rules/': typeof SidebarRulesIndexRoute
   '/_sidebar/rules/generate': typeof SidebarRulesGenerateRoute
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs/$runName': typeof SidebarRunsRunNameRoute
@@ -112,6 +120,7 @@ export interface FileRouteTypes {
     | '/discovery'
     | '/profile'
     | '/rules'
+    | '/rules/'
     | '/rules/generate'
     | '/runs'
     | '/runs/$runName'
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/_sidebar/discovery'
     | '/_sidebar/profile'
     | '/_sidebar/rules'
+    | '/_sidebar/rules/'
     | '/_sidebar/rules/generate'
     | '/_sidebar/runs'
     | '/_sidebar/runs/$runName'
@@ -196,6 +206,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SidebarConfigRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
+    '/_sidebar/rules/': {
+      id: '/_sidebar/rules/'
+      path: '/'
+      fullPath: '/rules/'
+      preLoaderRoute: typeof SidebarRulesIndexRouteImport
+      parentRoute: typeof SidebarRulesRoute
+    }
     '/_sidebar/rules/generate': {
       id: '/_sidebar/rules/generate'
       path: '/generate'
@@ -221,10 +238,12 @@ declare module '@tanstack/react-router' {
 }
 
 interface SidebarRulesRouteChildren {
+  SidebarRulesIndexRoute: typeof SidebarRulesIndexRoute
   SidebarRulesGenerateRoute: typeof SidebarRulesGenerateRoute
 }
 
 const SidebarRulesRouteChildren: SidebarRulesRouteChildren = {
+  SidebarRulesIndexRoute: SidebarRulesIndexRoute,
   SidebarRulesGenerateRoute: SidebarRulesGenerateRoute,
 }
 

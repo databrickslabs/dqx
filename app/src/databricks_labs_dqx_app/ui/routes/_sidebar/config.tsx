@@ -1,15 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { Suspense, useState, useEffect } from "react";
-import { QueryErrorResetBoundary, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { Suspense } from "react";
+import { QueryErrorResetBoundary } from "@tanstack/react-query";
 import { ErrorBoundary } from "react-error-boundary";
-import {
-  useGetSettingsSuspense,
-  useSaveSettings,
-  useSaveConfig,
-  WorkspaceConfigInput,
-} from "@/lib/api";
 import { useConfigSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
+import type { ConfigOut } from "@/lib/api";
 import {
   Card,
   CardContent,
@@ -21,34 +16,16 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { Input } from "@/components/ui/input";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Label } from "@/components/ui/label";
 import {
   AlertCircle,
   Settings,
   Database,
   Server,
   Activity,
-  Eye,
-  Code2,
-  Save,
-  RefreshCw,
-  ChevronRight,
   Package,
   UploadCloud,
-  LayoutDashboard,
-  Loader2,
-  FolderOpen,
-  Pencil,
 } from "lucide-react";
-import { toast } from "sonner";
-import yaml from "js-yaml";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 
@@ -56,129 +33,9 @@ export const Route = createFileRoute("/_sidebar/config")({
   component: () => <ConfigPage />,
 });
 
-function ConfigLocationSettings({ onSettingsSaved }: { onSettingsSaved?: () => void }) {
-  const { data: settings } = useGetSettingsSuspense(selector());
-  const { mutate: save, isPending } = useSaveSettings();
-  const queryClient = useQueryClient();
-
-  const [isOpen, setIsOpen] = useState(false);
-  const [path, setPath] = useState(settings.install_folder);
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    if (isOpen) {
-      setPath(settings.install_folder);
-    }
-  }, [isOpen, settings.install_folder]);
-
-  const onSave = () => {
-    setIsSaving(true);
-    save(
-      { data: { install_folder: path } },
-      {
-        onSuccess: async () => {
-          setIsOpen(false);
-          try {
-            // Refetch settings first
-            await queryClient.refetchQueries({ queryKey: ["/api/settings"] });
-            
-            // Then refetch config from the new location
-            // This will update all active queries and trigger re-renders
-            await queryClient.refetchQueries({ queryKey: ["/api/config"] });
-            
-            toast.success("Configuration location updated");
-            
-            // Force complete remount of config components
-            if (onSettingsSaved) {
-              onSettingsSaved();
-            }
-          } catch (error) {
-            // If config doesn't exist yet in new location, that's okay
-            // The error boundaries will handle it gracefully
-            console.warn("Config refetch after settings save:", error);
-            toast.success("Configuration location updated");
-            
-            // Still trigger remount even on error
-            if (onSettingsSaved) {
-              onSettingsSaved();
-            }
-          } finally {
-            setIsSaving(false);
-          }
-        },
-        onError: (error) => {
-          setIsSaving(false);
-          const msg = (error as any).response?.data?.detail || error.message;
-          toast.error("Failed to save: " + msg);
-        },
-      },
-    );
-  };
-
-  return (
-    <>
-      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border/60">
-        <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-        <span className="text-xs text-muted-foreground shrink-0">Config location:</span>
-        <code className="text-xs font-mono text-foreground truncate max-w-[400px]" title={settings.install_folder}>
-          {settings.install_folder}
-        </code>
-        <Popover open={isOpen} onOpenChange={setIsOpen}>
-          <PopoverTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 ml-1">
-              <Pencil className="h-3 w-3" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-[500px]" align="end">
-            <div className="grid gap-4">
-              <div className="space-y-2">
-                <h4 className="font-medium leading-none">
-                  DQX Installation Folder
-                </h4>
-                <p className="text-sm text-muted-foreground">
-                  Path to the config.yml file.
-                </p>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="config-path">Path</Label>
-                <Input
-                  id="config-path"
-                  value={path}
-                  onChange={(e) => setPath(e.target.value)}
-                  className="h-8 font-mono text-[10px]"
-                />
-              </div>
-              <div className="flex justify-end">
-                <Button size="sm" onClick={onSave} disabled={isPending}>
-                  {isPending ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
-      </div>
-
-      {isSaving && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 p-8 rounded-lg bg-card border shadow-lg">
-            <Loader2 className="h-12 w-12 animate-spin text-primary" />
-            <div className="text-center space-y-2">
-              <div className="text-lg font-semibold">Saving Configuration</div>
-              <p className="text-sm text-muted-foreground">
-                Updating install folder and refreshing config...
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
-
 function GeneralSettingsData() {
-  const {
-    data: { config },
-  } = useConfigSuspense(selector());
+  const { data } = useConfigSuspense(selector<ConfigOut>());
+  const { config } = data as ConfigOut;
 
   return (
     <div className="grid gap-4 md:grid-cols-3">
@@ -248,9 +105,8 @@ function GeneralSettingsData() {
 }
 
 function RunConfigsData() {
-  const {
-    data: { config },
-  } = useConfigSuspense(selector());
+  const { data } = useConfigSuspense(selector<ConfigOut>());
+  const { config } = data as ConfigOut;
 
   if (!config.run_configs || config.run_configs.length === 0) {
     return (
@@ -269,23 +125,9 @@ function RunConfigsData() {
         >
           <CardContent className="grid gap-2 p-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <h3 className="font-semibold text-lg">
-                  {runConfig.name || `Config ${index + 1}`}
-                </h3>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 text-xs"
-                  asChild
-                >
-                  <Link to="/runs">
-                    <LayoutDashboard className="h-3.5 w-3.5" />
-                    Manage Run
-                    <ChevronRight className="h-3 w-3 opacity-50" />
-                  </Link>
-                </Button>
-              </div>
+              <h3 className="font-semibold text-lg">
+                {runConfig.name || `Config ${index + 1}`}
+              </h3>
               <div className="flex gap-2">
                 {runConfig.warehouse_id && (
                   <Badge
@@ -364,9 +206,8 @@ function RunConfigsData() {
 }
 
 function ClusterOverridesCard() {
-  const {
-    data: { config },
-  } = useConfigSuspense(selector());
+  const { data } = useConfigSuspense(selector<ConfigOut>());
+  const { config } = data as ConfigOut;
 
   if (
     !config.profiler_override_clusters &&
@@ -419,9 +260,8 @@ function ClusterOverridesCard() {
 }
 
 function RunConfigCount() {
-  const {
-    data: { config },
-  } = useConfigSuspense(selector());
+  const { data } = useConfigSuspense(selector<ConfigOut>());
+  const { config } = data as ConfigOut;
   return <>({config.run_configs?.length || 0})</>;
 }
 
@@ -442,279 +282,108 @@ function SectionError({
   );
 }
 
-function YamlConfigEditor() {
-  const { data: configOut } = useConfigSuspense(selector());
-  // Fetch settings as well to display the path
-  const { data: settings } = useGetSettingsSuspense(selector());
-
-  const { mutate: saveConfig, isPending } = useSaveConfig();
-  const queryClient = useQueryClient();
-  const [yamlContent, setYamlContent] = useState("");
-  const [isModified, setIsModified] = useState(false);
-
-  useEffect(() => {
-    if (configOut?.config) {
-      try {
-        setYamlContent(yaml.dump(configOut.config));
-      } catch (e) {
-        console.error("Failed to convert config to YAML", e);
-        toast.error("Failed to load configuration");
-      }
-    }
-    setIsModified(false);
-  }, [configOut]);
-
-  const handleSave = () => {
-    try {
-      const parsed = yaml.load(yamlContent) as WorkspaceConfigInput;
-      saveConfig(
-        { data: { config: parsed } },
-        {
-          onSuccess: async () => {
-            toast.success("Configuration saved successfully");
-            setIsModified(false);
-            // Refetch config queries to immediately update the display
-            await queryClient.refetchQueries({ queryKey: ["/api/config"] });
-          },
-          onError: (error) => {
-            console.error(error);
-            const msg = (error as any).response?.data?.detail || error.message;
-            toast.error("Failed to save configuration: " + msg);
-          },
-        },
-      );
-    } catch (e) {
-      console.error(e);
-      toast.error("Invalid YAML: " + (e as Error).message);
-    }
-  };
-
-  const handleReset = () => {
-    if (configOut?.config) {
-      setYamlContent(yaml.dump(configOut.config));
-      setIsModified(false);
-    }
-  };
-
-  return (
-    <FadeIn duration={0.4}>
-      <Card className="flex flex-col h-[calc(100vh-12rem)] border-border/60 shadow-sm">
-        <CardHeader className="py-3 px-4 border-b flex flex-row justify-between items-center space-y-0 h-14 bg-muted/20">
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center gap-2">
-              <Code2 className="h-4 w-4 text-muted-foreground" />
-              <CardTitle className="text-base">Config Editor</CardTitle>
-            </div>
-            <p className="text-[10px] font-mono text-muted-foreground pl-6">
-              {settings.install_folder}/config.yml
-            </p>
-          </div>
-          {isModified && (
-            <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleReset}
-                disabled={isPending}
-              >
-                <RefreshCw className="mr-2 h-3 w-3" /> Reset
-              </Button>
-              <Button size="sm" onClick={handleSave} disabled={isPending}>
-                <Save className="mr-2 h-3 w-3" /> Save Changes
-              </Button>
-            </div>
-          )}
-        </CardHeader>
-        <CardContent className="flex-1 p-0 relative">
-          <textarea
-            className="w-full h-full font-mono text-sm p-4 bg-muted/30 resize-none focus:outline-none border-0"
-            value={yamlContent}
-            onChange={(e) => {
-              setYamlContent(e.target.value);
-              setIsModified(true);
-            }}
-            spellCheck={false}
-            disabled={isPending}
-          />
-        </CardContent>
-      </Card>
-    </FadeIn>
-  );
-}
-
 function ConfigPage() {
-  const [view, setView] = useState<"ui" | "yaml">("ui");
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  // Force complete remount of config components after settings save
-  const forceRefresh = () => {
-    setRefreshKey(prev => prev + 1);
-  };
-
   return (
-    <div className="space-y-6 h-full flex flex-col">
-      <div className="space-y-3 shrink-0">
-        <div className="flex items-start justify-between">
-          <div className="space-y-2">
-            <PageBreadcrumb page="Configuration" />
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight">
-                <ShinyText text="Configuration" speed={6} className="font-bold" />
-              </h1>
-              <p className="text-muted-foreground">
-                View your current workspace configuration.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 pt-6">
-            <div className="bg-muted rounded-lg p-1 flex items-center">
-              <Button
-                variant={view === "ui" ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 px-2 gap-2"
-                onClick={() => setView("ui")}
-              >
-                <Eye className="h-3.5 w-3.5" />
-              </Button>
-              <Button
-                variant={view === "yaml" ? "secondary" : "ghost"}
-                size="sm"
-                className="h-7 px-2 gap-2"
-                onClick={() => setView("yaml")}
-              >
-                <Code2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <PageBreadcrumb page="Configuration" />
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            <ShinyText text="Configuration" speed={6} className="font-bold" />
+          </h1>
+          <p className="text-muted-foreground">
+            View your current workspace configuration.
+          </p>
         </div>
+      </div>
 
-        <QueryErrorResetBoundary>
-          {({ reset }) => (
-            <ErrorBoundary
-              onReset={reset}
-              fallback={
-                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20">
-                  <AlertCircle className="h-4 w-4 text-destructive" />
-                  <span className="text-xs text-destructive">Failed to load config location</span>
-                </div>
-              }
-            >
-              <Suspense
-                fallback={
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50 border border-border/60">
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    <span className="text-xs text-muted-foreground">Loading config location...</span>
-                  </div>
-                }
-              >
-                <ConfigLocationSettings onSettingsSaved={forceRefresh} />
+      <QueryErrorResetBoundary>
+        {({ reset }) => (
+          <div className="space-y-6 pb-8">
+            <FadeIn delay={0.1}>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Settings className="h-5 w-5" />
+                    General Settings
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ErrorBoundary
+                    onReset={reset}
+                    fallbackRender={SectionError}
+                  >
+                    <Suspense
+                      fallback={
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <Skeleton className="h-16" />
+                          <Skeleton className="h-16" />
+                          <Skeleton className="h-16" />
+                          <Skeleton className="h-16" />
+                          <Skeleton className="h-16" />
+                          <Skeleton className="h-16" />
+                        </div>
+                      }
+                    >
+                      <GeneralSettingsData />
+                    </Suspense>
+                  </ErrorBoundary>
+                </CardContent>
+              </Card>
+            </FadeIn>
+
+            <FadeIn delay={0.2}>
+              <Card className="border-0 shadow-none bg-transparent">
+                <CardHeader className="px-0">
+                  <CardTitle className="flex items-center gap-2">
+                    <Activity className="h-5 w-5" />
+                    Run Configurations
+                    <ErrorBoundary onReset={reset} fallback={null}>
+                      <Suspense
+                        fallback={
+                          <Skeleton className="h-4 w-8 inline-block ml-2" />
+                        }
+                      >
+                        <span className="ml-1 text-sm font-normal text-muted-foreground">
+                          <RunConfigCount />
+                        </span>
+                      </Suspense>
+                    </ErrorBoundary>
+                  </CardTitle>
+                  <CardDescription>
+                    Defined run configurations
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="px-0">
+                  <ErrorBoundary
+                    onReset={reset}
+                    fallbackRender={SectionError}
+                  >
+                    <Suspense
+                      fallback={
+                        <div className="space-y-4">
+                          <Skeleton className="h-32 w-full" />
+                          <Skeleton className="h-32 w-full" />
+                        </div>
+                      }
+                    >
+                      <RunConfigsData />
+                    </Suspense>
+                  </ErrorBoundary>
+                </CardContent>
+              </Card>
+            </FadeIn>
+
+            <ErrorBoundary onReset={reset} fallback={null}>
+              <Suspense fallback={null}>
+                <FadeIn delay={0.3}>
+                  <ClusterOverridesCard />
+                </FadeIn>
               </Suspense>
             </ErrorBoundary>
-          )}
-        </QueryErrorResetBoundary>
-      </div>
-
-      <div className="flex-1 min-h-0" key={refreshKey}>
-        <QueryErrorResetBoundary>
-          {({ reset }) =>
-            view === "ui" ? (
-              <div className="space-y-6 pb-8">
-                {/* General Settings */}
-                <FadeIn delay={0.1}>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="flex items-center gap-2">
-                        <Settings className="h-5 w-5" />
-                        General Settings
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <ErrorBoundary
-                        onReset={reset}
-                        fallbackRender={SectionError}
-                      >
-                        <Suspense
-                          fallback={
-                            <div className="grid gap-4 md:grid-cols-3">
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                              <Skeleton className="h-16" />
-                            </div>
-                          }
-                        >
-                          <GeneralSettingsData />
-                        </Suspense>
-                      </ErrorBoundary>
-                    </CardContent>
-                  </Card>
-                </FadeIn>
-
-                {/* Run Configs */}
-                <FadeIn delay={0.2}>
-                  <Card className="border-0 shadow-none bg-transparent">
-                    <CardHeader className="px-0">
-                      <CardTitle className="flex items-center gap-2">
-                        <Activity className="h-5 w-5" />
-                        Run Configurations
-                        <ErrorBoundary onReset={reset} fallback={null}>
-                          <Suspense
-                            fallback={
-                              <Skeleton className="h-4 w-8 inline-block ml-2" />
-                            }
-                          >
-                            <span className="ml-1 text-sm font-normal text-muted-foreground">
-                              <RunConfigCount />
-                            </span>
-                          </Suspense>
-                        </ErrorBoundary>
-                      </CardTitle>
-                      <CardDescription>
-                        Defined run configurations
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-0">
-                      <ErrorBoundary
-                        onReset={reset}
-                        fallbackRender={SectionError}
-                      >
-                        <Suspense
-                          fallback={
-                            <div className="space-y-4">
-                              <Skeleton className="h-32 w-full" />
-                              <Skeleton className="h-32 w-full" />
-                            </div>
-                          }
-                        >
-                          <RunConfigsData />
-                        </Suspense>
-                      </ErrorBoundary>
-                    </CardContent>
-                  </Card>
-                </FadeIn>
-
-                {/* Cluster Overrides - Entire card is dynamic */}
-                <ErrorBoundary onReset={reset} fallback={null}>
-                  <Suspense fallback={null}>
-                    <FadeIn delay={0.3}>
-                      <ClusterOverridesCard />
-                    </FadeIn>
-                  </Suspense>
-                </ErrorBoundary>
-              </div>
-            ) : (
-              <ErrorBoundary onReset={reset} fallbackRender={SectionError}>
-                <Suspense fallback={<Skeleton className="h-full w-full" />}>
-                  <YamlConfigEditor />
-                </Suspense>
-              </ErrorBoundary>
-            )
-          }
-        </QueryErrorResetBoundary>
-      </div>
+          </div>
+        )}
+      </QueryErrorResetBoundary>
     </div>
   );
 }
