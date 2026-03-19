@@ -1,7 +1,7 @@
 name: anomaly
 
 on:
-  pull_request_target:
+  pull_request:
     types: [ opened, synchronize, ready_for_review ]
   merge_group:
     types: [ checks_requested ]
@@ -20,14 +20,13 @@ concurrency:
 
 jobs:
   anomaly-tests:
-    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Install Python
@@ -105,14 +104,13 @@ jobs:
           use_oidc: true
 
   anomaly-tests-serverless:
-    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Install Python
