@@ -843,7 +843,7 @@ def are_polygons_mutually_disjoint(
     Note:
         This function requires Databricks runtime 17.1 or above.
         Photon activation is suggested to use optimized spatial computation.
-        Non-conformant geometries values are ignored.
+        Non-conformant geometry values are ignored.
     """
 
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
@@ -860,6 +860,13 @@ def are_polygons_mutually_disjoint(
         The original DataFrame is returned with all rows preserved and a boolean
         condition column indicating violations.
 
+        Warning:
+            This check performs a self-join over all valid polygons in the input
+            DataFrame, which is inherently O(n²) in the number of polygons. Running
+            this on large, unfiltered tables can be prohibitively expensive. It is
+            strongly recommended to apply appropriate filtering via ``row_filter``
+            or other row-count limits before using this rule.
+
         Args:
             df: Input DataFrame containing the geometry column to check.
 
@@ -873,10 +880,11 @@ def are_polygons_mutually_disjoint(
             df_with_id.filter(col_expr.isNotNull())
             .withColumn(geom_temp_col, F.expr(f"try_to_geometry({col_expr_str})"))
             .filter(F.col(geom_temp_col).isNotNull())
+            .filter(F.expr(f"st_geometrytype(`{geom_temp_col}`) IN ('{POLYGON_TYPE}', '{MULTIPOLYGON_TYPE}')"))
         )
 
         if row_filter:
-            prep_df = prep_df.filter(row_filter)
+            prep_df = prep_df.filter(F.expr(row_filter))
 
         prep_a = prep_df.alias("a")
         prep_b = prep_df.alias("b")
