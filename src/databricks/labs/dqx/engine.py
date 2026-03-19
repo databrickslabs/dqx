@@ -220,7 +220,6 @@ class DQEngineCore(DQEngineCoreBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-        variables: dict[str, Any] | None = None,
     ) -> DataFrame | tuple[DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame.
 
@@ -233,14 +232,11 @@ class DQEngineCore(DQEngineCoreBase):
                   (rows appear in both DataFrames).
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             ref_dfs: Optional reference DataFrames to use in the checks.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation and deserialization.
 
         Returns:
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
             summary metrics. Summary metrics are returned by any `DQEngine` with an `observer` specified.
         """
-        checks = apply_variables(checks, variables)
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
         return self.apply_checks(df, dq_rule_checks, ref_dfs)
@@ -251,7 +247,6 @@ class DQEngineCore(DQEngineCoreBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-        variables: dict[str, Any] | None = None,
     ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
         two DataFrames ("good" and "bad").
@@ -265,8 +260,6 @@ class DQEngineCore(DQEngineCoreBase):
                   (rows appear in both DataFrames).
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             ref_dfs: Optional reference DataFrames to use in the checks.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation and deserialization.
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
@@ -276,7 +269,6 @@ class DQEngineCore(DQEngineCoreBase):
         Raises:
             InvalidCheckError: If any of the checks are invalid.
         """
-        checks = apply_variables(checks, variables)
         dq_rule_checks = deserialize_checks(checks, custom_check_functions)
 
         good_df, bad_df, *observations = self.apply_checks_and_split(df, dq_rule_checks, ref_dfs)
@@ -291,7 +283,6 @@ class DQEngineCore(DQEngineCoreBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
-        variables: dict[str, Any] | None = None,
     ) -> ChecksValidationStatus:
         """
         Validate checks defined as metadata to ensure they conform to the expected structure and types.
@@ -303,13 +294,10 @@ class DQEngineCore(DQEngineCoreBase):
             checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             validate_custom_check_functions: If True, validate custom check functions.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation.
 
         Returns:
             ChecksValidationStatus indicating the validation result.
         """
-        checks = apply_variables(checks, variables)
         return ChecksValidator.validate_checks(checks, custom_check_functions, validate_custom_check_functions)
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
@@ -342,7 +330,7 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     @staticmethod
-    def load_checks_from_local_file(filepath: str) -> list[dict]:
+    def load_checks_from_local_file(filepath: str, variables: dict[str, Any] | None = None) -> list[dict]:
         """
         Load DQ rules (checks) from a local JSON or YAML file.
 
@@ -350,11 +338,14 @@ class DQEngineCore(DQEngineCoreBase):
 
         Args:
             filepath: Path to a file containing checks definitions.
+            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
+                placeholders in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules.
         """
-        return FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
+        checks = FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
+        return apply_variables(checks=checks, variables=variables)
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], filepath: str):
@@ -626,7 +617,6 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-        variables: dict[str, Any] | None = None,
     ) -> DataFrame | tuple[DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame.
 
@@ -639,8 +629,6 @@ class DQEngine(DQEngineBase):
                   (rows appear in both DataFrames).
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             ref_dfs: Optional reference DataFrames to use in the checks.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation and deserialization.
 
         Returns:
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
@@ -648,7 +636,7 @@ class DQEngine(DQEngineBase):
         """
         log_dataframe_telemetry(self.ws, self.spark, df)
         return self._engine.apply_checks_by_metadata(
-            df, checks, custom_check_functions, ref_dfs, variables=variables
+            df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
         )
 
     @telemetry_logger("engine", "apply_checks_by_metadata_and_split")
@@ -658,7 +646,6 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-        variables: dict[str, Any] | None = None,
     ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
         two DataFrames ("good" and "bad").
@@ -672,8 +659,6 @@ class DQEngine(DQEngineBase):
                   (rows appear in both DataFrames).
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             ref_dfs: Optional reference DataFrames to use in the checks.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation and deserialization.
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
@@ -682,7 +667,7 @@ class DQEngine(DQEngineBase):
         """
         log_dataframe_telemetry(self.ws, self.spark, df)
         return self._engine.apply_checks_by_metadata_and_split(
-            df, checks, custom_check_functions, ref_dfs, variables=variables
+            df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
         )
 
     @telemetry_logger("engine", "apply_checks_and_save_in_table")
@@ -780,7 +765,6 @@ class DQEngine(DQEngineBase):
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
         checks_location: str | None = None,
-        variables: dict[str, Any] | None = None,
     ) -> None:
         """
         Apply metadata-defined data quality checks to input data and save results.
@@ -805,8 +789,6 @@ class DQEngine(DQEngineBase):
                 to callables/modules (e.g., globals()).
             ref_dfs: Optional reference DataFrames used by checks.
             checks_location: Optional location of the checks. Used for reporting in the summary metrics table only.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation and deserialization.
         """
         logger.info(f"Applying checks to {input_config.location}")
 
@@ -818,11 +800,7 @@ class DQEngine(DQEngineBase):
 
         if quarantine_config:
             check_result = self.apply_checks_by_metadata_and_split(
-                df,
-                checks=checks,
-                custom_check_functions=custom_check_functions,
-                ref_dfs=ref_dfs,
-                variables=variables,
+                df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
             )
             if self._engine.observer:
                 good_df, bad_df, batch_observation = check_result
@@ -833,11 +811,7 @@ class DQEngine(DQEngineBase):
             target_streaming_query = quarantine_streaming_query
         else:
             check_result = self.apply_checks_by_metadata(
-                df,
-                checks=checks,
-                custom_check_functions=custom_check_functions,
-                ref_dfs=ref_dfs,
-                variables=variables,
+                df=df, checks=checks, custom_check_functions=custom_check_functions, ref_dfs=ref_dfs
             )
             if self._engine.observer:
                 checked_df, batch_observation = check_result
@@ -995,7 +969,6 @@ class DQEngine(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
-        variables: dict[str, Any] | None = None,
     ) -> ChecksValidationStatus:
         """
         Validate checks defined as metadata to ensure they conform to the expected structure and types.
@@ -1007,17 +980,14 @@ class DQEngine(DQEngineBase):
             checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             validate_custom_check_functions: If True, validate custom check functions.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation.
 
         Returns:
             ChecksValidationStatus indicating the validation result.
         """
         return DQEngineCore.validate_checks(
-            checks,
-            custom_check_functions,
-            validate_custom_check_functions,
-            variables=variables,
+            checks=checks,
+            custom_check_functions=custom_check_functions,
+            validate_custom_check_functions=validate_custom_check_functions,
         )
 
     def get_invalid(self, df: DataFrame) -> DataFrame:
@@ -1147,7 +1117,7 @@ class DQEngine(DQEngineBase):
             )
 
     @telemetry_logger("engine", "load_checks")
-    def load_checks(self, config: BaseChecksStorageConfig) -> list[dict]:
+    def load_checks(self, config: BaseChecksStorageConfig, variables: dict[str, Any] | None = None) -> list[dict]:
         """Load DQ rules (checks) from the storage backend described by *config*.
 
         This method delegates to a storage handler selected by the factory
@@ -1164,6 +1134,8 @@ class DQEngine(DQEngineBase):
 
         Args:
             config: Configuration object describing the storage backend.
+            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
+                placeholders in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules (checks) represented as dictionaries.
@@ -1172,7 +1144,8 @@ class DQEngine(DQEngineBase):
             InvalidConfigError: If the configuration type is unsupported.
         """
         handler = self._checks_handler_factory.create(config)
-        return handler.load(config)
+        checks = handler.load(config)
+        return apply_variables(checks=checks, variables=variables)
 
     @telemetry_logger("engine", "save_checks")
     def save_checks(self, checks: list[dict], config: BaseChecksStorageConfig) -> None:

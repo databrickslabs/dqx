@@ -15,6 +15,7 @@ from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError,
 from databricks.labs.dqx.check_funcs import sql_query
 from databricks.labs.dqx.config import OutputConfig, FileChecksStorageConfig, ExtraParams, RunConfig
 from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.utils import apply_variables
 from databricks.labs.dqx.rule import (
     DQForEachColRule,
     register_rule,
@@ -9570,9 +9571,9 @@ def test_apply_checks_by_metadata_with_variables(ws, spark):
             },
         },
     ]
-    variables = {"col": "b"}
+    checks = apply_variables(checks, {"col": "b"})
 
-    checked = dq_engine.apply_checks_by_metadata(test_df, checks, variables=variables)
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     expected = spark.createDataFrame(
         [
@@ -9623,9 +9624,9 @@ def test_apply_checks_by_metadata_and_split_with_variables(ws, spark):
             },
         },
     ]
-    variables = {"col": "b", "expr_col": "a", "threshold": 1}
+    checks = apply_variables(checks, {"col": "b", "expr_col": "a", "threshold": 1})
 
-    good, bad = dq_engine.apply_checks_by_metadata_and_split(test_df, checks, variables=variables)
+    good, bad = dq_engine.apply_checks_by_metadata_and_split(test_df, checks)
 
     # Row [1, 3, 3]: b is not null, a > 1 passes -> good only
     # Row [2, None, 4]: b is null (error), a > 1 passes -> bad only
@@ -9649,9 +9650,9 @@ def test_apply_checks_by_metadata_with_variables_name_and_filter(ws, spark):
             "filter": "{{ filter_col }} IS NOT NULL",
         },
     ]
-    variables = {"col": "a", "threshold": 1, "filter_col": "a"}
+    checks = apply_variables(checks, {"col": "a", "threshold": 1, "filter_col": "a"})
 
-    checked = dq_engine.apply_checks_by_metadata(test_df, checks, variables=variables)
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
 
     # Row with a=1 should have an error since a > 1 is false
     result_rows = checked.collect()
@@ -9679,9 +9680,9 @@ def test_validate_checks_with_variables(ws):
             },
         },
     ]
-    variables = {"crit": "error", "col": "b"}
+    checks = apply_variables(checks, {"crit": "error", "col": "b"})
 
-    status = DQEngine.validate_checks(checks, variables=variables)
+    status = DQEngine.validate_checks(checks)
     assert not status.has_errors
 
 
@@ -9695,9 +9696,9 @@ def test_validate_checks_with_variables_invalid_after_substitution(ws):
             },
         },
     ]
-    variables = {"crit": "not_a_valid_criticality"}
+    checks = apply_variables(checks, {"crit": "not_a_valid_criticality"})
 
-    status = DQEngine.validate_checks(checks, variables=variables)
+    status = DQEngine.validate_checks(checks)
     assert status.has_errors
 
 

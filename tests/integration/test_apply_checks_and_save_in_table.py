@@ -14,6 +14,7 @@ from databricks.labs.dqx.config import (
 )
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
+from databricks.labs.dqx.utils import apply_variables
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from tests.integration.conftest import EXTRA_PARAMS, RUN_TIME, RUN_ID, REPORTING_COLUMNS
 
@@ -2103,14 +2104,13 @@ def test_apply_checks_by_metadata_and_save_in_table_with_variables(ws, spark, ma
             "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}},
         },
     ]
-    variables = {"col": "a", "crit": "error"}
+    checks = apply_variables(checks, {"col": "a", "crit": "error"})
 
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_by_metadata_and_save_in_table(
         checks=checks,
         input_config=InputConfig(location=input_table),
         output_config=OutputConfig(location=output_table, mode="overwrite"),
-        variables=variables,
     )
 
     actual_df = spark.table(output_table)

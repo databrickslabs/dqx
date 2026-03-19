@@ -81,7 +81,6 @@ class DQEngineCoreBase(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-        variables: dict[str, Any] | None = None,
     ) -> DataFrame | tuple[DataFrame, Observation]:
         """
         Apply data quality checks defined as metadata to the given DataFrame.
@@ -95,8 +94,6 @@ class DQEngineCoreBase(DQEngineBase):
                   (rows appear in both DataFrames).
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             ref_dfs: Optional reference DataFrames to use in the checks.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation and deserialization.
 
         Returns:
             A DataFrame with errors and warnings result columns and an optional Observation which tracks data quality
@@ -110,7 +107,6 @@ class DQEngineCoreBase(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         ref_dfs: dict[str, DataFrame] | None = None,
-        variables: dict[str, Any] | None = None,
     ) -> tuple[DataFrame, DataFrame] | tuple[DataFrame, DataFrame, Observation]:
         """Apply data quality checks defined as metadata to the given DataFrame and split the results into
         two DataFrames ("good" and "bad").
@@ -124,8 +120,6 @@ class DQEngineCoreBase(DQEngineBase):
                   (rows appear in both DataFrames).
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             ref_dfs: Optional reference DataFrames to use in the checks.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation and deserialization.
 
         Returns:
             A tuple of two DataFrames: "good" (may include rows with warnings but no result columns) and "bad" (rows
@@ -139,7 +133,6 @@ class DQEngineCoreBase(DQEngineBase):
         checks: list[dict],
         custom_check_functions: dict[str, Callable] | None = None,
         validate_custom_check_functions: bool = True,
-        variables: dict[str, Any] | None = None,
     ) -> ChecksValidationStatus:
         """
         Validate checks defined as metadata to ensure they conform to the expected structure and types.
@@ -151,8 +144,6 @@ class DQEngineCoreBase(DQEngineBase):
             checks: List of checks to apply to the DataFrame. Each check should be a dictionary.
             custom_check_functions: Optional dictionary with custom check functions (e.g., *globals()* of the calling module).
             validate_custom_check_functions: If True, validate custom check functions.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
-                placeholders in all string values of the check definitions before validation and deserialization.
 
         Returns:
             ChecksValidationStatus indicating the validation result.
@@ -184,7 +175,7 @@ class DQEngineCoreBase(DQEngineBase):
 
     @staticmethod
     @abc.abstractmethod
-    def load_checks_from_local_file(filepath: str) -> list[dict]:
+    def load_checks_from_local_file(filepath: str, variables: dict[str, Any] | None = None) -> list[dict]:
         """
         Load DQ rules (checks) from a local JSON or YAML file.
 
@@ -192,6 +183,8 @@ class DQEngineCoreBase(DQEngineBase):
 
         Args:
             filepath: Path to a file containing checks definitions.
+            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
+                placeholders in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules (checks).
