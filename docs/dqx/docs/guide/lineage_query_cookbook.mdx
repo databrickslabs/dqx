@@ -1,0 +1,371 @@
+---
+sidebar_position: 308
+title: Lineage Query Cookbook
+---
+
+import Admonition from '@theme/Admonition';
+
+# Lineage Query Cookbook
+
+A practical guide for querying DQX tables to trace data quality results across runs,
+rows, and check definitions. Each recipe includes SQL and PySpark examples.
+
+For table schemas and relationships, see [Table Schemas and Relationships](/docs/reference/table_schemas).
+
+<Admonition type="info" title="Table name placeholders">
+The examples below use these placeholder table names. Replace them with your actual catalog, schema, and table names:
+
+- `catalog.schema.output_table` — output table
+- `catalog.schema.quarantine_table` — quarantine table (when configured)
+- `catalog.schema.checks_table` — checks storage table
+- `catalog.schema.summary_metrics` — summary metrics table
+
+The default error and warning column names are `_errors` and `_warnings`.
+If you customized them, adjust the queries accordingly.
+</Admonition>
+
+## 1. Summary to Row Details
+
+**Goal**: Given a run in the summary metrics table, find the corresponding row-level results.
+
+### SQL
+
+```sql
+-- Get a specific run_id from summary metrics
+SELECT DISTINCT run_id, run_time, input_location
+FROM catalog.schema.summary_metrics
+ORDER BY run_time DESC
+LIMIT 1;
+
+-- Filter output rows for that run by exploding errors/warnings
+SELECT t.*, e.*
+FROM catalog.schema.output_table t
+LATERAL VIEW OUTER explode(t._errors) AS e
+WHERE e.run_id = '<run_id>';
+
+-- Same for quarantine table
+SELECT t.*, e.*
+FROM catalog.schema.quarantine_table t
+LATERAL VIEW OUTER explode(t._errors) AS e
+WHERE e.run_id = '<run_id>';
+```
+
+### PySpark
+
+```python
+import pyspark.sql.functions as F
+
+# Get the latest run_id from summary metrics
+latest_run = (
+    spark.table("catalog.schema.summary_metrics")
+    .orderBy(F.col("run_time").desc())
+    .select("run_id")
+    .first()
+)
+run_id = latest_run["run_id"]
+
+# Filter output rows for that run
+output_df = spark.table("catalog.schema.output_table")
+errors_df = (
+    output_df
+    .select("*", F.explode_outer(F.col("_errors")).alias("error"))
+    .filter(F.col("error.run_id") == run_id)
+)
+```
+
+## 2. Row Details to Summary
+
+**Goal**: From row-level results, look up the run metadata in the summary table.
+
+### SQL
+
+```sql
+-- From a row's error, join back to summary metrics
+SELECT sm.*
+FROM catalog.schema.summary_metrics sm
+INNER JOIN (
+    SELECT DISTINCT e.run_id
+    FROM catalog.schema.output_table t
+    LATERAL VIEW explode(t._errors) AS e
+) runs ON sm.run_id = runs.run_id
+ORDER BY sm.run_time DESC;
+```
+
+### PySpark
+
+```python
+import pyspark.sql.functions as F
+
+# Extract distinct run_ids from output errors
+run_ids_df = (
+    spark.table("catalog.schema.output_table")
+    .select(F.explode(F.col("_errors")).alias("error"))
+    .select(F.col("error.run_id").alias("run_id"))
+    .distinct()
+)
+
+# Join to summary metrics
+summary_df = spark.table("catalog.schema.summary_metrics")
+result_df = summary_df.join(run_ids_df, on="run_id")
+```
+
+## 3. Row Details to Checks Table
+
+**Goal**: From a row with errors, get the full check definition (function, arguments, filter)
+that produced the failure.
+
+### SQL
+
+```sql
+-- Explode errors and join to checks table on fingerprints
+SELECT
+    e.name AS error_name,
+    e.message,
+    e.columns,
+    c.check.function,
+    c.check.arguments,
+    c.filter,
+    c.criticality
+FROM catalog.schema.quarantine_table t
+LATERAL VIEW explode(t._errors) AS e
+INNER JOIN catalog.schema.checks_table c
+    ON e.rule_fingerprint = c.rule_fingerprint
+    AND e.rule_set_fingerprint = c.rule_set_fingerprint;
+```
+
+### PySpark
+
+```python
+import pyspark.sql.functions as F
+
+# Explode errors from quarantine
+errors_df = (
+    spark.table("catalog.schema.quarantine_table")
+    .select(F.explode(F.col("_errors")).alias("error"))
+    .select("error.*")
+)
+
+# Join to checks table
+checks_df = spark.table("catalog.schema.checks_table")
+joined_df = errors_df.join(
+    checks_df,
+    on=["rule_fingerprint", "rule_set_fingerprint"],
+)
+joined_df.select(
+    "name", "message", "columns",
+    "check.function", "check.arguments", "filter", "criticality",
+).display()
+```
+
+## 4. Summary to Checks Table
+
+**Goal**: From a summary metrics run, find the exact rule set that was applied.
+
+### SQL
+
+```sql
+-- Get the rule set used in the latest run
+SELECT c.*
+FROM catalog.schema.checks_table c
+INNER JOIN (
+    SELECT DISTINCT checks_location, rule_set_fingerprint
+    FROM catalog.schema.summary_metrics
+    WHERE run_id = '<run_id>'
+) sm
+    ON c.rule_set_fingerprint = sm.rule_set_fingerprint;
+```
+
+### PySpark
+
+```python
+import pyspark.sql.functions as F
+
+# Get rule_set_fingerprint from a specific run
+summary_df = spark.table("catalog.schema.summary_metrics")
+run_info = (
+    summary_df
+    .filter(F.col("run_id") == "<run_id>")
+    .select("rule_set_fingerprint")
+    .first()
+)
+
+# Load the matching checks
+checks_df = (
+    spark.table("catalog.schema.checks_table")
+    .filter(F.col("rule_set_fingerprint") == run_info["rule_set_fingerprint"])
+)
+```
+
+<Admonition type="tip" title="Loading checks programmatically">
+You can also load checks by fingerprint using the DQX API:
+
+```python
+from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.config import TableChecksStorageConfig
+from databricks.sdk import WorkspaceClient
+
+dq_engine = DQEngine(WorkspaceClient())
+checks = dq_engine.load_checks(
+    config=TableChecksStorageConfig(
+        location="catalog.schema.checks_table",
+        rule_set_fingerprint="<fingerprint>",
+    )
+)
+```
+</Admonition>
+
+## 5. Which Checks Failed for a Run
+
+**Goal**: For a given run, list all distinct checks that failed along with their definitions.
+
+### SQL
+
+```sql
+-- Combine errors from output and quarantine for one run
+WITH all_errors AS (
+    SELECT e.*
+    FROM catalog.schema.output_table t
+    LATERAL VIEW explode(t._errors) AS e
+    WHERE e.run_id = '<run_id>'
+    UNION ALL
+    SELECT e.*
+    FROM catalog.schema.quarantine_table t
+    LATERAL VIEW explode(t._errors) AS e
+    WHERE e.run_id = '<run_id>'
+)
+SELECT DISTINCT
+    ae.name,
+    ae.message,
+    ae.rule_fingerprint,
+    c.check.function,
+    c.check.arguments,
+    c.filter
+FROM all_errors ae
+LEFT JOIN catalog.schema.checks_table c
+    ON ae.rule_fingerprint = c.rule_fingerprint
+    AND ae.rule_set_fingerprint = c.rule_set_fingerprint;
+```
+
+### PySpark
+
+```python
+import pyspark.sql.functions as F
+
+run_id = "<run_id>"
+
+# Collect errors from both output and quarantine
+def explode_errors(table_name, rid):
+    return (
+        spark.table(table_name)
+        .select(F.explode(F.col("_errors")).alias("error"))
+        .select("error.*")
+        .filter(F.col("run_id") == rid)
+    )
+
+all_errors_df = (
+    explode_errors("catalog.schema.output_table", run_id)
+    .unionByName(explode_errors("catalog.schema.quarantine_table", run_id))
+)
+
+# Join to checks for definitions
+checks_df = spark.table("catalog.schema.checks_table")
+failed_checks_df = (
+    all_errors_df
+    .select("name", "rule_fingerprint", "rule_set_fingerprint")
+    .distinct()
+    .join(checks_df, on=["rule_fingerprint", "rule_set_fingerprint"], how="left")
+)
+```
+
+## 6. Which Rules Were Applied in a Run
+
+**Goal**: List all rules that were active for a given run, whether or not they produced failures.
+
+### SQL
+
+```sql
+-- Get the rule set fingerprint from summary, then load all rules
+SELECT c.name, c.criticality, c.check.function, c.check.arguments, c.filter
+FROM catalog.schema.checks_table c
+WHERE c.rule_set_fingerprint = (
+    SELECT DISTINCT rule_set_fingerprint
+    FROM catalog.schema.summary_metrics
+    WHERE run_id = '<run_id>'
+)
+ORDER BY c.name;
+```
+
+### PySpark
+
+```python
+import pyspark.sql.functions as F
+
+# Retrieve rule_set_fingerprint for the run
+rsf = (
+    spark.table("catalog.schema.summary_metrics")
+    .filter(F.col("run_id") == "<run_id>")
+    .select("rule_set_fingerprint")
+    .first()["rule_set_fingerprint"]
+)
+
+# List all rules in that set
+rules_df = (
+    spark.table("catalog.schema.checks_table")
+    .filter(F.col("rule_set_fingerprint") == rsf)
+    .select("name", "criticality", "check.function", "check.arguments", "filter")
+    .orderBy("name")
+)
+```
+
+## 7. Run Tracking Over Time
+
+**Goal**: Monitor data quality trends across runs with error rates, warning rates, and row counts.
+
+### SQL
+
+```sql
+-- Pivot summary metrics into columns per run
+SELECT
+    run_id,
+    run_time,
+    input_location,
+    MAX(CASE WHEN metric_name = 'input_row_count' THEN CAST(metric_value AS BIGINT) END) AS input_rows,
+    MAX(CASE WHEN metric_name = 'valid_row_count' THEN CAST(metric_value AS BIGINT) END) AS valid_rows,
+    MAX(CASE WHEN metric_name = 'error_row_count' THEN CAST(metric_value AS BIGINT) END) AS error_rows,
+    MAX(CASE WHEN metric_name = 'warning_row_count' THEN CAST(metric_value AS BIGINT) END) AS warning_rows,
+    ROUND(
+        MAX(CASE WHEN metric_name = 'error_row_count' THEN CAST(metric_value AS DOUBLE) END) /
+        NULLIF(MAX(CASE WHEN metric_name = 'input_row_count' THEN CAST(metric_value AS DOUBLE) END), 0) * 100,
+        2
+    ) AS error_rate_pct
+FROM catalog.schema.summary_metrics
+GROUP BY run_id, run_time, input_location
+ORDER BY run_time DESC;
+```
+
+### PySpark
+
+```python
+import pyspark.sql.functions as F
+
+summary_df = spark.table("catalog.schema.summary_metrics")
+
+# Pivot metrics into columns
+trend_df = (
+    summary_df
+    .groupBy("run_id", "run_time", "input_location")
+    .pivot("metric_name")
+    .agg(F.first(F.col("metric_value").cast("double")))
+    .withColumn(
+        "error_rate_pct",
+        F.round(F.col("error_row_count") / F.col("input_row_count") * 100, 2),
+    )
+    .orderBy(F.col("run_time").desc())
+)
+```
+
+<Admonition type="tip" title="Alerting on trends">
+Use Databricks SQL Alerts on the run tracking
+query to get notified when error rates exceed a threshold. See [Summary Metrics](/docs/guide/summary_metrics)
+for more on monitoring best practices.
+</Admonition>
