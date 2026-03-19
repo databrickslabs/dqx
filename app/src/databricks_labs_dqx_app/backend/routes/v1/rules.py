@@ -31,7 +31,7 @@ def list_rules(
 ) -> list[RuleCatalogEntryOut]:
     """List all rule sets in the catalog, optionally filtered by status."""
     try:
-        entries = svc.list(status=status)
+        entries = svc.list_rules(status=status)
         return [_entry_to_out(e) for e in entries]
     except Exception as e:
         logger.error(f"Failed to list rules: {e}", exc_info=True)
@@ -95,17 +95,19 @@ def submit_for_approval(
     table_fqn: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: SetStatusIn | None = None,
 ) -> RuleCatalogEntryOut:
     """Submit a rule set for approval."""
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
-        entry = svc.set_status(table_fqn, "pending_approval", user_email)
+        expected_version = body.expected_version if body else None
+        entry = svc.set_status(table_fqn, "pending_approval", user_email, expected_version)
         return _entry_to_out(entry)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to submit rules for approval: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to submit for approval: {e}")
@@ -116,17 +118,19 @@ def approve_rules(
     table_fqn: str,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: SetStatusIn | None = None,
 ) -> RuleCatalogEntryOut:
     """Approve a rule set (admin only)."""
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
-        entry = svc.set_status(table_fqn, "approved", user_email)
+        expected_version = body.expected_version if body else None
+        entry = svc.set_status(table_fqn, "approved", user_email, expected_version)
         return _entry_to_out(entry)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to approve rules: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to approve rules: {e}")
@@ -135,20 +139,21 @@ def approve_rules(
 @router.post("/{table_fqn:path}/reject", response_model=RuleCatalogEntryOut, operation_id="rejectRules")
 def reject_rules(
     table_fqn: str,
-    body: SetStatusIn,
     svc: Annotated[RulesCatalogService, Depends(get_rules_catalog_service)],
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
+    body: SetStatusIn | None = None,
 ) -> RuleCatalogEntryOut:
     """Reject a rule set (admin only)."""
     try:
         user = obo_ws.current_user.me()
         user_email = user.user_name or "unknown"
-        entry = svc.set_status(table_fqn, "rejected", user_email)
+        expected_version = body.expected_version if body else None
+        entry = svc.set_status(table_fqn, "rejected", user_email, expected_version)
         return _entry_to_out(entry)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to reject rules: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to reject rules: {e}")

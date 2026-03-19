@@ -307,9 +307,16 @@ export interface SchemaOut {
   comment?: SchemaOutComment;
 }
 
+/**
+ * If provided, the update is rejected when the current version does not match (optimistic concurrency).
+ */
+export type SetStatusInExpectedVersion = number | null;
+
 export interface SetStatusIn {
   /** New status: draft | pending_approval | approved | rejected */
   status: string;
+  /** If provided, the update is rejected when the current version does not match (optimistic concurrency). */
+  expected_version?: SetStatusInExpectedVersion;
 }
 
 export type TableOutTableType = string | null;
@@ -555,6 +562,12 @@ export type ListRulesParams = {
 };
 
 export type DeleteRules200 = { [key: string]: string };
+
+export type SubmitRulesForApprovalBody = SetStatusIn | null;
+
+export type ApproveRulesBody = SetStatusIn | null;
+
+export type RejectRulesBody = SetStatusIn | null;
 
 /**
  * @summary Version
@@ -4048,11 +4061,12 @@ export const useDeleteRules = <
  */
 export const submitRulesForApproval = (
   tableFqn: string,
+  submitRulesForApprovalBody: SubmitRulesForApprovalBody,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
   return axios.default.post(
     `/api/v1/rules/${tableFqn}/submit`,
-    undefined,
+    submitRulesForApprovalBody,
     options,
   );
 };
@@ -4064,14 +4078,14 @@ export const getSubmitRulesForApprovalMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof submitRulesForApproval>>,
     TError,
-    { tableFqn: string },
+    { tableFqn: string; data: SubmitRulesForApprovalBody },
     TContext
   >;
   axios?: AxiosRequestConfig;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof submitRulesForApproval>>,
   TError,
-  { tableFqn: string },
+  { tableFqn: string; data: SubmitRulesForApprovalBody },
   TContext
 > => {
   const mutationKey = ["submitRulesForApproval"];
@@ -4085,11 +4099,11 @@ export const getSubmitRulesForApprovalMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof submitRulesForApproval>>,
-    { tableFqn: string }
+    { tableFqn: string; data: SubmitRulesForApprovalBody }
   > = (props) => {
-    const { tableFqn } = props ?? {};
+    const { tableFqn, data } = props ?? {};
 
-    return submitRulesForApproval(tableFqn, axiosOptions);
+    return submitRulesForApproval(tableFqn, data, axiosOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -4098,7 +4112,7 @@ export const getSubmitRulesForApprovalMutationOptions = <
 export type SubmitRulesForApprovalMutationResult = NonNullable<
   Awaited<ReturnType<typeof submitRulesForApproval>>
 >;
-
+export type SubmitRulesForApprovalMutationBody = SubmitRulesForApprovalBody;
 export type SubmitRulesForApprovalMutationError =
   AxiosError<HTTPValidationError>;
 
@@ -4113,7 +4127,7 @@ export const useSubmitRulesForApproval = <
     mutation?: UseMutationOptions<
       Awaited<ReturnType<typeof submitRulesForApproval>>,
       TError,
-      { tableFqn: string },
+      { tableFqn: string; data: SubmitRulesForApprovalBody },
       TContext
     >;
     axios?: AxiosRequestConfig;
@@ -4122,7 +4136,7 @@ export const useSubmitRulesForApproval = <
 ): UseMutationResult<
   Awaited<ReturnType<typeof submitRulesForApproval>>,
   TError,
-  { tableFqn: string },
+  { tableFqn: string; data: SubmitRulesForApprovalBody },
   TContext
 > => {
   const mutationOptions = getSubmitRulesForApprovalMutationOptions(options);
@@ -4136,11 +4150,12 @@ export const useSubmitRulesForApproval = <
  */
 export const approveRules = (
   tableFqn: string,
+  approveRulesBody: ApproveRulesBody,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
   return axios.default.post(
     `/api/v1/rules/${tableFqn}/approve`,
-    undefined,
+    approveRulesBody,
     options,
   );
 };
@@ -4152,14 +4167,14 @@ export const getApproveRulesMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof approveRules>>,
     TError,
-    { tableFqn: string },
+    { tableFqn: string; data: ApproveRulesBody },
     TContext
   >;
   axios?: AxiosRequestConfig;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof approveRules>>,
   TError,
-  { tableFqn: string },
+  { tableFqn: string; data: ApproveRulesBody },
   TContext
 > => {
   const mutationKey = ["approveRules"];
@@ -4173,11 +4188,11 @@ export const getApproveRulesMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof approveRules>>,
-    { tableFqn: string }
+    { tableFqn: string; data: ApproveRulesBody }
   > = (props) => {
-    const { tableFqn } = props ?? {};
+    const { tableFqn, data } = props ?? {};
 
-    return approveRules(tableFqn, axiosOptions);
+    return approveRules(tableFqn, data, axiosOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -4186,7 +4201,7 @@ export const getApproveRulesMutationOptions = <
 export type ApproveRulesMutationResult = NonNullable<
   Awaited<ReturnType<typeof approveRules>>
 >;
-
+export type ApproveRulesMutationBody = ApproveRulesBody;
 export type ApproveRulesMutationError = AxiosError<HTTPValidationError>;
 
 /**
@@ -4200,7 +4215,7 @@ export const useApproveRules = <
     mutation?: UseMutationOptions<
       Awaited<ReturnType<typeof approveRules>>,
       TError,
-      { tableFqn: string },
+      { tableFqn: string; data: ApproveRulesBody },
       TContext
     >;
     axios?: AxiosRequestConfig;
@@ -4209,7 +4224,7 @@ export const useApproveRules = <
 ): UseMutationResult<
   Awaited<ReturnType<typeof approveRules>>,
   TError,
-  { tableFqn: string },
+  { tableFqn: string; data: ApproveRulesBody },
   TContext
 > => {
   const mutationOptions = getApproveRulesMutationOptions(options);
@@ -4223,12 +4238,12 @@ export const useApproveRules = <
  */
 export const rejectRules = (
   tableFqn: string,
-  setStatusIn: SetStatusIn,
+  rejectRulesBody: RejectRulesBody,
   options?: AxiosRequestConfig,
 ): Promise<AxiosResponse<RuleCatalogEntryOut>> => {
   return axios.default.post(
     `/api/v1/rules/${tableFqn}/reject`,
-    setStatusIn,
+    rejectRulesBody,
     options,
   );
 };
@@ -4240,14 +4255,14 @@ export const getRejectRulesMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof rejectRules>>,
     TError,
-    { tableFqn: string; data: SetStatusIn },
+    { tableFqn: string; data: RejectRulesBody },
     TContext
   >;
   axios?: AxiosRequestConfig;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof rejectRules>>,
   TError,
-  { tableFqn: string; data: SetStatusIn },
+  { tableFqn: string; data: RejectRulesBody },
   TContext
 > => {
   const mutationKey = ["rejectRules"];
@@ -4261,7 +4276,7 @@ export const getRejectRulesMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof rejectRules>>,
-    { tableFqn: string; data: SetStatusIn }
+    { tableFqn: string; data: RejectRulesBody }
   > = (props) => {
     const { tableFqn, data } = props ?? {};
 
@@ -4274,7 +4289,7 @@ export const getRejectRulesMutationOptions = <
 export type RejectRulesMutationResult = NonNullable<
   Awaited<ReturnType<typeof rejectRules>>
 >;
-export type RejectRulesMutationBody = SetStatusIn;
+export type RejectRulesMutationBody = RejectRulesBody;
 export type RejectRulesMutationError = AxiosError<HTTPValidationError>;
 
 /**
@@ -4288,7 +4303,7 @@ export const useRejectRules = <
     mutation?: UseMutationOptions<
       Awaited<ReturnType<typeof rejectRules>>,
       TError,
-      { tableFqn: string; data: SetStatusIn },
+      { tableFqn: string; data: RejectRulesBody },
       TContext
     >;
     axios?: AxiosRequestConfig;
@@ -4297,7 +4312,7 @@ export const useRejectRules = <
 ): UseMutationResult<
   Awaited<ReturnType<typeof rejectRules>>,
   TError,
-  { tableFqn: string; data: SetStatusIn },
+  { tableFqn: string; data: RejectRulesBody },
   TContext
 > => {
   const mutationOptions = getRejectRulesMutationOptions(options);

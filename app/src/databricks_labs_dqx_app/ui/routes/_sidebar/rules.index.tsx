@@ -90,6 +90,7 @@ function statusBadge(status: string) {
 function RulesIndexPage() {
   const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState("all");
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const {
     data: rulesResp,
@@ -106,44 +107,71 @@ function RulesIndexPage() {
   const approveMutation = useApproveRules();
   const rejectMutation = useRejectRules();
 
+  const isBusy = pendingAction !== null;
+
   const handleDelete = async (tableFqn: string) => {
+    if (isBusy) return;
     if (!confirm(`Delete rules for ${tableFqn}?`)) return;
+    setPendingAction(tableFqn);
     try {
       await deleteRulesMutation.mutateAsync({ tableFqn });
       toast.success(`Rules deleted for ${tableFqn}`);
       refetch();
     } catch {
       toast.error("Failed to delete rules");
+    } finally {
+      setPendingAction(null);
     }
   };
 
-  const handleSubmit = async (tableFqn: string) => {
+  const handleSubmit = async (tableFqn: string, version: number) => {
+    if (isBusy) return;
+    setPendingAction(tableFqn);
     try {
-      await submitMutation.mutateAsync({ tableFqn });
+      await submitMutation.mutateAsync({
+        tableFqn,
+        data: { status: "pending_approval", expected_version: version },
+      });
       toast.success("Submitted for approval");
       refetch();
     } catch {
       toast.error("Failed to submit for approval");
+    } finally {
+      setPendingAction(null);
     }
   };
 
-  const handleApprove = async (tableFqn: string) => {
+  const handleApprove = async (tableFqn: string, version: number) => {
+    if (isBusy) return;
+    setPendingAction(tableFqn);
     try {
-      await approveMutation.mutateAsync({ tableFqn });
+      await approveMutation.mutateAsync({
+        tableFqn,
+        data: { status: "approved", expected_version: version },
+      });
       toast.success("Rules approved");
       refetch();
     } catch {
       toast.error("Failed to approve rules");
+    } finally {
+      setPendingAction(null);
     }
   };
 
-  const handleReject = async (tableFqn: string) => {
+  const handleReject = async (tableFqn: string, version: number) => {
+    if (isBusy) return;
+    setPendingAction(tableFqn);
     try {
-      await rejectMutation.mutateAsync({ tableFqn, data: { status: "rejected" } });
+      await rejectMutation.mutateAsync({
+        tableFqn,
+        data: { status: "rejected", expected_version: version },
+      });
       toast.success("Rules rejected");
       refetch();
     } catch {
       toast.error("Failed to reject rules");
+    } finally {
+      setPendingAction(null);
     }
   };
 
@@ -258,11 +286,12 @@ function RulesIndexPage() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => handleSubmit(rule.table_fqn)}
+                                disabled={isBusy}
+                                onClick={() => handleSubmit(rule.table_fqn, rule.version)}
                                 className="gap-1 h-7 text-xs"
                               >
                                 <SendHorizonal className="h-3 w-3" />
-                                Submit
+                                {pendingAction === rule.table_fqn ? "Submitting..." : "Submit"}
                               </Button>
                             )}
                             {rule.status === "pending_approval" && (
@@ -270,26 +299,29 @@ function RulesIndexPage() {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => handleApprove(rule.table_fqn)}
+                                  disabled={isBusy}
+                                  onClick={() => handleApprove(rule.table_fqn, rule.version)}
                                   className="gap-1 h-7 text-xs text-green-600"
                                 >
                                   <CheckCircle2 className="h-3 w-3" />
-                                  Approve
+                                  {pendingAction === rule.table_fqn ? "Approving..." : "Approve"}
                                 </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => handleReject(rule.table_fqn)}
+                                  disabled={isBusy}
+                                  onClick={() => handleReject(rule.table_fqn, rule.version)}
                                   className="gap-1 h-7 text-xs text-red-600"
                                 >
                                   <XCircle className="h-3 w-3" />
-                                  Reject
+                                  {pendingAction === rule.table_fqn ? "Rejecting..." : "Reject"}
                                 </Button>
                               </>
                             )}
                             <Button
                               size="sm"
                               variant="ghost"
+                              disabled={isBusy}
                               onClick={() => handleDelete(rule.table_fqn)}
                               className="h-7 text-xs text-destructive"
                             >

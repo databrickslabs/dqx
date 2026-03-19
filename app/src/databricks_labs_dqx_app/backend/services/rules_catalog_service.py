@@ -44,6 +44,13 @@ class RulesCatalogService:
 
     VALID_STATUSES = {"draft", "pending_approval", "approved", "rejected"}
 
+    VALID_TRANSITIONS: dict[str, set[str]] = {
+        "draft": {"pending_approval"},
+        "pending_approval": {"approved", "rejected"},
+        "approved": {"draft"},
+        "rejected": {"draft"},
+    }
+
     def __init__(self, ws: WorkspaceClient, warehouse_id: str, catalog: str, schema: str) -> None:
         self._ws = ws
         self._warehouse_id = warehouse_id
@@ -123,7 +130,7 @@ class RulesCatalogService:
             return None
         return self._row_to_entry(rows[0])
 
-    def list(self, status: str | None = None) -> list[RuleCatalogEntry]:
+    def list_rules(self, status: str | None = None) -> list[RuleCatalogEntry]:
         """List all rule sets, optionally filtered by status."""
         sql = (
             f"SELECT table_fqn, checks, version, status, created_by, "
@@ -145,30 +152,62 @@ class RulesCatalogService:
         self._execute(sql)
         logger.info(f"Deleted rules for table: {table_fqn} (by {user_email})")
 
-    def set_status(self, table_fqn: str, status: str, user_email: str) -> RuleCatalogEntry:
-        """Update the approval status of a rule set."""
+    def set_status(
+        self,
+        table_fqn: str,
+        status: str,
+        user_email: str,
+        expected_version: int | None = None,
+    ) -> RuleCatalogEntry:
+        """Update the approval status of a rule set.
+
+        Enforces valid state transitions and optional optimistic concurrency
+        via ``expected_version``. If the row's current version does not match,
+        the UPDATE is a no-op and a ``RuntimeError`` is raised.
+        """
         if status not in self.VALID_STATUSES:
             raise ValueError(f"Invalid status: {status}. Must be one of {self.VALID_STATUSES}")
+
+        entry = self.get(table_fqn)
+        if entry is None:
+            raise RuntimeError(f"Rule set not found: {table_fqn}")
+
+        allowed = self.VALID_TRANSITIONS.get(entry.status, set())
+        if status not in allowed:
+            raise ValueError(
+                f"Cannot transition from '{entry.status}' to '{status}'. " f"Allowed transitions: {allowed or 'none'}"
+            )
+
+        if expected_version is not None and entry.version != expected_version:
+            raise RuntimeError(
+                f"Version conflict for {table_fqn}: expected v{expected_version}, "
+                f"but current is v{entry.version}. Another user may have modified the rules."
+            )
 
         escaped_fqn = table_fqn.replace("'", "\\'")
         escaped_status = status.replace("'", "\\'")
         escaped_email = user_email.replace("'", "\\'")
         now = datetime.utcnow().isoformat()
 
+        version_guard = f" AND version = {entry.version}"
         sql = (
             f"UPDATE {self._table} SET "
             f"  status = '{escaped_status}', "
             f"  updated_by = '{escaped_email}', "
             f"  updated_at = '{now}' "
-            f"WHERE table_fqn = '{escaped_fqn}'"
+            f"WHERE table_fqn = '{escaped_fqn}'{version_guard}"
         )
         self._execute(sql)
         logger.info(f"Updated status for {table_fqn} to {status} (by {user_email})")
 
-        entry = self.get(table_fqn)
-        if entry is None:
+        updated = self.get(table_fqn)
+        if updated is None:
             raise RuntimeError(f"Rule set not found after status update: {table_fqn}")
-        return entry
+        if updated.status != status:
+            raise RuntimeError(
+                f"Status update for {table_fqn} did not take effect — " "the row may have been modified concurrently."
+            )
+        return updated
 
     # ------------------------------------------------------------------
     # Internal helpers

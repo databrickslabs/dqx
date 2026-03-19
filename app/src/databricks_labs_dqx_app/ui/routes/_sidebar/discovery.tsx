@@ -1,8 +1,8 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
-import { useGetTableColumns, ColumnOut } from "@/lib/api";
+import { useGetTableColumns, useGetRules, ColumnOut } from "@/lib/api";
 import {
   Card,
   CardContent,
@@ -11,8 +11,21 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Database, Table2, Columns3, Search } from "lucide-react";
+import {
+  Database,
+  Table2,
+  Columns3,
+  Search,
+  BookCheck,
+  Plus,
+  Pencil,
+  FileEdit,
+  Clock,
+  CheckCircle2,
+  XCircle,
+} from "lucide-react";
 import { FadeIn } from "@/components/anim/FadeIn";
 import { ShinyText } from "@/components/anim/ShinyText";
 
@@ -64,7 +77,10 @@ function DiscoveryPage() {
 
       {catalog && schema && table && (
         <FadeIn duration={0.3}>
-          <ColumnsTable catalog={catalog} schema={schema} table={table} />
+          <div className="space-y-6">
+            <ColumnsTable catalog={catalog} schema={schema} table={table} />
+            <RulesPanel tableFqn={`${catalog}.${schema}.${table}`} />
+          </div>
         </FadeIn>
       )}
 
@@ -83,6 +99,125 @@ function DiscoveryPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function statusBadge(status: string) {
+  switch (status) {
+    case "draft":
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <FileEdit className="h-3 w-3" />
+          Draft
+        </Badge>
+      );
+    case "pending_approval":
+      return (
+        <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600">
+          <Clock className="h-3 w-3" />
+          Pending
+        </Badge>
+      );
+    case "approved":
+      return (
+        <Badge variant="outline" className="gap-1 border-green-500 text-green-600">
+          <CheckCircle2 className="h-3 w-3" />
+          Approved
+        </Badge>
+      );
+    case "rejected":
+      return (
+        <Badge variant="outline" className="gap-1 border-red-500 text-red-600">
+          <XCircle className="h-3 w-3" />
+          Rejected
+        </Badge>
+      );
+    default:
+      return <Badge variant="secondary">{status}</Badge>;
+  }
+}
+
+function RulesPanel({ tableFqn }: { tableFqn: string }) {
+  const navigate = useNavigate();
+  const { data: rulesResp, isLoading, error } = useGetRules(tableFqn);
+  const entry = rulesResp?.data;
+  const hasRules = entry && !error;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BookCheck className="h-5 w-5" />
+          Quality Rules
+        </CardTitle>
+        <CardDescription>
+          {isLoading
+            ? "Checking for existing rules..."
+            : hasRules
+              ? `${entry.checks.length} rule${entry.checks.length !== 1 ? "s" : ""} defined for this table`
+              : "No quality rules defined for this table yet."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading && (
+          <Skeleton className="h-12 w-full" />
+        )}
+
+        {hasRules && (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 text-sm">
+              <span className="tabular-nums font-medium">v{entry.version}</span>
+              <span className="text-muted-foreground">·</span>
+              {statusBadge(entry.status)}
+              <span className="text-muted-foreground">·</span>
+              <span className="tabular-nums">{entry.checks.length} rules</span>
+              {entry.updated_at && (
+                <>
+                  <span className="text-muted-foreground">·</span>
+                  <span className="text-muted-foreground text-xs">
+                    Updated {new Date(entry.updated_at).toLocaleDateString()}
+                  </span>
+                </>
+              )}
+            </div>
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={() =>
+                navigate({
+                  to: "/rules/generate",
+                  search: { table: tableFqn },
+                })
+              }
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit Rules
+            </Button>
+          </div>
+        )}
+
+        {!isLoading && !hasRules && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Get started by generating rules with AI.
+            </p>
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={() =>
+                navigate({
+                  to: "/rules/generate",
+                  search: { table: tableFqn },
+                })
+              }
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Create Rules
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

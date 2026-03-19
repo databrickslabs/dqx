@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
   Card,
@@ -8,6 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -19,6 +20,11 @@ import {
   Loader2,
   ArrowLeft,
   AlertCircle,
+  FileEdit,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
@@ -29,7 +35,9 @@ import {
   useDryRun,
   useSaveRules,
   useSubmitRulesForApproval,
+  useGetRules,
   type DryRunOut,
+  type RuleCatalogEntryOut,
 } from "@/lib/api";
 
 type SearchParams = {
@@ -43,6 +51,41 @@ export const Route = createFileRoute("/_sidebar/rules/generate")({
   }),
 });
 
+function statusBadge(status: string) {
+  switch (status) {
+    case "draft":
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <FileEdit className="h-3 w-3" />
+          Draft
+        </Badge>
+      );
+    case "pending_approval":
+      return (
+        <Badge variant="outline" className="gap-1 border-amber-500 text-amber-600">
+          <Clock className="h-3 w-3" />
+          Pending
+        </Badge>
+      );
+    case "approved":
+      return (
+        <Badge variant="outline" className="gap-1 border-green-500 text-green-600">
+          <CheckCircle2 className="h-3 w-3" />
+          Approved
+        </Badge>
+      );
+    case "rejected":
+      return (
+        <Badge variant="outline" className="gap-1 border-red-500 text-red-600">
+          <XCircle className="h-3 w-3" />
+          Rejected
+        </Badge>
+      );
+    default:
+      return <Badge variant="secondary">{status}</Badge>;
+  }
+}
+
 function GenerateRulesPage() {
   const navigate = useNavigate();
   const { table: initialTable } = Route.useSearch();
@@ -51,6 +94,28 @@ function GenerateRulesPage() {
   const [userInput, setUserInput] = useState("");
   const [checks, setChecks] = useState<Record<string, unknown>[]>([]);
   const [dryRunResult, setDryRunResult] = useState<DryRunOut | null>(null);
+  const [existingEntry, setExistingEntry] = useState<RuleCatalogEntryOut | null>(null);
+
+  const hasTable = tableFqn.split(".").length === 3;
+
+  const {
+    data: rulesResp,
+    isLoading: isLoadingRules,
+  } = useGetRules(tableFqn, {
+    query: { enabled: hasTable },
+  });
+
+  useEffect(() => {
+    if (rulesResp?.data) {
+      const entry = rulesResp.data;
+      setExistingEntry(entry);
+      if (checks.length === 0) {
+        setChecks(entry.checks);
+      }
+    }
+  }, [rulesResp]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isEditMode = existingEntry !== null;
 
   const generateMutation = useAiAssistedChecksGeneration();
   const dryRunMutation = useDryRun();
@@ -58,7 +123,6 @@ function GenerateRulesPage() {
   const submitMutation = useSubmitRulesForApproval();
 
   const hasChecks = checks.length > 0;
-  const hasTable = tableFqn.split(".").length === 3;
 
   const handleGenerate = async () => {
     if (!userInput.trim()) {
@@ -142,16 +206,17 @@ function GenerateRulesPage() {
       <div className="space-y-2">
         <PageBreadcrumb
           items={[{ label: "Rules", to: "/rules" }]}
-          page="Generate Rules"
+          page={isEditMode ? "Edit Rules" : "Generate Rules"}
         />
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">
-              Generate Rules
+              {isEditMode ? "Edit Rules" : "Generate Rules"}
             </h1>
             <p className="text-muted-foreground">
-              Select a table and describe your data quality requirements to
-              generate rules with AI.
+              {isEditMode
+                ? "Edit the data quality rules for this table. Use AI to regenerate, or edit manually."
+                : "Select a table and describe your data quality requirements to generate rules with AI."}
             </p>
           </div>
           <Button variant="outline" asChild className="gap-2">
@@ -168,32 +233,59 @@ function GenerateRulesPage() {
         <CardHeader>
           <CardTitle>1. Select Table</CardTitle>
           <CardDescription>
-            Choose the table you want to generate data quality rules for.
+            {isEditMode
+              ? "Table is locked while editing an existing rule set."
+              : "Choose the table you want to generate data quality rules for."}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
           <CatalogBrowser
             value={tableFqn}
             onChange={setTableFqn}
-            disabled={isBusy}
+            disabled={isEditMode || isBusy}
           />
-          {tableFqn && hasTable && (
-            <p className="text-sm text-muted-foreground mt-2">
+          {tableFqn && hasTable && !isEditMode && (
+            <p className="text-sm text-muted-foreground">
               Selected: <code className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded">{tableFqn}</code>
             </p>
+          )}
+          {isEditMode && existingEntry && (
+            <div className="flex items-center gap-3 rounded-md border border-border bg-muted/50 px-4 py-3">
+              <Info className="h-4 w-4 text-muted-foreground shrink-0" />
+              <div className="flex items-center gap-3 text-sm">
+                <code className="font-mono text-xs bg-background px-1.5 py-0.5 rounded">{tableFqn}</code>
+                <span className="text-muted-foreground">·</span>
+                <span className="tabular-nums font-medium">v{existingEntry.version}</span>
+                <span className="text-muted-foreground">·</span>
+                {statusBadge(existingEntry.status)}
+                {existingEntry.updated_at && (
+                  <>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="text-muted-foreground text-xs">
+                      Updated {new Date(existingEntry.updated_at).toLocaleDateString()}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {isLoadingRules && hasTable && (
+            <p className="text-sm text-muted-foreground">Loading existing rules...</p>
           )}
         </CardContent>
       </Card>
 
-      {/* Step 2: AI generation */}
+      {/* AI generation */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5" />
-            2. Describe Requirements
+            {isEditMode ? "AI Assist (Optional)" : "2. Describe Requirements"}
           </CardTitle>
           <CardDescription>
-            Describe what data quality checks you need in plain English.
+            {isEditMode
+              ? "Optionally regenerate rules with AI. This will replace the current rules."
+              : "Describe what data quality checks you need in plain English."}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -223,13 +315,15 @@ function GenerateRulesPage() {
         </CardContent>
       </Card>
 
-      {/* Step 3: Review rules */}
+      {/* Review rules */}
       {hasChecks && (
         <Card>
           <CardHeader>
-            <CardTitle>3. Review Rules</CardTitle>
+            <CardTitle>{isEditMode ? "2. Review Rules" : "3. Review Rules"}</CardTitle>
             <CardDescription>
-              Review, edit, or remove the generated rules before saving.
+              {isEditMode
+                ? "Edit the existing rules, change criticality, or remove rules."
+                : "Review, edit, or remove the generated rules before saving."}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -238,11 +332,11 @@ function GenerateRulesPage() {
         </Card>
       )}
 
-      {/* Step 4: Dry run + save */}
+      {/* Dry run + save */}
       {hasChecks && (
         <Card>
           <CardHeader>
-            <CardTitle>4. Validate & Save</CardTitle>
+            <CardTitle>{isEditMode ? "3. Validate & Save" : "4. Validate & Save"}</CardTitle>
             <CardDescription>
               Run a dry run to validate rules against live data, then save.
             </CardDescription>

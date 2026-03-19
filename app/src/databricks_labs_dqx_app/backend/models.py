@@ -67,6 +67,10 @@ class SaveRulesIn(BaseModel):
 
 class SetStatusIn(BaseModel):
     status: str = Field(description="New status: draft | pending_approval | approved | rejected")
+    expected_version: int | None = Field(
+        default=None,
+        description="If provided, the update is rejected when the current version does not match (optimistic concurrency).",
+    )
 
 
 class DryRunIn(BaseModel):

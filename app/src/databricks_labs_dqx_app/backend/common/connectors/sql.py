@@ -1,8 +1,8 @@
 import asyncio
 import logging
 
-from databricks import sql as databricks_sql
-from databricks.sql.client import Connection
+from databricks import sql as databricks_sql  # type: ignore[attr-defined]
+from databricks.sql.client import Connection  # type: ignore[import-untyped]
 
 logger = logging.getLogger(__name__)
 

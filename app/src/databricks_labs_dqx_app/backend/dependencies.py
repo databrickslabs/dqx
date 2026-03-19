@@ -1,6 +1,11 @@
+from __future__ import annotations
+
 import os
 from contextlib import contextmanager
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
+
+if TYPE_CHECKING:
+    from .common.connectors.sql import SQLConnector
 
 from databricks.connect import DatabricksSession
 from databricks.labs.dqx.config import LLMModelConfig
@@ -11,7 +16,6 @@ from fastapi import Depends, Header, HTTPException, status
 from pyspark.sql import SparkSession
 
 from .common.authentication.sql import SQLAuthentication
-from .common.connectors.sql import SQLConnector
 from .config import conf, get_sql_warehouse_path
 from .logger import logger
 from .migrations import MigrationRunner
@@ -141,7 +145,7 @@ def get_migration_runner() -> MigrationRunner:
     Used at startup to ensure the database schema is current before any
     request is served.  All DDL runs as the app service principal.
     """
-    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
     return MigrationRunner(
         ws=rt.ws,
         warehouse_id=wh_id,
@@ -157,7 +161,7 @@ def get_app_settings_service() -> AppSettingsService:
     not per-user workspace files.  All operations use the app's service
     principal, not the calling user's OBO token.
     """
-    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
     return AppSettingsService(
         ws=rt.ws,
         warehouse_id=wh_id,
@@ -250,7 +254,7 @@ def get_rules_catalog_service() -> RulesCatalogService:
     Rules are stored centrally in a Delta table.  All operations use the
     app's service principal, not the calling user's OBO token.
     """
-    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID", "")
+    wh_id = os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
     return RulesCatalogService(
         ws=rt.ws,
         warehouse_id=wh_id,
@@ -270,6 +274,8 @@ def get_sql_connector(
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> SQLConnector:
     """Create a SQLConnector using the OBO token and configured SQL warehouse."""
+    from .common.connectors.sql import SQLConnector
+
     auth = SQLAuthentication(bearer=token)
     host = os.environ.get("DATABRICKS_HOST", "")
     if not host:

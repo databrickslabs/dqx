@@ -26,7 +26,7 @@ def dry_run(
             )
 
         # Read a sample from the table
-        spark = engine._spark  # noqa: SLF001
+        spark = engine.spark
         df = spark.read.table(body.table_fqn).limit(body.sample_size)
 
         # Apply checks and split
@@ -43,9 +43,7 @@ def dry_run(
             from pyspark.sql import functions as F
 
             errors_df = invalid_df.select(F.explode(F.col("_errors")).alias("error"))
-            summary_rows = (
-                errors_df.groupBy("error").count().orderBy(F.desc("count")).limit(20).collect()
-            )
+            summary_rows = errors_df.groupBy("error").count().orderBy(F.desc("count")).limit(20).collect()
             error_summary = [{"error": str(row["error"]), "count": row["count"]} for row in summary_rows]
 
         # Collect sample invalid rows (limited)
