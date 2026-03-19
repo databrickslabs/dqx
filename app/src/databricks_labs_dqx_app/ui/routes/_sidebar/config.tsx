@@ -7,6 +7,9 @@ import {
   useGetSettingsSuspense,
   useSaveSettings,
   useSaveConfig,
+  useInitializeApp,
+  useGetAppSettings,
+  useGetAvailableCatalogs,
   WorkspaceConfigInput,
 } from "@/lib/api";
 import selector from "@/lib/selector";
@@ -16,12 +19,20 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CardFooter,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
   Popover,
@@ -46,6 +57,9 @@ import {
   Loader2,
   FolderOpen,
   Pencil,
+  CheckCircle2,
+  Users,
+  Rocket,
 } from "lucide-react";
 import { toast } from "sonner";
 import yaml from "js-yaml";
@@ -55,6 +69,337 @@ import { ShinyText } from "@/components/anim/ShinyText";
 export const Route = createFileRoute("/_sidebar/config")({
   component: () => <ConfigPage />,
 });
+
+// =============================================================================
+// App Setup / Initialization Component
+// =============================================================================
+
+const STORAGE_KEY = "dqx_app_catalog";
+
+function AppSetupCard() {
+  // Load saved catalog from localStorage on initial render
+  const [selectedCatalog, setSelectedCatalog] = useState(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem(STORAGE_KEY) || "";
+    }
+    return "";
+  });
+  const [dataStewardGroup, setDataStewardGroup] = useState("");
+  const [viewerGroup, setViewerGroup] = useState("");
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [isReconfiguring, setIsReconfiguring] = useState(false);
+  
+  const queryClient = useQueryClient();
+  const { mutate: initialize } = useInitializeApp();
+  
+  // Save selected catalog to localStorage
+  const handleCatalogChange = (catalog: string) => {
+    setSelectedCatalog(catalog);
+    if (catalog) {
+      localStorage.setItem(STORAGE_KEY, catalog);
+    }
+  };
+  
+  // Handle manual catalog entry
+  const handleManualCatalogSubmit = () => {
+    if (manualCatalog.trim()) {
+      handleCatalogChange(manualCatalog.trim());
+      setUseManualEntry(false);
+    }
+  };
+  
+  // Clear saved catalog (for reconfigure)
+  const handleReconfigure = () => {
+    setIsReconfiguring(true);
+  };
+  
+  const handleCancelReconfigure = () => {
+    setIsReconfiguring(false);
+  };
+  
+  // Fetch available catalogs where user has CREATE SCHEMA permission
+  const { data: catalogsResponse, isLoading: isLoadingCatalogs, error: catalogsError } = useGetAvailableCatalogs();
+  const availableCatalogs = catalogsResponse?.data?.catalogs || [];
+  const catalogsApiError = catalogsResponse?.data?.error || (catalogsError as any)?.message;
+  const [useManualEntry, setUseManualEntry] = useState(false);
+  const [manualCatalog, setManualCatalog] = useState("");
+  
+  // Fetch current app settings to check if already initialized
+  const { data: appSettings, isLoading: isLoadingSettings, refetch: refetchSettings, error: settingsError } = useGetAppSettings(
+    { catalog: selectedCatalog },
+    { query: { enabled: !!selectedCatalog, retry: false } }
+  );
+
+  const handleInitialize = () => {
+    if (!selectedCatalog || !dataStewardGroup) {
+      toast.error("Please fill in required fields");
+      return;
+    }
+    
+    setIsInitializing(true);
+    initialize(
+      {
+        data: {
+          target_catalog: selectedCatalog,
+          target_schema: "dqx_app",
+          data_steward_group: dataStewardGroup,
+          viewer_group: viewerGroup || undefined,
+        },
+      },
+      {
+        onSuccess: (response) => {
+          setIsInitializing(false);
+          setIsReconfiguring(false);
+          const result = response.data;
+          if (result.success) {
+            toast.success(isReconfiguring ? "Configuration updated!" : "App initialized successfully!");
+            refetchSettings();
+            queryClient.invalidateQueries({ queryKey: ["/api/admin/app-settings"] });
+          } else {
+            toast.error("Initialization failed: " + (result.errors?.join(", ") || "Unknown error"));
+          }
+        },
+        onError: (error) => {
+          setIsInitializing(false);
+          const msg = (error as any).response?.data?.detail || error.message;
+          toast.error("Failed to initialize: " + msg);
+        },
+      }
+    );
+  };
+
+  const settings = appSettings?.data;
+  const isInitialized = settings?.initialized === true;
+  const hasCatalogSelected = !!selectedCatalog;
+  const notFound = hasCatalogSelected && settingsError;
+
+  return (
+    <Card className="border-primary/20">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Rocket className="h-5 w-5 text-primary" />
+            <CardTitle>App Setup (Delta Storage)</CardTitle>
+          </div>
+          {isInitialized && (
+            <Badge variant="default" className="flex items-center gap-1 bg-green-600">
+              <CheckCircle2 className="h-3 w-3" />
+              Initialized
+            </Badge>
+          )}
+        </div>
+        <CardDescription>
+          App settings are stored in Delta table: <code className="text-xs">{selectedCatalog || "catalog"}.dqx_app.dq_app_settings</code>
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Catalog Selection */}
+        <div className="space-y-2">
+          <Label>
+            Target Catalog <span className="text-destructive">*</span>
+          </Label>
+          {isLoadingCatalogs ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading available catalogs...
+            </div>
+          ) : useManualEntry || availableCatalogs.length === 0 ? (
+            <div className="space-y-3">
+              {catalogsApiError && (
+                <div className="flex items-start gap-2 text-sm text-yellow-600 p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded-md">
+                  <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium">Could not load catalogs automatically</p>
+                    <p className="text-xs mt-1 opacity-80">{catalogsApiError}</p>
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  value={manualCatalog}
+                  onChange={(e) => setManualCatalog(e.target.value)}
+                  placeholder="Enter catalog name (e.g., main)"
+                  className="font-mono flex-1"
+                  onKeyDown={(e) => e.key === "Enter" && handleManualCatalogSubmit()}
+                />
+                <Button onClick={handleManualCatalogSubmit} disabled={!manualCatalog.trim()}>
+                  Use Catalog
+                </Button>
+              </div>
+              {availableCatalogs.length > 0 && (
+                <Button variant="link" size="sm" className="p-0 h-auto" onClick={() => setUseManualEntry(false)}>
+                  ← Back to catalog list
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Select value={selectedCatalog} onValueChange={handleCatalogChange}>
+                <SelectTrigger className="font-mono">
+                  <SelectValue placeholder="Select a catalog" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableCatalogs.map((catalog: { name: string; has_create_schema: boolean }) => (
+                    <SelectItem key={catalog.name} value={catalog.name} className="font-mono">
+                      {catalog.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button variant="link" size="sm" className="p-0 h-auto text-xs" onClick={() => setUseManualEntry(true)}>
+                Enter catalog name manually
+              </Button>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Select or enter a catalog where you have CREATE SCHEMA permission
+          </p>
+        </div>
+
+        {/* Show status after selecting a catalog */}
+        {hasCatalogSelected && (
+          <>
+            <Separator />
+            
+            {isLoadingSettings ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Checking initialization status...
+              </div>
+            ) : isInitialized && !isReconfiguring ? (
+              // Show current settings when initialized (and not reconfiguring)
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-green-600">
+                    <CheckCircle2 className="h-5 w-5" />
+                    <span className="font-medium">App is initialized in this catalog</span>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={handleReconfigure}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    Reconfigure
+                  </Button>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label className="text-muted-foreground text-xs">Target Catalog</Label>
+                    <p className="font-mono text-sm">{settings?.target_catalog}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-muted-foreground text-xs">Schema</Label>
+                    <p className="font-mono text-sm">{settings?.target_schema}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-muted-foreground text-xs">Data Steward Group</Label>
+                    <p className="font-mono text-sm flex items-center gap-1">
+                      <Users className="h-3 w-3" />
+                      {settings?.data_steward_group || "Not set"}
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-muted-foreground text-xs">Viewer Group</Label>
+                    <p className="font-mono text-sm flex items-center gap-1">
+                      <Eye className="h-3 w-3" />
+                      {settings?.viewer_group || "Not set"}
+                    </p>
+                  </div>
+                </div>
+                {settings?.initialized_at && (
+                  <p className="text-xs text-muted-foreground">
+                    Initialized on {new Date(settings.initialized_at).toLocaleString()} by {settings.initialized_by}
+                  </p>
+                )}
+              </div>
+            ) : (
+              // Show setup form when not initialized
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-yellow-600">
+                  <AlertCircle className="h-5 w-5" />
+                  <span className="font-medium">
+                    {notFound 
+                      ? `App not initialized in catalog "${selectedCatalog}"` 
+                      : "Ready to initialize"}
+                  </span>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="data-steward-group">
+                      Data Steward Group <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="data-steward-group"
+                      value={dataStewardGroup}
+                      onChange={(e) => setDataStewardGroup(e.target.value)}
+                      placeholder="e.g., data_stewards"
+                      className="font-mono"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Group that can create and edit quality rules
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="viewer-group">Viewer Group (Optional)</Label>
+                    <Input
+                      id="viewer-group"
+                      value={viewerGroup}
+                      onChange={(e) => setViewerGroup(e.target.value)}
+                      placeholder="e.g., analysts"
+                      className="font-mono"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Group with read-only access to profiles and rules
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-md bg-muted/50 border">
+                  <p className="text-sm">
+                    <strong>What will be created:</strong>
+                  </p>
+                  <ul className="text-xs text-muted-foreground mt-1 space-y-1">
+                    <li>• Schema: <code>{selectedCatalog}.dqx_app</code></li>
+                    <li>• Tables: <code>dq_app_settings</code>, <code>dq_profiling_results</code>, <code>dq_quality_rules</code>, etc.</li>
+                    <li>• Grants for the specified groups</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+      {hasCatalogSelected && (!isInitialized || isReconfiguring) && !isLoadingSettings && (
+        <CardFooter className="flex gap-2">
+          {isReconfiguring && (
+            <Button
+              variant="outline"
+              onClick={handleCancelReconfigure}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+          )}
+          <Button
+            onClick={handleInitialize}
+            disabled={isInitializing || !dataStewardGroup}
+            className="flex-1"
+          >
+            {isInitializing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {isReconfiguring ? "Updating..." : "Initializing..."}
+              </>
+            ) : (
+              <>
+                <Rocket className="mr-2 h-4 w-4" />
+                {isReconfiguring ? "Update Configuration" : `Initialize App in ${selectedCatalog}`}
+              </>
+            )}
+          </Button>
+        </CardFooter>
+      )}
+    </Card>
+  );
+}
 
 function ConfigLocationSettings({ onSettingsSaved }: { onSettingsSaved?: () => void }) {
   const { data: settings } = useGetSettingsSuspense(selector());
@@ -620,6 +965,28 @@ function ConfigPage() {
           {({ reset }) =>
             view === "ui" ? (
               <div className="space-y-6 pb-8">
+                {/* App Setup / Initialization */}
+                <FadeIn delay={0.05}>
+                  <ErrorBoundary
+                    onReset={reset}
+                    fallbackRender={({ resetErrorBoundary }) => (
+                      <Card className="border-destructive/50">
+                        <CardContent className="pt-4">
+                          <div className="flex items-center gap-2 text-sm text-destructive">
+                            <AlertCircle className="h-4 w-4" />
+                            <span>Failed to load app settings</span>
+                            <Button variant="outline" size="sm" onClick={resetErrorBoundary}>
+                              Retry
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  >
+                    <AppSetupCard />
+                  </ErrorBoundary>
+                </FadeIn>
+
                 {/* General Settings */}
                 <FadeIn delay={0.1}>
                   <Card>

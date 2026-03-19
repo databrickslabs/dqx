@@ -109,11 +109,25 @@ def get_spark(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get Databricks host from environment
+    # Get Databricks host from environment or SDK config
     host = os.environ.get("DATABRICKS_HOST")
+    
+    # If host not in env, try to get from SDK config (e.g., DATABRICKS_CONFIG_PROFILE)
     if not host:
-        logger.info("DATABRICKS_HOST not set, using default configuration for local development")
-        return DatabricksSession.builder.token(token).getOrCreate()
+        try:
+            from databricks.sdk.config import Config
+            cfg = Config()
+            host = cfg.host
+            logger.info(f"Using host from SDK config: {host}")
+        except Exception as e:
+            logger.warning(f"Could not get host from SDK config: {e}")
+    
+    if not host:
+        logger.error("DATABRICKS_HOST not set and could not be determined from SDK config")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Databricks host not configured. Set DATABRICKS_HOST environment variable.",
+        )
 
     # Temporarily remove OAuth env vars to avoid multi-auth conflicts
     with _without_oauth_env_vars():

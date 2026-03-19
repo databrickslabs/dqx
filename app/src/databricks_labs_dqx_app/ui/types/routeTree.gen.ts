@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './../routes/__root'
 import { Route as SidebarRouteRouteImport } from './../routes/_sidebar/route'
 import { Route as IndexRouteImport } from './../routes/index'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
+import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
+import { Route as SidebarProfilerRouteImport } from './../routes/_sidebar/profiler'
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
 import { Route as SidebarRunsIndexRouteImport } from './../routes/_sidebar/runs.index'
@@ -29,6 +31,16 @@ const IndexRoute = IndexRouteImport.update({
 const SidebarRunsRoute = SidebarRunsRouteImport.update({
   id: '/runs',
   path: '/runs',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarRulesRoute = SidebarRulesRouteImport.update({
+  id: '/rules',
+  path: '/rules',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarProfilerRoute = SidebarProfilerRouteImport.update({
+  id: '/profiler',
+  path: '/profiler',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarProfileRoute = SidebarProfileRouteImport.update({
@@ -52,10 +64,34 @@ const SidebarRunsRunNameRoute = SidebarRunsRunNameRouteImport.update({
   getParentRoute: () => SidebarRunsRoute,
 } as any)
 
+// Define children objects BEFORE they are used
+const SidebarRunsRouteChildren = {
+  SidebarRunsIndexRoute: SidebarRunsIndexRoute,
+  SidebarRunsRunNameRoute: SidebarRunsRunNameRoute,
+}
+
+const SidebarRunsRouteWithChildren = SidebarRunsRoute._addFileChildren(
+  SidebarRunsRouteChildren,
+)
+
+const SidebarRouteRouteChildren = {
+  SidebarConfigRoute: SidebarConfigRoute,
+  SidebarProfileRoute: SidebarProfileRoute,
+  SidebarProfilerRoute: SidebarProfilerRoute,
+  SidebarRulesRoute: SidebarRulesRoute,
+  SidebarRunsRoute: SidebarRunsRouteWithChildren,
+}
+
+const SidebarRouteRouteWithChildren = SidebarRouteRoute._addFileChildren(
+  SidebarRouteRouteChildren,
+)
+
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/config': typeof SidebarConfigRoute
   '/profile': typeof SidebarProfileRoute
+  '/profiler': typeof SidebarProfilerRoute
+  '/rules': typeof SidebarRulesRoute
   '/runs': typeof SidebarRunsRouteWithChildren
   '/runs/$runName': typeof SidebarRunsRunNameRoute
   '/runs/': typeof SidebarRunsIndexRoute
@@ -64,6 +100,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/config': typeof SidebarConfigRoute
   '/profile': typeof SidebarProfileRoute
+  '/profiler': typeof SidebarProfilerRoute
+  '/rules': typeof SidebarRulesRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
   '/runs': typeof SidebarRunsIndexRoute
 }
@@ -73,6 +111,8 @@ export interface FileRoutesById {
   '/_sidebar': typeof SidebarRouteRouteWithChildren
   '/_sidebar/config': typeof SidebarConfigRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
+  '/_sidebar/profiler': typeof SidebarProfilerRoute
+  '/_sidebar/rules': typeof SidebarRulesRoute
   '/_sidebar/runs': typeof SidebarRunsRouteWithChildren
   '/_sidebar/runs/$runName': typeof SidebarRunsRunNameRoute
   '/_sidebar/runs/': typeof SidebarRunsIndexRoute
@@ -83,17 +123,21 @@ export interface FileRouteTypes {
     | '/'
     | '/config'
     | '/profile'
+    | '/profiler'
+    | '/rules'
     | '/runs'
     | '/runs/$runName'
     | '/runs/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/config' | '/profile' | '/runs/$runName' | '/runs'
+  to: '/' | '/config' | '/profile' | '/profiler' | '/rules' | '/runs/$runName' | '/runs'
   id:
     | '__root__'
     | '/'
     | '/_sidebar'
     | '/_sidebar/config'
     | '/_sidebar/profile'
+    | '/_sidebar/profiler'
+    | '/_sidebar/rules'
     | '/_sidebar/runs'
     | '/_sidebar/runs/$runName'
     | '/_sidebar/runs/'
@@ -104,94 +148,70 @@ export interface RootRouteChildren {
   SidebarRouteRoute: typeof SidebarRouteRouteWithChildren
 }
 
-declare module '@tanstack/react-router' {
-  interface FileRoutesByPath {
-    '/_sidebar': {
-      id: '/_sidebar'
-      path: ''
-      fullPath: ''
-      preLoaderRoute: typeof SidebarRouteRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/_sidebar/runs': {
-      id: '/_sidebar/runs'
-      path: '/runs'
-      fullPath: '/runs'
-      preLoaderRoute: typeof SidebarRunsRouteImport
-      parentRoute: typeof SidebarRouteRoute
-    }
-    '/_sidebar/profile': {
-      id: '/_sidebar/profile'
-      path: '/profile'
-      fullPath: '/profile'
-      preLoaderRoute: typeof SidebarProfileRouteImport
-      parentRoute: typeof SidebarRouteRoute
-    }
-    '/_sidebar/config': {
-      id: '/_sidebar/config'
-      path: '/config'
-      fullPath: '/config'
-      preLoaderRoute: typeof SidebarConfigRouteImport
-      parentRoute: typeof SidebarRouteRoute
-    }
-    '/_sidebar/runs/': {
-      id: '/_sidebar/runs/'
-      path: '/'
-      fullPath: '/runs/'
-      preLoaderRoute: typeof SidebarRunsIndexRouteImport
-      parentRoute: typeof SidebarRunsRoute
-    }
-    '/_sidebar/runs/$runName': {
-      id: '/_sidebar/runs/$runName'
-      path: '/$runName'
-      fullPath: '/runs/$runName'
-      preLoaderRoute: typeof SidebarRunsRunNameRouteImport
-      parentRoute: typeof SidebarRunsRoute
-    }
-  }
-}
-
-interface SidebarRunsRouteChildren {
-  SidebarRunsRunNameRoute: typeof SidebarRunsRunNameRoute
-  SidebarRunsIndexRoute: typeof SidebarRunsIndexRoute
-}
-
-const SidebarRunsRouteChildren: SidebarRunsRouteChildren = {
-  SidebarRunsRunNameRoute: SidebarRunsRunNameRoute,
-  SidebarRunsIndexRoute: SidebarRunsIndexRoute,
-}
-
-const SidebarRunsRouteWithChildren = SidebarRunsRoute._addFileChildren(
-  SidebarRunsRouteChildren,
-)
-
-interface SidebarRouteRouteChildren {
-  SidebarConfigRoute: typeof SidebarConfigRoute
-  SidebarProfileRoute: typeof SidebarProfileRoute
-  SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
-}
-
-const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
-  SidebarConfigRoute: SidebarConfigRoute,
-  SidebarProfileRoute: SidebarProfileRoute,
-  SidebarRunsRoute: SidebarRunsRouteWithChildren,
-}
-
-const SidebarRouteRouteWithChildren = SidebarRouteRoute._addFileChildren(
-  SidebarRouteRouteChildren,
-)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SidebarRouteRoute: SidebarRouteRouteWithChildren,
 }
+
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+/* ROUTE_MANIFEST_START
+{
+  "routes": {
+    "__root__": {
+      "filePath": "__root.tsx",
+      "children": [
+        "/",
+        "/_sidebar"
+      ]
+    },
+    "/": {
+      "filePath": "index.tsx"
+    },
+    "/_sidebar": {
+      "filePath": "_sidebar/route.tsx",
+      "children": [
+        "/_sidebar/config",
+        "/_sidebar/profile",
+        "/_sidebar/profiler",
+        "/_sidebar/rules",
+        "/_sidebar/runs"
+      ]
+    },
+    "/_sidebar/config": {
+      "filePath": "_sidebar/config.tsx",
+      "parent": "/_sidebar"
+    },
+    "/_sidebar/profile": {
+      "filePath": "_sidebar/profile.tsx",
+      "parent": "/_sidebar"
+    },
+    "/_sidebar/profiler": {
+      "filePath": "_sidebar/profiler.tsx",
+      "parent": "/_sidebar"
+    },
+    "/_sidebar/rules": {
+      "filePath": "_sidebar/rules.tsx",
+      "parent": "/_sidebar"
+    },
+    "/_sidebar/runs": {
+      "filePath": "_sidebar/runs.tsx",
+      "parent": "/_sidebar",
+      "children": [
+        "/_sidebar/runs/",
+        "/_sidebar/runs/$runName"
+      ]
+    },
+    "/_sidebar/runs/": {
+      "filePath": "_sidebar/runs.index.tsx",
+      "parent": "/_sidebar/runs"
+    },
+    "/_sidebar/runs/$runName": {
+      "filePath": "_sidebar/runs.$runName.tsx",
+      "parent": "/_sidebar/runs"
+    }
+  }
+}
+ROUTE_MANIFEST_END */
