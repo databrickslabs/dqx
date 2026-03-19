@@ -19,5 +19,4 @@ resources:
 
 targets:
   dev:
-    mode: development
     default: true
