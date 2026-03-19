@@ -3011,8 +3011,20 @@ def test_has_valid_schema_with_specified_columns(spark):
 
     expected_condition_df = spark.createDataFrame(
         [
-            ["str1", 1, 100.0, "extra", None],
-            ["str2", 2, 200.0, "data", None],
+            [
+                "str1",
+                1,
+                100.0,
+                "extra",
+                "Schema validation failed: Column 'c' in expected schema not present in checked data; Column 'e' in expected schema not present in checked data",
+            ],
+            [
+                "str2",
+                2,
+                200.0,
+                "data",
+                "Schema validation failed: Column 'c' in expected schema not present in checked data; Column 'e' in expected schema not present in checked data",
+            ],
         ],
         "a string, b int, c double, d string, has_invalid_schema string",
     )
@@ -3039,13 +3051,13 @@ def test_has_valid_schema_with_specific_columns_mismatch(spark: SparkSession):
                 "str1",
                 "not_int",
                 100.0,
-                "Schema validation failed: Column 'b' has incorrect type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'b' has incorrect type, expected 'integer', got 'string'; Column 'c' in expected schema not present in checked data",
             ],
             [
                 "str2",
                 "also_not_int",
                 200.0,
-                "Schema validation failed: Column 'b' has incorrect type, expected 'integer', got 'string'",
+                "Schema validation failed: Column 'b' has incorrect type, expected 'integer', got 'string'; Column 'c' in expected schema not present in checked data",
             ],
         ],
         "a string, b string, c double, has_invalid_schema string",

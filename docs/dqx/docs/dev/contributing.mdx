@@ -107,8 +107,7 @@ This is a good way to gather early feedback without needing to meet all Definiti
 <Admonition type="warning" title="Special cases">
 * Draft PRs — Integration and end-to-end (e2e) tests are not run automatically on Draft PRs. These tests will only execute once the PR is marked as "Ready for Review".
 * Forked PRs — The following applies for PRs opened from forks (external contributors scenario):
-    * Project maintainers must approve Github workflows before they run.
-    * Once approved, integration, end-to-end (e2e) and performance tests run automatically, the same as for non-fork PRs.
+    * Project maintainers must approve Github workflows (e.g. formatting, unit testing) before they run. Project maintainers must also trigger integration, end-to-end (e2e) and performance tests.
     * You can also run the tests locally using [Databricks Free Edition](https://www.databricks.com/learn/free-edition) with the exception of Lakebase tests, which require a standard workspace. When using Databricks Free you can ignore the Lakebase tests.
     * The performance workflow cannot commit the benchmark baseline back to a fork branch. The baseline is instead uploaded as a workflow artifact — see [Updating Baseline and Reports](#updating-baseline-and-reports).
 
