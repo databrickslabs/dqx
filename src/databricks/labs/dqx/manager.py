@@ -50,6 +50,8 @@ class DQRuleManager:
     run_id: str
     ref_dfs: dict[str, DataFrame] | None = None
     skip_quietly: bool = False
+    rule_fingerprint: str | None = None
+    rule_set_fingerprint: str | None = None
 
     @cached_property
     def user_metadata(self) -> dict[str, str]:
@@ -161,6 +163,8 @@ class DQRuleManager:
                 "user_metadata"
             ),
             F.lit(True if skipped else None).alias("skipped"),
+            F.lit(self.rule_fingerprint).alias("rule_fingerprint"),
+            F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
         ).cast(dq_result_item_schema)
 
     def _get_invalid_cols_message(self) -> str:

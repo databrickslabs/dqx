@@ -135,3 +135,20 @@ def test_generate_dlt_python_dict(ws):
         "price_min_max": "price >= 0.01 and price <= 999.99",
     }
     assert expectations == expected
+
+
+def test_generate_dlt_rules_is_not_empty_profile(ws):
+    """is_not_empty profile generates DLT expectation (null or non-empty)."""
+    generator = DQDltGenerator(ws)
+    rules = [
+        DQProfile(
+            name="is_not_empty",
+            column="category",
+            description=None,
+            parameters={"trim_strings": True},
+        ),
+    ]
+    expectations = generator.generate_dlt_rules(rules, language="Python_Dict")
+    assert "category_is_not_empty" in expectations
+    assert "trim" in expectations["category_is_not_empty"]
+    assert "<> ''" in expectations["category_is_not_empty"]

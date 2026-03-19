@@ -1,7 +1,7 @@
 name: performance
 
 on:
-  pull_request:
+  pull_request_target:
     types: [ opened, synchronize, ready_for_review ]
   merge_group:
     types: [ checks_requested ]
@@ -15,12 +15,12 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   benchmark:
-    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
+    if: github.event_name == 'pull_request_target' && !github.event.pull_request.draft
     environment: tool
     runs-on: larger
     env:
@@ -33,6 +33,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge  # ensures checkout works for both repo branches and forks
           fetch-depth: 0
 
       - name: Set up Python
@@ -155,7 +156,7 @@ jobs:
           echo "Benchmark report updated at $OUT"
           echo "BENCHMARK_REPORT=$OUT" >> $GITHUB_ENV
 
-      # for troubleshooting issues only
+      # For troubleshooting and as fallback for fork PRs (where commit-back is skipped so we can manually commit the baseline)
       - name: Upload baseline artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -166,6 +167,9 @@ jobs:
             ${{ env.UPDATED_BASELINE }}
 
       - name: Commit benchmark baseline to the current branch
+        # Skipped for fork PRs: GITHUB_TOKEN is scoped to the base repo only and cannot
+        # push to a fork repo, even if we clone the fork URL
+        if: "!github.event.pull_request.head.repo.fork"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

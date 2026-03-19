@@ -53,3 +53,9 @@ docs-clean:
 	rm -rf docs/dqx/build
 	rm -rf docs/dqx/.docusaurus docs/dqx/.cache
 	find docs/dqx/docs/reference/api -mindepth 1 -not -name 'index.mdx' -exec rm -rf {} +
+
+# Sync fork PR to branch in main repo for CI testing (acceptance/anomaly/perf run on non-fork PRs).
+# Usage: make fork-sync PR=123
+fork-sync:
+	@test -n "$(PR)" || (echo "Usage: make fork-sync PR=<number>"; exit 1)
+	./.github/scripts/fork-sync-pr.sh $(PR)

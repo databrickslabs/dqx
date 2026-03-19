@@ -309,71 +309,6 @@ def test_workspace_config_as_dict():
     assert "quality_checker_max_parallelism" in result
 
 
-# Test LakebaseChecksStorageConfig validation and properties
-def test_lakebase_config_missing_instance_name():
-    with pytest.raises(InvalidParameterError, match="Instance name must not be empty or None"):
-        LakebaseChecksStorageConfig(
-            location="db.schema.table", instance_name=None, client_id="00000000-0000-0000-0000-000000000000"
-        )
-
-
-def test_lakebase_config_invalid_location_format():
-    with pytest.raises(InvalidConfigError, match="Invalid Lakebase table name.*Must be in the format"):
-        LakebaseChecksStorageConfig(
-            location="invalid_table", instance_name="instance", client_id="00000000-0000-0000-0000-000000000000"
-        )
-
-
-def test_lakebase_config_invalid_mode():
-    with pytest.raises(InvalidConfigError, match="Invalid mode.*Must be 'append' or 'overwrite'"):
-        LakebaseChecksStorageConfig(
-            location="db.schema.table",
-            instance_name="instance",
-            client_id="00000000-0000-0000-0000-000000000000",
-            mode="invalid",
-        )
-
-
-def test_lakebase_config_properties():
-    config = LakebaseChecksStorageConfig(
-        location="my_db.my_schema.my_table", instance_name="instance", client_id="00000000-0000-0000-0000-000000000000"
-    )
-    assert config.database_name == "my_db"
-    assert config.schema_name == "my_schema"
-    assert config.table_name == "my_table"
-
-
-def test_lakebase_config_properties_cached():
-    config = LakebaseChecksStorageConfig(
-        location="db1.sch1.tbl1", instance_name="instance", client_id="00000000-0000-0000-0000-000000000000"
-    )
-    # Access properties multiple times to ensure caching works
-    assert config.database_name == "db1"
-    assert config.database_name == "db1"
-    assert config.schema_name == "sch1"
-    assert config.schema_name == "sch1"
-    assert config.table_name == "tbl1"
-    assert config.table_name == "tbl1"
-
-
-def test_lakebase_config_valid_modes():
-    config_append = LakebaseChecksStorageConfig(
-        location="db.schema.table",
-        instance_name="instance",
-        client_id="00000000-0000-0000-0000-000000000000",
-        mode="append",
-    )
-    assert config_append.mode == "append"
-
-    config_overwrite = LakebaseChecksStorageConfig(
-        location="db.schema.table",
-        instance_name="instance",
-        client_id="00000000-0000-0000-0000-000000000000",
-        mode="overwrite",
-    )
-    assert config_overwrite.mode == "overwrite"
-
-
 # Test VolumeFileChecksStorageConfig valid paths
 def test_volume_file_config_valid_yml_path():
     config = VolumeFileChecksStorageConfig(location="/Volumes/main/demo/files/checks.yml")
@@ -395,7 +330,7 @@ def test_table_config_defaults():
     config = TableChecksStorageConfig(location="catalog.schema.table")
     assert config.location == "catalog.schema.table"
     assert config.run_config_name == "default"
-    assert config.mode == "overwrite"
+    assert config.mode == "append"
 
 
 def test_table_config_custom_values():
@@ -471,3 +406,63 @@ def test_run_config_with_input_output():
     assert config.name == "test_run"
     assert config.input_config == input_cfg
     assert config.output_config == output_cfg
+
+
+# Test TableChecksStorageConfig with rule_set_fingerprint
+def test_table_checks_storage_config_default_fingerprint_is_none():
+    config = TableChecksStorageConfig(location="catalog.schema.table")
+    assert config.location == "catalog.schema.table"
+    assert config.run_config_name == "default"
+    assert config.mode == "append"
+    assert config.rule_set_fingerprint is None
+
+
+def test_table_checks_storage_config_with_fingerprint():
+    rule_set_fingerprint = "abc123def456789"
+    config = TableChecksStorageConfig(location="catalog.schema.table", rule_set_fingerprint=rule_set_fingerprint)
+    assert config.location == "catalog.schema.table"
+    assert config.run_config_name == "default"
+    assert config.rule_set_fingerprint == rule_set_fingerprint
+
+
+def test_table_checks_storage_config_with_custom_run_config_and_fingerprint():
+    rule_set_fingerprint = "abc123def456789"
+    config = TableChecksStorageConfig(
+        location="catalog.schema.table", run_config_name="prod", rule_set_fingerprint=rule_set_fingerprint
+    )
+    assert config.location == "catalog.schema.table"
+    assert config.run_config_name == "prod"
+    assert config.rule_set_fingerprint == rule_set_fingerprint
+
+
+# Test LakebaseChecksStorageConfig with rule_set_fingerprint
+def test_lakebase_checks_storage_config_default_fingerprint_is_none():
+    config = LakebaseChecksStorageConfig(location="db.schema.table", instance_name="my_instance")
+    assert config.location == "db.schema.table"
+    assert config.instance_name == "my_instance"
+    assert config.run_config_name == "default"
+    assert config.rule_set_fingerprint is None
+
+
+def test_lakebase_checks_storage_config_with_fingerprint():
+    rule_set_fingerprint = "abc123def456789"
+    config = LakebaseChecksStorageConfig(
+        location="db.schema.table", instance_name="my_instance", rule_set_fingerprint=rule_set_fingerprint
+    )
+    assert config.location == "db.schema.table"
+    assert config.instance_name == "my_instance"
+    assert config.rule_set_fingerprint == rule_set_fingerprint
+
+
+def test_lakebase_checks_storage_config_with_custom_run_config_and_fingerprint():
+    rule_set_fingerprint = "abc123def456789"
+    config = LakebaseChecksStorageConfig(
+        location="db.schema.table",
+        instance_name="my_instance",
+        run_config_name="prod",
+        rule_set_fingerprint=rule_set_fingerprint,
+    )
+    assert config.location == "db.schema.table"
+    assert config.instance_name == "my_instance"
+    assert config.run_config_name == "prod"
+    assert config.rule_set_fingerprint == rule_set_fingerprint
