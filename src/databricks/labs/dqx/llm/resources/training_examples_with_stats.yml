@@ -106,3 +106,21 @@
       max: "suspended"
   quality_rules: '[{"criticality":"warn","check":{"function":"is_not_null_and_not_empty","arguments":{"column":"email"}}},{"criticality":"error","check":{"function":"is_email","arguments":{"column":"email"}}}]'
   reasoning: "Email should be present for all user accounts and follow valid format. Combining completeness and format validation ensures high-quality contact information."
+
+- name: "order_total_within_daily_average_sql_query"
+  business_description: "Each order's total must not exceed 10 times the average order total for that day"
+  data_summary_stats:
+    order_id:
+      mean: null
+      min: "ORD001"
+      max: "ORD999"
+    order_date:
+      mean: null
+      min: "2024-01-01"
+      max: "2024-12-31"
+    order_total:
+      mean: "250.75"
+      min: "10.00"
+      max: "5000.00"
+  quality_rules: '[{"criticality":"warn","check":{"function":"sql_query","arguments":{"query":"SELECT order_id, CASE WHEN order_total > 10 * AVG(order_total) OVER (PARTITION BY order_date) THEN true ELSE false END as condition FROM {{ input_view }}","merge_columns":["order_id"],"condition_column":"condition","msg":"Order total exceeds 10x daily average"}}}]'
+  reasoning: "The sql_query function enables complex aggregation checks. The input DataFrame must be referenced as {{ input_view }} (with curly brackets and spaces). Never use bare input_view without {{ }}."
