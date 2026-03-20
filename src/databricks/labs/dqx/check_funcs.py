@@ -93,12 +93,16 @@ def make_condition(condition: Column, message: Column | str, alias: str) -> Colu
     return (F.when(condition, msg_col).otherwise(F.lit(None).cast("string"))).alias(_cleanup_alias_name(alias))
 
 
-def _matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
+def _matches_pattern(
+    column: str | Column, pattern: DQPattern, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column match a given pattern.
 
     Args:
         column: column to check; can be a string column name or a column expression
         pattern: pattern to match against
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -108,21 +112,27 @@ def _matches_pattern(column: str | Column, pattern: DQPattern) -> Column:
     final_condition = F.when(col_expr.isNotNull(), condition).otherwise(F.lit(None))
 
     condition_str = f"' in Column '{col_expr_str}' does not match pattern '{pattern.name}'"
+    default_msg = F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str))
+    default_name = f"{col_str_norm}_does_not_match_pattern_{pattern.name.lower()}"
 
     return make_condition(
         final_condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_does_not_match_pattern_{pattern.name.lower()}",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+def is_not_null_and_not_empty(
+    column: str | Column, trim_strings: bool | None = False, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column are not null and not empty.
 
     Args:
         column: column to check; can be a string column name or a column expression
         trim_strings: boolean flag to trim spaces from strings
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -131,18 +141,22 @@ def is_not_null_and_not_empty(column: str | Column, trim_strings: bool | None = 
     if trim_strings:
         col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.isNull() | (col_expr.cast("string").isNull() | (col_expr.cast("string") == F.lit("")))
-    return make_condition(
-        condition, f"Column '{col_expr_str}' value is null or empty", f"{col_str_norm}_is_null_or_empty"
-    )
+    default_msg = f"Column '{col_expr_str}' value is null or empty"
+    default_name = f"{col_str_norm}_is_null_or_empty"
+    return make_condition(condition, msg or default_msg, name or default_name)
 
 
 @register_rule("row")
-def is_not_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+def is_not_empty(
+    column: str | Column, trim_strings: bool | None = False, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column are not empty (but may be null).
 
     Args:
         column: column to check; can be a string column name or a column expression
         trim_strings: boolean flag to trim spaces from strings
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -151,46 +165,58 @@ def is_not_empty(column: str | Column, trim_strings: bool | None = False) -> Col
     if trim_strings:
         col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.cast("string") == F.lit("")
-    return make_condition(condition, f"Column '{col_expr_str}' value is empty", f"{col_str_norm}_is_empty")
+    default_msg = f"Column '{col_expr_str}' value is empty"
+    default_name = f"{col_str_norm}_is_empty"
+    return make_condition(condition, msg or default_msg, name or default_name)
 
 
 @register_rule("row")
-def is_not_null(column: str | Column) -> Column:
+def is_not_null(column: str | Column, msg: str | None = None, name: str | None = None) -> Column:
     """Checks whether the values in the input column are not null.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    return make_condition(col_expr.isNull(), f"Column '{col_expr_str}' value is null", f"{col_str_norm}_is_null")
+    default_msg = f"Column '{col_expr_str}' value is null"
+    default_name = f"{col_str_norm}_is_null"
+    return make_condition(col_expr.isNull(), msg or default_msg, name or default_name)
 
 
 @register_rule("row")
-def is_null(column: str | Column) -> Column:
+def is_null(column: str | Column, msg: str | None = None, name: str | None = None) -> Column:
     """Checks whether the values in the input column are null.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
-    return make_condition(
-        col_expr.isNotNull(), f"Column '{col_expr_str}' value is not null", f"{col_str_norm}_is_not_null"
-    )
+    default_msg = f"Column '{col_expr_str}' value is not null"
+    default_name = f"{col_str_norm}_is_not_null"
+    return make_condition(col_expr.isNotNull(), msg or default_msg, name or default_name)
 
 
 @register_rule("row")
-def is_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+def is_empty(
+    column: str | Column, trim_strings: bool | None = False, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column are empty (but may be null).
 
     Args:
         column: column to check; can be a string column name or a column expression
         trim_strings: boolean flag to trim spaces from strings
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -199,16 +225,22 @@ def is_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
     if trim_strings:
         col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.cast("string") != F.lit("")
-    return make_condition(condition, f"Column '{col_expr_str}' value is not empty", f"{col_str_norm}_is_not_empty")
+    default_msg = f"Column '{col_expr_str}' value is not empty"
+    default_name = f"{col_str_norm}_is_not_empty"
+    return make_condition(condition, msg or default_msg, name or default_name)
 
 
 @register_rule("row")
-def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) -> Column:
+def is_null_or_empty(
+    column: str | Column, trim_strings: bool | None = False, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column are either null or empty.
 
     Args:
         column: column to check; can be a string column name or a column expression
         trim_strings: boolean flag to trim spaces from strings
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -217,15 +249,15 @@ def is_null_or_empty(column: str | Column, trim_strings: bool | None = False) ->
     if trim_strings:
         col_expr = F.trim(col_expr).alias(col_str_norm)
     condition = col_expr.isNotNull() & (col_expr.cast("string").isNotNull() & (col_expr.cast("string") != F.lit("")))
-    return make_condition(
-        condition,
-        f"Column '{col_expr_str}' value is not null and not empty",
-        f"{col_str_norm}_is_not_null_and_not_empty",
-    )
+    default_msg = f"Column '{col_expr_str}' value is not null and not empty"
+    default_name = f"{col_str_norm}_is_not_null_and_not_empty"
+    return make_condition(condition, msg or default_msg, name or default_name)
 
 
 @register_rule("row")
-def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
+def is_not_null_and_is_in_list(
+    column: str | Column, allowed: list, case_sensitive: bool = True, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column are not null and present in the list of allowed values.
     Can optionally perform a case-insensitive comparison.
     This check is not suited for `MapType` or `StructType` columns.
@@ -234,6 +266,9 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
         column: column to check; can be a string column name or a column expression
         allowed: list of allowed values (actual values or Column objects)
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -264,22 +299,27 @@ def is_not_null_and_is_in_list(column: str | Column, allowed: list, case_sensiti
 
     condition = col_expr.isNull() | ~col_expr_compare.isin(*allowed_cols_compare)
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
+        F.lit(f"' in Column '{col_expr_str}' is null or not in the allowed list: ["),
+        F.concat_ws(", ", *[c.cast("string") for c in allowed_cols]),
+        F.lit("]"),
+    )
+    default_name = f"{col_str_norm}_is_null_or_is_not_in_the_list"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
-            F.lit(f"' in Column '{col_expr_str}' is null or not in the allowed list: ["),
-            F.concat_ws(", ", *[c.cast("string") for c in allowed_cols]),
-            F.lit("]"),
-        ),
-        f"{col_str_norm}_is_null_or_is_not_in_the_list",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True) -> Column:
+def is_in_list(
+    column: str | Column, allowed: list, case_sensitive: bool = True, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column are present in the list of allowed values
     (null values are allowed). Can optionally perform a case-insensitive comparison.
     This check is not suited for `MapType` or `StructType` columns.
@@ -292,6 +332,9 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
         column: column to check; can be a string column name or a column expression
         allowed: list of allowed values (actual values or Column objects)
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -322,22 +365,27 @@ def is_in_list(column: str | Column, allowed: list, case_sensitive: bool = True)
 
     condition = ~col_expr_compare.isin(*allowed_cols_compare)
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
+        F.lit(f"' in Column '{col_expr_str}' is not in the allowed list: ["),
+        F.concat_ws(", ", *[c.cast("string") for c in allowed_cols]),
+        F.lit("]"),
+    )
+    default_name = f"{col_str_norm}_is_not_in_the_list"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
-            F.lit(f"' in Column '{col_expr_str}' is not in the allowed list: ["),
-            F.concat_ws(", ", *[c.cast("string") for c in allowed_cols]),
-            F.lit("]"),
-        ),
-        f"{col_str_norm}_is_not_in_the_list",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool = True) -> Column:
+def is_not_in_list(
+    column: str | Column, forbidden: list, case_sensitive: bool = True, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column are NOT present in the list of forbidden values
     (null values are allowed). Can optionally perform a case-insensitive comparison.
 
@@ -349,6 +397,9 @@ def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool =
         column: column to check; can be a string column name or a column expression
         forbidden: list of forbidden values (actual values or Column objects)
         case_sensitive: whether to perform a case-sensitive comparison (default: True)
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -379,17 +430,20 @@ def is_not_in_list(column: str | Column, forbidden: list, case_sensitive: bool =
 
     condition = col_expr_compare.isin(*forbidden_cols_compare)
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
+        F.lit(f"' in Column '{col_expr_str}' is in the forbidden list: ["),
+        F.concat_ws(", ", *[c.cast("string") for c in forbidden_cols]),
+        F.lit("]"),
+    )
+    default_name = f"{col_str_norm}_is_in_the_forbidden_list"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string")),
-            F.lit(f"' in Column '{col_expr_str}' is in the forbidden list: ["),
-            F.concat_ws(", ", *[c.cast("string") for c in forbidden_cols]),
-            F.lit("]"),
-        ),
-        f"{col_str_norm}_is_in_the_forbidden_list",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
@@ -411,6 +465,9 @@ def sql_expression(
             values as "bad". Although sometimes it's easier to specify it other way around "col is null" + negate set to True
         columns: optional list of columns to be used for validation against the actual input DataFrame,
             reporting and for constructing name prefix if check name is not provided.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -437,7 +494,12 @@ def sql_expression(
 
 @register_rule("row")
 def is_older_than_col2_for_n_days(
-    column1: str | Column, column2: str | Column, days: int = 0, negate: bool = False
+    column1: str | Column,
+    column2: str | Column,
+    days: int = 0,
+    negate: bool = False,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Checks whether the values in one input column are at least N days older than the values in another column.
 
@@ -447,6 +509,9 @@ def is_older_than_col2_for_n_days(
         days: number of days
         negate: if the condition should be negated (true) or not; if negated, the check will fail when values in the
             first column are at least N days older than values in the second column
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -458,36 +523,45 @@ def is_older_than_col2_for_n_days(
     col2_date = F.to_date(col_expr2)
     condition = col1_date >= F.date_sub(col2_date, days)
     if negate:
-        return make_condition(
-            ~condition,
-            F.concat_ws(
-                "",
-                F.lit("Value '"),
-                col1_date.cast("string"),
-                F.lit(f"' in Column '{col_expr_str1}' is less than Value '"),
-                col2_date.cast("string"),
-                F.lit(f"' in Column '{col_expr_str2}' for {days} or more days"),
-            ),
-            f"is_col_{col_str_norm1}_not_older_than_{col_str_norm2}_for_n_days",
-        )
-
-    return make_condition(
-        condition,
-        F.concat_ws(
+        default_msg_negate = F.concat_ws(
             "",
             F.lit("Value '"),
             col1_date.cast("string"),
-            F.lit(f"' in Column '{col_expr_str1}' is not less than Value '"),
+            F.lit(f"' in Column '{col_expr_str1}' is less than Value '"),
             col2_date.cast("string"),
-            F.lit(f"' in Column '{col_expr_str2}' for more than {days} days"),
-        ),
-        f"is_col_{col_str_norm1}_older_than_{col_str_norm2}_for_n_days",
+            F.lit(f"' in Column '{col_expr_str2}' for {days} or more days"),
+        )
+        default_name_negate = f"is_col_{col_str_norm1}_not_older_than_{col_str_norm2}_for_n_days"
+        return make_condition(
+            ~condition,
+            F.lit(msg) if msg else default_msg_negate,
+            name or default_name_negate,
+        )
+
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col1_date.cast("string"),
+        F.lit(f"' in Column '{col_expr_str1}' is not less than Value '"),
+        col2_date.cast("string"),
+        F.lit(f"' in Column '{col_expr_str2}' for more than {days} days"),
+    )
+    default_name = f"is_col_{col_str_norm1}_older_than_{col_str_norm2}_for_n_days"
+    return make_condition(
+        condition,
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
 def is_older_than_n_days(
-    column: str | Column, days: int, curr_date: Column | None = None, negate: bool = False
+    column: str | Column,
+    days: int,
+    curr_date: Column | None = None,
+    negate: bool = False,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Checks whether the values in the input column are at least N days older than the current date.
 
@@ -497,6 +571,9 @@ def is_older_than_n_days(
         curr_date: (optional) set current date
         negate: if the condition should be negated (true) or not; if negated, the check will fail when values in the
             first column are at least N days older than values in the second column
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -509,35 +586,45 @@ def is_older_than_n_days(
     condition = col_date >= F.date_sub(curr_date, days)
 
     if negate:
-        return make_condition(
-            ~condition,
-            F.concat_ws(
-                "",
-                F.lit("Value '"),
-                col_date.cast("string"),
-                F.lit(f"' in Column '{col_expr_str}' is less than current date '"),
-                curr_date.cast("string"),
-                F.lit(f"' for {days} or more days"),
-            ),
-            f"is_col_{col_str_norm}_not_older_than_n_days",
-        )
-
-    return make_condition(
-        condition,
-        F.concat_ws(
+        default_msg_negate = F.concat_ws(
             "",
             F.lit("Value '"),
             col_date.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is not less than current date '"),
+            F.lit(f"' in Column '{col_expr_str}' is less than current date '"),
             curr_date.cast("string"),
-            F.lit(f"' for more than {days} days"),
-        ),
-        f"is_col_{col_str_norm}_older_than_n_days",
+            F.lit(f"' for {days} or more days"),
+        )
+        default_name_negate = f"is_col_{col_str_norm}_not_older_than_n_days"
+        return make_condition(
+            ~condition,
+            F.lit(msg) if msg else default_msg_negate,
+            name or default_name_negate,
+        )
+
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_date.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not less than current date '"),
+        curr_date.cast("string"),
+        F.lit(f"' for more than {days} days"),
+    )
+    default_name = f"is_col_{col_str_norm}_older_than_n_days"
+    return make_condition(
+        condition,
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
+def is_not_in_future(
+    column: str | Column,
+    offset: int = 0,
+    curr_timestamp: Column | None = None,
+    msg: str | None = None,
+    name: str | None = None,
+) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the future,
     where 'future' is defined as current_timestamp + offset (in seconds).
 
@@ -545,6 +632,9 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
         column: column to check; can be a string column name or a column expression
         offset: offset (in seconds) to add to the current timestamp at time of execution
         curr_timestamp: (optional) set current timestamp
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -556,22 +646,31 @@ def is_not_in_future(column: str | Column, offset: int = 0, curr_timestamp: Colu
     timestamp_offset = F.from_unixtime(F.unix_timestamp(curr_timestamp) + offset)
     condition = col_expr > timestamp_offset
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is greater than time '"),
+        timestamp_offset,
+        F.lit("'"),
+    )
+    default_name = f"{col_str_norm}_in_future"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is greater than time '"),
-            timestamp_offset,
-            F.lit("'"),
-        ),
-        f"{col_str_norm}_in_future",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp: Column | None = None) -> Column:
+def is_not_in_near_future(
+    column: str | Column,
+    offset: int = 0,
+    curr_timestamp: Column | None = None,
+    msg: str | None = None,
+    name: str | None = None,
+) -> Column:
     """Checks whether the values in the input column contain a timestamp that is not in the near future,
     where 'near future' is defined as greater than the current timestamp
     but less than the current_timestamp + offset (in seconds).
@@ -580,6 +679,9 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
         column: column to check; can be a string column name or a column expression
         offset: offset (in seconds) to add to the current timestamp at time of execution
         curr_timestamp: (optional) set current timestamp
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -591,19 +693,22 @@ def is_not_in_near_future(column: str | Column, offset: int = 0, curr_timestamp:
     near_future = F.from_unixtime(F.unix_timestamp(curr_timestamp) + offset)
     condition = (col_expr > curr_timestamp) & (col_expr < near_future)
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is greater than '"),
+        curr_timestamp.cast("string"),
+        F.lit(" and smaller than '"),
+        near_future.cast("string"),
+        F.lit("'"),
+    )
+    default_name = f"{col_str_norm}_in_near_future"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is greater than '"),
-            curr_timestamp.cast("string"),
-            F.lit(" and smaller than '"),
-            near_future.cast("string"),
-            F.lit("'"),
-        ),
-        f"{col_str_norm}_in_near_future",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
@@ -613,6 +718,8 @@ def is_equal_to(
     value: int | float | Decimal | str | datetime.date | datetime.datetime | Column | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Check whether the values in the input column are equal to the given value.
 
@@ -629,6 +736,9 @@ def is_equal_to(
                 With tolerance=0.01 (1%):
                     100 vs 101 → equal (diff = 1, tolerance = 1)
                     100 vs 102 → not equal (diff = 2, tolerance = 1)
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
+
     Returns:
         Column: A Spark Column condition that fails if the column value is not equal to the given value.
 
@@ -655,16 +765,19 @@ def is_equal_to(
         # Exact equality comparison
         condition = col_expr != value_expr
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not equal to value: "),
+        value_expr.cast("string"),
+    )
+    default_name = f"{col_str_norm}_not_equal_to_value"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is not equal to value: "),
-            value_expr.cast("string"),
-        ),
-        f"{col_str_norm}_not_equal_to_value",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
@@ -674,6 +787,8 @@ def is_not_equal_to(
     value: int | float | Decimal | str | datetime.date | datetime.datetime | Column | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Check whether the values in the input column are not equal to the given value.
 
@@ -690,6 +805,9 @@ def is_not_equal_to(
                 With tolerance=0.01 (1%):
                     100 vs 101 → equal (diff = 1, tolerance = 1)
                     100 vs 102 → not equal (diff = 2, tolerance = 1)
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column: A Spark Column condition that fails if the column value is equal to the given value.
@@ -717,28 +835,37 @@ def is_not_equal_to(
         # Exact equality comparison (backwards compatible)
         condition = col_expr == value_expr
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is equal to value: "),
+        value_expr.cast("string"),
+    )
+    default_name = f"{col_str_norm}_equal_to_value"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is equal to value: "),
-            value_expr.cast("string"),
-        ),
-        f"{col_str_norm}_equal_to_value",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
 def is_not_less_than(
-    column: str | Column, limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None
+    column: str | Column,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Checks whether the values in the input column are not less than the provided limit.
 
     Args:
         column: column to check; can be a string column name or a column expression
         limit: limit to use in the condition as number, date, timestamp, column name or sql expression
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -747,28 +874,37 @@ def is_not_less_than(
     limit_expr = get_limit_expr(limit)
     condition = col_expr < limit_expr
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is less than limit: "),
+        limit_expr.cast("string"),
+    )
+    default_name = f"{col_str_norm}_less_than_limit"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is less than limit: "),
-            limit_expr.cast("string"),
-        ),
-        f"{col_str_norm}_less_than_limit",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
 def is_not_greater_than(
-    column: str | Column, limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None
+    column: str | Column,
+    limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Checks whether the values in the input column are not greater than the provided limit.
 
     Args:
         column: column to check; can be a string column name or a column expression
         limit: limit to use in the condition as number, date, timestamp, column name or sql expression
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -777,16 +913,19 @@ def is_not_greater_than(
     limit_expr = get_limit_expr(limit)
     condition = col_expr > limit_expr
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is greater than limit: "),
+        limit_expr.cast("string"),
+    )
+    default_name = f"{col_str_norm}_greater_than_limit"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is greater than limit: "),
-            limit_expr.cast("string"),
-        ),
-        f"{col_str_norm}_greater_than_limit",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
@@ -795,6 +934,8 @@ def is_in_range(
     column: str | Column,
     min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
     max_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Checks whether the values in the input column are in the provided limits (inclusive of both boundaries).
 
@@ -802,6 +943,9 @@ def is_in_range(
         column: column to check; can be a string column name or a column expression
         min_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
         max_limit: max limit to use in the condition as number, date, timestamp, column name or sql expression
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -812,19 +956,22 @@ def is_in_range(
 
     condition = (col_expr < min_limit_expr) | (col_expr > max_limit_expr)
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' not in range: ["),
+        min_limit_expr.cast("string"),
+        F.lit(", "),
+        max_limit_expr.cast("string"),
+        F.lit("]"),
+    )
+    default_name = f"{col_str_norm}_not_in_range"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' not in range: ["),
-            min_limit_expr.cast("string"),
-            F.lit(", "),
-            max_limit_expr.cast("string"),
-            F.lit("]"),
-        ),
-        f"{col_str_norm}_not_in_range",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
@@ -833,6 +980,8 @@ def is_not_in_range(
     column: str | Column,
     min_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
     max_limit: int | float | Decimal | datetime.date | datetime.datetime | str | Column | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Checks whether the values in the input column are outside the provided limits (inclusive of both boundaries).
 
@@ -840,6 +989,9 @@ def is_not_in_range(
         column: column to check; can be a string column name or a column expression
         min_limit: min limit to use in the condition as number, date, timestamp, column name or sql expression
         max_limit: max limit to use in the condition as number, date, timestamp, column name or sql expression
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         new Column
@@ -850,30 +1002,37 @@ def is_not_in_range(
 
     condition = (col_expr >= min_limit_expr) & (col_expr <= max_limit_expr)
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' in range: ["),
+        min_limit_expr.cast("string"),
+        F.lit(", "),
+        max_limit_expr.cast("string"),
+        F.lit("]"),
+    )
+    default_name = f"{col_str_norm}_in_range"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' in range: ["),
-            min_limit_expr.cast("string"),
-            F.lit(", "),
-            max_limit_expr.cast("string"),
-            F.lit("]"),
-        ),
-        f"{col_str_norm}_in_range",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def regex_match(column: str | Column, regex: str, negate: bool = False) -> Column:
+def regex_match(
+    column: str | Column, regex: str, negate: bool = False, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column matches a given regex.
 
     Args:
         column: column to check; can be a string column name or a column expression
         regex: regex to check
         negate: if the condition should be negated (true) or not
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -881,38 +1040,47 @@ def regex_match(column: str | Column, regex: str, negate: bool = False) -> Colum
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     if negate:
         condition = col_expr.rlike(regex)
-        return make_condition(condition, f"Column '{col_expr_str}' is matching regex", f"{col_str_norm}_matching_regex")
+        default_msg = f"Column '{col_expr_str}' is matching regex"
+        default_name = f"{col_str_norm}_matching_regex"
+        return make_condition(condition, msg or default_msg, name or default_name)
 
     condition = ~col_expr.rlike(regex)
-    return make_condition(
-        condition, f"Column '{col_expr_str}' is not matching regex", f"{col_str_norm}_not_matching_regex"
-    )
+    default_msg = f"Column '{col_expr_str}' is not matching regex"
+    default_name = f"{col_str_norm}_not_matching_regex"
+    return make_condition(condition, msg or default_msg, name or default_name)
 
 
 @register_rule("row")
-def is_not_null_and_not_empty_array(column: str | Column) -> Column:
+def is_not_null_and_not_empty_array(column: str | Column, msg: str | None = None, name: str | None = None) -> Column:
     """Checks whether the values in the array input column are not null and not empty.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
     condition = col_expr.isNull() | (F.size(col_expr) == 0)
-    return make_condition(
-        condition, f"Column '{col_expr_str}' is null or empty array", f"{col_str_norm}_is_null_or_empty_array"
-    )
+    default_msg = f"Column '{col_expr_str}' is null or empty array"
+    default_name = f"{col_str_norm}_is_null_or_empty_array"
+    return make_condition(condition, msg or default_msg, name or default_name)
 
 
 @register_rule("row")
-def is_valid_date(column: str | Column, date_format: str | None = None) -> Column:
+def is_valid_date(
+    column: str | Column, date_format: str | None = None, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column have valid date formats.
 
     Args:
         column: column to check; can be a string column name or a column expression
         date_format: date format (e.g. 'yyyy-mm-dd')
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -923,20 +1091,27 @@ def is_valid_date(column: str | Column, date_format: str | None = None) -> Colum
     condition_str = f"' in Column '{col_expr_str}' is not a valid date"
     if date_format is not None:
         condition_str += f" with format '{date_format}'"
+    default_msg = F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str))
+    default_name = f"{col_str_norm}_is_not_valid_date"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_is_not_valid_date",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None) -> Column:
+def is_valid_timestamp(
+    column: str | Column, timestamp_format: str | None = None, msg: str | None = None, name: str | None = None
+) -> Column:
     """Checks whether the values in the input column have valid timestamp formats.
 
     Args:
         column: column to check; can be a string column name or a column expression
         timestamp_format: timestamp format (e.g. 'yyyy-mm-dd HH:mm:ss')
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -951,34 +1126,43 @@ def is_valid_timestamp(column: str | Column, timestamp_format: str | None = None
     condition_str = f"' in Column '{col_expr_str}' is not a valid timestamp"
     if timestamp_format is not None:
         condition_str += f" with format '{timestamp_format}'"
+    default_msg = F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str))
+    default_name = f"{col_str_norm}_is_not_valid_timestamp"
     return make_condition(
         condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_is_not_valid_timestamp",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def is_valid_ipv4_address(column: str | Column) -> Column:
+def is_valid_ipv4_address(column: str | Column, msg: str | None = None, name: str | None = None) -> Column:
     """Checks whether the values in the input column have valid IPv4 address formats.
 
     Args:
         column: column to check; can be a string column name or a column expression
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
     """
-    return _matches_pattern(column, DQPattern.IPV4_ADDRESS)
+    return _matches_pattern(column, DQPattern.IPV4_ADDRESS, msg=msg, name=name)
 
 
 @register_rule("row")
-def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
+def is_ipv4_address_in_cidr(
+    column: str | Column, cidr_block: str, msg: str | None = None, name: str | None = None
+) -> Column:
     """
     Checks if an IPv4 column value falls within the given CIDR block.
 
     Args:
         column: column to check; can be a string column name or a column expression
         cidr_block: CIDR block string (e.g., '192.168.1.0/24')
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -1015,20 +1199,24 @@ def is_ipv4_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         col_expr.cast("string"),
         F.lit(f"' in Column '{col_expr_str}' is not in the CIDR block '{cidr_block}'"),
     )
+    default_msg = F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg)
+    default_name = f"{col_str_norm}_is_not_ipv4_in_cidr"
     return make_condition(
         condition=ipv4_msg_col.isNotNull() | (ip_net != cidr_net),
-        message=F.when(ipv4_msg_col.isNotNull(), ipv4_msg_col).otherwise(cidr_msg),
-        alias=f"{col_str_norm}_is_not_ipv4_in_cidr",
+        message=F.lit(msg) if msg else default_msg,
+        alias=name or default_name,
     )
 
 
 @register_rule("row")
-def is_valid_ipv6_address(column: str | Column) -> Column:
+def is_valid_ipv6_address(column: str | Column, msg: str | None = None, name: str | None = None) -> Column:
     """
     Validate if the column contains properly formatted IPv6 addresses.
 
     Args:
         column: The column to check; can be a string column name or a Column expression.
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition indicating whether a value is a valid IPv6 address.
@@ -1045,22 +1233,29 @@ def is_valid_ipv6_address(column: str | Column) -> Column:
     ipv6_match_condition = is_valid_ipv6_address_udf(col_expr)
     final_condition = F.when(col_expr.isNotNull(), ~ipv6_match_condition).otherwise(F.lit(None))
     condition_str = f"' in Column '{col_expr_str}' does not match pattern 'IPV6_ADDRESS'"
+    default_msg = F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str))
+    default_name = f"{col_str_norm}_does_not_match_pattern_ipv6_address"
 
     return make_condition(
         final_condition,
-        F.concat_ws("", F.lit("Value '"), col_expr.cast("string"), F.lit(condition_str)),
-        f"{col_str_norm}_does_not_match_pattern_ipv6_address",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
+def is_ipv6_address_in_cidr(
+    column: str | Column, cidr_block: str, msg: str | None = None, name: str | None = None
+) -> Column:
     """
     Fail if IPv6 is invalid OR (valid AND not in CIDR). Null for null inputs.
 
     Args:
         column: The column to check; can be a string column name or a Column expression.
         cidr_block: The CIDR block to check against.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column: A Column expression indicating whether each value is not a valid IPv6 address or not in the CIDR block.
@@ -1104,12 +1299,13 @@ def is_ipv6_address_in_cidr(column: str | Column, cidr_block: str) -> Column:
         F.lit(col_expr_str),
         F.lit(f"' is not in the CIDR block '{cidr_block}'"),
     )
-    message = F.when(~is_valid_ipv6, ipv6_msg_col).otherwise(cidr_msg)
+    default_msg = F.when(~is_valid_ipv6, ipv6_msg_col).otherwise(cidr_msg)
+    default_name = f"{col_str_norm}_is_not_ipv6_in_cidr"
 
     return make_condition(
         condition=condition,
-        message=message,
-        alias=f"{col_str_norm}_is_not_ipv6_in_cidr",
+        message=F.lit(msg) if msg else default_msg,
+        alias=name or default_name,
     )
 
 
@@ -1118,6 +1314,8 @@ def is_data_fresh(
     column: str | Column,
     max_age_minutes: int,
     base_timestamp: str | datetime.date | datetime.datetime | Column | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> Column:
     """Checks whether the values in the timestamp column are not older than the specified number of minutes from the base timestamp column.
 
@@ -1127,6 +1325,9 @@ def is_data_fresh(
         column: column to check; can be a string column name or a column expression containing timestamp values
         max_age_minutes: maximum age in minutes before data is considered stale
         base_timestamp: (optional) set base timestamp column from which the stale check is calculated, if not provided uses current_timestamp()
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Column object for condition
@@ -1141,22 +1342,27 @@ def is_data_fresh(
     # Check if the timestamp is older than the threshold (stale)
     condition = col_expr < threshold_timestamp
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is older than {max_age_minutes} minutes from base timestamp '"),
+        base_timestamp_col_expr.cast("string"),
+        F.lit("'"),
+    )
+    default_name = f"{col_str_norm}_is_data_fresh"
+
     return make_condition(
         condition,
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is older than {max_age_minutes} minutes from base timestamp '"),
-            base_timestamp_col_expr.cast("string"),
-            F.lit("'"),
-        ),
-        f"{col_str_norm}_is_data_fresh",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("dataset")
-def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tuple[Column, Callable]:
+def has_no_outliers(
+    column: str | Column, row_filter: str | None = None, msg: str | None = None, name: str | None = None
+) -> tuple[Column, Callable]:
     """
     Build an outlier check condition and closure for dataset-level validation.
 
@@ -1169,6 +1375,9 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
         column: column to check; can be a string column name or a column expression
         row_filter: Optional SQL expression for filtering rows before checking for outliers. Auto-injected from the check filter.
 
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         A tuple of:
@@ -1221,15 +1430,18 @@ def has_no_outliers(column: str | Column, row_filter: str | None = None) -> tupl
 
         return result_df
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is an outlier as per MAD."),
+    )
+    default_name = f"{col_str_norm}_has_outliers"
+
     condition = make_condition(
         condition=F.col(condition_col),
-        message=F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is an outlier as per MAD."),
-        ),
-        alias=f"{col_str_norm}_has_outliers",
+        message=F.lit(msg) if msg else default_msg,
+        alias=name or default_name,
     )
     return condition, apply
 
@@ -1239,6 +1451,8 @@ def is_unique(
     columns: list[str | Column],
     nulls_distinct: bool = True,
     row_filter: str | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a uniqueness check condition and closure for dataset-level validation.
@@ -1254,6 +1468,9 @@ def is_unique(
         columns: List of column names (str) or Spark Column expressions to validate for uniqueness.
         nulls_distinct: Whether NULLs are treated as distinct (default: True).
         row_filter: Optional SQL expression for filtering rows before checking uniqueness. Auto-injected from the check filter.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         A tuple of:
@@ -1311,21 +1528,24 @@ def is_unique(
 
         return df
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        (
+            col_expr.cast("string")
+            if nulls_distinct
+            else F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string"))
+        ),
+        F.lit(f"' in column '{col_expr_str}' is not unique, found "),
+        F.col(count_col).cast("string"),
+        F.lit(" duplicates"),
+    )
+    default_name = f"{col_str_norm}_is_not_unique"
+
     condition = make_condition(
         condition=F.col(condition_col),
-        message=F.concat_ws(
-            "",
-            F.lit("Value '"),
-            (
-                col_expr.cast("string")
-                if nulls_distinct
-                else F.when(col_expr.isNull(), F.lit("null")).otherwise(col_expr.cast("string"))
-            ),
-            F.lit(f"' in column '{col_expr_str}' is not unique, found "),
-            F.col(count_col).cast("string"),
-            F.lit(" duplicates"),
-        ),
-        alias=f"{col_str_norm}_is_not_unique",
+        message=F.lit(msg) if msg else default_msg,
+        alias=name or default_name,
     )
 
     return condition, apply
@@ -1339,6 +1559,8 @@ def foreign_key(
     ref_table: str | None = None,  # or reference table name
     negate: bool = False,
     row_filter: str | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -1357,6 +1579,9 @@ def foreign_key(
         row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
         negate: If True, the condition is negated (i.e., the check fails when the foreign key values exist in the
             reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         A tuple of:
@@ -1424,19 +1649,22 @@ def foreign_key(
 
     op_name = "exists_in" if negate else "not_exists_in"
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit("' in column '"),
+        F.lit(col_expr_str),
+        F.lit(f"' {'' if negate else 'not '}found in reference column '"),
+        F.lit(ref_col_expr_str),
+        F.lit("'"),
+    )
+    default_name = f"{col_str_norm}_{op_name}_ref_{ref_col_str_norm}"
+
     condition = make_condition(
         condition=F.col(condition_col),
-        message=F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit("' in column '"),
-            F.lit(col_expr_str),
-            F.lit(f"' {'' if negate else 'not '}found in reference column '"),
-            F.lit(ref_col_expr_str),
-            F.lit("'"),
-        ),
-        alias=f"{col_str_norm}_{op_name}_ref_{ref_col_str_norm}",
+        message=F.lit(msg) if msg else default_msg,
+        alias=name or default_name,
     )
 
     return condition, apply
@@ -1480,6 +1708,9 @@ def sql_query(
         input_placeholder: Name to be used in the sql query as `{{ input_placeholder }}` to refer to the
             input DataFrame on which the checks are applied.
         row_filter: Optional SQL expression used to filter input rows before running the SQL validation. Auto-injected from the check filter.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         Tuple (condition column, apply function).
@@ -1586,6 +1817,8 @@ def is_aggr_not_greater_than(
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     aggr_params: dict[str, Any] | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1605,6 +1838,9 @@ def is_aggr_not_greater_than(
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
 
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
+
     Returns:
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
@@ -1620,6 +1856,8 @@ def is_aggr_not_greater_than(
         compare_op=py_operator.gt,
         compare_op_label="greater than",
         compare_op_name="greater_than",
+        msg=msg,
+        name_override=name,
     )
 
 
@@ -1631,6 +1869,8 @@ def is_aggr_not_less_than(
     group_by: list[str | Column] | None = None,
     row_filter: str | None = None,
     aggr_params: dict[str, Any] | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1650,6 +1890,9 @@ def is_aggr_not_less_than(
             percentile functions, accuracy for approximate aggregates). Parameters are passed as keyword
             arguments to the Spark function.
 
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
+
     Returns:
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
@@ -1665,6 +1908,8 @@ def is_aggr_not_less_than(
         compare_op=py_operator.lt,
         compare_op_label="less than",
         compare_op_name="less_than",
+        msg=msg,
+        name_override=name,
     )
 
 
@@ -1678,6 +1923,8 @@ def is_aggr_equal(
     aggr_params: dict[str, Any] | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1699,6 +1946,9 @@ def is_aggr_equal(
         abs_tolerance: Optional absolute tolerance for equality comparison of numeric aggregations.
         rel_tolerance: Optional relative tolerance for equality comparison of numeric aggregations.
 
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
+
     Returns:
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
@@ -1716,6 +1966,8 @@ def is_aggr_equal(
         compare_op_name="not_equal_to",
         abs_tolerance=abs_tolerance,
         rel_tolerance=rel_tolerance,
+        msg=msg,
+        name_override=name,
     )
 
 
@@ -1729,6 +1981,8 @@ def is_aggr_not_equal(
     aggr_params: dict[str, Any] | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build an aggregation check condition and closure for dataset-level validation.
@@ -1750,6 +2004,9 @@ def is_aggr_not_equal(
         abs_tolerance: Optional absolute tolerance for equality comparison of numeric aggregations.
         rel_tolerance: Optional relative tolerance for equality comparison of numeric aggregations.
 
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
+
     Returns:
         A tuple of:
             - A Spark Column representing the condition for aggregation limit violations.
@@ -1767,11 +2024,13 @@ def is_aggr_not_equal(
         compare_op_name="equal_to",
         abs_tolerance=abs_tolerance,
         rel_tolerance=rel_tolerance,
+        msg=msg,
+        name_override=name,
     )
 
 
 @register_rule("dataset")
-def compare_datasets(
+def compare_datasets(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     columns: list[str | Column],
     ref_columns: list[str | Column],
     ref_df_name: str | None = None,
@@ -1783,6 +2042,8 @@ def compare_datasets(
     row_filter: str | None = None,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Dataset-level check that compares two datasets and returns a condition for changed rows,
@@ -1840,6 +2101,8 @@ def compare_datasets(
             With tolerance=0.01 (1%):
             100 vs 101 → equal (diff = 1, tolerance = 1)
             2.001 vs 2.0099 → equal
+      msg: optional custom error message, automatically generated if None
+      name: optional name of the resulting column, automatically generated if None
 
 
     Returns:
@@ -1930,10 +2193,13 @@ def compare_datasets(
         )
 
     condition = F.col(condition_col).isNotNull()
+    default_msg = F.when(condition, F.to_json(F.col(condition_col)))
 
     return (
         make_condition(
-            condition=condition, message=F.when(condition, F.to_json(F.col(condition_col))), alias=check_alias
+            condition=condition,
+            message=F.lit(msg) if msg else default_msg,
+            alias=name or check_alias,
         ),
         apply,
     )
@@ -1947,6 +2213,8 @@ def is_data_fresh_per_time_window(
     lookback_windows: int | None = None,
     row_filter: str | None = None,
     curr_timestamp: Column | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a completeness freshness check that validates records arrive at least every X minutes
@@ -1964,6 +2232,9 @@ def is_data_fresh_per_time_window(
             If no lookback is provided, the check is applied to the entire dataset.
         row_filter: Optional SQL expression to filter rows before checking. Auto-injected from the check filter.
         curr_timestamp: Optional current timestamp column. If not provided, current_timestamp() function is used.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         A tuple of:
@@ -2035,19 +2306,22 @@ def is_data_fresh_per_time_window(
 
         return df
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Data arrival completeness check failed: only "),
+        F.col(count_col).cast("string"),
+        F.lit(f" records found in {window_minutes}-minute interval starting at "),
+        F.col(interval_col).start.cast("string"),
+        F.lit(" and ending at "),
+        F.col(interval_col).end.cast("string"),
+        F.lit(f", expected at least {min_records_per_window} records"),
+    )
+    default_name = f"{col_str_norm}_is_data_fresh_per_time_window"
+
     condition = make_condition(
         condition=F.col(condition_col),
-        message=F.concat_ws(
-            "",
-            F.lit("Data arrival completeness check failed: only "),
-            F.col(count_col).cast("string"),
-            F.lit(f" records found in {window_minutes}-minute interval starting at "),
-            F.col(interval_col).start.cast("string"),
-            F.lit(" and ending at "),
-            F.col(interval_col).end.cast("string"),
-            F.lit(f", expected at least {min_records_per_window} records"),
-        ),
-        alias=f"{col_str_norm}_is_data_fresh_per_time_window",
+        message=F.lit(msg) if msg else default_msg,
+        alias=name or default_name,
     )
 
     return condition, apply
@@ -2062,6 +2336,8 @@ def has_valid_schema(
     columns: list[str | Column] | None = None,
     strict: bool = False,
     exclude_columns: list[str | Column] | None = None,
+    msg: str | None = None,
+    name: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Build a schema compatibility check condition and closure for dataset-level validation.
@@ -2083,6 +2359,9 @@ def has_valid_schema(
             same order, same types).
         exclude_columns: Optional list of columns in the checked DataFrame schema to
             ignore for validation.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         A tuple of:
@@ -2165,41 +2444,50 @@ def has_valid_schema(
 
         return df
 
+    default_msg = F.concat_ws("", F.lit("Schema validation failed: "), F.col(message_col))
+    default_name = "has_invalid_schema"
+
     condition = make_condition(
         condition=F.col(condition_col),
-        message=F.concat_ws("", F.lit("Schema validation failed: "), F.col(message_col)),
-        alias="has_invalid_schema",
+        message=F.lit(msg) if msg else default_msg,
+        alias=name or default_name,
     )
 
     return condition, apply
 
 
 @register_rule("row")
-def is_valid_json(column: str | Column) -> Column:
+def is_valid_json(column: str | Column, msg: str | None = None, name: str | None = None) -> Column:
     """
     Checks whether the values in the input column are valid JSON strings.
 
     Args:
         column: Column name (str) or Column expression to check for valid JSON.
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         A Spark Column representing the condition for invalid JSON strings.
     """
     col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    default_msg = F.concat_ws(
+        "",
+        F.lit("Value '"),
+        col_expr.cast("string"),
+        F.lit(f"' in Column '{col_expr_str}' is not a valid JSON string"),
+    )
+    default_name = f"{col_str_norm}_is_not_valid_json"
     return make_condition(
         ~F.when(col_expr.isNotNull(), F.try_parse_json(col_expr_str).isNotNull()),
-        F.concat_ws(
-            "",
-            F.lit("Value '"),
-            col_expr.cast("string"),
-            F.lit(f"' in Column '{col_expr_str}' is not a valid JSON string"),
-        ),
-        f"{col_str_norm}_is_not_valid_json",
+        F.lit(msg) if msg else default_msg,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def has_json_keys(column: str | Column, keys: list[str], require_all: bool = True) -> Column:
+def has_json_keys(
+    column: str | Column, keys: list[str], require_all: bool = True, msg: str | None = None, name: str | None = None
+) -> Column:
     """
     Checks whether the values in the input column contain specific keys in the outermost JSON object.
 
@@ -2207,6 +2495,9 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
         column: The name of the column or the column expression to check for JSON keys.
         keys: A list of JSON keys to verify within the outermost JSON object.
         require_all: If True, all specified keys must be present. If False, at least one key must be present.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         A Spark Column representing the condition for missing JSON keys.
@@ -2243,15 +2534,18 @@ def has_json_keys(column: str | Column, keys: list[str], require_all: bool = Tru
     # Treat NULL values as valid (no violation) to ensure consistent behavior across ANSI/non-ANSI modes
     condition = condition | col_expr.isNull()
 
+    default_name = f"{col_str_norm}_does_not_have_json_keys"
     return make_condition(
         ~condition,
-        message,
-        f"{col_str_norm}_does_not_have_json_keys",
+        F.lit(msg) if msg else message,
+        name or default_name,
     )
 
 
 @register_rule("row")
-def has_valid_json_schema(column: str | Column, schema: str | types.StructType) -> Column:
+def has_valid_json_schema(
+    column: str | Column, schema: str | types.StructType, msg: str | None = None, name: str | None = None
+) -> Column:
     """
     Validates that JSON strings in the specified column conform to an expected schema.
 
@@ -2270,6 +2564,9 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
         schema: Expected schema as a DDL string (e.g. "struct<id:string NOT NULL>", "id INT, name STRING")
             or a generic StructType. To enforce strict presence of a field, you must explicitly set it to nullable=False
             or use NOT NULL in the DDL string.
+
+        msg: optional custom error message, automatically generated if None
+        name: optional name of the resulting column, automatically generated if None
 
     Returns:
         A string Column containing the error message if the JSON does not conform to the schema,
@@ -2324,11 +2621,12 @@ def has_valid_json_schema(column: str | Column, schema: str | types.StructType) 
     )
 
     final_error_msg = F.when(is_invalid_json, json_validation_error).otherwise(error_msg)
+    default_name = f"{col_str_norm}_has_invalid_json_schema"
 
     return make_condition(
         ~condition,
-        final_error_msg,
-        f"{col_str_norm}_has_invalid_json_schema",
+        F.lit(msg) if msg else final_error_msg,
+        name or default_name,
     )
 
 
@@ -2985,7 +3283,7 @@ def _build_aggregate_check_metadata(
     return name, group_by_list_str
 
 
-def _is_aggr_compare(
+def _is_aggr_compare(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
     column: str | Column,
     limit: int | float | Decimal | str | Column,
     aggr_type: str,
@@ -2997,6 +3295,8 @@ def _is_aggr_compare(
     compare_op_name: str,
     abs_tolerance: float | None = None,
     rel_tolerance: float | None = None,
+    msg: str | None = None,
+    name_override: str | None = None,
 ) -> tuple[Column, Callable]:
     """
     Helper to build aggregation comparison checks with a given operator.
@@ -3019,6 +3319,8 @@ def _is_aggr_compare(
         compare_op_name: Name identifier for the comparison (e.g., 'greater_than').
         abs_tolerance: Optional absolute tolerance for numeric comparisons.
         rel_tolerance: Optional relative tolerance for numeric comparisons.
+        msg: optional custom error message, automatically generated if None
+        name_override: optional name of the resulting column, automatically generated if None
 
     Returns:
         A tuple of:
@@ -3133,19 +3435,21 @@ def _is_aggr_compare(
     # Get human-readable display name for aggregate function (including params if present)
     aggr_display_name = _get_aggregate_display_name(aggr_type, aggr_params)
 
+    default_msg = F.concat_ws(
+        "",
+        F.lit(f"{aggr_display_name} value "),
+        F.col(metric_col).cast("string"),
+        F.lit(f" in column '{aggr_col_str}'"),
+        F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
+        F.lit(f"'{group_by_list_str}'" if group_by_list_str else ""),
+        F.lit(f" is {compare_op_label} limit: "),
+        limit_expr.cast("string"),
+    )
+
     condition = make_condition(
         condition=F.col(condition_col),
-        message=F.concat_ws(
-            "",
-            F.lit(f"{aggr_display_name} value "),
-            F.col(metric_col).cast("string"),
-            F.lit(f" in column '{aggr_col_str}'"),
-            F.lit(f"{' per group of columns ' if group_by_list_str else ''}"),
-            F.lit(f"'{group_by_list_str}'" if group_by_list_str else ""),
-            F.lit(f" is {compare_op_label} limit: "),
-            limit_expr.cast("string"),
-        ),
-        alias=name,
+        message=F.lit(msg) if msg else default_msg,
+        alias=name_override or name,
     )
 
     return condition, apply
