@@ -64,23 +64,23 @@ def test_engine_core_creation_with_observer():
     assert engine_core.run_id == observer.id
 
 
-def test_engine_core_skip_quietly_default():
+def test_engine_core_suppress_skipped_default():
     spark_mock = create_autospec(SparkSession)
     ws = create_autospec(WorkspaceClient)
 
     engine_core = DQEngineCore(spark=spark_mock, workspace_client=ws)
 
-    assert engine_core.skip_quietly is False
+    assert engine_core.suppress_skipped is False
 
 
-def test_engine_core_skip_quietly_enabled():
+def test_engine_core_suppress_skipped_enabled():
     spark_mock = create_autospec(SparkSession)
     ws = create_autospec(WorkspaceClient)
-    extra_params = ExtraParams(skip_quietly=True)
+    extra_params = ExtraParams(suppress_skipped=True)
 
     engine_core = DQEngineCore(spark=spark_mock, workspace_client=ws, extra_params=extra_params)
 
-    assert engine_core.skip_quietly is True
+    assert engine_core.suppress_skipped is True
 
 
 def test_engine_creation_no_workspace_connection(mock_workspace_client, mock_spark):

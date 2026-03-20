@@ -271,7 +271,7 @@ def test_extra_params_defaults():
     assert not config.user_metadata
     assert config.run_time_overwrite is None
     assert config.run_id_overwrite is None
-    assert config.skip_quietly is False
+    assert config.suppress_skipped is False
 
 
 def test_extra_params_custom_values():
@@ -287,9 +287,9 @@ def test_extra_params_custom_values():
     assert config.run_id_overwrite == "custom_run_id"
 
 
-def test_extra_params_skip_quietly():
-    config = ExtraParams(skip_quietly=True)
-    assert config.skip_quietly is True
+def test_extra_params_suppress_skipped():
+    config = ExtraParams(suppress_skipped=True)
+    assert config.suppress_skipped is True
 
 
 # Test WorkspaceConfig.as_dict()
