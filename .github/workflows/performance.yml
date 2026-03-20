@@ -15,7 +15,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -155,7 +155,7 @@ jobs:
           echo "Benchmark report updated at $OUT"
           echo "BENCHMARK_REPORT=$OUT" >> $GITHUB_ENV
 
-      # for troubleshooting issues only
+      # For troubleshooting only
       - name: Upload baseline artifacts
         uses: actions/upload-artifact@v4
         with:
