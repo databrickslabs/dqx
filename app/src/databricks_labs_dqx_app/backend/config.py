@@ -22,6 +22,7 @@ class AppConfig(BaseSettings):
         env_prefix=f"{app_name.upper()}_",
         extra="ignore",
         env_nested_delimiter="__",
+        populate_by_name=True,
     )
     app_name: str = Field(default=app_name)
     api_prefix: str = Field(default="/api")

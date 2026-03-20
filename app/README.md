@@ -20,15 +20,78 @@ This app uses several tools for local development:
 
 - **Backend**: FastAPI application (`src/databricks_labs_dqx_app/backend/`)
   - REST API endpoints under `/api`
-  - Integration with Databricks SDK
+  - No Spark session in the app process — all Spark work is offloaded to a Databricks Job
   - Serves static frontend files using FastAPI's `StaticFiles` middleware
 - **Frontend**: React + TypeScript (`src/databricks_labs_dqx_app/ui/`)
   - Built with Vite and TanStack Router
   - Compiled into `__dist__` directory during build
   - Static files (HTML, JS, CSS) are hosted by FastAPI at the root path `/`
+- **Task Runner**: Serverless Databricks Job (`tasks/dqx_task_runner.py`)
+  - Runs profiler and dry-run operations asynchronously
+  - Uses Spark (PySpark) — the only place Spark is used in this project
+  - Deployed as a workspace file via DABs alongside the app
 - **Production**: Deployed as a Databricks App using `databricks bundle deploy`
   - Only the built artifacts are deployed, not the development tools
   - FastAPI serves both the API (`/api/*`) and the static UI (`/*`)
+
+### Authentication Model
+
+The app uses a **two-tier authentication model** — no admin-scoped REST calls are made by the app itself.
+
+#### OBO (On-Behalf-Of) — user identity
+
+Operations that must respect the logged-in user's permissions use the `X-Forwarded-Access-Token` header, injected automatically by Databricks when the app runs on the platform:
+
+- **Unity Catalog browsing** (catalogs, schemas, tables, columns)
+- **Temporary view creation** — the view inherits the user's table permissions so the job can only read data the user can access
+
+```python
+async def get_obo_ws(
+    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
+) -> WorkspaceClient:
+    """Return a WorkspaceClient for the logged-in user (OBO), cached for 45 min."""
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    return await _create_obo_ws(token_hash, token)
+```
+
+#### SP (Service Principal) — app identity
+
+Operations the app owns and manages run as the app's own service principal (no user token required):
+
+- **Job submission** for profiler and dry-run tasks
+- **Rules catalog CRUD** (reading and writing the rules Delta table)
+- **Schema migrations** (creating and evolving Delta tables)
+- **App settings** (reading and writing settings from the Delta table)
+
+This ensures that:
+- ✅ Users only see data they have permission to access
+- ✅ No elevated privileges are required for browsing or profiling
+- ✅ Internal app state (rules, settings) is managed consistently under the SP identity
+- ✅ Audit logs correctly attribute actions to individual users
+
+### Async Job Pattern (Profiler & Dry-Run)
+
+Profiler and dry-run operations require Spark, which cannot run inside the app process. These operations follow an async job pattern:
+
+```
+User request
+    │
+    ├─ (OBO) Create temporary VIEW over the target table
+    │         └─ View inherits user's table permissions
+    │
+    ├─ (SP) Submit Databricks Job with view_fqn + config
+    │        └─ dqx_task_runner.py runs on serverless compute
+    │              ├─ Reads from the temporary view
+    │              ├─ Runs profiler / dry-run (PySpark)
+    │              ├─ Writes results to Delta table
+    │              └─ Drops the temporary view (finally block)
+    │
+    └─ Return run_id + job_run_id to the frontend
+           └─ Frontend polls /status until complete
+                  └─ Frontend fetches /results from Delta
+```
+
+The `DQX_JOB_ID` environment variable (injected from the `dqx-task-runner-job` bundle resource) identifies which job to submit runs to.
 
 ### Routing Structure
 
@@ -51,7 +114,7 @@ Server-side routing in `app.py` defines two main routes:
      - **Response Model**: Pydantic model that defines the response structure (type-safe)
      - **operation_id**: Human-readable identifier for the endpoint (used for OpenAPI docs and client generation)
      - **Sync or Async Function**: Handler function that processes requests and returns data to the frontend
-   
+
    Example endpoint structure:
    ```python
    @router.get("/version", response_model=VersionResponse, operation_id="getVersion")
@@ -76,37 +139,6 @@ Client-side routing in `ui/routes/` handles navigation within the React applicat
   3. React renders the new component without server request
   4. Only API calls to `/api/*` fetch data from backend
 
-**Why Two Routers?**
-
-- **Backend Router (FastAPI)**: Handles HTTP requests from the internet → determines which code executes
-- **Frontend Router (TanStack)**: Handles in-browser navigation → determines which React components render
-- This separation allows the frontend to be fast and interactive while backend remains stateless and scalable
-
-### Authentication & Databricks Integration
-
-The application uses **On-Behalf-Of (OBO)** authentication to perform Databricks workspace operations as the logged-in user:
-
-- **`X-Forwarded-Access-Token` Header**: When the app runs on Databricks, this header contains the user's access token
-- **WorkspaceClient Initialization**: The `get_obo_ws` dependency (in `dependencies.py`) extracts this token and creates a `WorkspaceClient` on behalf of the user
-- **User-Scoped Operations**: All Databricks SDK operations (workspace, clusters, jobs, etc.) are performed with the user's permissions
-- **No Service Credentials Needed**: The app doesn't need to manage service account credentials—it uses the user's identity
-
-Implementation example from `dependencies.py`:
-```python
-def get_obo_ws(
-    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
-) -> WorkspaceClient:
-    """Create WorkspaceClient using the user's access token from the header."""
-    if not token:
-        raise ValueError("OBO token is not provided in the header X-Forwarded-Access-Token")
-    return WorkspaceClient(token=token, auth_type="pat")
-```
-
-This pattern ensures that:
-- ✅ Users only see data they have permission to access
-- ✅ Audit logs correctly attribute actions to individual users
-- ✅ No elevated privileges are required for the application
-
 ### Build Process
 
 The build process (`uv run apx build`) performs three key operations:
@@ -114,7 +146,7 @@ The build process (`uv run apx build`) performs three key operations:
 1. **OpenAPI Schema Generation**
    - Extracts the API contract from FastAPI backend and saves it to `.apx/openapi.json`
    - Uses **orval** to auto-generate TypeScript types and React Query hooks in `ui/lib/api.ts`
-   - This decouples frontend and backend - they communicate via the OpenAPI contract
+   - This decouples frontend and backend — they communicate via the OpenAPI contract
    - Frontend doesn't need to import Python types directly; all types are generated from the spec
 
 2. **UI Compilation**
@@ -167,6 +199,8 @@ databricks auth login --host https://your-workspace.cloud.databricks.com
 Create a `.env` file in the app directory:
 ```bash
 DATABRICKS_CONFIG_PROFILE=<your-profile>
+DATABRICKS_WAREHOUSE_ID=<your-warehouse-id>
+DQX_JOB_ID=<task-runner-job-id>   # optional for local dev; required for profiler/dry-run
 ```
 
 This is useful when you have multiple [Databricks CLI profiles](https://docs.databricks.com/aws/en/dev-tools/cli/profiles) and want to use a specific one.
@@ -296,15 +330,19 @@ databricks bundle deploy -p <your-profile>
 ```
 
 This command:
-- Build the project using `uv run apx build` (compiles frontend, generates OpenAPI schema, creates wheel)
-- Uploads the `.build/` directory to workspace (at `.bundle/<app-name>/dev/files/.build`)
-- Creates/updates the app resource in Databricks workspace
-- Configures app settings from `databricks.yml` (name, scopes, permissions)
+- Builds the project using `uv run apx build` (compiles frontend, generates OpenAPI schema, creates wheel)
+- Uploads the `.build/` and `tasks/` directories to workspace
+- Creates/updates the following resources:
+  - **App** (`databricks-labs-dqx-app`)
+  - **SQL Warehouse** (`dqx-sql-warehouse`) — used for metadata queries
+  - **Schema** (`<catalog>.dqx_app`) — Delta tables for rules, results, settings
+  - **Job** (`dqx-app-task-runner`) — serverless job for profiler and dry-run tasks
+- Configures app environment variables including `DQX_JOB_ID` (wired to the task runner job)
 
 This does not:
 - Start the app
 - Deploy the actual source code to the app runtime
-- Configures the OAuth scopes (you need to do this manually after the initial deployment)
+- Configure the OAuth scopes (you need to do this manually after the initial deployment)
 - Grant users access to the app (you need to do this manually after deployment)
 
 ### Step 2: Configure OAuth Scopes (⚠️ Critical)
@@ -326,7 +364,7 @@ databricks account custom-app-integration update '<oauth2-app-client-id>' --json
 - **Option B - CLI**: Run `databricks account custom-app-integration list`
 
 **Why is this needed?**
-The default scopes available in `databricks.yml` are limited and don't cover all workspace operations (like workspace file access). The `all-apis` scope grants the necessary permissions for the app to work with workspace files, configurations, and other resources on behalf of the user.
+The default scopes available in `databricks.yml` are limited. The `all-apis` scope grants the necessary permissions for the app to browse Unity Catalog and create temporary views on behalf of the user.
 
 To confirm the scope has been added run:
 ```bash
@@ -370,7 +408,7 @@ databricks apps deploy databricks-labs-dqx-app \
 After deployment, you need to grant users permissions to access the app.
 This is done through the Databricks UI or API by assigning users/groups to the app with `Can Use` permission.
 
-### Step 6: Access and Configure the App
+### Step 6: Access the App
 
 Once the app is deployed and started, you can access it at:
 ```
@@ -381,22 +419,6 @@ https://<your-workspace-url>/apps/databricks-labs-dqx-app
 - **In Databricks UI**: Navigate to **Apps** in the sidebar → Click on **databricks-labs-dqx-app** → Copy the URL from the address bar
 - **Via CLI**: Run `databricks apps get databricks-labs-dqx-app -p <your-profile>` and look for the `url` field
 
-**Initial Configuration:**
-
-When you first open the app, you'll need to configure the workspace installation folder (folder where config.yml is located):
-
-1. **Settings Page**: Click on the **Settings** icon (⚙️) in the app navigation
-2. **Set Install Folder**: Specify where your DQX configuration will be stored
-   - Default location: `/Users/<your-username>/.dqx`
-   - Or choose a custom location (e.g., `/Workspace/Shared/dqx-config`)
-3. **Save Settings**: Click **Save** to persist your settings
-
-**What Gets Created:**
-- **App Settings**: Stored in `/Users/<your-username>/.dqx/app.yml` (contains the install folder path)
-- **Install Folder**: Created automatically if it doesn't exist
-- **Default config.yml**: Automatically created in your install folder with an empty configuration if it doesn't already exist
-  - You can then add run configurations through the Configuration page in the app
-
 ### Complete Deployment Script
 
 Here's a complete script that performs all deployment steps:
@@ -404,7 +426,7 @@ Here's a complete script that performs all deployment steps:
 ```bash
 cd app
 
-# Step 1: Deploy bundle
+# Step 1: Deploy bundle (builds wheel, provisions job + warehouse + schema)
 databricks bundle deploy -p <your-profile>
 
 # Step 2: Deploy source code
@@ -416,7 +438,7 @@ databricks apps deploy databricks-labs-dqx-app \
 databricks apps start databricks-labs-dqx-app -p <your-profile>
 ```
 
-After deployment, continue with [Step 5: Access and Configure the App](#step-5-access-and-configure-the-app)
+After deployment, continue with [Step 5: Configure Permissions](#step-5-configure-permissions-in-the-app).
 
 ### Monitor and Manage
 
@@ -450,7 +472,7 @@ databricks apps deploy databricks-labs-dqx-app \
 
 **Update OAuth scopes (after changing `databricks.yml` or initial deployment):**
 
-⚠️ **Important**: After the initial deployment, you must configure the `all-apis` scope. See [Step 1.5: Configure OAuth Scopes](#step-15-configure-oauth-scopes--critical) for details.
+⚠️ **Important**: After the initial deployment, you must configure the `all-apis` scope. See [Step 2: Configure OAuth Scopes](#step-2-configure-oauth-scopes--critical) for details.
 
 If you're updating scopes in `databricks.yml`:
 ```bash
@@ -492,6 +514,14 @@ databricks bundle deploy -p <your-profile> --force
 - When switching between different workspaces
 - If deployment fails with "app does not exist" errors
 - After manually deleting an app from the workspace UI
+
+### Profiler or dry-run not starting
+
+If submitting a profiler or dry-run returns an error about the job:
+
+1. Verify `DQX_JOB_ID` is set in the app's environment (check `databricks.yml` and app config in the UI)
+2. Confirm the `dqx-app-task-runner` job was created: `databricks jobs list -p <your-profile>`
+3. Confirm the app's service principal has `CAN_MANAGE_RUN` on the job (set automatically by DABs)
 
 ### uv hangs
 

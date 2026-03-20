@@ -1,20 +1,41 @@
 """Unit tests for the DQX App backend modules."""
 
+import asyncio
 import base64
 import json
 import logging
 from unittest.mock import create_autospec
 
 import pytest
+from databricks_labs_dqx_app.backend.cache import CacheFactory
+from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import get_generator, get_obo_ws
-from databricks_labs_dqx_app.backend.logger import CustomFormatter, setup_logger, get_logger
+from databricks_labs_dqx_app.backend.logger import CustomFormatter, get_logger, setup_logger
+from databricks_labs_dqx_app.backend.migrations import MIGRATIONS, MigrationRunner
 from databricks_labs_dqx_app.backend.models import (
     DryRunIn,
     DryRunOut,
+    DryRunResultsOut,
+    DryRunSubmitOut,
     InstallationSettings,
+    ProfileResultsOut,
+    ProfileRunIn,
+    ProfileRunOut,
     RuleCatalogEntryOut,
+    RunStatusOut,
     SaveRulesIn,
     SetStatusIn,
+)
+from databricks_labs_dqx_app.backend.routes.v1.dryrun import (
+    get_dry_run_results,
+    get_dry_run_status,
+    submit_dry_run,
+)
+from databricks_labs_dqx_app.backend.routes.v1.profiler import (
+    get_profile_run_results,
+    get_profile_run_status,
+    list_profile_runs,
+    submit_profile_run,
 )
 from databricks_labs_dqx_app.backend.routes.v1.rules import (
     approve_rules,
@@ -25,19 +46,28 @@ from databricks_labs_dqx_app.backend.routes.v1.rules import (
     save_rules,
     submit_for_approval,
 )
+from databricks_labs_dqx_app.backend.services.discovery import DiscoveryService
+from databricks_labs_dqx_app.backend.services.job_service import JobService, RunStatus
 from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
     RuleCatalogEntry,
     RulesCatalogService,
 )
+from databricks_labs_dqx_app.backend.services.view_service import ViewService
 from databricks_labs_dqx_app.backend.settings import SettingsManager
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceDoesNotExist
+from databricks.sdk.service.catalog import CatalogInfo, ColumnInfo as CatalogColumnInfo, SchemaInfo, TableInfo
 from databricks.sdk.service.iam import User
+from databricks.sdk.service.jobs import Run, RunLifeCycleState, RunResultState
 from databricks.sdk.service.sql import (
+    ColumnInfo as SQLColumnInfo,
     ResultData,
+    ResultManifest,
+    ResultSchema,
     ServiceError,
     StatementResponse,
     StatementState,
@@ -94,17 +124,25 @@ class TestGetOboWs:
 
     def test_raises_when_no_token(self):
         """Should raise HTTPException when no token is provided."""
-        with pytest.raises(HTTPException) as exc_info:
-            get_obo_ws(token=None)
-        assert exc_info.value.status_code == 401
-        assert "Authentication required" in exc_info.value.detail
+
+        async def _() -> None:
+            with pytest.raises(HTTPException) as exc_info:
+                await get_obo_ws(token=None)
+            assert exc_info.value.status_code == 401
+            assert "Authentication required" in exc_info.value.detail
+
+        asyncio.run(_())
 
     def test_raises_when_empty_token(self):
         """Should raise HTTPException when empty token is provided."""
-        with pytest.raises(HTTPException) as exc_info:
-            get_obo_ws(token="")
-        assert exc_info.value.status_code == 401
-        assert "Authentication required" in exc_info.value.detail
+
+        async def _() -> None:
+            with pytest.raises(HTTPException) as exc_info:
+                await get_obo_ws(token="")
+            assert exc_info.value.status_code == 401
+            assert "Authentication required" in exc_info.value.detail
+
+        asyncio.run(_())
 
 
 class TestCustomFormatter:
@@ -414,7 +452,7 @@ class TestDryRunIn:
     def test_valid_defaults(self):
         """Should accept valid input with default sample_size."""
         body = DryRunIn(table_fqn="catalog.schema.table", checks=_SAMPLE_CHECKS)
-        assert body.sample_size == 100
+        assert body.sample_size == 1000
 
     def test_custom_sample_size(self):
         """Should accept a custom sample_size within bounds."""
@@ -422,9 +460,9 @@ class TestDryRunIn:
         assert body.sample_size == 500
 
     def test_rejects_sample_size_above_max(self):
-        """Should reject sample_size > 1000."""
+        """Should reject sample_size > 10000."""
         with pytest.raises(ValidationError, match="sample_size"):
-            DryRunIn(table_fqn="c.s.t", checks=_SAMPLE_CHECKS, sample_size=1001)
+            DryRunIn(table_fqn="c.s.t", checks=_SAMPLE_CHECKS, sample_size=10001)
 
 
 class TestDryRunOut:
@@ -859,6 +897,903 @@ class TestGetGenerator:
     def test_raises_when_no_token(self):
         mock_ws = create_autospec(WorkspaceClient)
 
+        async def _() -> None:
+            with pytest.raises(HTTPException) as exc:
+                await get_generator(obo_ws=mock_ws, token=None)
+            assert exc.value.status_code == 401
+
+        asyncio.run(_())
+
+
+# ============================================================================
+# Helper for building tabular SQL responses (with named columns)
+# ============================================================================
+
+
+def _make_tabular_response(columns: list[str], rows: list[list[str]]) -> StatementResponse:
+    """Build a StatementResponse with named columns and data rows."""
+    return StatementResponse(
+        status=StatementStatus(state=StatementState.SUCCEEDED),
+        result=ResultData(data_array=rows),
+        manifest=ResultManifest(schema=ResultSchema(columns=[SQLColumnInfo(name=col_name) for col_name in columns])),
+    )
+
+
+# ============================================================================
+# Tests for CacheFactory
+# ============================================================================
+
+
+class TestCacheFactory:
+    """Unit tests for the async in-memory CacheFactory."""
+
+    def test_get_returns_none_for_missing_key(self) -> None:
+        """Missing key should return None."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+            assert await cache.get("absent") is None
+
+        asyncio.run(_())
+
+    def test_set_and_get_round_trips(self) -> None:
+        """Value stored with set should be retrievable with get."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+            await cache.set("key", "hello")
+            assert await cache.get("key") == "hello"
+
+        asyncio.run(_())
+
+    def test_get_returns_none_after_ttl_expires(self) -> None:
+        """Expired entries should not be returned."""
+
+        async def _() -> None:
+            cache = CacheFactory(ttl=0)
+            await cache.set("key", "value", ttl=0)
+            # TTL=0 means already expired at the moment of set
+            assert await cache.get("key") is None
+
+        asyncio.run(_())
+
+    def test_delete_removes_key(self) -> None:
+        """Deleted key should not be retrievable."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+            await cache.set("key", "value")
+            await cache.delete("key")
+            assert await cache.get("key") is None
+
+        asyncio.run(_())
+
+    def test_clear_removes_all_keys(self) -> None:
+        """clear() should remove all stored entries."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+            await cache.set("a", 1)
+            await cache.set("b", 2)
+            await cache.clear()
+            assert await cache.get("a") is None
+            assert await cache.get("b") is None
+
+        asyncio.run(_())
+
+    def test_set_fire_and_forget_stores_value(self) -> None:
+        """set_fire_and_forget should schedule a write that resolves on next tick."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+            cache.set_fire_and_forget("key", "value")
+            await asyncio.sleep(0)  # let the task execute
+            assert await cache.get("key") == "value"
+
+        asyncio.run(_())
+
+    def test_set_reliable_stores_value(self) -> None:
+        """set_reliable should await the write successfully."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+            await cache.set_reliable("key", "value")
+            assert await cache.get("key") == "value"
+
+        asyncio.run(_())
+
+    def test_cached_decorator_calls_fn_on_miss(self) -> None:
+        """On cache miss the decorated function should be invoked."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+            call_count = 0
+
+            @cache.cached("test:items")
+            async def get_items() -> list[str]:
+                nonlocal call_count
+                call_count += 1
+                return ["a", "b"]
+
+            result = await get_items()
+            assert result == ["a", "b"]
+            assert call_count == 1
+
+        asyncio.run(_())
+
+    def test_cached_decorator_returns_cached_on_hit(self) -> None:
+        """Second call to a cached function should not invoke the function again."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+            call_count = 0
+
+            @cache.cached("test:items2")
+            async def get_items() -> list[str]:
+                nonlocal call_count
+                call_count += 1
+                return ["a", "b"]
+
+            await get_items()
+            await asyncio.sleep(0)  # allow fire-and-forget cache write to complete
+            await get_items()
+            assert call_count == 1
+
+        asyncio.run(_())
+
+    def test_cached_decorator_resolves_user_key(self) -> None:
+        """The {_user} placeholder should be resolved from self.user_id."""
+
+        async def _() -> None:
+            cache = CacheFactory()
+
+            class Service:
+                user_id = "alice"
+
+                @cache.cached("discovery:{_user}:catalogs")
+                async def list_catalogs(self) -> list[str]:
+                    return ["cat1"]
+
+            svc = Service()
+            result1 = await svc.list_catalogs()
+            result2 = await svc.list_catalogs()
+            assert result1 == ["cat1"]
+            assert result2 == ["cat1"]
+
+        asyncio.run(_())
+
+
+# ============================================================================
+# Tests for RunStatus model
+# ============================================================================
+
+
+class TestRunStatus:
+    """Unit tests for the RunStatus Pydantic model."""
+
+    def test_defaults(self) -> None:
+        status = RunStatus(state="RUNNING")
+        assert status.result_state is None
+        assert status.message is None
+
+    def test_all_fields(self) -> None:
+        status = RunStatus(state="TERMINATED", result_state="SUCCESS", message="Done")
+        assert status.state == "TERMINATED"
+        assert status.result_state == "SUCCESS"
+        assert status.message == "Done"
+
+
+# ============================================================================
+# Tests for JobService
+# ============================================================================
+
+
+class TestJobService:
+    """Unit tests for JobService."""
+
+    @pytest.fixture
+    def ws(self) -> WorkspaceClient:
+        ws = create_autospec(WorkspaceClient)
+        return ws
+
+    @pytest.fixture
+    def svc(self, ws: WorkspaceClient) -> JobService:
+        return JobService(ws=ws, job_id="42", catalog="cat", schema="sch", warehouse_id="wh-1")
+
+    def test_submit_run_raises_when_no_job_id(self, ws: WorkspaceClient) -> None:
+        """Should raise RuntimeError when job_id is not configured."""
+        svc = JobService(ws=ws, job_id="", catalog="cat", schema="sch", warehouse_id="wh-1")
+        with pytest.raises(RuntimeError, match="DQX_JOB_ID is not configured"):
+            svc.submit_run(
+                task_type="dryrun",
+                view_fqn="cat.sch.tmp_view_abc",
+                config={"checks": []},
+                run_id="run-001",
+                requesting_user="alice@example.com",
+            )
+
+    def test_submit_run_calls_jobs_run_now(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """submit_run should call jobs.run_now with correct parameters and return run_id."""
+        mock_run = create_autospec(Run)
+        mock_run.run_id = 99999
+        ws.jobs.run_now.return_value = mock_run  # type: ignore[attr-defined]
+
+        job_run_id = svc.submit_run(
+            task_type="profile",
+            view_fqn="cat.sch.tmp_view_xyz",
+            config={"sample_limit": 1000},
+            run_id="run-002",
+            requesting_user="bob@example.com",
+        )
+
+        assert job_run_id == 99999
+        call_kwargs = ws.jobs.run_now.call_args.kwargs  # type: ignore[attr-defined]
+        assert call_kwargs["job_id"] == 42
+        params = call_kwargs["job_parameters"]
+        assert params["task_type"] == "profile"
+        assert params["run_id"] == "run-002"
+        assert params["requesting_user"] == "bob@example.com"
+
+    def test_get_run_status_returns_status(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """get_run_status should map life_cycle_state and result_state."""
+        mock_run = create_autospec(Run)
+        mock_run.state.life_cycle_state = RunLifeCycleState.TERMINATED
+        mock_run.state.result_state = RunResultState.SUCCESS
+        mock_run.state.state_message = None
+        ws.jobs.get_run.return_value = mock_run  # type: ignore[attr-defined]
+
+        status = svc.get_run_status(99999)
+
+        assert status.state == "TERMINATED"
+        assert status.result_state == "SUCCESS"
+        assert status.message is None
+
+    def test_get_run_status_handles_no_result_state(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """get_run_status should return None for result_state when not present."""
+        mock_run = create_autospec(Run)
+        mock_run.state.life_cycle_state = RunLifeCycleState.RUNNING
+        mock_run.state.result_state = None
+        mock_run.state.state_message = "In progress"
+        ws.jobs.get_run.return_value = mock_run  # type: ignore[attr-defined]
+
+        status = svc.get_run_status(12345)
+
+        assert status.state == "RUNNING"
+        assert status.result_state is None
+        assert status.message == "In progress"
+
+    def test_list_run_rows_returns_dict_list(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """list_run_rows should return a list of dicts keyed by column name."""
+        ws.statement_execution.execute_statement.return_value = _make_tabular_response(  # type: ignore[attr-defined]
+            columns=["run_id", "status"],
+            rows=[["abc", "SUCCEEDED"], ["def", "FAILED"]],
+        )
+
+        rows = svc.list_run_rows("cat.sch.dq_profiling_results")
+
+        assert len(rows) == 2
+        assert rows[0] == {"run_id": "abc", "status": "SUCCEEDED"}
+        assert rows[1] == {"run_id": "def", "status": "FAILED"}
+
+    def test_list_run_rows_returns_empty_when_no_data(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """list_run_rows should return [] when the table has no rows."""
+        resp = StatementResponse(
+            status=StatementStatus(state=StatementState.SUCCEEDED),
+            result=ResultData(data_array=[]),
+        )
+        ws.statement_execution.execute_statement.return_value = resp  # type: ignore[attr-defined]
+
+        rows = svc.list_run_rows("cat.sch.dq_profiling_results")
+
+        assert rows == []
+
+    def test_list_run_rows_raises_on_sql_failure(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """list_run_rows should raise RuntimeError on SQL execution failure."""
+        ws.statement_execution.execute_statement.return_value = _failed_response("timeout")  # type: ignore[attr-defined]
+
+        with pytest.raises(RuntimeError, match="List query failed: timeout"):
+            svc.list_run_rows("cat.sch.dq_profiling_results")
+
+    def test_get_run_result_row_returns_dict(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """get_run_result_row should return the first row as a dict."""
+        ws.statement_execution.execute_statement.return_value = _make_tabular_response(  # type: ignore[attr-defined]
+            columns=["run_id", "status", "total_rows"],
+            rows=[["run-001", "SUCCEEDED", "500"]],
+        )
+
+        row = svc.get_run_result_row("cat.sch.dq_validation_runs", "run-001")
+
+        assert row is not None
+        assert row["run_id"] == "run-001"
+        assert row["status"] == "SUCCEEDED"
+        assert row["total_rows"] == "500"
+
+    def test_get_run_result_row_returns_none_when_empty(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """get_run_result_row should return None when no row matches."""
+        resp = StatementResponse(
+            status=StatementStatus(state=StatementState.SUCCEEDED),
+            result=ResultData(data_array=[]),
+        )
+        ws.statement_execution.execute_statement.return_value = resp  # type: ignore[attr-defined]
+
+        result = svc.get_run_result_row("cat.sch.dq_validation_runs", "run-missing")
+
+        assert result is None
+
+    def test_get_run_result_row_raises_on_sql_failure(self, svc: JobService, ws: WorkspaceClient) -> None:
+        """get_run_result_row should raise RuntimeError on SQL failure."""
+        ws.statement_execution.execute_statement.return_value = _failed_response("permission denied")  # type: ignore[attr-defined]
+
+        with pytest.raises(RuntimeError, match="Results query failed: permission denied"):
+            svc.get_run_result_row("cat.sch.dq_validation_runs", "run-001")
+
+
+# ============================================================================
+# Tests for ViewService
+# ============================================================================
+
+
+class TestViewService:
+    """Unit tests for ViewService."""
+
+    @pytest.fixture
+    def ws(self) -> WorkspaceClient:
+        ws = create_autospec(WorkspaceClient)
+        return ws
+
+    @pytest.fixture
+    def svc(self, ws: WorkspaceClient) -> ViewService:
+        return ViewService(ws=ws, warehouse_id="wh-1", catalog="cat", schema="sch")
+
+    def test_create_view_returns_fqn(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """create_view should return a fully qualified view name."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        result = svc.create_view("cat.sch.src_table")
+
+        assert result.startswith("cat.sch.tmp_view_")
+
+    def test_create_view_executes_correct_sql(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """create_view should issue CREATE OR REPLACE VIEW referencing the source table."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table")
+
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]  # type: ignore[attr-defined]
+        assert "CREATE OR REPLACE VIEW" in sql
+        assert "cat.sch.src_table" in sql
+
+    def test_create_view_adds_limit_clause_when_sample_limit_given(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """create_view with sample_limit should append LIMIT to the SQL."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.create_view("cat.sch.src_table", sample_limit=5000)
+
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]  # type: ignore[attr-defined]
+        assert "LIMIT 5000" in sql
+
+    def test_create_view_raises_on_sql_failure(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """_execute should raise RuntimeError when the statement fails."""
+        ws.statement_execution.execute_statement.return_value = _failed_response("access denied")  # type: ignore[attr-defined]
+
+        with pytest.raises(RuntimeError, match="SQL statement failed: access denied"):
+            svc.create_view("cat.sch.src_table")
+
+    def test_drop_view_executes_drop_sql(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """drop_view should issue DROP VIEW IF EXISTS."""
+        ws.statement_execution.execute_statement.return_value = _ok_response()  # type: ignore[attr-defined]
+
+        svc.drop_view("cat.sch.tmp_view_abc")
+
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]  # type: ignore[attr-defined]
+        assert "DROP VIEW IF EXISTS" in sql
+        assert "cat.sch.tmp_view_abc" in sql
+
+    def test_drop_view_does_not_raise_on_failure(self, svc: ViewService, ws: WorkspaceClient) -> None:
+        """drop_view is best-effort — failures should be swallowed."""
+        ws.statement_execution.execute_statement.return_value = _failed_response("not found")  # type: ignore[attr-defined]
+
+        # Should not raise
+        svc.drop_view("cat.sch.tmp_view_gone")
+
+
+# ============================================================================
+# Tests for DiscoveryService (sync methods)
+# ============================================================================
+
+
+class TestDiscoveryService:
+    """Unit tests for DiscoveryService synchronous methods."""
+
+    @pytest.fixture
+    def ws(self) -> WorkspaceClient:
+        ws = create_autospec(WorkspaceClient)
+        return ws
+
+    @pytest.fixture
+    def svc(self, ws: WorkspaceClient) -> DiscoveryService:
+        return DiscoveryService(ws=ws, user_id="alice@example.com")
+
+    def test_list_catalogs_returns_catalog_info_list(self, svc: DiscoveryService, ws: WorkspaceClient) -> None:
+        """list_catalogs should return whatever the SDK yields."""
+        cat = CatalogInfo(name="my_catalog")
+        ws.catalogs.list.return_value = iter([cat])  # type: ignore[attr-defined]
+
+        result = svc.list_catalogs()
+
+        assert len(result) == 1
+        assert result[0].name == "my_catalog"
+
+    def test_list_schemas_passes_catalog_name(self, svc: DiscoveryService, ws: WorkspaceClient) -> None:
+        """list_schemas should pass the catalog_name to the SDK."""
+        schema = SchemaInfo(name="my_schema", catalog_name="cat")
+        ws.schemas.list.return_value = iter([schema])  # type: ignore[attr-defined]
+
+        result = svc.list_schemas("cat")
+
+        assert len(result) == 1
+        ws.schemas.list.assert_called_once_with(catalog_name="cat")  # type: ignore[attr-defined]
+
+    def test_list_tables_passes_catalog_and_schema(self, svc: DiscoveryService, ws: WorkspaceClient) -> None:
+        """list_tables should pass both catalog_name and schema_name to the SDK."""
+        table = TableInfo(name="my_table", catalog_name="cat", schema_name="sch")
+        ws.tables.list.return_value = iter([table])  # type: ignore[attr-defined]
+
+        result = svc.list_tables("cat", "sch")
+
+        assert len(result) == 1
+        ws.tables.list.assert_called_once_with(catalog_name="cat", schema_name="sch")  # type: ignore[attr-defined]
+
+    def test_get_table_columns_returns_table_columns(self, svc: DiscoveryService, ws: WorkspaceClient) -> None:
+        """get_table_columns should convert SDK ColumnInfo into TableColumn objects."""
+        col = CatalogColumnInfo(name="id", type_name=None, comment="pk", nullable=False, position=0)
+        mock_table = create_autospec(TableInfo)
+        mock_table.columns = [col]
+        ws.tables.get.return_value = mock_table  # type: ignore[attr-defined]
+
+        result = svc.get_table_columns("cat", "sch", "tbl")
+
+        assert len(result) == 1
+        assert result[0].name == "id"
+        assert result[0].comment == "pk"
+        assert result[0].nullable is False
+        ws.tables.get.assert_called_once_with(full_name="cat.sch.tbl")  # type: ignore[attr-defined]
+
+    def test_get_table_columns_returns_empty_when_no_columns(self, svc: DiscoveryService, ws: WorkspaceClient) -> None:
+        """get_table_columns should return [] when the table has no column metadata."""
+        mock_table = create_autospec(TableInfo)
+        mock_table.columns = None
+        ws.tables.get.return_value = mock_table  # type: ignore[attr-defined]
+
+        result = svc.get_table_columns("cat", "sch", "tbl")
+
+        assert result == []
+
+    def test_user_id_is_stored(self, svc: DiscoveryService) -> None:
+        """user_id should be accessible for use as cache key component."""
+        assert svc.user_id == "alice@example.com"
+
+
+# ============================================================================
+# Tests for MigrationRunner
+# ============================================================================
+
+
+class TestMigrationRunner:
+    """Unit tests for MigrationRunner with mocked WorkspaceClient."""
+
+    @pytest.fixture
+    def ws(self) -> WorkspaceClient:
+        ws = create_autospec(WorkspaceClient)
+        return ws
+
+    def test_run_all_returns_zero_when_all_already_applied(self, ws: WorkspaceClient) -> None:
+        """run_all should skip all migrations when every version is already recorded."""
+        all_applied_rows = [[str(m.version), "2025-01-01T00:00:00"] for m in MIGRATIONS]
+        ws.statement_execution.execute_statement.side_effect = [  # type: ignore[attr-defined]
+            _ok_response(),  # _ensure_schema (bootstrap)
+            _ok_response(),  # _ensure_meta_table
+            _ok_response(all_applied_rows),  # _applied_at_map query
+        ]
+
+        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        count = runner.run_all()
+
+        assert count == 0
+
+    def test_run_all_applies_all_when_none_applied(self, ws: WorkspaceClient) -> None:
+        """run_all should apply every migration when none are recorded yet."""
+        # schema + meta table + applied_at_map query + 2 calls per migration (DDL + INSERT)
+        total_responses = 3 + 2 * len(MIGRATIONS)
+        ws.statement_execution.execute_statement.side_effect = [_ok_response()] * total_responses  # type: ignore[attr-defined]
+
+        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        count = runner.run_all()
+
+        assert count == len(MIGRATIONS)
+
+    def test_run_all_applies_only_pending_migrations(self, ws: WorkspaceClient) -> None:
+        """run_all should only apply migrations that are not yet recorded."""
+        n_already_applied = 3
+        applied_rows = [[str(m.version), "2025-01-01T00:00:00"] for m in MIGRATIONS[:n_already_applied]]
+        pending = len(MIGRATIONS) - n_already_applied
+        # schema + meta table + applied_at query + 2 calls per pending migration (DDL + INSERT)
+        ws.statement_execution.execute_statement.side_effect = (  # type: ignore[attr-defined]
+            [_ok_response(), _ok_response(), _ok_response(applied_rows)] + [_ok_response()] * (2 * pending)
+        )
+
+        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        count = runner.run_all()
+
+        assert count == pending
+
+    def test_run_all_raises_on_sql_failure(self, ws: WorkspaceClient) -> None:
+        """run_all should propagate RuntimeError on the first SQL failure."""
+        ws.statement_execution.execute_statement.return_value = _failed_response("permission denied")  # type: ignore[attr-defined]
+
+        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        with pytest.raises(RuntimeError, match="Migration SQL failed"):
+            runner.run_all()
+
+    def test_status_returns_all_migrations_with_applied_flag(self, ws: WorkspaceClient) -> None:
+        """status should list every migration with correct applied/pending flags."""
+        n_applied = 2
+        applied_rows = [[str(m.version), "2025-01-01T00:00:00"] for m in MIGRATIONS[:n_applied]]
+        ws.statement_execution.execute_statement.side_effect = [  # type: ignore[attr-defined]
+            _ok_response(),  # _ensure_schema
+            _ok_response(),  # _ensure_meta_table
+            _ok_response(applied_rows),  # _applied_at_map
+        ]
+
+        runner = MigrationRunner(ws=ws, warehouse_id="wh", catalog="cat", schema="sch")
+        statuses = runner.status()
+
+        assert len(statuses) == len(MIGRATIONS)
+        applied = [s for s in statuses if s["applied"]]
+        pending = [s for s in statuses if not s["applied"]]
+        assert len(applied) == n_applied
+        assert len(pending) == len(MIGRATIONS) - n_applied
+        assert statuses[0]["version"] == 1
+
+
+# ============================================================================
+# Tests for profiler routes
+# ============================================================================
+
+
+class TestProfilerRoutes:
+    """Unit tests for profiler route handlers."""
+
+    @pytest.fixture
+    def mock_job_svc(self) -> JobService:
+        svc = create_autospec(JobService)
+        return svc
+
+    @pytest.fixture
+    def mock_view_svc(self) -> ViewService:
+        svc = create_autospec(ViewService)
+        return svc
+
+    @pytest.fixture
+    def mock_obo_ws(self) -> WorkspaceClient:
+        ws = create_autospec(WorkspaceClient)
+        mock_user = create_autospec(User)
+        mock_user.user_name = "alice@example.com"
+        ws.current_user.me.return_value = mock_user
+        return ws
+
+    def test_list_profile_runs_returns_summaries(self, mock_job_svc: JobService) -> None:
+        """list_profile_runs should return ProfileRunSummaryOut entries from job service rows."""
+        mock_job_svc.list_run_rows.return_value = [  # type: ignore[attr-defined]
+            {
+                "run_id": "abc123",
+                "source_table_fqn": "cat.sch.tbl",
+                "status": "SUCCEEDED",
+                "rows_profiled": "1000",
+                "columns_profiled": "5",
+                "duration_seconds": "3.14",
+                "requesting_user": "alice@example.com",
+                "created_at": "2025-01-01T00:00:00",
+            }
+        ]
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        result = list_profile_runs(job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert len(result) == 1
+        assert result[0].run_id == "abc123"
+        assert result[0].source_table_fqn == "cat.sch.tbl"
+        assert result[0].rows_profiled == 1000
+        assert result[0].columns_profiled == 5
+
+    def test_list_profile_runs_returns_empty_list(self, mock_job_svc: JobService) -> None:
+        """list_profile_runs should return [] when no runs exist."""
+        mock_job_svc.list_run_rows.return_value = []  # type: ignore[attr-defined]
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        result = list_profile_runs(job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert result == []
+
+    def test_list_profile_runs_raises_500_on_error(self, mock_job_svc: JobService) -> None:
+        """list_profile_runs should raise HTTP 500 when an unexpected error occurs."""
+        mock_job_svc.list_run_rows.side_effect = RuntimeError("db error")  # type: ignore[attr-defined]
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
         with pytest.raises(HTTPException) as exc:
-            get_generator(obo_ws=mock_ws, token=None)
-        assert exc.value.status_code == 401
+            list_profile_runs(job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert exc.value.status_code == 500
+
+    def test_submit_profile_run_creates_view_and_submits_job(
+        self,
+        mock_job_svc: JobService,
+        mock_view_svc: ViewService,
+        mock_obo_ws: WorkspaceClient,
+    ) -> None:
+        """submit_profile_run should create a view and submit a job, returning run ids."""
+        mock_view_svc.create_view.return_value = "cat.sch.tmp_view_xyz"  # type: ignore[attr-defined]
+        mock_job_svc.submit_run.return_value = 77777  # type: ignore[attr-defined]
+        body = ProfileRunIn(table_fqn="cat.sch.src_table", sample_limit=5000)
+
+        result = submit_profile_run(
+            body=body,
+            obo_ws=mock_obo_ws,
+            view_svc=mock_view_svc,
+            job_svc=mock_job_svc,
+        )
+
+        assert isinstance(result, ProfileRunOut)
+        assert result.job_run_id == 77777
+        assert len(result.run_id) > 0
+        mock_view_svc.create_view.assert_called_once_with("cat.sch.src_table", sample_limit=5000)  # type: ignore[attr-defined]
+
+    def test_submit_profile_run_raises_500_on_error(
+        self,
+        mock_job_svc: JobService,
+        mock_view_svc: ViewService,
+        mock_obo_ws: WorkspaceClient,
+    ) -> None:
+        """submit_profile_run should raise HTTP 500 when view creation fails."""
+        mock_view_svc.create_view.side_effect = RuntimeError("warehouse down")  # type: ignore[attr-defined]
+        body = ProfileRunIn(table_fqn="cat.sch.src_table")
+
+        with pytest.raises(HTTPException) as exc:
+            submit_profile_run(
+                body=body,
+                obo_ws=mock_obo_ws,
+                view_svc=mock_view_svc,
+                job_svc=mock_job_svc,
+            )
+
+        assert exc.value.status_code == 500
+
+    def test_get_profile_run_status_returns_status_out(self, mock_job_svc: JobService) -> None:
+        """get_profile_run_status should map JobService.get_run_status to RunStatusOut."""
+        mock_job_svc.get_run_status.return_value = RunStatus(  # type: ignore[attr-defined]
+            state="TERMINATED", result_state="SUCCESS", message=None
+        )
+
+        result = get_profile_run_status(run_id="run-001", job_run_id=99999, job_svc=mock_job_svc)
+
+        assert isinstance(result, RunStatusOut)
+        assert result.run_id == "run-001"
+        assert result.state == "TERMINATED"
+        assert result.result_state == "SUCCESS"
+
+    def test_get_profile_run_status_raises_500_on_error(self, mock_job_svc: JobService) -> None:
+        """get_profile_run_status should raise HTTP 500 when the job service errors."""
+        mock_job_svc.get_run_status.side_effect = RuntimeError("jobs api error")  # type: ignore[attr-defined]
+
+        with pytest.raises(HTTPException) as exc:
+            get_profile_run_status(run_id="run-001", job_run_id=99999, job_svc=mock_job_svc)
+
+        assert exc.value.status_code == 500
+
+    def test_get_profile_run_results_returns_results(self, mock_job_svc: JobService) -> None:
+        """get_profile_run_results should parse result row from the Delta table."""
+        mock_job_svc.get_run_result_row.return_value = {  # type: ignore[attr-defined]
+            "run_id": "run-001",
+            "source_table_fqn": "cat.sch.tbl",
+            "rows_profiled": "1000",
+            "columns_profiled": "5",
+            "duration_seconds": "3.14",
+            "summary_json": json.dumps({"col": "stats"}),
+            "generated_rules_json": json.dumps([{"check": {"function": "is_not_null"}}]),
+            "status": "SUCCEEDED",
+        }
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        result = get_profile_run_results(run_id="run-001", job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert isinstance(result, ProfileResultsOut)
+        assert result.rows_profiled == 1000
+        assert len(result.generated_rules) == 1
+
+    def test_get_profile_run_results_raises_404_when_not_found(self, mock_job_svc: JobService) -> None:
+        """get_profile_run_results should raise HTTP 404 when no result row exists."""
+        mock_job_svc.get_run_result_row.return_value = None  # type: ignore[attr-defined]
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        with pytest.raises(HTTPException) as exc:
+            get_profile_run_results(run_id="run-missing", job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert exc.value.status_code == 404
+
+    def test_get_profile_run_results_raises_500_on_failed_status(self, mock_job_svc: JobService) -> None:
+        """get_profile_run_results should raise HTTP 500 when the run status is FAILED."""
+        mock_job_svc.get_run_result_row.return_value = {  # type: ignore[attr-defined]
+            "run_id": "run-001",
+            "source_table_fqn": "cat.sch.tbl",
+            "status": "FAILED",
+            "error_message": "OOM error",
+        }
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        with pytest.raises(HTTPException) as exc:
+            get_profile_run_results(run_id="run-001", job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert exc.value.status_code == 500
+
+
+# ============================================================================
+# Tests for dry-run routes (job-based)
+# ============================================================================
+
+
+class TestDryRunRoutes:
+    """Unit tests for the job-based dry-run route handlers."""
+
+    @pytest.fixture
+    def mock_job_svc(self) -> JobService:
+        svc = create_autospec(JobService)
+        return svc
+
+    @pytest.fixture
+    def mock_view_svc(self) -> ViewService:
+        svc = create_autospec(ViewService)
+        return svc
+
+    @pytest.fixture
+    def mock_obo_ws(self) -> WorkspaceClient:
+        ws = create_autospec(WorkspaceClient)
+        mock_user = create_autospec(User)
+        mock_user.user_name = "alice@example.com"
+        ws.current_user.me.return_value = mock_user
+        return ws
+
+    def test_submit_dry_run_success(
+        self,
+        mock_job_svc: JobService,
+        mock_view_svc: ViewService,
+        mock_obo_ws: WorkspaceClient,
+    ) -> None:
+        """submit_dry_run should validate checks, create view, submit job and return run ids."""
+        validation = ChecksValidationStatus()
+        mock_view_svc.create_view.return_value = "cat.sch.tmp_view_abc"  # type: ignore[attr-defined]
+        mock_job_svc.submit_run.return_value = 88888  # type: ignore[attr-defined]
+        body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
+
+        result = submit_dry_run(
+            body=body,
+            obo_ws=mock_obo_ws,
+            view_svc=mock_view_svc,
+            job_svc=mock_job_svc,
+            validate_checks_fn=lambda checks: validation,
+        )
+
+        assert isinstance(result, DryRunSubmitOut)
+        assert result.job_run_id == 88888
+        assert len(result.run_id) > 0
+        mock_view_svc.create_view.assert_called_once_with("cat.sch.tbl")  # type: ignore[attr-defined]
+
+    def test_submit_dry_run_raises_400_on_invalid_checks(
+        self,
+        mock_job_svc: JobService,
+        mock_view_svc: ViewService,
+        mock_obo_ws: WorkspaceClient,
+    ) -> None:
+        """submit_dry_run should raise HTTP 400 when check validation reports errors."""
+        validation = ChecksValidationStatus(_errors=["Unknown function: bad_func"])
+        body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
+
+        with pytest.raises(HTTPException) as exc:
+            submit_dry_run(
+                body=body,
+                obo_ws=mock_obo_ws,
+                view_svc=mock_view_svc,
+                job_svc=mock_job_svc,
+                validate_checks_fn=lambda checks: validation,
+            )
+
+        assert exc.value.status_code == 400
+
+    def test_submit_dry_run_raises_500_on_view_error(
+        self,
+        mock_job_svc: JobService,
+        mock_view_svc: ViewService,
+        mock_obo_ws: WorkspaceClient,
+    ) -> None:
+        """submit_dry_run should raise HTTP 500 when view creation fails."""
+        validation = ChecksValidationStatus()
+        mock_view_svc.create_view.side_effect = RuntimeError("warehouse unreachable")  # type: ignore[attr-defined]
+        body = DryRunIn(table_fqn="cat.sch.tbl", checks=_SAMPLE_CHECKS)
+
+        with pytest.raises(HTTPException) as exc:
+            submit_dry_run(
+                body=body,
+                obo_ws=mock_obo_ws,
+                view_svc=mock_view_svc,
+                job_svc=mock_job_svc,
+                validate_checks_fn=lambda checks: validation,
+            )
+
+        assert exc.value.status_code == 500
+
+    def test_get_dry_run_status_returns_status_out(self, mock_job_svc: JobService) -> None:
+        """get_dry_run_status should map JobService status to RunStatusOut."""
+        mock_job_svc.get_run_status.return_value = RunStatus(  # type: ignore[attr-defined]
+            state="RUNNING", result_state=None, message="Executing"
+        )
+
+        result = get_dry_run_status(run_id="run-001", job_run_id=88888, job_svc=mock_job_svc)
+
+        assert isinstance(result, RunStatusOut)
+        assert result.state == "RUNNING"
+        assert result.message == "Executing"
+
+    def test_get_dry_run_status_raises_500_on_error(self, mock_job_svc: JobService) -> None:
+        """get_dry_run_status should raise HTTP 500 when the job service errors."""
+        mock_job_svc.get_run_status.side_effect = RuntimeError("api error")  # type: ignore[attr-defined]
+
+        with pytest.raises(HTTPException) as exc:
+            get_dry_run_status(run_id="run-001", job_run_id=88888, job_svc=mock_job_svc)
+
+        assert exc.value.status_code == 500
+
+    def test_get_dry_run_results_returns_results(self, mock_job_svc: JobService) -> None:
+        """get_dry_run_results should parse result row from the Delta table."""
+        mock_job_svc.get_run_result_row.return_value = {  # type: ignore[attr-defined]
+            "run_id": "run-001",
+            "source_table_fqn": "cat.sch.tbl",
+            "total_rows": "500",
+            "valid_rows": "480",
+            "invalid_rows": "20",
+            "error_summary_json": json.dumps([{"error": "null", "count": 20}]),
+            "sample_invalid_json": json.dumps([{"id": None}]),
+            "status": "SUCCEEDED",
+        }
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        result = get_dry_run_results(run_id="run-001", job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert isinstance(result, DryRunResultsOut)
+        assert result.total_rows == 500
+        assert result.valid_rows == 480
+        assert result.invalid_rows == 20
+        assert len(result.error_summary) == 1
+
+    def test_get_dry_run_results_raises_404_when_not_found(self, mock_job_svc: JobService) -> None:
+        """get_dry_run_results should raise HTTP 404 when no result row exists."""
+        mock_job_svc.get_run_result_row.return_value = None  # type: ignore[attr-defined]
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        with pytest.raises(HTTPException) as exc:
+            get_dry_run_results(run_id="run-missing", job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert exc.value.status_code == 404
+
+    def test_get_dry_run_results_raises_500_on_failed_status(self, mock_job_svc: JobService) -> None:
+        """get_dry_run_results should raise HTTP 500 when the run status is FAILED."""
+        mock_job_svc.get_run_result_row.return_value = {  # type: ignore[attr-defined]
+            "run_id": "run-001",
+            "source_table_fqn": "cat.sch.tbl",
+            "status": "FAILED",
+            "error_message": "Spark OOM",
+        }
+
+        app_conf = AppConfig(catalog="cat", schema_name="sch", job_id="")
+        with pytest.raises(HTTPException) as exc:
+            get_dry_run_results(run_id="run-001", job_svc=mock_job_svc, app_conf=app_conf)
+
+        assert exc.value.status_code == 500

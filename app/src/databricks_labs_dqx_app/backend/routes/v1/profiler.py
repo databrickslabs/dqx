@@ -7,7 +7,9 @@ from uuid import uuid4
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_conf,
     get_job_service,
     get_obo_ws,
     get_view_service,
@@ -29,12 +31,11 @@ router = APIRouter()
 @router.get("/runs", response_model=list[ProfileRunSummaryOut], operation_id="listProfileRuns")
 def list_profile_runs(
     job_svc: Annotated[JobService, Depends(get_job_service)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
 ) -> list[ProfileRunSummaryOut]:
     """Return profiling run history, newest first."""
     try:
-        from databricks_labs_dqx_app.backend.config import conf
-
-        table = f"{conf.catalog}.{conf.schema_name}.dq_profiling_results"
+        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
         rows = job_svc.list_run_rows(table)
         return [
             ProfileRunSummaryOut(
@@ -76,6 +77,8 @@ def submit_profile_run(
         config = {
             "sample_limit": body.sample_limit,
             "source_table_fqn": body.table_fqn,
+            "columns": body.columns,
+            "profile_options": body.profile_options,
         }
         job_run_id = job_svc.submit_run(
             task_type="profile",
@@ -117,12 +120,11 @@ def get_profile_run_status(
 def get_profile_run_results(
     run_id: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
 ) -> ProfileResultsOut:
     """Read profiler results from the Delta table."""
     try:
-        from databricks_labs_dqx_app.backend.config import conf
-
-        table = f"{conf.catalog}.{conf.schema_name}.dq_profiling_results"
+        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_profiling_results"
         row = job_svc.get_run_result_row(table, run_id)
 
         if row is None:

@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
     from .common.connectors.sql import SQLConnector
 
+from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.labs.dqx.config import LLMModelConfig
 from databricks.labs.dqx.profiler.generator import DQGenerator
 from databricks.labs.dqx.table_manager import SDKTableDataProvider, TableManager
@@ -16,7 +18,7 @@ from fastapi import Depends, Header, HTTPException, status
 
 from .cache import app_cache
 from .common.authentication.sql import SQLAuthentication
-from .config import conf, get_sql_warehouse_path
+from .config import AppConfig, conf, get_sql_warehouse_path
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
@@ -181,6 +183,18 @@ async def get_view_service(
     )
 
 
+def get_conf() -> AppConfig:
+    """Return the app configuration singleton."""
+    return conf
+
+
+def get_check_validator() -> Callable[[list], ChecksValidationStatus]:
+    """Return DQEngine.validate_checks for injection into route handlers."""
+    from databricks.labs.dqx.engine import DQEngine
+
+    return DQEngine.validate_checks
+
+
 async def get_job_service(
     sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
 ) -> JobService:
@@ -222,6 +236,8 @@ async def get_sql_connector(
 __all__ = [
     "get_sp_ws",
     "get_obo_ws",
+    "get_conf",
+    "get_check_validator",
     "get_migration_runner",
     "get_app_settings_service",
     "get_generator",

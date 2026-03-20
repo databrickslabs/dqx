@@ -14,6 +14,14 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   BarChart3,
   Play,
@@ -23,6 +31,10 @@ import {
   Clock,
   XCircle,
   History,
+  ChevronDown,
+  Plus,
+  Eye,
+  Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { CatalogBrowser } from "@/components/CatalogBrowser";
@@ -30,8 +42,10 @@ import { useJobPolling } from "@/hooks/use-job-polling";
 import {
   useSubmitProfileRun,
   useListProfileRuns,
-  getProfileRunStatus,
   useGetProfileRunResults,
+  useSaveRules,
+  useGetTableColumns,
+  getProfileRunStatus,
   type ProfileResultsOut,
   type ProfileRunSummaryOut,
 } from "@/lib/api";
@@ -95,12 +109,18 @@ function estimateEtaSeconds(
   );
   if (priorRuns.length === 0) return null;
 
-  // Average seconds per row from prior successful runs
   const avgSecsPerRow =
     priorRuns.reduce((sum, r) => sum + r.duration_seconds! / r.rows_profiled!, 0) /
     priorRuns.length;
 
   return Math.round(avgSecsPerRow * sampleLimit);
+}
+
+/** Parse "catalog.schema.table" into parts. Returns null if not 3 parts. */
+function parseTableFqn(fqn: string): { catalog: string; schema: string; table: string } | null {
+  const parts = fqn.split(".");
+  if (parts.length !== 3) return null;
+  return { catalog: parts[0], schema: parts[1], table: parts[2] };
 }
 
 function ProfilerPage() {
@@ -111,20 +131,45 @@ function ProfilerPage() {
   const [results, setResults] = useState<ProfileResultsOut | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
+
+  // Advanced options
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [filterSql, setFilterSql] = useState("");
+  const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
+  const [llmPkDetection, setLlmPkDetection] = useState(false);
+  const [removeOutliers, setRemoveOutliers] = useState(true);
+  const [numSigmas, setNumSigmas] = useState(3);
+
+  // Historical results dialog
+  const [historyRunId, setHistoryRunId] = useState<string | null>(null);
+
   const hasTable = tableFqn.split(".").length === 3;
+  const tableParts = hasTable ? parseTableFqn(tableFqn) : null;
 
   const submitMutation = useSubmitProfileRun();
   const { data: runsResp, isLoading: runsLoading, refetch: refetchRuns } = useListProfileRuns();
   const runs: ProfileRunSummaryOut[] = runsResp?.data ?? [];
 
+  // Columns for the selected table (used in advanced options)
+  const { data: columnsResp } = useGetTableColumns(
+    tableParts?.catalog ?? "",
+    tableParts?.schema ?? "",
+    tableParts?.table ?? "",
+    { query: { enabled: hasTable } },
+  );
+  const availableColumns = columnsResp?.data?.map((c) => c.name) ?? [];
+
   const resultsQuery = useGetProfileRunResults(runId ?? "", {
     query: { enabled: false },
+  });
+
+  const historyResultsQuery = useGetProfileRunResults(historyRunId ?? "", {
+    query: { enabled: historyRunId !== null },
   });
 
   const fetchStatus = useCallback(async () => {
     if (!runId || jobRunId === null) throw new Error("No active run");
     const resp = await getProfileRunStatus(runId, { job_run_id: jobRunId });
-    // Update elapsed time
     if (startedAt) setElapsedSeconds(Math.round((Date.now() - startedAt) / 1000));
     return resp.data;
   }, [runId, jobRunId, startedAt]);
@@ -162,8 +207,21 @@ function ProfilerPage() {
     try {
       setResults(null);
       setElapsedSeconds(0);
+
+      const profileOptions: Record<string, unknown> = {
+        remove_outliers: removeOutliers,
+        num_sigmas: numSigmas,
+        llm_primary_key_detection: llmPkDetection,
+      };
+      if (filterSql.trim()) profileOptions.filter = filterSql.trim();
+
       const resp = await submitMutation.mutateAsync({
-        data: { table_fqn: tableFqn, sample_limit: sampleLimit },
+        data: {
+          table_fqn: tableFqn,
+          sample_limit: sampleLimit,
+          columns: selectedColumns.length > 0 ? selectedColumns : undefined,
+          profile_options: profileOptions,
+        },
       });
       setRunId(resp.data.run_id);
       setJobRunId(resp.data.job_run_id);
@@ -176,6 +234,12 @@ function ProfilerPage() {
 
   const isRunning = submitMutation.isPending || polling.isPolling;
   const etaSeconds = isRunning ? estimateEtaSeconds(tableFqn, sampleLimit, runs) : null;
+
+  const toggleColumn = (col: string) => {
+    setSelectedColumns((prev) =>
+      prev.includes(col) ? prev.filter((c) => c !== col) : [...prev, col],
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -243,6 +307,134 @@ function ProfilerPage() {
             </Button>
           </div>
 
+          {/* Advanced options */}
+          <div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-2 text-muted-foreground"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              type="button"
+            >
+              <Settings2 className="h-4 w-4" />
+              Advanced Options
+              <ChevronDown
+                className={`h-3 w-3 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
+              />
+            </Button>
+            {advancedOpen && <div className="mt-3 space-y-4 rounded-lg border p-4">
+              {/* SQL filter */}
+              <div className="grid gap-2">
+                <Label htmlFor="filter-sql">Row Filter (SQL WHERE clause)</Label>
+                <Input
+                  id="filter-sql"
+                  placeholder="e.g. status = 'active' AND year >= 2024"
+                  value={filterSql}
+                  onChange={(e) => setFilterSql(e.target.value)}
+                  disabled={isRunning}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional SQL condition applied before profiling.
+                </p>
+              </div>
+
+              {/* Column selection */}
+              {availableColumns.length > 0 && (
+                <div className="grid gap-2">
+                  <Label>
+                    Columns to Profile
+                    {selectedColumns.length > 0 && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        ({selectedColumns.length} selected)
+                      </span>
+                    )}
+                  </Label>
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1">
+                    {availableColumns.map((col) => (
+                      <button
+                        key={col}
+                        type="button"
+                        onClick={() => toggleColumn(col)}
+                        disabled={isRunning}
+                        className={`px-2 py-0.5 rounded text-xs font-mono border transition-colors ${
+                          selectedColumns.includes(col)
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-muted border-border hover:border-primary/50"
+                        }`}
+                      >
+                        {col}
+                      </button>
+                    ))}
+                  </div>
+                  {selectedColumns.length > 0 && (
+                    <button
+                      type="button"
+                      className="text-xs text-muted-foreground underline self-start"
+                      onClick={() => setSelectedColumns([])}
+                    >
+                      Clear selection (profile all)
+                    </button>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Click to toggle. No selection = profile all columns.
+                  </p>
+                </div>
+              )}
+
+              {/* Outlier removal */}
+              <div className="flex items-center justify-between">
+                <div className="grid gap-0.5">
+                  <Label htmlFor="remove-outliers">Remove Outliers</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Exclude statistical outliers when computing min/max range checks.
+                  </p>
+                </div>
+                <Switch
+                  id="remove-outliers"
+                  checked={removeOutliers}
+                  onCheckedChange={setRemoveOutliers}
+                  disabled={isRunning}
+                />
+              </div>
+
+              {removeOutliers && (
+                <div className="grid gap-2 max-w-xs">
+                  <Label htmlFor="num-sigmas">Outlier Threshold (σ)</Label>
+                  <Input
+                    id="num-sigmas"
+                    type="number"
+                    value={numSigmas}
+                    onChange={(e) => setNumSigmas(Math.max(1, Number(e.target.value)))}
+                    disabled={isRunning}
+                    min={1}
+                    max={10}
+                    step={0.5}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Standard deviations from mean to consider an outlier (default: 3).
+                  </p>
+                </div>
+              )}
+
+              {/* LLM primary key detection */}
+              <div className="flex items-center justify-between">
+                <div className="grid gap-0.5">
+                  <Label htmlFor="llm-pk">LLM Primary Key Detection</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Use AI to detect primary key columns and generate uniqueness checks.
+                    Requires the LLM optional dependency.
+                  </p>
+                </div>
+                <Switch
+                  id="llm-pk"
+                  checked={llmPkDetection}
+                  onCheckedChange={setLlmPkDetection}
+                  disabled={isRunning}
+                />
+              </div>
+            </div>}
+          </div>
+
           {/* Active run progress */}
           {isRunning && (
             <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
@@ -263,7 +455,7 @@ function ProfilerPage() {
           {results && (
             <>
               <Separator />
-              <ProfileResults results={results} />
+              <ProfileResults results={results} tableFqn={results.source_table_fqn} />
             </>
           )}
         </CardContent>
@@ -276,7 +468,7 @@ function ProfilerPage() {
             <History className="h-5 w-5" />
             Run History
           </CardTitle>
-          <CardDescription>Previous profiling runs, newest first.</CardDescription>
+          <CardDescription>Previous profiling runs, newest first. Click a successful run to view its results.</CardDescription>
         </CardHeader>
         <CardContent>
           {runsLoading && (
@@ -307,6 +499,7 @@ function ProfilerPage() {
                       Started
                     </th>
                     <th className="text-left p-3 font-medium">By</th>
+                    <th className="p-3"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -331,6 +524,19 @@ function ProfilerPage() {
                       <td className="p-3 text-muted-foreground text-xs">
                         {run.requesting_user ?? "—"}
                       </td>
+                      <td className="p-3">
+                        {run.status === "SUCCESS" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1 h-7 px-2 text-xs"
+                            onClick={() => setHistoryRunId(run.run_id)}
+                          >
+                            <Eye className="h-3 w-3" />
+                            View
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -339,11 +545,67 @@ function ProfilerPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Historical results dialog */}
+      <Dialog open={historyRunId !== null} onOpenChange={(open) => !open && setHistoryRunId(null)}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Profile Run Results</DialogTitle>
+            <DialogDescription>
+              {runs.find((r) => r.run_id === historyRunId)?.source_table_fqn ?? ""}
+              {" · "}
+              {formatDate(runs.find((r) => r.run_id === historyRunId)?.created_at)}
+            </DialogDescription>
+          </DialogHeader>
+          {historyResultsQuery.isLoading && (
+            <div className="space-y-2 py-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          )}
+          {historyResultsQuery.isError && (
+            <div className="flex items-center gap-2 text-sm text-destructive py-4">
+              <AlertTriangle className="h-4 w-4" />
+              Failed to load results.
+            </div>
+          )}
+          {historyResultsQuery.data?.data && (
+            <ProfileResults
+              results={historyResultsQuery.data.data}
+              tableFqn={historyResultsQuery.data.data.source_table_fqn}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function ProfileResults({ results }: { results: ProfileResultsOut }) {
+function ProfileResults({
+  results,
+  tableFqn,
+}: {
+  results: ProfileResultsOut;
+  tableFqn: string;
+}) {
+  const saveRules = useSaveRules();
+  const [added, setAdded] = useState(false);
+
+  const handleAddToRules = async () => {
+    const rules = results.generated_rules ?? [];
+    if (!tableFqn || !rules.length) return;
+    try {
+      await saveRules.mutateAsync({
+        data: { table_fqn: tableFqn, checks: rules },
+      });
+      setAdded(true);
+      toast.success(`${rules.length} rules added for ${tableFqn}`);
+    } catch {
+      toast.error("Failed to add rules");
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-4">
@@ -369,10 +631,28 @@ function ProfileResults({ results }: { results: ProfileResultsOut }) {
 
       {(results.generated_rules?.length ?? 0) > 0 && (
         <div className="space-y-2">
-          <h4 className="text-sm font-medium flex items-center gap-1.5">
-            <CheckCircle2 className="h-4 w-4 text-green-500" />
-            Generated Rules ({results.generated_rules.length})
-          </h4>
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium flex items-center gap-1.5">
+              <CheckCircle2 className="h-4 w-4 text-green-500" />
+              Generated Rules ({(results.generated_rules ?? []).length})
+            </h4>
+            <Button
+              size="sm"
+              variant={added ? "outline" : "default"}
+              className="gap-1.5"
+              onClick={handleAddToRules}
+              disabled={saveRules.isPending || added}
+            >
+              {saveRules.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : added ? (
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" />
+              )}
+              {added ? "Added to Rules" : "Add to Rules"}
+            </Button>
+          </div>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-xs">
               <thead>
@@ -383,7 +663,7 @@ function ProfileResults({ results }: { results: ProfileResultsOut }) {
                 </tr>
               </thead>
               <tbody>
-                {results.generated_rules.map((rule, idx) => {
+                {(results.generated_rules ?? []).map((rule, idx) => {
                   const check = (rule.check as Record<string, unknown>) ?? {};
                   const args = (check.arguments as Record<string, unknown>) ?? {};
                   return (

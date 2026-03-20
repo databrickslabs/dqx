@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Annotated
 from uuid import uuid4
 
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.checks_validator import ChecksValidationStatus
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
+from databricks_labs_dqx_app.backend.config import AppConfig
 from databricks_labs_dqx_app.backend.dependencies import (
+    get_check_validator,
+    get_conf,
     get_job_service,
     get_obo_ws,
     get_view_service,
@@ -32,11 +36,12 @@ def submit_dry_run(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
+    validate_checks_fn: Annotated[Callable[[list], ChecksValidationStatus], Depends(get_check_validator)],
 ) -> DryRunSubmitOut:
     """Validate checks, create a temporary view (OBO), and submit a dry-run job (SP)."""
     try:
         # Validate checks first
-        validation = DQEngine.validate_checks(body.checks)
+        validation = validate_checks_fn(body.checks)
         if validation.has_errors:
             raise HTTPException(
                 status_code=400,
@@ -98,12 +103,11 @@ def get_dry_run_status(
 def get_dry_run_results(
     run_id: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],
+    app_conf: Annotated[AppConfig, Depends(get_conf)],
 ) -> DryRunResultsOut:
     """Read dry-run results from the Delta table."""
     try:
-        from databricks_labs_dqx_app.backend.config import conf
-
-        table = f"{conf.catalog}.{conf.schema_name}.dq_validation_runs"
+        table = f"{app_conf.catalog}.{app_conf.schema_name}.dq_validation_runs"
         row = job_svc.get_run_result_row(table, run_id)
 
         if row is None:

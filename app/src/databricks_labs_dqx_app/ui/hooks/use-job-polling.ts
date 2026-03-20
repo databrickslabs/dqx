@@ -6,8 +6,8 @@ export type ResultState = "SUCCESS" | "FAILED" | "TIMEDOUT" | "CANCELED" | null;
 interface JobStatus {
   run_id: string;
   state: string;
-  result_state: string | null;
-  message: string | null;
+  result_state?: string | null;
+  message?: string | null;
 }
 
 interface UseJobPollingOptions {

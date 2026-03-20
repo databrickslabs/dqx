@@ -100,6 +100,14 @@ class DryRunOut(BaseModel):
 class ProfileRunIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name to profile")
     sample_limit: int = Field(default=50_000, le=100_000, description="Max rows to sample")
+    columns: list[str] | None = Field(default=None, description="Specific columns to profile (all if None)")
+    profile_options: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Advanced profiler options: filter (SQL WHERE), max_null_ratio, max_empty_ratio, "
+            "max_in_count, distinct_ratio, remove_outliers, num_sigmas, llm_primary_key_detection"
+        ),
+    )
 
 
 class ProfileRunOut(BaseModel):

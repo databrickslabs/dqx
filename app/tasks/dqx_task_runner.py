@@ -54,6 +54,8 @@ def _run_profile(
 
     sample_limit = config.get("sample_limit", 50_000)
     source_table_fqn = config.get("source_table_fqn", "")
+    columns = config.get("columns") or None
+    profile_options = config.get("profile_options") or {}
     result_table = f"{result_catalog}.{result_schema}.dq_profiling_results"
 
     start = time.time()
@@ -63,7 +65,7 @@ def _run_profile(
         df = df.limit(sample_limit)
 
     profiler = DQProfiler(ws, spark)
-    summary, profiles = profiler.profile(df)
+    summary, profiles = profiler.profile(df, columns=columns, options=profile_options)
 
     generator = DQGenerator(ws, spark)
     rules = generator.generate_dq_rules(profiles)

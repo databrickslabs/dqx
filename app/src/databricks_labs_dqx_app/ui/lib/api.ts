@@ -233,6 +233,18 @@ export interface ProfileResultsOut {
   summary?: ProfileResultsOutSummary;
 }
 
+/**
+ * Specific columns to profile (all if None)
+ */
+export type ProfileRunInColumns = string[] | null;
+
+export type ProfileRunInProfileOptionsAnyOf = { [key: string]: unknown };
+
+/**
+ * Advanced profiler options: filter (SQL WHERE), max_null_ratio, max_empty_ratio, max_in_count, distinct_ratio, remove_outliers, num_sigmas, llm_primary_key_detection
+ */
+export type ProfileRunInProfileOptions = ProfileRunInProfileOptionsAnyOf | null;
+
 export interface ProfileRunIn {
   /** Fully qualified table name to profile */
   table_fqn: string;
@@ -241,6 +253,10 @@ export interface ProfileRunIn {
    * @maximum 100000
    */
   sample_limit?: number;
+  /** Specific columns to profile (all if None) */
+  columns?: ProfileRunInColumns;
+  /** Advanced profiler options: filter (SQL WHERE), max_null_ratio, max_empty_ratio, max_in_count, distinct_ratio, remove_outliers, num_sigmas, llm_primary_key_detection */
+  profile_options?: ProfileRunInProfileOptions;
 }
 
 export interface ProfileRunOut {

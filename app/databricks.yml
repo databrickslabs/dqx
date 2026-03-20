@@ -25,7 +25,7 @@ variables:
         - name: "DQX_SCHEMA"
           value: "${var.schema_name}"
         - name: "DQX_JOB_ID"
-          value: "${resources.jobs.dqx_task_runner.id}"
+          value_from: "dqx-task-runner-job"
 
 sync:
   include:
@@ -52,8 +52,12 @@ resources:
       # alternatively, you can find it by running: `databricks account custom-app-integration list`
 
       # use all-apis scope for full functionality instead of the limited scopes below
-      #user_api_scopes:
-      #  - files.files
+      user_api_scopes:
+        - sql
+        - catalog.catalogs:read
+        - catalog.schemas:read
+        - catalog.tables:read
+
 
       resources:
         - name: "dqx-sql-warehouse"
@@ -61,6 +65,11 @@ resources:
           sql_warehouse:
             id: ${resources.sql_warehouses.dqx_sql_warehouse.id}
             permission: "CAN_USE"
+        - name: "dqx-task-runner-job"
+          description: "Job for async profiler and dry-run tasks"
+          job:
+            id: ${resources.jobs.dqx_task_runner.id}
+            permission: "CAN_MANAGE_RUN"
 
       permissions:
         - user_name: "*"
