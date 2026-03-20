@@ -1,10 +1,5 @@
 # Version changelog
 
-## 0.14.0
-
-* Added `suppress_skipped` option to `ExtraParams` ([#953](https://github.com/databrickslabs/dqx/issues/953)). When `suppress_skipped=True`, checks skipped due to missing columns or invalid filters produce no entry in `_errors` or `_warnings`, so skipped rows are excluded entirely from the bad DataFrame rather than recorded with a skip message.
-* Added `skipped` field to DQ result schema ([#953](https://github.com/databrickslabs/dqx/issues/953)). When a check is skipped due to an unresolvable column, filter, or SQL expression, the result struct now includes `skipped=True`, enabling downstream consumers to distinguish skipped checks from failed ones without parsing the message string.
-
 ## 0.13.0
 
 * New DQX Data Quality Dashboard ([#1019](https://github.com/databrickslabs/dqx/issues/1019)). The data quality dashboard has been significantly enhanced to provide a centralized view of data quality metrics across all tables, allowing users to monitor and track data quality issues with greater ease. The dashboard now consists of three tabs - Data Quality Summary, Data Quality by Table (Time Series), and Data Quality by Table (Full Snapshot) - each catering to different monitoring scenarios, and offers customizable parameters for reporting column names and filtering tables with data quality issues. Additionally, the installation process for the dashboard has been simplified, with options to import it directly to a Workspace or deploy it automatically using the Databricks CLI. 
