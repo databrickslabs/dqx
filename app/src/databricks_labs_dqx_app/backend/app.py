@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .config import conf
-from .dependencies import get_migration_runner
+from .dependencies import get_migration_runner, get_sp_ws
 from .logger import logger
 from .routes import api_router
 from .utils import add_not_found_handler
@@ -15,7 +15,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting app with configuration:\n{conf.model_dump_json(indent=2)}")
 
     try:
-        runner = get_migration_runner()
+        sp_ws = await get_sp_ws()
+        runner = await get_migration_runner(sp_ws=sp_ws)
         applied = runner.run_all()
         if applied:
             logger.info("Applied %d database migration(s)", applied)

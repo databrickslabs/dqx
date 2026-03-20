@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import os
 from typing import TYPE_CHECKING, Annotated
 
@@ -12,6 +14,7 @@ from databricks.labs.dqx.table_manager import SDKTableDataProvider, TableManager
 from databricks.sdk import WorkspaceClient
 from fastapi import Depends, Header, HTTPException, status
 
+from .cache import app_cache
 from .common.authentication.sql import SQLAuthentication
 from .config import conf, get_sql_warehouse_path
 from .logger import logger
@@ -23,14 +26,40 @@ from .services.job_service import JobService
 from .services.rules_catalog_service import RulesCatalogService
 from .services.view_service import ViewService
 
+_SP_TTL = 45 * 60  # 45 minutes
+_OBO_TTL = 45 * 60  # 45 minutes
 
-def get_obo_ws(
+
+# ---------------------------------------------------------------------------
+# Service-principal WorkspaceClient — cached for 45 minutes
+# ---------------------------------------------------------------------------
+
+
+@app_cache.cached("auth:sp", ttl=_SP_TTL)
+async def get_sp_ws() -> WorkspaceClient:
+    """Return the app's service-principal WorkspaceClient, cached for 45 min."""
+    return WorkspaceClient()
+
+
+# ---------------------------------------------------------------------------
+# OBO WorkspaceClient — cached per token hash for 45 minutes
+# ---------------------------------------------------------------------------
+
+
+@app_cache.cached("auth:obo:{token_hash}", ttl=_OBO_TTL)
+async def _create_obo_ws(token_hash: str, token: str) -> WorkspaceClient:  # noqa: ARG001
+    return WorkspaceClient(token=token, auth_type="pat")
+
+
+async def get_obo_ws(
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> WorkspaceClient:
-    """Create a Databricks WorkspaceClient using On-Behalf-Of (OBO) authentication.
+    """Return a WorkspaceClient for the logged-in user (OBO), cached for 45 min.
 
-    When a Databricks App runs on the platform, the X-Forwarded-Access-Token header
-    is automatically injected with the logged-in user's access token.
+    When a Databricks App runs on the platform, the X-Forwarded-Access-Token
+    header is automatically injected with the logged-in user's access token.
+    The token is hashed before use as a cache key so raw tokens are never
+    stored in the key space.
     """
     if not token:
         logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token")
@@ -40,34 +69,49 @@ def get_obo_ws(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return WorkspaceClient(token=token, auth_type="pat")  # set pat explicitly to avoid issues with SP client
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    return await _create_obo_ws(token_hash, token)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _get_warehouse_id() -> str:
     return os.environ.get("DATABRICKS_WAREHOUSE_ID") or os.environ.get("DATABRICKS_SQL_WAREHOUSE_ID") or ""
 
 
-def get_migration_runner() -> MigrationRunner:
+# ---------------------------------------------------------------------------
+# Service factories
+# ---------------------------------------------------------------------------
+
+
+async def get_migration_runner(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> MigrationRunner:
     """Create a MigrationRunner using app (SP) credentials."""
     return MigrationRunner(
-        ws=rt.ws,
+        ws=sp_ws,
         warehouse_id=_get_warehouse_id(),
         catalog=conf.catalog,
         schema=conf.schema_name,
     )
 
 
-def get_app_settings_service() -> AppSettingsService:
+async def get_app_settings_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> AppSettingsService:
     """Create an AppSettingsService using app (SP) credentials."""
     return AppSettingsService(
-        ws=rt.ws,
+        ws=sp_ws,
         warehouse_id=_get_warehouse_id(),
         catalog=conf.catalog,
         schema=conf.schema_name,
     )
 
 
-def get_generator(
+async def get_generator(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
 ) -> DQGenerator:
@@ -101,24 +145,28 @@ def get_generator(
     )
 
 
-def get_rules_catalog_service() -> RulesCatalogService:
+async def get_rules_catalog_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> RulesCatalogService:
     """Create a RulesCatalogService using app (SP) credentials."""
     return RulesCatalogService(
-        ws=rt.ws,
+        ws=sp_ws,
         warehouse_id=_get_warehouse_id(),
         catalog=conf.catalog,
         schema=conf.schema_name,
     )
 
 
-def get_discovery_service(
+async def get_discovery_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> DiscoveryService:
     """Create a DiscoveryService using the OBO-authenticated WorkspaceClient."""
-    return DiscoveryService(obo_ws)
+    me = await asyncio.to_thread(obo_ws.current_user.me)
+    user_id = me.user_name or me.id or "unknown"
+    return DiscoveryService(ws=obo_ws, user_id=user_id)
 
 
-def get_view_service(
+async def get_view_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
 ) -> ViewService:
     """Create a ViewService using the OBO-authenticated WorkspaceClient.
@@ -133,13 +181,15 @@ def get_view_service(
     )
 
 
-def get_job_service() -> JobService:
+async def get_job_service(
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> JobService:
     """Create a JobService using app (SP) credentials.
 
     Job submission and polling run as the app's service principal.
     """
     return JobService(
-        ws=rt.ws,
+        ws=sp_ws,
         job_id=conf.job_id,
         catalog=conf.catalog,
         schema=conf.schema_name,
@@ -147,9 +197,9 @@ def get_job_service() -> JobService:
     )
 
 
-def get_sql_connector(
+async def get_sql_connector(
     token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
-) -> SQLConnector:
+) -> "SQLConnector":
     """Create a SQLConnector using the OBO token and configured SQL warehouse."""
     from .common.connectors.sql import SQLConnector
 
@@ -166,3 +216,19 @@ def get_sql_connector(
         server_hostname=host,
         http_path=http_path,
     )
+
+
+# Re-export rt for any remaining usages during transition
+__all__ = [
+    "get_sp_ws",
+    "get_obo_ws",
+    "get_migration_runner",
+    "get_app_settings_service",
+    "get_generator",
+    "get_rules_catalog_service",
+    "get_discovery_service",
+    "get_view_service",
+    "get_job_service",
+    "get_sql_connector",
+    "rt",
+]

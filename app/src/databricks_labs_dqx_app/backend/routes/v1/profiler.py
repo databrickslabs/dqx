@@ -17,12 +17,41 @@ from databricks_labs_dqx_app.backend.models import (
     ProfileResultsOut,
     ProfileRunIn,
     ProfileRunOut,
+    ProfileRunSummaryOut,
     RunStatusOut,
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
 from databricks_labs_dqx_app.backend.services.view_service import ViewService
 
 router = APIRouter()
+
+
+@router.get("/runs", response_model=list[ProfileRunSummaryOut], operation_id="listProfileRuns")
+def list_profile_runs(
+    job_svc: Annotated[JobService, Depends(get_job_service)],
+) -> list[ProfileRunSummaryOut]:
+    """Return profiling run history, newest first."""
+    try:
+        from databricks_labs_dqx_app.backend.config import conf
+
+        table = f"{conf.catalog}.{conf.schema_name}.dq_profiling_results"
+        rows = job_svc.list_run_rows(table)
+        return [
+            ProfileRunSummaryOut(
+                run_id=row.get("run_id") or "",
+                source_table_fqn=row.get("source_table_fqn") or "",
+                status=row.get("status"),
+                rows_profiled=int(v) if (v := row.get("rows_profiled")) else None,
+                columns_profiled=int(v) if (v := row.get("columns_profiled")) else None,
+                duration_seconds=float(v) if (v := row.get("duration_seconds")) else None,
+                requesting_user=row.get("requesting_user"),
+                created_at=row.get("created_at"),
+            )
+            for row in rows
+        ]
+    except Exception as e:
+        logger.error("Failed to list profile runs: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to list profile runs: {e}")
 
 
 @router.post("/run", response_model=ProfileRunOut, operation_id="submitProfileRun")
@@ -100,7 +129,9 @@ def get_profile_run_results(
             raise HTTPException(status_code=404, detail=f"No results found for run_id={run_id}")
 
         if row.get("status") == "FAILED":
-            raise HTTPException(status_code=500, detail=f"Profile run failed: {row.get('error_message', 'Unknown error')}")
+            raise HTTPException(
+                status_code=500, detail=f"Profile run failed: {row.get('error_message', 'Unknown error')}"
+            )
 
         summary_json = row.get("summary_json") or "{}"
         rules_json = row.get("generated_rules_json") or "[]"
@@ -108,9 +139,9 @@ def get_profile_run_results(
         return ProfileResultsOut(
             run_id=run_id,
             source_table_fqn=row.get("source_table_fqn") or "",
-            rows_profiled=int(row["rows_profiled"]) if row.get("rows_profiled") else None,
-            columns_profiled=int(row["columns_profiled"]) if row.get("columns_profiled") else None,
-            duration_seconds=float(row["duration_seconds"]) if row.get("duration_seconds") else None,
+            rows_profiled=int(v) if (v := row.get("rows_profiled")) else None,
+            columns_profiled=int(v) if (v := row.get("columns_profiled")) else None,
+            duration_seconds=float(v) if (v := row.get("duration_seconds")) else None,
             generated_rules=json.loads(rules_json),
             summary=json.loads(summary_json),
         )

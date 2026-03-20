@@ -59,6 +59,19 @@ export function CatalogBrowser({
   const schemas: SchemaOut[] = schemasResp?.data ?? [];
   const tables: TableOut[] = tablesResp?.data ?? [];
 
+  // Auto-select when only one option is available
+  useEffect(() => {
+    if (!schemasLoading && schemas.length === 1 && !schema) {
+      handleSchemaChange(schemas[0].name);
+    }
+  }, [schemas, schemasLoading]);
+
+  useEffect(() => {
+    if (!tablesLoading && tables.length === 1 && !table) {
+      handleTableChange(tables[0].name);
+    }
+  }, [tables, tablesLoading]);
+
   const handleCatalogChange = (val: string) => {
     setCatalog(val);
     setSchema("");

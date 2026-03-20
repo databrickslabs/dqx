@@ -3,12 +3,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from databricks_labs_dqx_app.backend.dependencies import get_obo_ws, get_engine
+from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
 from databricks_labs_dqx_app.backend.models import InstallationSettings
 from databricks_labs_dqx_app.backend.settings import SettingsManager
 from databricks.labs.dqx.config import RunConfig, InputConfig, OutputConfig, WorkspaceConfig
 from databricks.labs.dqx.config_serializer import ConfigSerializer
-from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceDoesNotExist
 
@@ -70,7 +69,7 @@ def installation_folder(ws, make_random):
 
 
 @pytest.fixture
-def api_client(ws, spark, test_app_folder, monkeypatch):
+def api_client(ws, test_app_folder, monkeypatch):
     """Fixture that provides a FastAPI test client with dependency overrides."""
     # Import app lazy here to avoid module-level initialization during fixture collection
     from databricks_labs_dqx_app.backend.app import app
@@ -94,12 +93,7 @@ def api_client(ws, spark, test_app_folder, monkeypatch):
         """Override OBO workspace client to use the test workspace client."""
         return ws
 
-    def override_get_engine() -> DQEngine:
-        """Override DQX engine to use test spark session."""
-        return DQEngine(workspace_client=ws, spark=spark)
-
     app.dependency_overrides[get_obo_ws] = override_get_obo_ws
-    app.dependency_overrides[get_engine] = override_get_engine
 
     client = TestClient(app)
     yield client

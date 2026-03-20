@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from pandas import DataFrame  # type: ignore
 from databricks.sdk import WorkspaceClient
+
+if TYPE_CHECKING:
+    from pyspark.sql import SparkSession
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +117,7 @@ class SparkTableDataProvider:
         Args:
             spark: SparkSession instance. If None, gets or creates a session.
         """
-        from pyspark.sql import SparkSession as _SparkSession
+        from pyspark.sql import SparkSession as _SparkSession  # pylint: disable=import-outside-toplevel
 
         self.spark = _SparkSession.builder.getOrCreate() if spark is None else spark
 
@@ -352,7 +355,7 @@ class SDKTableDataProvider:
         """
         table_info = self._get_table_info(table)
         for constraint in table_info.table_constraints or []:
-            pk = constraint.primary_key_constraint
+            pk = constraint.primary_key_constraint  # pylint: disable=invalid-name
             if pk:
                 cols = pk.child_columns or []
                 result = f"PRIMARY KEY ({', '.join(cols)})"
@@ -390,7 +393,7 @@ class SDKTableDataProvider:
         table_info = self._get_table_info(table)
         foreign_keys: dict[str, dict[str, Any]] = {}
         for constraint in table_info.table_constraints or []:
-            fk = constraint.foreign_key_constraint
+            fk = constraint.foreign_key_constraint  # pylint: disable=invalid-name
             if fk:
                 name = fk.name or f"fk_{len(foreign_keys)}"
                 foreign_keys[name] = {
@@ -445,7 +448,7 @@ class SDKTableDataProvider:
         if not self._warehouse_id:
             raise ValueError("warehouse_id is required for execute_query with SDKTableDataProvider")
 
-        from databricks.sdk.service.sql import StatementState  # type: ignore
+        from databricks.sdk.service.sql import StatementState  # type: ignore  # pylint: disable=import-outside-toplevel
 
         logger.info(f"SDKTableDataProvider: executing query via warehouse '{self._warehouse_id}': {query}")
         response = self._ws.statement_execution.execute_statement(
@@ -461,7 +464,7 @@ class SDKTableDataProvider:
 
         manifest = response.manifest
         result = response.result
-        columns = [col.name for col in (manifest.schema.columns if manifest and manifest.schema else [])]
+        columns = [col.name for col in ((manifest.schema.columns if manifest and manifest.schema else None) or [])]
 
         if not result or not result.data_array:
             logger.info("SDKTableDataProvider: query returned no rows")

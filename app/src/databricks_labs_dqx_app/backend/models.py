@@ -124,6 +124,17 @@ class ProfileResultsOut(BaseModel):
     summary: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProfileRunSummaryOut(BaseModel):
+    run_id: str
+    source_table_fqn: str
+    status: str | None = None
+    rows_profiled: int | None = None
+    columns_profiled: int | None = None
+    duration_seconds: float | None = None
+    requesting_user: str | None = None
+    created_at: str | None = None
+
+
 class DryRunResultsOut(BaseModel):
     run_id: str
     source_table_fqn: str

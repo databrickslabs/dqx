@@ -120,6 +120,26 @@ MIGRATIONS: list[Migration] = [
             ")"
         ),
     ),
+    Migration(
+        version=5,
+        description="Liquid cluster dq_quality_rules by table_fqn and status",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_quality_rules " "CLUSTER BY (table_fqn, status)"),
+    ),
+    Migration(
+        version=6,
+        description="Liquid cluster dq_profiling_results by source_table_fqn and created_at",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_profiling_results " "CLUSTER BY (source_table_fqn, created_at)"),
+    ),
+    Migration(
+        version=7,
+        description="Liquid cluster dq_validation_runs by source_table_fqn and created_at",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_validation_runs " "CLUSTER BY (source_table_fqn, created_at)"),
+    ),
+    Migration(
+        version=8,
+        description="Liquid cluster dq_app_settings by setting_key",
+        sql_template=(f"ALTER TABLE {_PLACEHOLDER}.dq_app_settings " "CLUSTER BY (setting_key)"),
+    ),
 ]
 
 # ---------------------------------------------------------------------------

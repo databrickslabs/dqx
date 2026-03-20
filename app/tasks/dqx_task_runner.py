@@ -193,7 +193,23 @@ def _write_error(
     if task_type == "profile":
         table = f"{result_catalog}.{result_schema}.dq_profiling_results"
         row = spark.createDataFrame(
-            [(run_id, requesting_user, source_table_fqn, view_fqn, None, None, None, None, None, None, "FAILED", error_message, now)],
+            [
+                (
+                    run_id,
+                    requesting_user,
+                    source_table_fqn,
+                    view_fqn,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "FAILED",
+                    error_message,
+                    now,
+                )
+            ],
             schema=(
                 "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
                 "view_fqn STRING, sample_limit INT, rows_profiled INT, columns_profiled INT, "
@@ -204,7 +220,24 @@ def _write_error(
     else:
         table = f"{result_catalog}.{result_schema}.dq_validation_runs"
         row = spark.createDataFrame(
-            [(run_id, requesting_user, source_table_fqn, view_fqn, None, None, None, None, None, None, None, "FAILED", error_message, now)],
+            [
+                (
+                    run_id,
+                    requesting_user,
+                    source_table_fqn,
+                    view_fqn,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    "FAILED",
+                    error_message,
+                    now,
+                )
+            ],
             schema=(
                 "run_id STRING, requesting_user STRING, source_table_fqn STRING, "
                 "view_fqn STRING, checks_json STRING, sample_size INT, "
@@ -228,24 +261,38 @@ def main() -> None:
     try:
         if args.task_type == "profile":
             _run_profile(
-                spark, ws, args.view_fqn, config,
-                args.result_catalog, args.result_schema,
-                args.run_id, args.requesting_user,
+                spark,
+                ws,
+                args.view_fqn,
+                config,
+                args.result_catalog,
+                args.result_schema,
+                args.run_id,
+                args.requesting_user,
             )
         elif args.task_type == "dryrun":
             _run_dryrun(
-                spark, ws, args.view_fqn, config,
-                args.result_catalog, args.result_schema,
-                args.run_id, args.requesting_user,
+                spark,
+                ws,
+                args.view_fqn,
+                config,
+                args.result_catalog,
+                args.result_schema,
+                args.run_id,
+                args.requesting_user,
             )
     except Exception as exc:
         logger.error("Task %s failed: %s", args.task_type, exc, exc_info=True)
         try:
             _write_error(
-                spark, args.task_type,
-                args.result_catalog, args.result_schema,
-                args.run_id, args.requesting_user,
-                source_table_fqn, args.view_fqn,
+                spark,
+                args.task_type,
+                args.result_catalog,
+                args.result_schema,
+                args.run_id,
+                args.requesting_user,
+                source_table_fqn,
+                args.view_fqn,
                 str(exc),
             )
         except Exception as write_exc:

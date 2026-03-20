@@ -118,9 +118,9 @@ def get_dry_run_results(
         return DryRunResultsOut(
             run_id=run_id,
             source_table_fqn=row.get("source_table_fqn") or "",
-            total_rows=int(row["total_rows"]) if row.get("total_rows") else None,
-            valid_rows=int(row["valid_rows"]) if row.get("valid_rows") else None,
-            invalid_rows=int(row["invalid_rows"]) if row.get("invalid_rows") else None,
+            total_rows=int(v) if (v := row.get("total_rows")) else None,
+            valid_rows=int(v) if (v := row.get("valid_rows")) else None,
+            invalid_rows=int(v) if (v := row.get("invalid_rows")) else None,
             error_summary=json.loads(error_summary_json),
             sample_invalid=json.loads(sample_invalid_json),
         )

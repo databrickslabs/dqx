@@ -67,7 +67,7 @@ class DQGenerator(DQEngineBase):
         if table_manager is None:
             self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
         else:
-            self.spark = spark  # May be None; only used when input_config is provided
+            self.spark = spark  # type: ignore[assignment]  # May be None; only used when input_config is provided
 
         self.custom_check_functions = custom_check_functions
 

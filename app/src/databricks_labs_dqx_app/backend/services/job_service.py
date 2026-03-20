@@ -86,6 +86,36 @@ class JobService:
             message=state.state_message if state else None,
         )
 
+    def list_run_rows(self, table: str, limit: int = 100) -> list[dict[str, str | None]]:
+        """Read the most recent result rows from a Delta table, newest first.
+
+        Returns a list of dicts keyed by column name.
+        """
+        from databricks.sdk.service.sql import Disposition, Format, StatementState
+
+        sql = f"SELECT * FROM {table} ORDER BY created_at DESC LIMIT {limit}"  # noqa: S608
+        resp = self._ws.statement_execution.execute_statement(
+            warehouse_id=self._warehouse_id,
+            statement=sql,
+            catalog=self._catalog,
+            schema=self._schema,
+            disposition=Disposition.INLINE,
+            format=Format.JSON_ARRAY,
+        )
+
+        if resp.status and resp.status.state == StatementState.FAILED:
+            msg = resp.status.error.message if resp.status.error else "Unknown error"
+            raise RuntimeError(f"List query failed: {msg}")
+
+        if not resp.result or not resp.result.data_array:
+            return []
+
+        columns = [
+            col.name or ""
+            for col in ((resp.manifest.schema.columns if resp.manifest and resp.manifest.schema else None) or [])
+        ]
+        return [dict(zip(columns, row)) for row in resp.result.data_array]
+
     def get_run_result_row(self, table: str, run_id: str) -> dict[str, str | None] | None:
         """Read a result row from a Delta table by run_id.
 
@@ -112,6 +142,9 @@ class JobService:
             return None
 
         # Build dict from manifest column names + first row values
-        columns = [col.name for col in (resp.manifest.schema.columns if resp.manifest and resp.manifest.schema else [])]
+        columns = [
+            col.name or ""
+            for col in ((resp.manifest.schema.columns if resp.manifest and resp.manifest.schema else None) or [])
+        ]
         row = resp.result.data_array[0]
         return dict(zip(columns, row))

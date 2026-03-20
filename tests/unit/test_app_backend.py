@@ -6,7 +6,7 @@ import logging
 from unittest.mock import create_autospec
 
 import pytest
-from databricks_labs_dqx_app.backend.dependencies import get_generator, get_obo_ws, get_spark
+from databricks_labs_dqx_app.backend.dependencies import get_generator, get_obo_ws
 from databricks_labs_dqx_app.backend.logger import CustomFormatter, setup_logger, get_logger
 from databricks_labs_dqx_app.backend.models import (
     DryRunIn,
@@ -16,7 +16,6 @@ from databricks_labs_dqx_app.backend.models import (
     SaveRulesIn,
     SetStatusIn,
 )
-from databricks_labs_dqx_app.backend.routes.v1.dryrun import dry_run
 from databricks_labs_dqx_app.backend.routes.v1.rules import (
     approve_rules,
     delete_rules,
@@ -33,9 +32,7 @@ from databricks_labs_dqx_app.backend.services.rules_catalog_service import (
 from databricks_labs_dqx_app.backend.settings import SettingsManager
 from fastapi import HTTPException
 from pydantic import ValidationError
-from pyspark.sql import DataFrame, SparkSession
 
-from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import ResourceDoesNotExist
 from databricks.sdk.service.iam import User
@@ -852,96 +849,8 @@ class TestRulesRoutesWrite:
 
 
 # ============================================================================
-# Tests for dryrun route
-# ============================================================================
-
-
-class TestDryRunRoute:
-    """Unit tests for the dry_run route handler."""
-
-    @pytest.fixture
-    def mock_engine(self):
-        engine = create_autospec(DQEngine, instance=True)
-        engine.spark = create_autospec(SparkSession)
-        return engine
-
-    def test_dry_run_returns_400_on_invalid_checks(self, mock_engine, monkeypatch):
-        """Should return 400 when check validation fails."""
-        validation_result = create_autospec(DQEngine.validate_checks, instance=False)
-        validation_result.has_errors = True
-        validation_result.errors = ["bad check"]
-
-        monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.routes.v1.dryrun.DQEngine.validate_checks",
-            lambda _: validation_result,
-        )
-        body = DryRunIn(table_fqn="c.s.t", checks=[{"bad": "check"}])
-        with pytest.raises(HTTPException) as exc:
-            dry_run(body=body, engine=mock_engine)
-        assert exc.value.status_code == 400
-        assert "Invalid checks" in exc.value.detail
-
-    def test_dry_run_returns_500_on_unexpected_error(self, mock_engine, monkeypatch):
-        """Should return 500 when Spark read fails."""
-        validation_result = create_autospec(DQEngine.validate_checks, instance=False)
-        validation_result.has_errors = False
-
-        monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.routes.v1.dryrun.DQEngine.validate_checks",
-            lambda _: validation_result,
-        )
-        mock_engine.spark.read.table.side_effect = RuntimeError("connection lost")
-        body = DryRunIn(table_fqn="c.s.t", checks=_SAMPLE_CHECKS)
-        with pytest.raises(HTTPException) as exc:
-            dry_run(body=body, engine=mock_engine)
-        assert exc.value.status_code == 500
-
-    def test_dry_run_success_all_valid(self, mock_engine, monkeypatch):
-        """Should return correct counts when all rows are valid."""
-        validation_result = create_autospec(DQEngine.validate_checks, instance=False)
-        validation_result.has_errors = False
-
-        sampled_df = create_autospec(DataFrame)
-        sampled_df.count.return_value = 10
-        mock_engine.spark.read.table.return_value.limit.return_value = sampled_df
-
-        valid_df = create_autospec(DataFrame)
-        valid_df.count.return_value = 10
-        invalid_df = create_autospec(DataFrame)
-        invalid_df.count.return_value = 0
-        mock_engine.apply_checks_by_metadata_and_split.return_value = (valid_df, invalid_df)
-
-        monkeypatch.setattr(
-            "databricks_labs_dqx_app.backend.routes.v1.dryrun.DQEngine.validate_checks",
-            lambda _: validation_result,
-        )
-        body = DryRunIn(table_fqn="c.s.t", checks=_SAMPLE_CHECKS)
-        result = dry_run(body=body, engine=mock_engine)
-
-        assert result.total_rows == 10
-        assert result.valid_rows == 10
-        assert result.invalid_rows == 0
-        assert result.error_summary == []
-        assert result.sample_invalid == []
-
-
-# ============================================================================
 # Tests for dependency functions
 # ============================================================================
-
-
-class TestGetSpark:
-    """Unit tests for get_spark dependency."""
-
-    def test_raises_when_no_token(self):
-        with pytest.raises(HTTPException) as exc:
-            get_spark(token=None)
-        assert exc.value.status_code == 401
-
-    def test_raises_when_empty_token(self):
-        with pytest.raises(HTTPException) as exc:
-            get_spark(token="")
-        assert exc.value.status_code == 401
 
 
 class TestGetGenerator:
@@ -949,8 +858,7 @@ class TestGetGenerator:
 
     def test_raises_when_no_token(self):
         mock_ws = create_autospec(WorkspaceClient)
-        mock_spark = create_autospec(SparkSession)
 
         with pytest.raises(HTTPException) as exc:
-            get_generator(obo_ws=mock_ws, spark=mock_spark, token=None)
+            get_generator(obo_ws=mock_ws, token=None)
         assert exc.value.status_code == 401
