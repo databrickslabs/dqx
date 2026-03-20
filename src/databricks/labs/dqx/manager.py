@@ -1,3 +1,4 @@
+import inspect
 import logging
 from datetime import datetime
 from dataclasses import dataclass
@@ -147,9 +148,11 @@ class DQRuleManager:
         # or use literal run time if explicitly overridden
         run_time_expr = F.current_timestamp() if self.run_time_overwrite is None else F.lit(self.run_time_overwrite)
 
+        message_col = self._build_message_col(condition)
+
         return F.struct(
             F.lit(self.check.name).alias("name"),
-            condition.alias("message"),
+            message_col.alias("message"),
             self.check.columns_as_string_expr.alias("columns"),
             F.lit(self.check.filter or None).cast("string").alias("filter"),
             F.lit(self.check.check_func.__name__).alias("function"),
@@ -161,6 +164,31 @@ class DQRuleManager:
             F.lit(self.rule_fingerprint).alias("rule_fingerprint"),
             F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
         ).cast(dq_result_item_schema)
+
+    def _build_message_col(self, condition: Column) -> Column:
+        """Build the message column, using a custom message callable if provided on the rule."""
+        if self.check.message is None:
+            return condition
+
+        # Build check_func_args dict from the check function's parameter names and stored args/kwargs
+        sig = inspect.signature(self.check.check_func)
+        param_names = list(sig.parameters.keys())
+        check_func_args = dict(zip(param_names, self.check.check_func_args))
+        check_func_args.update(self.check.check_func_kwargs)
+
+        # Get the column value expression
+        column_value = F.col(self.check.column) if self.check.column else F.lit(None)
+
+        # Call the user's message function
+        custom_message = self.check.message(
+            rule_name=self.check.name,
+            check_func_name=self.check.check_func.__name__,
+            check_func_args=check_func_args,
+            column_value=column_value,
+        )
+
+        # Keep the null/non-null semantics of the original condition but swap the message text
+        return F.when(condition.isNotNull(), custom_message).otherwise(F.lit(None).cast("string"))
 
     def _get_invalid_cols_message(self) -> str:
         """

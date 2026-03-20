@@ -176,6 +176,7 @@ class DQRule(abc.ABC, DQRuleTypeMixin, SingleColumnMixin, MultipleColumnsMixin):
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
     user_metadata: dict[str, str] | None = None
+    message: Callable | None = None
 
     def __post_init__(self):
         self._validate_rule_type(self.check_func)
@@ -428,6 +429,7 @@ class DQForEachColRule(DQRuleTypeMixin):
     check_func_args: list[Any] = field(default_factory=list)
     check_func_kwargs: dict[str, Any] = field(default_factory=dict)
     user_metadata: dict[str, str] | None = None
+    message: Callable | None = None
 
     def get_rules(self) -> list[DQRule]:
         """Build a list of rules for a set of columns.
@@ -453,6 +455,7 @@ class DQForEachColRule(DQRuleTypeMixin):
                         criticality=self.criticality,
                         filter=self.filter,
                         user_metadata=self.user_metadata,
+                        message=self.message,
                     )
                 )
             else:  # default to row-level rule
@@ -467,6 +470,7 @@ class DQForEachColRule(DQRuleTypeMixin):
                         criticality=self.criticality,
                         filter=self.filter,
                         user_metadata=self.user_metadata,
+                        message=self.message,
                     )
                 )
         return rules
