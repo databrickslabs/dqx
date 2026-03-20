@@ -55,7 +55,9 @@ To regenerate `api.ts` after backend changes:
 npx orval --input .apx/openapi.json --output src/databricks_labs_dqx_app/ui/lib/api.ts
 ```
 
-Route tree regenerates automatically during `npm run dev` or `npm run build`.
+Route tree regenerates automatically when the APX dev server is running (it runs the Vite dev server as a subprocess, which watches for route file changes). It also regenerates during `uv run apx build`.
+
+> **Common issue — new route not found / silently 404ing:** `routeTree.gen.ts` only regenerates while the APX dev server (or Vite) is running. If a route file is added while the dev server is stopped — e.g. by an AI agent between sessions — the file is stale and the route silently does not exist at runtime. Fix: restart `uv run apx dev` and the Vite watcher will detect the new file and regenerate immediately. Alternatively run `uv run apx build`.
 
 ## Stack
 
@@ -105,8 +107,8 @@ npm run preview   # Preview production build
 
 1. Create `routes/_sidebar/<name>.tsx` (or `routes/<name>.tsx` for non-sidebar pages)
 2. Export a `Route` using `createFileRoute` from TanStack Router
-3. The route tree auto-regenerates — `routeTree.gen.ts` updates automatically
-4. Add nav item to `_sidebar/route.tsx` if it should appear in the sidebar
+3. Add nav item to `_sidebar/route.tsx` if it should appear in the sidebar
+4. Add nav item to `_sidebar/route.tsx` if it should appear in the sidebar — `types/routeTree.gen.ts` regenerates automatically while APX dev is running. If the dev server was stopped when the file was created, restart it to pick up the new route.
 
 ### Adding a New API-Backed Feature
 

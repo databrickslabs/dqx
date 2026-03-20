@@ -13,6 +13,7 @@ import { Route as SidebarRouteRouteImport } from './../routes/_sidebar/route'
 import { Route as IndexRouteImport } from './../routes/index'
 import { Route as SidebarRunsRouteImport } from './../routes/_sidebar/runs'
 import { Route as SidebarRulesRouteImport } from './../routes/_sidebar/rules'
+import { Route as SidebarProfilerRouteImport } from './../routes/_sidebar/profiler'
 import { Route as SidebarProfileRouteImport } from './../routes/_sidebar/profile'
 import { Route as SidebarDiscoveryRouteImport } from './../routes/_sidebar/discovery'
 import { Route as SidebarConfigRouteImport } from './../routes/_sidebar/config'
@@ -38,6 +39,11 @@ const SidebarRunsRoute = SidebarRunsRouteImport.update({
 const SidebarRulesRoute = SidebarRulesRouteImport.update({
   id: '/rules',
   path: '/rules',
+  getParentRoute: () => SidebarRouteRoute,
+} as any)
+const SidebarProfilerRoute = SidebarProfilerRouteImport.update({
+  id: '/profiler',
+  path: '/profiler',
   getParentRoute: () => SidebarRouteRoute,
 } as any)
 const SidebarProfileRoute = SidebarProfileRouteImport.update({
@@ -81,6 +87,7 @@ export interface FileRoutesByFullPath {
   '/config': typeof SidebarConfigRoute
   '/discovery': typeof SidebarDiscoveryRoute
   '/profile': typeof SidebarProfileRoute
+  '/profiler': typeof SidebarProfilerRoute
   '/rules': typeof SidebarRulesRouteWithChildren
   '/rules/': typeof SidebarRulesIndexRoute
   '/rules/generate': typeof SidebarRulesGenerateRoute
@@ -93,6 +100,7 @@ export interface FileRoutesByTo {
   '/config': typeof SidebarConfigRoute
   '/discovery': typeof SidebarDiscoveryRoute
   '/profile': typeof SidebarProfileRoute
+  '/profiler': typeof SidebarProfilerRoute
   '/rules': typeof SidebarRulesRouteWithChildren
   '/rules/generate': typeof SidebarRulesGenerateRoute
   '/runs/$runName': typeof SidebarRunsRunNameRoute
@@ -105,6 +113,7 @@ export interface FileRoutesById {
   '/_sidebar/config': typeof SidebarConfigRoute
   '/_sidebar/discovery': typeof SidebarDiscoveryRoute
   '/_sidebar/profile': typeof SidebarProfileRoute
+  '/_sidebar/profiler': typeof SidebarProfilerRoute
   '/_sidebar/rules': typeof SidebarRulesRouteWithChildren
   '/_sidebar/rules/': typeof SidebarRulesIndexRoute
   '/_sidebar/rules/generate': typeof SidebarRulesGenerateRoute
@@ -119,6 +128,7 @@ export interface FileRouteTypes {
     | '/config'
     | '/discovery'
     | '/profile'
+    | '/profiler'
     | '/rules'
     | '/rules/'
     | '/rules/generate'
@@ -131,6 +141,7 @@ export interface FileRouteTypes {
     | '/config'
     | '/discovery'
     | '/profile'
+    | '/profiler'
     | '/rules'
     | '/rules/generate'
     | '/runs/$runName'
@@ -142,6 +153,7 @@ export interface FileRouteTypes {
     | '/_sidebar/config'
     | '/_sidebar/discovery'
     | '/_sidebar/profile'
+    | '/_sidebar/profiler'
     | '/_sidebar/rules'
     | '/_sidebar/rules/'
     | '/_sidebar/rules/generate'
@@ -190,6 +202,13 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof SidebarProfileRouteImport
+      parentRoute: typeof SidebarRouteRoute
+    }
+    '/_sidebar/profiler': {
+      id: '/_sidebar/profiler'
+      path: '/profiler'
+      fullPath: '/profiler'
+      preLoaderRoute: typeof SidebarProfilerRouteImport
       parentRoute: typeof SidebarRouteRoute
     }
     '/_sidebar/discovery': {
@@ -269,6 +288,7 @@ interface SidebarRouteRouteChildren {
   SidebarConfigRoute: typeof SidebarConfigRoute
   SidebarDiscoveryRoute: typeof SidebarDiscoveryRoute
   SidebarProfileRoute: typeof SidebarProfileRoute
+  SidebarProfilerRoute: typeof SidebarProfilerRoute
   SidebarRulesRoute: typeof SidebarRulesRouteWithChildren
   SidebarRunsRoute: typeof SidebarRunsRouteWithChildren
 }
@@ -277,6 +297,7 @@ const SidebarRouteRouteChildren: SidebarRouteRouteChildren = {
   SidebarConfigRoute: SidebarConfigRoute,
   SidebarDiscoveryRoute: SidebarDiscoveryRoute,
   SidebarProfileRoute: SidebarProfileRoute,
+  SidebarProfilerRoute: SidebarProfilerRoute,
   SidebarRulesRoute: SidebarRulesRouteWithChildren,
   SidebarRunsRoute: SidebarRunsRouteWithChildren,
 }

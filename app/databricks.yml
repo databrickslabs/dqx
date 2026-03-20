@@ -24,10 +24,13 @@ variables:
           value: "${var.catalog_name}"
         - name: "DQX_SCHEMA"
           value: "${var.schema_name}"
+        - name: "DQX_JOB_ID"
+          value: "${resources.jobs.dqx_task_runner.id}"
 
 sync:
   include:
     - .build
+    - tasks
 
 artifacts:
   default:
@@ -76,6 +79,53 @@ resources:
     dqx_schema:
       catalog_name: ${var.catalog_name}
       name: ${var.schema_name}
+
+  jobs:
+    dqx_task_runner:
+      name: "dqx-app-task-runner"
+      tags:
+        app: "dqx"
+      tasks:
+        - task_key: "run_task"
+          spark_python_task:
+            python_file: "./tasks/dqx_task_runner.py"
+            parameters:
+              - "--task_type"
+              - "{{job.parameters.task_type}}"
+              - "--view_fqn"
+              - "{{job.parameters.view_fqn}}"
+              - "--result_catalog"
+              - "{{job.parameters.result_catalog}}"
+              - "--result_schema"
+              - "{{job.parameters.result_schema}}"
+              - "--config_json"
+              - "{{job.parameters.config_json}}"
+              - "--run_id"
+              - "{{job.parameters.run_id}}"
+              - "--requesting_user"
+              - "{{job.parameters.requesting_user}}"
+          environment_key: "default"
+      environments:
+        - environment_key: "default"
+          spec:
+            client: "1"
+            dependencies:
+              - "databricks-labs-dqx"
+      parameters:
+        - name: "task_type"
+          default: "profile"
+        - name: "view_fqn"
+          default: ""
+        - name: "result_catalog"
+          default: "${var.catalog_name}"
+        - name: "result_schema"
+          default: "${var.schema_name}"
+        - name: "config_json"
+          default: "{}"
+        - name: "run_id"
+          default: ""
+        - name: "requesting_user"
+          default: "unknown"
 
 targets:
   dev:

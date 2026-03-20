@@ -27,6 +27,11 @@ class AppConfig(BaseSettings):
     api_prefix: str = Field(default="/api")
     catalog: str = Field(default="dqx")
     schema_name: str = Field(default="dqx_app", validation_alias="DQX_SCHEMA")
+    job_id: str = Field(default="", validation_alias="DQX_JOB_ID")
+    profiler_max_sample_limit: int = Field(default=100_000)
+    profiler_default_sample_limit: int = Field(default=50_000)
+    dryrun_max_sample_size: int = Field(default=10_000)
+    dryrun_default_sample_size: int = Field(default=1_000)
 
     @property
     def static_assets_path(self) -> Path:

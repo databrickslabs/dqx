@@ -729,7 +729,6 @@ provides-extras = ["anomaly", "cli", "datacontract", "llm", "pii"]
 name = "databricks-labs-dqx-app"
 source = { editable = "." }
 dependencies = [
-    { name = "databricks-connect" },
     { name = "databricks-labs-dqx", extra = ["llm"] },
     { name = "databricks-sdk" },
     { name = "databricks-sql-connector", extra = ["pyarrow"] },
@@ -746,7 +745,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "databricks-connect", specifier = "~=15.4" },
     { name = "databricks-labs-dqx", extras = ["llm"], editable = "../" },
     { name = "databricks-sdk", specifier = "~=0.73" },
     { name = "databricks-sql-connector", extras = ["pyarrow"], specifier = "==4.2.5" },

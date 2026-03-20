@@ -77,6 +77,49 @@ MIGRATIONS: list[Migration] = [
             ")"
         ),
     ),
+    Migration(
+        version=3,
+        description="Create dq_profiling_results table",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_profiling_results ("
+            "  run_id STRING NOT NULL,"
+            "  requesting_user STRING,"
+            "  source_table_fqn STRING NOT NULL,"
+            "  view_fqn STRING,"
+            "  sample_limit INT,"
+            "  rows_profiled INT,"
+            "  columns_profiled INT,"
+            "  duration_seconds DOUBLE,"
+            "  summary_json STRING,"
+            "  generated_rules_json STRING,"
+            "  status STRING,"
+            "  error_message STRING,"
+            "  created_at STRING"
+            ")"
+        ),
+    ),
+    Migration(
+        version=4,
+        description="Create dq_validation_runs table",
+        sql_template=(
+            f"CREATE TABLE IF NOT EXISTS {_PLACEHOLDER}.dq_validation_runs ("
+            "  run_id STRING NOT NULL,"
+            "  requesting_user STRING,"
+            "  source_table_fqn STRING NOT NULL,"
+            "  view_fqn STRING,"
+            "  checks_json STRING,"
+            "  sample_size INT,"
+            "  total_rows INT,"
+            "  valid_rows INT,"
+            "  invalid_rows INT,"
+            "  error_summary_json STRING,"
+            "  sample_invalid_json STRING,"
+            "  status STRING,"
+            "  error_message STRING,"
+            "  created_at STRING"
+            ")"
+        ),
+    ),
 ]
 
 # ---------------------------------------------------------------------------

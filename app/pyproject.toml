@@ -10,7 +10,6 @@ dependencies = [
     "uvicorn~=0.37",
     "databricks-labs-dqx[llm]",
     "databricks-sdk~=0.73",
-    "databricks-connect~=15.4",
     "databricks-sql-connector[pyarrow]==4.2.5",
 ]
 

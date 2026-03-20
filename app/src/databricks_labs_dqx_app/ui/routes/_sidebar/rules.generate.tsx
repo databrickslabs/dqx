@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PageBreadcrumb } from "@/components/apx/PageBreadcrumb";
 import {
   Card,
@@ -32,13 +32,16 @@ import { RulesReview } from "@/components/RulesReview";
 import { DryRunResults } from "@/components/DryRunResults";
 import {
   useAiAssistedChecksGeneration,
-  useDryRun,
+  useSubmitDryRun,
+  useGetDryRunResults,
   useSaveRules,
   useSubmitRulesForApproval,
   useGetRules,
-  type DryRunOut,
+  getDryRunStatus,
+  type DryRunResultsOut,
   type RuleCatalogEntryOut,
 } from "@/lib/api";
+import { useJobPolling } from "@/hooks/use-job-polling";
 
 type SearchParams = {
   table?: string;
@@ -93,8 +96,10 @@ function GenerateRulesPage() {
   const [tableFqn, setTableFqn] = useState(initialTable ?? "");
   const [userInput, setUserInput] = useState("");
   const [checks, setChecks] = useState<Record<string, unknown>[]>([]);
-  const [dryRunResult, setDryRunResult] = useState<DryRunOut | null>(null);
+  const [dryRunResult, setDryRunResult] = useState<DryRunResultsOut | null>(null);
   const [existingEntry, setExistingEntry] = useState<RuleCatalogEntryOut | null>(null);
+  const [dryRunJobRunId, setDryRunJobRunId] = useState<number | null>(null);
+  const [dryRunRunId, setDryRunRunId] = useState<string | null>(null);
 
   const hasTable = tableFqn.split(".").length === 3;
 
@@ -118,9 +123,45 @@ function GenerateRulesPage() {
   const isEditMode = existingEntry !== null;
 
   const generateMutation = useAiAssistedChecksGeneration();
-  const dryRunMutation = useDryRun();
+  const submitDryRunMutation = useSubmitDryRun();
   const saveMutation = useSaveRules();
   const submitMutation = useSubmitRulesForApproval();
+
+  // Fetch dry-run results when job completes
+  const dryRunResultsQuery = useGetDryRunResults(dryRunRunId ?? "", {
+    query: { enabled: false },
+  });
+
+  const fetchDryRunStatus = useCallback(async () => {
+    if (!dryRunRunId || dryRunJobRunId === null) throw new Error("No active run");
+    const resp = await getDryRunStatus(dryRunRunId, { job_run_id: dryRunJobRunId });
+    return resp.data;
+  }, [dryRunRunId, dryRunJobRunId]);
+
+  const dryRunPolling = useJobPolling({
+    fetchStatus: fetchDryRunStatus,
+    enabled: dryRunJobRunId !== null && dryRunRunId !== null,
+    interval: 3000,
+    onComplete: async (status) => {
+      if (status.result_state === "SUCCESS") {
+        try {
+          const resp = await dryRunResultsQuery.refetch();
+          if (resp.data?.data) {
+            setDryRunResult(resp.data.data);
+            toast.success("Dry run complete");
+          }
+        } catch {
+          toast.error("Failed to fetch dry run results");
+        }
+      } else {
+        toast.error(`Dry run failed: ${status.message || "Unknown error"}`);
+      }
+      setDryRunJobRunId(null);
+    },
+    onError: () => {
+      toast.error("Failed to check dry run status");
+    },
+  });
 
   const hasChecks = checks.length > 0;
 
@@ -159,13 +200,15 @@ function GenerateRulesPage() {
       return;
     }
     try {
-      const resp = await dryRunMutation.mutateAsync({
+      setDryRunResult(null);
+      const resp = await submitDryRunMutation.mutateAsync({
         data: { table_fqn: tableFqn, checks },
       });
-      setDryRunResult(resp.data);
-      toast.success("Dry run complete");
+      setDryRunRunId(resp.data.run_id);
+      setDryRunJobRunId(resp.data.job_run_id);
+      toast.info("Dry run submitted — waiting for results...");
     } catch {
-      toast.error("Dry run failed");
+      toast.error("Failed to submit dry run");
     }
   };
 
@@ -197,7 +240,7 @@ function GenerateRulesPage() {
   };
 
   const isGenerating = generateMutation.isPending;
-  const isDryRunning = dryRunMutation.isPending;
+  const isDryRunning = submitDryRunMutation.isPending || dryRunPolling.isPolling;
   const isSaving = saveMutation.isPending || submitMutation.isPending;
   const isBusy = isGenerating || isDryRunning || isSaving;
 
@@ -375,6 +418,16 @@ function GenerateRulesPage() {
                 </p>
               )}
             </div>
+
+            {/* Polling progress */}
+            {isDryRunning && dryRunPolling.status && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span>
+                  Job status: <span className="font-medium">{dryRunPolling.status.state}</span>
+                </span>
+              </div>
+            )}
 
             {dryRunResult && (
               <>

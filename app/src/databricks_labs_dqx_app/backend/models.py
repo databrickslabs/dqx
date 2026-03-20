@@ -76,7 +76,12 @@ class SetStatusIn(BaseModel):
 class DryRunIn(BaseModel):
     table_fqn: str = Field(description="Fully qualified table name to run checks against")
     checks: list[dict[str, Any]] = Field(description="List of check metadata dictionaries")
-    sample_size: int = Field(default=100, le=1000, description="Number of rows to sample")
+    sample_size: int = Field(default=1000, le=10_000, description="Number of rows to sample")
+
+
+class DryRunSubmitOut(BaseModel):
+    run_id: str
+    job_run_id: int
 
 
 class DryRunOut(BaseModel):
@@ -85,6 +90,48 @@ class DryRunOut(BaseModel):
     invalid_rows: int
     error_summary: list[dict[str, Any]]
     sample_invalid: list[dict[str, Any]]
+
+
+# ---------------------------------------------------------------------------
+# Profiler models
+# ---------------------------------------------------------------------------
+
+
+class ProfileRunIn(BaseModel):
+    table_fqn: str = Field(description="Fully qualified table name to profile")
+    sample_limit: int = Field(default=50_000, le=100_000, description="Max rows to sample")
+
+
+class ProfileRunOut(BaseModel):
+    run_id: str
+    job_run_id: int
+
+
+class RunStatusOut(BaseModel):
+    run_id: str
+    state: str  # PENDING, RUNNING, TERMINATED, etc.
+    result_state: str | None = None  # SUCCESS, FAILED, etc.
+    message: str | None = None
+
+
+class ProfileResultsOut(BaseModel):
+    run_id: str
+    source_table_fqn: str
+    rows_profiled: int | None = None
+    columns_profiled: int | None = None
+    duration_seconds: float | None = None
+    generated_rules: list[dict[str, Any]] = Field(default_factory=list)
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class DryRunResultsOut(BaseModel):
+    run_id: str
+    source_table_fqn: str
+    total_rows: int | None = None
+    valid_rows: int | None = None
+    invalid_rows: int | None = None
+    error_summary: list[dict[str, Any]] = Field(default_factory=list)
+    sample_invalid: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CatalogOut(BaseModel):

@@ -1,15 +1,21 @@
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
-import type { DryRunOut } from "@/lib/api";
+import type { DryRunResultsOut } from "@/lib/api";
 
 interface DryRunResultsProps {
-  result: DryRunOut;
+  result: DryRunResultsOut;
 }
 
 export function DryRunResults({ result }: DryRunResultsProps) {
+  const totalRows = result.total_rows ?? 0;
+  const validRows = result.valid_rows ?? 0;
+  const invalidRows = result.invalid_rows ?? 0;
+  const errorSummary = result.error_summary ?? [];
+  const sampleInvalid = result.sample_invalid ?? [];
+
   const passRate =
-    result.total_rows > 0
-      ? Math.round((result.valid_rows / result.total_rows) * 100)
+    totalRows > 0
+      ? Math.round((validRows / totalRows) * 100)
       : 0;
 
   return (
@@ -18,13 +24,13 @@ export function DryRunResults({ result }: DryRunResultsProps) {
       <div className="grid grid-cols-3 gap-4">
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums">
-            {result.total_rows}
+            {totalRows}
           </div>
           <div className="text-xs text-muted-foreground">Total Rows</div>
         </div>
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums text-green-600">
-            {result.valid_rows}
+            {validRows}
           </div>
           <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
             <CheckCircle2 className="h-3 w-3" />
@@ -33,7 +39,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
         </div>
         <div className="rounded-lg border p-3 text-center">
           <div className="text-2xl font-bold tabular-nums text-red-600">
-            {result.invalid_rows}
+            {invalidRows}
           </div>
           <div className="text-xs text-muted-foreground flex items-center justify-center gap-1">
             <XCircle className="h-3 w-3" />
@@ -63,7 +69,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
       </div>
 
       {/* Error summary */}
-      {result.error_summary.length > 0 && (
+      {errorSummary.length > 0 && (
         <div className="space-y-2">
           <h4 className="text-sm font-medium flex items-center gap-1.5">
             <AlertTriangle className="h-4 w-4 text-amber-500" />
@@ -78,7 +84,7 @@ export function DryRunResults({ result }: DryRunResultsProps) {
                 </tr>
               </thead>
               <tbody>
-                {result.error_summary.map((item, idx) => (
+                {errorSummary.map((item, idx) => (
                   <tr
                     key={idx}
                     className="border-b last:border-b-0"
@@ -100,14 +106,14 @@ export function DryRunResults({ result }: DryRunResultsProps) {
       )}
 
       {/* Sample invalid rows */}
-      {result.sample_invalid.length > 0 && (
+      {sampleInvalid.length > 0 && (
         <div className="space-y-2">
           <h4 className="text-sm font-medium">
-            Sample Invalid Rows ({result.sample_invalid.length})
+            Sample Invalid Rows ({sampleInvalid.length})
           </h4>
           <div className="border rounded-lg overflow-auto max-h-64">
             <pre className="p-3 text-xs font-mono whitespace-pre-wrap">
-              {JSON.stringify(result.sample_invalid, null, 2)}
+              {JSON.stringify(sampleInvalid, null, 2)}
             </pre>
           </div>
         </div>

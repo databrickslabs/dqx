@@ -1,7 +1,7 @@
 import SidebarLayout from "@/components/apx/SidebarLayout";
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
-import { BookCheck, Search } from "lucide-react";
+import { BookCheck, Search, BarChart3 } from "lucide-react";
 import {
   SidebarGroup,
   SidebarGroupContent,
@@ -22,6 +22,12 @@ function Layout() {
       label: "Rules",
       icon: <BookCheck size={16} />,
       match: (path: string) => path.startsWith("/rules"),
+    },
+    {
+      to: "/profiler",
+      label: "Profiler",
+      icon: <BarChart3 size={16} />,
+      match: (path: string) => path.startsWith("/profiler"),
     },
     {
       to: "/discovery",

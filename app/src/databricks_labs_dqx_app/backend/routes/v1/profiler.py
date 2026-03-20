@@ -4,7 +4,6 @@ import json
 from typing import Annotated
 from uuid import uuid4
 
-from databricks.labs.dqx.engine import DQEngine
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -15,9 +14,9 @@ from databricks_labs_dqx_app.backend.dependencies import (
 )
 from databricks_labs_dqx_app.backend.logger import logger
 from databricks_labs_dqx_app.backend.models import (
-    DryRunIn,
-    DryRunResultsOut,
-    DryRunSubmitOut,
+    ProfileResultsOut,
+    ProfileRunIn,
+    ProfileRunOut,
     RunStatusOut,
 )
 from databricks_labs_dqx_app.backend.services.job_service import JobService
@@ -26,23 +25,15 @@ from databricks_labs_dqx_app.backend.services.view_service import ViewService
 router = APIRouter()
 
 
-@router.post("", response_model=DryRunSubmitOut, operation_id="submitDryRun")
-def submit_dry_run(
-    body: DryRunIn,
+@router.post("/run", response_model=ProfileRunOut, operation_id="submitProfileRun")
+def submit_profile_run(
+    body: ProfileRunIn,
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
-) -> DryRunSubmitOut:
-    """Validate checks, create a temporary view (OBO), and submit a dry-run job (SP)."""
+) -> ProfileRunOut:
+    """Create a temporary view (OBO) and submit a profiler job (SP)."""
     try:
-        # Validate checks first
-        validation = DQEngine.validate_checks(body.checks)
-        if validation.has_errors:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid checks: {validation.errors}",
-            )
-
         run_id = uuid4().hex[:16]
 
         # Get requesting user email
@@ -50,37 +41,36 @@ def submit_dry_run(
         requesting_user = user.user_name or "unknown"
 
         # Create view using OBO token — inherits user's table permissions
-        view_fqn = view_svc.create_view(body.table_fqn)
+        view_fqn = view_svc.create_view(body.table_fqn, sample_limit=body.sample_limit)
 
         # Submit job using SP credentials
         config = {
-            "checks": body.checks,
-            "sample_size": body.sample_size,
+            "sample_limit": body.sample_limit,
             "source_table_fqn": body.table_fqn,
         }
         job_run_id = job_svc.submit_run(
-            task_type="dryrun",
+            task_type="profile",
             view_fqn=view_fqn,
             config=config,
             run_id=run_id,
             requesting_user=requesting_user,
         )
 
-        return DryRunSubmitOut(run_id=run_id, job_run_id=job_run_id)
+        return ProfileRunOut(run_id=run_id, job_run_id=job_run_id)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to submit dry run for %s: %s", body.table_fqn, e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to submit dry run: {e}")
+        logger.error("Failed to submit profile run for %s: %s", body.table_fqn, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to submit profile run: {e}")
 
 
-@router.get("/runs/{run_id}/status", response_model=RunStatusOut, operation_id="getDryRunStatus")
-def get_dry_run_status(
+@router.get("/runs/{run_id}/status", response_model=RunStatusOut, operation_id="getProfileRunStatus")
+def get_profile_run_status(
     run_id: str,
     job_run_id: int,
     job_svc: Annotated[JobService, Depends(get_job_service)],
 ) -> RunStatusOut:
-    """Poll the status of a dry-run job."""
+    """Poll the status of a profiler job run."""
     try:
         status = job_svc.get_run_status(job_run_id)
         return RunStatusOut(
@@ -90,42 +80,42 @@ def get_dry_run_status(
             message=status.message,
         )
     except Exception as e:
-        logger.error("Failed to get dry run status (run_id=%s): %s", run_id, e, exc_info=True)
+        logger.error("Failed to get profile run status (run_id=%s): %s", run_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to get run status: {e}")
 
 
-@router.get("/runs/{run_id}/results", response_model=DryRunResultsOut, operation_id="getDryRunResults")
-def get_dry_run_results(
+@router.get("/runs/{run_id}/results", response_model=ProfileResultsOut, operation_id="getProfileRunResults")
+def get_profile_run_results(
     run_id: str,
     job_svc: Annotated[JobService, Depends(get_job_service)],
-) -> DryRunResultsOut:
-    """Read dry-run results from the Delta table."""
+) -> ProfileResultsOut:
+    """Read profiler results from the Delta table."""
     try:
         from databricks_labs_dqx_app.backend.config import conf
 
-        table = f"{conf.catalog}.{conf.schema_name}.dq_validation_runs"
+        table = f"{conf.catalog}.{conf.schema_name}.dq_profiling_results"
         row = job_svc.get_run_result_row(table, run_id)
 
         if row is None:
             raise HTTPException(status_code=404, detail=f"No results found for run_id={run_id}")
 
         if row.get("status") == "FAILED":
-            raise HTTPException(status_code=500, detail=f"Dry run failed: {row.get('error_message', 'Unknown error')}")
+            raise HTTPException(status_code=500, detail=f"Profile run failed: {row.get('error_message', 'Unknown error')}")
 
-        error_summary_json = row.get("error_summary_json") or "[]"
-        sample_invalid_json = row.get("sample_invalid_json") or "[]"
+        summary_json = row.get("summary_json") or "{}"
+        rules_json = row.get("generated_rules_json") or "[]"
 
-        return DryRunResultsOut(
+        return ProfileResultsOut(
             run_id=run_id,
             source_table_fqn=row.get("source_table_fqn") or "",
-            total_rows=int(row["total_rows"]) if row.get("total_rows") else None,
-            valid_rows=int(row["valid_rows"]) if row.get("valid_rows") else None,
-            invalid_rows=int(row["invalid_rows"]) if row.get("invalid_rows") else None,
-            error_summary=json.loads(error_summary_json),
-            sample_invalid=json.loads(sample_invalid_json),
+            rows_profiled=int(row["rows_profiled"]) if row.get("rows_profiled") else None,
+            columns_profiled=int(row["columns_profiled"]) if row.get("columns_profiled") else None,
+            duration_seconds=float(row["duration_seconds"]) if row.get("duration_seconds") else None,
+            generated_rules=json.loads(rules_json),
+            summary=json.loads(summary_json),
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to get dry run results (run_id=%s): %s", run_id, e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to get dry run results: {e}")
+        logger.error("Failed to get profile results (run_id=%s): %s", run_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get profile results: {e}")

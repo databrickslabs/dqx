@@ -92,21 +92,34 @@ export interface DryRunIn {
   checks: DryRunInChecksItem[];
   /**
    * Number of rows to sample
-   * @maximum 1000
+   * @maximum 10000
    */
   sample_size?: number;
 }
 
-export type DryRunOutErrorSummaryItem = { [key: string]: unknown };
+export type DryRunResultsOutTotalRows = number | null;
 
-export type DryRunOutSampleInvalidItem = { [key: string]: unknown };
+export type DryRunResultsOutValidRows = number | null;
 
-export interface DryRunOut {
-  total_rows: number;
-  valid_rows: number;
-  invalid_rows: number;
-  error_summary: DryRunOutErrorSummaryItem[];
-  sample_invalid: DryRunOutSampleInvalidItem[];
+export type DryRunResultsOutInvalidRows = number | null;
+
+export type DryRunResultsOutErrorSummaryItem = { [key: string]: unknown };
+
+export type DryRunResultsOutSampleInvalidItem = { [key: string]: unknown };
+
+export interface DryRunResultsOut {
+  run_id: string;
+  source_table_fqn: string;
+  total_rows?: DryRunResultsOutTotalRows;
+  valid_rows?: DryRunResultsOutValidRows;
+  invalid_rows?: DryRunResultsOutInvalidRows;
+  error_summary?: DryRunResultsOutErrorSummaryItem[];
+  sample_invalid?: DryRunResultsOutSampleInvalidItem[];
+}
+
+export interface DryRunSubmitOut {
+  run_id: string;
+  job_run_id: number;
 }
 
 export type ExtraParamsResultColumnNames = { [key: string]: string };
@@ -200,6 +213,41 @@ export interface OutputConfig {
   cluster_by?: string[];
 }
 
+export type ProfileResultsOutRowsProfiled = number | null;
+
+export type ProfileResultsOutColumnsProfiled = number | null;
+
+export type ProfileResultsOutDurationSeconds = number | null;
+
+export type ProfileResultsOutGeneratedRulesItem = { [key: string]: unknown };
+
+export type ProfileResultsOutSummary = { [key: string]: unknown };
+
+export interface ProfileResultsOut {
+  run_id: string;
+  source_table_fqn: string;
+  rows_profiled?: ProfileResultsOutRowsProfiled;
+  columns_profiled?: ProfileResultsOutColumnsProfiled;
+  duration_seconds?: ProfileResultsOutDurationSeconds;
+  generated_rules?: ProfileResultsOutGeneratedRulesItem[];
+  summary?: ProfileResultsOutSummary;
+}
+
+export interface ProfileRunIn {
+  /** Fully qualified table name to profile */
+  table_fqn: string;
+  /**
+   * Max rows to sample
+   * @maximum 100000
+   */
+  sample_limit?: number;
+}
+
+export interface ProfileRunOut {
+  run_id: string;
+  job_run_id: number;
+}
+
 export type ProfilerConfigSampleSeed = number | null;
 
 export type ProfilerConfigFilter = string | null;
@@ -288,6 +336,17 @@ export interface RunConfigIn {
 
 export interface RunConfigOut {
   config: RunConfig;
+}
+
+export type RunStatusOutResultState = string | null;
+
+export type RunStatusOutMessage = string | null;
+
+export interface RunStatusOut {
+  run_id: string;
+  state: string;
+  result_state?: RunStatusOutResultState;
+  message?: RunStatusOutMessage;
 }
 
 export type SaveRulesInChecksItem = { [key: string]: unknown };
@@ -568,6 +627,14 @@ export type SubmitRulesForApprovalBody = SetStatusIn | null;
 export type ApproveRulesBody = SetStatusIn | null;
 
 export type RejectRulesBody = SetStatusIn | null;
+
+export type GetDryRunStatusParams = {
+  job_run_id: number;
+};
+
+export type GetProfileRunStatusParams = {
+  job_run_id: number;
+};
 
 /**
  * @summary Version
@@ -4321,34 +4388,34 @@ export const useRejectRules = <
 };
 
 /**
- * Run checks against a sample of the table and return validation results.
- * @summary Dry Run
+ * Validate checks, create a temporary view (OBO), and submit a dry-run job (SP).
+ * @summary Submit Dry Run
  */
-export const dryRun = (
+export const submitDryRun = (
   dryRunIn: DryRunIn,
   options?: AxiosRequestConfig,
-): Promise<AxiosResponse<DryRunOut>> => {
+): Promise<AxiosResponse<DryRunSubmitOut>> => {
   return axios.default.post(`/api/v1/dryrun`, dryRunIn, options);
 };
 
-export const getDryRunMutationOptions = <
+export const getSubmitDryRunMutationOptions = <
   TError = AxiosError<HTTPValidationError>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
-    Awaited<ReturnType<typeof dryRun>>,
+    Awaited<ReturnType<typeof submitDryRun>>,
     TError,
     { data: DryRunIn },
     TContext
   >;
   axios?: AxiosRequestConfig;
 }): UseMutationOptions<
-  Awaited<ReturnType<typeof dryRun>>,
+  Awaited<ReturnType<typeof submitDryRun>>,
   TError,
   { data: DryRunIn },
   TContext
 > => {
-  const mutationKey = ["dryRun"];
+  const mutationKey = ["submitDryRun"];
   const { mutation: mutationOptions, axios: axiosOptions } = options
     ? options.mutation &&
       "mutationKey" in options.mutation &&
@@ -4358,33 +4425,33 @@ export const getDryRunMutationOptions = <
     : { mutation: { mutationKey }, axios: undefined };
 
   const mutationFn: MutationFunction<
-    Awaited<ReturnType<typeof dryRun>>,
+    Awaited<ReturnType<typeof submitDryRun>>,
     { data: DryRunIn }
   > = (props) => {
     const { data } = props ?? {};
 
-    return dryRun(data, axiosOptions);
+    return submitDryRun(data, axiosOptions);
   };
 
   return { mutationFn, ...mutationOptions };
 };
 
-export type DryRunMutationResult = NonNullable<
-  Awaited<ReturnType<typeof dryRun>>
+export type SubmitDryRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitDryRun>>
 >;
-export type DryRunMutationBody = DryRunIn;
-export type DryRunMutationError = AxiosError<HTTPValidationError>;
+export type SubmitDryRunMutationBody = DryRunIn;
+export type SubmitDryRunMutationError = AxiosError<HTTPValidationError>;
 
 /**
- * @summary Dry Run
+ * @summary Submit Dry Run
  */
-export const useDryRun = <
+export const useSubmitDryRun = <
   TError = AxiosError<HTTPValidationError>,
   TContext = unknown,
 >(
   options?: {
     mutation?: UseMutationOptions<
-      Awaited<ReturnType<typeof dryRun>>,
+      Awaited<ReturnType<typeof submitDryRun>>,
       TError,
       { data: DryRunIn },
       TContext
@@ -4393,15 +4460,1340 @@ export const useDryRun = <
   },
   queryClient?: QueryClient,
 ): UseMutationResult<
-  Awaited<ReturnType<typeof dryRun>>,
+  Awaited<ReturnType<typeof submitDryRun>>,
   TError,
   { data: DryRunIn },
   TContext
 > => {
-  const mutationOptions = getDryRunMutationOptions(options);
+  const mutationOptions = getSubmitDryRunMutationOptions(options);
 
   return useMutation(mutationOptions, queryClient);
 };
+
+/**
+ * Poll the status of a dry-run job.
+ * @summary Get Dry Run Status
+ */
+export const getDryRunStatus = (
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunStatusOut>> => {
+  return axios.default.get(`/api/v1/dryrun/runs/${runId}/status`, {
+    ...options,
+    params: { ...params, ...options?.params },
+  });
+};
+
+export const getGetDryRunStatusQueryKey = (
+  runId?: string,
+  params?: GetDryRunStatusParams,
+) => {
+  return [
+    `/api/v1/dryrun/runs/${runId}/status`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetDryRunStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDryRunStatusQueryKey(runId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getDryRunStatus>>> = ({
+    signal,
+  }) => getDryRunStatus(runId, params, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDryRunStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetDryRunStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDryRunStatus>>
+>;
+export type GetDryRunStatusQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetDryRunStatus<
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDryRunStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getDryRunStatus>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetDryRunStatus<
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDryRunStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getDryRunStatus>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetDryRunStatus<
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Dry Run Status
+ */
+
+export function useGetDryRunStatus<
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetDryRunStatusQueryOptions(runId, params, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetDryRunStatusSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetDryRunStatusQueryKey(runId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getDryRunStatus>>> = ({
+    signal,
+  }) => getDryRunStatus(runId, params, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getDryRunStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetDryRunStatusSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDryRunStatus>>
+>;
+export type GetDryRunStatusSuspenseQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetDryRunStatusSuspense<
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetDryRunStatusSuspense<
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetDryRunStatusSuspense<
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Dry Run Status
+ */
+
+export function useGetDryRunStatusSuspense<
+  TData = Awaited<ReturnType<typeof getDryRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetDryRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetDryRunStatusSuspenseQueryOptions(
+    runId,
+    params,
+    options,
+  );
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Read dry-run results from the Delta table.
+ * @summary Get Dry Run Results
+ */
+export const getDryRunResults = (
+  runId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<DryRunResultsOut>> => {
+  return axios.default.get(`/api/v1/dryrun/runs/${runId}/results`, options);
+};
+
+export const getGetDryRunResultsQueryKey = (runId?: string) => {
+  return [`/api/v1/dryrun/runs/${runId}/results`] as const;
+};
+
+export const getGetDryRunResultsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDryRunResultsQueryKey(runId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDryRunResults>>
+  > = ({ signal }) => getDryRunResults(runId, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDryRunResults>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetDryRunResultsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDryRunResults>>
+>;
+export type GetDryRunResultsQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetDryRunResults<
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDryRunResults>>,
+          TError,
+          Awaited<ReturnType<typeof getDryRunResults>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetDryRunResults<
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getDryRunResults>>,
+          TError,
+          Awaited<ReturnType<typeof getDryRunResults>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetDryRunResults<
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Dry Run Results
+ */
+
+export function useGetDryRunResults<
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetDryRunResultsQueryOptions(runId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetDryRunResultsSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDryRunResultsQueryKey(runId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDryRunResults>>
+  > = ({ signal }) => getDryRunResults(runId, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getDryRunResults>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetDryRunResultsSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDryRunResults>>
+>;
+export type GetDryRunResultsSuspenseQueryError =
+  AxiosError<HTTPValidationError>;
+
+export function useGetDryRunResultsSuspense<
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetDryRunResultsSuspense<
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetDryRunResultsSuspense<
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Dry Run Results
+ */
+
+export function useGetDryRunResultsSuspense<
+  TData = Awaited<ReturnType<typeof getDryRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getDryRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetDryRunResultsSuspenseQueryOptions(runId, options);
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Create a temporary view (OBO) and submit a profiler job (SP).
+ * @summary Submit Profile Run
+ */
+export const submitProfileRun = (
+  profileRunIn: ProfileRunIn,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ProfileRunOut>> => {
+  return axios.default.post(`/api/v1/profiler/run`, profileRunIn, options);
+};
+
+export const getSubmitProfileRunMutationOptions = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof submitProfileRun>>,
+    TError,
+    { data: ProfileRunIn },
+    TContext
+  >;
+  axios?: AxiosRequestConfig;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof submitProfileRun>>,
+  TError,
+  { data: ProfileRunIn },
+  TContext
+> => {
+  const mutationKey = ["submitProfileRun"];
+  const { mutation: mutationOptions, axios: axiosOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, axios: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof submitProfileRun>>,
+    { data: ProfileRunIn }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return submitProfileRun(data, axiosOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SubmitProfileRunMutationResult = NonNullable<
+  Awaited<ReturnType<typeof submitProfileRun>>
+>;
+export type SubmitProfileRunMutationBody = ProfileRunIn;
+export type SubmitProfileRunMutationError = AxiosError<HTTPValidationError>;
+
+/**
+ * @summary Submit Profile Run
+ */
+export const useSubmitProfileRun = <
+  TError = AxiosError<HTTPValidationError>,
+  TContext = unknown,
+>(
+  options?: {
+    mutation?: UseMutationOptions<
+      Awaited<ReturnType<typeof submitProfileRun>>,
+      TError,
+      { data: ProfileRunIn },
+      TContext
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseMutationResult<
+  Awaited<ReturnType<typeof submitProfileRun>>,
+  TError,
+  { data: ProfileRunIn },
+  TContext
+> => {
+  const mutationOptions = getSubmitProfileRunMutationOptions(options);
+
+  return useMutation(mutationOptions, queryClient);
+};
+
+/**
+ * Poll the status of a profiler job run.
+ * @summary Get Profile Run Status
+ */
+export const getProfileRunStatus = (
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<RunStatusOut>> => {
+  return axios.default.get(`/api/v1/profiler/runs/${runId}/status`, {
+    ...options,
+    params: { ...params, ...options?.params },
+  });
+};
+
+export const getGetProfileRunStatusQueryKey = (
+  runId?: string,
+  params?: GetProfileRunStatusParams,
+) => {
+  return [
+    `/api/v1/profiler/runs/${runId}/status`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetProfileRunStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetProfileRunStatusQueryKey(runId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getProfileRunStatus>>
+  > = ({ signal }) =>
+    getProfileRunStatus(runId, params, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getProfileRunStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetProfileRunStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getProfileRunStatus>>
+>;
+export type GetProfileRunStatusQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetProfileRunStatus<
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProfileRunStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getProfileRunStatus>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetProfileRunStatus<
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProfileRunStatus>>,
+          TError,
+          Awaited<ReturnType<typeof getProfileRunStatus>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetProfileRunStatus<
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Profile Run Status
+ */
+
+export function useGetProfileRunStatus<
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetProfileRunStatusQueryOptions(
+    runId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetProfileRunStatusSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetProfileRunStatusQueryKey(runId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getProfileRunStatus>>
+  > = ({ signal }) =>
+    getProfileRunStatus(runId, params, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getProfileRunStatus>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetProfileRunStatusSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getProfileRunStatus>>
+>;
+export type GetProfileRunStatusSuspenseQueryError =
+  AxiosError<HTTPValidationError>;
+
+export function useGetProfileRunStatusSuspense<
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetProfileRunStatusSuspense<
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetProfileRunStatusSuspense<
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Profile Run Status
+ */
+
+export function useGetProfileRunStatusSuspense<
+  TData = Awaited<ReturnType<typeof getProfileRunStatus>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  params: GetProfileRunStatusParams,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunStatus>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetProfileRunStatusSuspenseQueryOptions(
+    runId,
+    params,
+    options,
+  );
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+/**
+ * Read profiler results from the Delta table.
+ * @summary Get Profile Run Results
+ */
+export const getProfileRunResults = (
+  runId: string,
+  options?: AxiosRequestConfig,
+): Promise<AxiosResponse<ProfileResultsOut>> => {
+  return axios.default.get(`/api/v1/profiler/runs/${runId}/results`, options);
+};
+
+export const getGetProfileRunResultsQueryKey = (runId?: string) => {
+  return [`/api/v1/profiler/runs/${runId}/results`] as const;
+};
+
+export const getGetProfileRunResultsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetProfileRunResultsQueryKey(runId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getProfileRunResults>>
+  > = ({ signal }) => getProfileRunResults(runId, { signal, ...axiosOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!runId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getProfileRunResults>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetProfileRunResultsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getProfileRunResults>>
+>;
+export type GetProfileRunResultsQueryError = AxiosError<HTTPValidationError>;
+
+export function useGetProfileRunResults<
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProfileRunResults>>,
+          TError,
+          Awaited<ReturnType<typeof getProfileRunResults>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): DefinedUseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetProfileRunResults<
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    > &
+      Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getProfileRunResults>>,
+          TError,
+          Awaited<ReturnType<typeof getProfileRunResults>>
+        >,
+        "initialData"
+      >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetProfileRunResults<
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Profile Run Results
+ */
+
+export function useGetProfileRunResults<
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetProfileRunResultsQueryOptions(runId, options);
+
+  const query = useQuery(queryOptions, queryClient) as UseQueryResult<
+    TData,
+    TError
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
+
+export const getGetProfileRunResultsSuspenseQueryOptions = <
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+) => {
+  const { query: queryOptions, axios: axiosOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetProfileRunResultsQueryKey(runId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getProfileRunResults>>
+  > = ({ signal }) => getProfileRunResults(runId, { signal, ...axiosOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseSuspenseQueryOptions<
+    Awaited<ReturnType<typeof getProfileRunResults>>,
+    TError,
+    TData
+  > & { queryKey: DataTag<QueryKey, TData, TError> };
+};
+
+export type GetProfileRunResultsSuspenseQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getProfileRunResults>>
+>;
+export type GetProfileRunResultsSuspenseQueryError =
+  AxiosError<HTTPValidationError>;
+
+export function useGetProfileRunResultsSuspense<
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options: {
+    query: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetProfileRunResultsSuspense<
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+export function useGetProfileRunResultsSuspense<
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+};
+/**
+ * @summary Get Profile Run Results
+ */
+
+export function useGetProfileRunResultsSuspense<
+  TData = Awaited<ReturnType<typeof getProfileRunResults>>,
+  TError = AxiosError<HTTPValidationError>,
+>(
+  runId: string,
+  options?: {
+    query?: Partial<
+      UseSuspenseQueryOptions<
+        Awaited<ReturnType<typeof getProfileRunResults>>,
+        TError,
+        TData
+      >
+    >;
+    axios?: AxiosRequestConfig;
+  },
+  queryClient?: QueryClient,
+): UseSuspenseQueryResult<TData, TError> & {
+  queryKey: DataTag<QueryKey, TData, TError>;
+} {
+  const queryOptions = getGetProfileRunResultsSuspenseQueryOptions(
+    runId,
+    options,
+  );
+
+  const query = useSuspenseQuery(
+    queryOptions,
+    queryClient,
+  ) as UseSuspenseQueryResult<TData, TError> & {
+    queryKey: DataTag<QueryKey, TData, TError>;
+  };
+
+  query.queryKey = queryOptions.queryKey;
+
+  return query;
+}
 
 /**
  * @summary Get Settings
