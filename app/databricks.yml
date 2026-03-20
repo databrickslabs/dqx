@@ -34,7 +34,12 @@ sync:
 
 artifacts:
   default:
-    build: uv run apx build
+    build: >
+      uv run apx build &&
+      uv build ../ --wheel --out-dir .build/ &&
+      dqx_whl=$(ls -1 .build/databricks_labs_dqx-*.whl | head -1 | xargs basename) &&
+      echo "$dqx_whl" | cat - .build/requirements.txt > .build/requirements.txt.tmp &&
+      mv .build/requirements.txt.tmp .build/requirements.txt
 
 resources:
   apps:
@@ -88,6 +93,10 @@ resources:
     dqx_schema:
       catalog_name: ${var.catalog_name}
       name: ${var.schema_name}
+      grants:
+        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+          privileges:
+            - CREATE_TABLE
 
   jobs:
     dqx_task_runner:
@@ -138,5 +147,6 @@ resources:
 
 targets:
   dev:
-    mode: development
-    default: true
+    presets:
+      trigger_pause_status: PAUSED
+   

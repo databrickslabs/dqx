@@ -69,6 +69,7 @@ class DQGenerator(DQEngineBase):
         else:
             self.spark = spark  # type: ignore[assignment]  # May be None; only used when input_config is provided
 
+        self._table_manager = table_manager
         self.custom_check_functions = custom_check_functions
 
         llm_model_config = llm_model_config or LLMModelConfig()
@@ -150,12 +151,17 @@ class DQGenerator(DQEngineBase):
 
         logger.info(f"Generating DQ rules with LLM for input: '{user_input}'")
         if input_config:
-            if self.spark is None:
+            if self.spark is not None:
+                schema_info = get_column_metadata(self.spark, input_config)
+            elif self._table_manager is not None:
+                columns_df = self._table_manager.repository.get_table_columns(input_config.location)
+                columns = [{"name": row["col_name"], "type": row["data_type"]} for _, row in columns_df.iterrows()]
+                schema_info = json.dumps({"columns": columns})
+            else:
                 raise MissingParameterError(
                     "spark is required when input_config is provided for schema lookup. "
                     "Either pass a SparkSession or omit input_config."
                 )
-            schema_info = get_column_metadata(self.spark, input_config)
         else:
             schema_info = ""
 
