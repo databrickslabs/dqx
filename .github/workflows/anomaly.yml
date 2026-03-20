@@ -15,7 +15,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false  # don't cancel ongoing runs to ensure fixtures are completed and resources terminated
 
 jobs:
@@ -76,7 +76,7 @@ jobs:
           # Set cluster ID without printing to logs
           echo "DATABRICKS_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
           echo "DATABRICKS_DQX_CLUSTER_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-DQX-CLUSTER-ID" --query value -o tsv)" >> $GITHUB_ENV
-          
+
           # Set warehouse ID without printing to logs
           echo "DATABRICKS_WAREHOUSE_ID=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-WAREHOUSE-ID" --query value -o tsv)" >> $GITHUB_ENV
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV

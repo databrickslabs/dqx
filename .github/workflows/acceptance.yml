@@ -159,7 +159,7 @@ jobs:
 
       - name: Install hatch
         run: pip install hatch==1.16.5
-      
+
       - name: Install dbt
         run: |
           pip install dbt-core==1.10.9 dbt-databricks==1.10.9

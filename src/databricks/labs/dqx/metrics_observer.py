@@ -10,8 +10,8 @@ import pyspark.sql.functions as F
 
 OBSERVATION_TABLE_SCHEMA = (
     "run_id string, run_name string, input_location string, output_location string, quarantine_location string, "
-    "checks_location string, metric_name string, metric_value string, run_time timestamp, error_column_name string, "
-    "warning_column_name string, user_metadata map<string, string>"
+    "checks_location string, rule_set_fingerprint string, metric_name string, metric_value string, run_time timestamp, "
+    "error_column_name string, warning_column_name string, user_metadata map<string, string>"
 )
 
 
@@ -35,6 +35,8 @@ class DQMetricsObservation:
             table name or file path).
         checks_location: (optional) Location where checks are loaded from when running quality checks (fully-qualified table name
             or file path).
+        rule_set_fingerprint: (optional) SHA-256 fingerprint of the rule set used for this run. Enables correlation with
+            checks storage and filtering metrics by rule set version.
     """
 
     run_id: str
@@ -47,6 +49,7 @@ class DQMetricsObservation:
     output_location: str | None = None
     quarantine_location: str | None = None
     checks_location: str | None = None
+    rule_set_fingerprint: str | None = None
     user_metadata: dict[str, str] | None = None
 
 
@@ -145,6 +148,7 @@ class DQMetricsObserver:
                     observation.output_location,
                     observation.quarantine_location,
                     observation.checks_location,
+                    observation.rule_set_fingerprint,
                     metric_key,
                     metric_value,
                     observation.run_time_overwrite,
