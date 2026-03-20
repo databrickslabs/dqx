@@ -98,6 +98,7 @@ tests/
 - Provide **production-grade solutions**, not prototype or demo code.
 - Avoid speculative or unrequested changes.
 - Align with the project's coding conventions and testing standards above.
+- **Don't disable linting issues — fix the code.** Do not add `# pylint: disable`, `# type: ignore`, `# noqa`, or per-file ignores to silence warnings. Address the underlying issue instead.
 
 ## Critical Rules
 
@@ -126,6 +127,22 @@ Never import these unconditionally in `engine.py`, `check_funcs.py`, or any non-
 ### 5. Never serialize configs with `dataclasses.asdict()`
 
 Use `ConfigSerializer` — it preserves nested types. `dataclasses.asdict()` loses them.
+
+### 6. Never disable linting to silence issues
+
+Fix the code instead of adding `# pylint: disable`, `# type: ignore`, `# noqa`, or per-file ignores. Use project-wide exceptions in `pyproject.toml` only when there is no viable fix (e.g., third-party API compatibility).
+
+---
+
+## Security Guidelines
+
+Ensure no security gaps are introduced when adding or modifying code, e.g.
+- **SQL injection**: User-provided or templated SQL must be validated with `is_sql_query_safe()` from `utils.py` before execution. Raise `UnsafeSqlQueryError` when the query is unsafe. Do not embed user input directly into SQL strings; use parameterized queries or validated template substitution (e.g., `re.escape` for keys).
+- **Sensitive data**: Do not log credentials, tokens, PII, or other secrets. Use structured logging with redaction where needed.
+- **Untrusted input**: When parsing JSON, YAML, or other formats from external sources, handle parse failures gracefully and avoid exposing raw error details that could leak internal structure.
+- **Path traversal**: Validate file and workspace paths; avoid constructing paths from unsanitized user input.
+- **Dependencies**: Do not add dependencies with known vulnerabilities. Prefer well-maintained, widely used packages.
+- **GitHub workflows**: Avoid `pull_request_target` unless strictly necessary. It runs in the base branch context with access to secrets, so untrusted PR code from forks can exfiltrate them. Prefer `pull_request` for CI. If `pull_request_target` is required (e.g., for label-based workflows), never checkout or run PR-provided code when secrets are available; use `workflow_run` or `workflow_dispatch` for sensitive operations instead.
 
 ---
 
@@ -219,6 +236,13 @@ def resolve(column, spark): ...
 model: Any  # type: ignore[assignment] — mlflow has no stubs
 ```
 `Any` in `anomaly/` is a known legacy exception. New code outside that module must not introduce it.
+
+### Docstrings
+
+Use [Google Style Python Docstrings](https://sphinxcontrib-napoleon.readthedocs.io/en/latest/example_google.html) for public functions, classes, and modules. See [Writing Docstrings](https://databrickslabs.github.io/dqx/docs/dev/contributing/#writing-docstrings) for full guidance.
+
+- **No backticks** around object names — use italics instead (e.g., *arg1*, *column*). Backticks cause rendering issues in API docs.
+- **Double curly braces** — mask with backslashes, e.g. `{{`. For code examples, use triple backticks.
 
 ### Blueprint Patterns
 
