@@ -1,4 +1,6 @@
 from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.geo.check_funcs import are_polygons_mutually_disjoint
 
 
@@ -360,6 +362,165 @@ def test_are_polygons_mutually_disjoint_row_filter_numeric(skip_if_runtime_not_g
                 "value `POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))` in column `geom` intersects with at least one other polygon",
             ],
             [5.0, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))", None],
+        ],
+        checked_schema,
+    )
+
+    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+
+
+def test_are_polygons_mutually_disjoint_via_engine_api(skip_if_runtime_not_geo_compatible, spark, ws: WorkspaceClient):
+    """Test through the DQX engine API with metadata-based rule definition."""
+    input_schema = "id: int, geom: string"
+    test_df = spark.createDataFrame(
+        [
+            [1, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))"],  # Intersects with id=2
+            [2, "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))"],  # Intersects with id=1
+            [3, "POLYGON((5 5, 6 5, 6 6, 5 6, 5 5))"],  # Disjoint
+        ],
+        input_schema,
+    )
+
+    engine = DQEngine(ws)
+    checks = [
+        {
+            "criticality": "error",
+            "check": {
+                "function": "are_polygons_mutually_disjoint",
+                "arguments": {"column": "geom"},
+            },
+        }
+    ]
+
+    checked_df = engine.apply_checks_by_metadata(test_df, checks)
+
+    # Verify _errors column was added with correct violations
+    assert "_errors" in checked_df.columns
+    error_rows = checked_df.filter("_errors is not null").select("id", "geom", "_errors").collect()
+    assert len(error_rows) == 2
+    assert {row.id for row in error_rows} == {1, 2}
+
+    # Verify id=3 has no error
+    clean_rows = checked_df.filter("_errors is null").select("id").collect()
+    assert [row.id for row in clean_rows] == [3]
+
+
+def test_are_polygons_mutually_disjoint_multipartition_determinism(skip_if_runtime_not_geo_compatible, spark):
+    """Test determinism with multiple partitions to ensure hash-based IDs are stable."""
+    input_schema = "id: int, category: string, geom: string"
+    # Create test data with deliberately varied polygon coordinates
+    test_df = spark.createDataFrame(
+        [
+            [1, "A", "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"],
+            [2, "A", "POLYGON((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))"],  # Intersects 1
+            [3, "B", "POLYGON((2 2, 3 2, 3 3, 2 3, 2 2))"],
+            [4, "B", "POLYGON((2.5 2.5, 3.5 2.5, 3.5 3.5, 2.5 3.5, 2.5 2.5))"],  # Intersects 3
+            [5, "C", "POLYGON((5 5, 6 5, 6 6, 5 6, 5 5))"],  # Disjoint from all
+        ],
+        input_schema,
+    ).repartition(
+        5
+    )  # Force 5 partitions to increase chance of re-evaluation
+
+    condition, apply_method = are_polygons_mutually_disjoint("geom")
+
+    actual_df = apply_method(df=test_df)
+    actual = actual_df.select("id", "category", condition).collect()
+
+    # Expected violations: ids 1,2 and 3,4
+    violations = {row.id for row in actual if getattr(row, list(row.__fields__)[-1]) is not None}
+    assert violations == {1, 2, 3, 4}, f"Expected violations for ids 1,2,3,4 but got {violations}"
+
+    # id=5 should not be flagged
+    clean = {row.id for row in actual if getattr(row, list(row.__fields__)[-1]) is None}
+    assert 5 in clean
+
+
+def test_are_polygons_mutually_disjoint_row_filter_with_partitions(skip_if_runtime_not_geo_compatible, spark):
+    """Test row_filter respects partition boundaries correctly."""
+    input_schema = "category: string, geom: string"
+    test_df = spark.createDataFrame(
+        [
+            ["A", "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"],
+            ["A", "POLYGON((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))"],  # Intersects A1
+            ["B", "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"],  # Same geom as A1 but different category
+            ["B", "POLYGON((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))"],  # Same as A2
+            ["C", "POLYGON((5 5, 6 5, 6 6, 5 6, 5 5))"],
+        ],
+        input_schema,
+    ).repartition(3)
+
+    # Only evaluate category='A' rows
+    condition, apply_method = are_polygons_mutually_disjoint("geom", row_filter="category = 'A'")
+
+    actual_df = apply_method(df=test_df)
+    actual = actual_df.select("category", condition).collect()
+
+    # Count violations per category
+    violations_by_category = {}
+    for row in actual:
+        cat = row.category
+        has_error = getattr(row, list(row.__fields__)[-1]) is not None
+        violations_by_category[cat] = violations_by_category.get(cat, 0) + (1 if has_error else 0)
+
+    # A: 2 violations (A1 and A2 intersect)
+    # B: 0 violations (filtered out, so not evaluated)
+    # C: 0 violations (disjoint)
+    assert violations_by_category.get("A", 0) == 2
+    assert violations_by_category.get("B", 0) == 0
+    assert violations_by_category.get("C", 0) == 0
+
+
+def test_are_polygons_mutually_disjoint_large_partition_count(skip_if_runtime_not_geo_compatible, spark):
+    """Stress test with many small partitions to trigger re-evaluation edge cases."""
+    input_schema = "id: int, geom: string"
+    rows = [
+        [1, "POLYGON((0 0, 2 0, 2 2, 0 2, 0 0))"],  # Overlaps with id=2
+        [2, "POLYGON((1 1, 3 1, 3 3, 1 3, 1 1))"],  # Overlaps with id=1
+        [3, "POLYGON((5 5, 6 5, 6 6, 5 6, 5 5))"],  # Disjoint
+        [4, "POLYGON((10 10, 11 10, 11 11, 10 11, 10 10))"],  # Disjoint
+        [5, "POLYGON((15 15, 16 15, 16 16, 15 16, 15 15))"],  # Disjoint
+    ]
+
+    test_df = spark.createDataFrame(rows, input_schema).repartition(10)  # Many small partitions
+
+    condition, apply_method = are_polygons_mutually_disjoint("geom")
+
+    actual_df = apply_method(df=test_df)
+    actual = actual_df.select("id", condition).collect()
+
+    violations = {row.id for row in actual if getattr(row, list(row.__fields__)[-1]) is not None}
+    assert violations == {1, 2}, f"Expected ids 1 and 2 to violate, got {violations}"
+
+
+def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runtime_not_geo_compatible, spark):
+    """Verify that row_filter properly excludes rows from the polygon intersection evaluation.
+
+    Rows that fail the filter should not be evaluated for intersections, even if they
+    would form part of an intersection pair in the unfiltered dataset.
+    """
+    input_schema = "geom: string"
+    test_df = spark.createDataFrame(
+        [
+            ["POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"],  # Row 1: would intersect with intersecting polygons
+            ["POLYGON((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))"],  # Row 2: intersects with row 1
+        ],
+        input_schema,
+    )
+
+    # Filter to include only the first polygon (excludes the intersecting one)
+    condition, apply_method = are_polygons_mutually_disjoint(
+        "geom", row_filter="geom = 'POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))'"
+    )
+
+    actual_apply_df = apply_method(df=test_df)
+    actual = actual_apply_df.select("geom", condition)
+
+    checked_schema = "geom: string, geom_not_mutually_disjoint: string"
+    expected = spark.createDataFrame(
+        [
+            ["POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))", None],  # Single row after filter, no violations
+            ["POLYGON((0.5 0.5, 1.5 0.5, 1.5 1.5, 0.5 1.5, 0.5 0.5))", None],  # Filtered out, not evaluated
         ],
         checked_schema,
     )
