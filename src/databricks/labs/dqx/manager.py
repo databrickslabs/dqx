@@ -166,26 +166,47 @@ class DQRuleManager:
         ).cast(dq_result_item_schema)
 
     def _build_message_col(self, condition: Column) -> Column:
-        """Build the message column, using a custom message callable if provided on the rule."""
+        """
+        Builds the message column, using the default message or a custom message callable if specified in the rule
+        definition. Allows use of the following arguments passed at execution time by the DQRuleManager:
+
+        * *rule_name* is the name of the DQX rule
+        * *check_func_name* is the name of the DQX check function
+        * *check_func_args* is a dictionary of DQX check function arguments as key-value pairs
+        * *column_value* is the column value that failed the DQX check
+
+        Args:
+            condition: Default DQX condition message returned by evaluating the DQX check function
+
+        Returns:
+            The custom DQX condition message if specified in the rule definition, otherwise the default DQX condition
+            message
+        """
         if self.check.message is None:
             return condition
 
-        # Build check_func_args dict from the check function's parameter names and stored args/kwargs
-        sig = inspect.signature(self.check.check_func)
-        param_names = list(sig.parameters.keys())
-        check_func_args = dict(zip(param_names, self.check.check_func_args))
-        check_func_args.update(self.check.check_func_kwargs)
+        check_func_signature = inspect.signature(self.check.check_func)
+        args, kwargs = self.check.prepare_check_func_args_and_kwargs()
+        bound = check_func_signature.bind_partial(*args, **kwargs)
+        check_func_args = dict(bound.arguments)
+        column_value = F.coalesce(F.col(self.check.column), F.lit("null")) if self.check.column else F.lit("null")
 
-        # Get the column value expression
-        column_value = F.col(self.check.column) if self.check.column else F.lit(None)
-
-        # Call the user's message function
-        custom_message = self.check.message(
-            rule_name=self.check.name,
-            check_func_name=self.check.check_func.__name__,
-            check_func_args=check_func_args,
-            column_value=column_value,
+        default_message_func_args = {
+            "rule_name": self.check.name,
+            "check_func_name": self.check.check_func.__name__,
+            "check_func_args": check_func_args,
+            "column_value": column_value,
+        }
+        message_func_signature = inspect.signature(self.check.message)
+        message_func_accepts_keyword_args = any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in message_func_signature.parameters.values()
         )
+        message_func_args = {
+            arg: val
+            for arg, val in default_message_func_args.items()
+            if arg in list(message_func_signature.parameters.keys()) or message_func_accepts_keyword_args
+        }
+        custom_message = self.check.message(**message_func_args)
 
         # Keep the null/non-null semantics of the original condition but swap the message text
         return F.when(condition.isNotNull(), custom_message).otherwise(F.lit(None).cast("string"))
