@@ -1,4 +1,5 @@
 import pytest
+from pyspark.sql import Column
 from databricks.labs.dqx.check_funcs import (
     is_equal_to,
     is_not_equal_to,
@@ -11,6 +12,7 @@ from databricks.labs.dqx.check_funcs import (
     is_aggr_not_greater_than,
     is_ipv4_address_in_cidr,
     is_ipv6_address_in_cidr,
+    sql_expression,
 )
 from databricks.labs.dqx.pii.pii_detection_funcs import does_not_contain_pii
 from databricks.labs.dqx.errors import MissingParameterError, InvalidParameterError
@@ -127,3 +129,15 @@ def test_is_equal_to_missing_value():
 def test_is_not_equal_to_missing_value():
     with pytest.raises(MissingParameterError, match=LIMIT_VALUE_ERROR):
         is_not_equal_to("a", value=None)
+
+
+def test_sql_expression_complex_exists_auto_name():
+    expression = "EXISTS (SELECT 1 FROM cfg WHERE cfg.val = STATUS)"
+    result = sql_expression(expression)
+    assert isinstance(result, Column)
+
+
+def test_sql_expression_complex_exists_negate_auto_name():
+    expression = "EXISTS (SELECT 1 FROM cfg WHERE cfg.val = STATUS)"
+    result = sql_expression(expression, negate=True)
+    assert isinstance(result, Column)
