@@ -301,3 +301,34 @@ def test_extra_params_variables_fallback_to_defaults(ws, spark, tmp_path):
 
     # 4. Verify that "default" was used
     assert checks[0]["name"] == "check_default"
+
+
+def test_apply_checks_with_missing_variable(ws, spark, tmp_path):
+    dq_engine = DQEngine(workspace_client=ws, spark=spark, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [None, 4, None]], SCHEMA)
+
+    checks_yaml = """
+        - criticality: error
+          check:
+            function: is_not_null
+            arguments:
+              column: "{{ missing_col }}"
+        """
+    checks_file = tmp_path / "checks_missing.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+
+    # Load file, which will warn and leave the placeholder
+    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"different_var": "val"})
+
+    # Assert that the placeholder was left in the metadata (unresolved variable)
+    assert checks[0]["check"]["arguments"]["column"] == "{{ missing_col }}"
+
+    # Check function apply should not raise an exception, but instead skip the check and report it in the results
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    errors = checked.select("_errors").collect()
+    for row in errors:
+        assert row["_errors"] is not None
+        assert len(row["_errors"]) == 1
+        assert "Check evaluation skipped due to invalid check columns" in row["_errors"][0]["message"]
+        assert "{{ missing_col }}" in row["_errors"][0]["message"]
