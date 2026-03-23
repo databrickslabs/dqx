@@ -6046,6 +6046,45 @@ def test_apply_checks_all_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible,
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_all_dataset_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible, ws, spark):
+    """Test applying all dataset geo checks from a yaml file."""
+    file_path = Path(__file__).parent.parent / "resources" / "all_dateset_geo_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks = yaml.safe_load(f)
+
+    dq_engine = DQEngine(ws)
+    status = dq_engine.validate_checks(checks)
+    assert not status.has_errors
+
+    schema = "id: int, geom: string"
+    # Three mutually disjoint polygons (pass case)
+    test_df = spark.createDataFrame(
+        [
+            [1, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"],
+            [2, "POLYGON((2 0, 3 0, 3 1, 2 1, 2 0))"],
+            [3, "POLYGON((0 2, 1 2, 1 3, 0 3, 0 2))"],
+        ],
+        schema,
+    )
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    assert "_errors" in checked.columns
+    error_rows = checked.filter("_errors is not null").collect()
+    assert len(error_rows) == 0
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [1, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))", None, None],
+            [2, "POLYGON((2 0, 3 0, 3 1, 2 1, 2 0))", None, None],
+            [3, "POLYGON((0 2, 1 2, 1 3, 0 3, 0 2))", None, None],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
 @pytest.mark.timeout(3600)
 def test_apply_checks_all_checks_using_classes(ws, spark):
     """Test applying all checks using DQX classes.

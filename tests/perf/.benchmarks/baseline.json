@@ -231,6 +231,41 @@
     },
     {
       "group": null,
+      "name": "test_benchmark_are_polygons_mutually_disjoint",
+      "fullname": "tests/perf/test_apply_checks.py::test_benchmark_are_polygons_mutually_disjoint",
+      "params": null,
+      "param": null,
+      "extra_info": {},
+      "options": {
+        "disable_gc": false,
+        "timer": "perf_counter",
+        "min_rounds": 5,
+        "max_time": 1.0,
+        "min_time": 0.000005,
+        "warmup": false
+      },
+      "stats": {
+        "min": 0.4611826249747537,
+        "max": 0.6492638750059996,
+        "mean": 0.5430284417932854,
+        "stddev": 0.06838463623534577,
+        "rounds": 5,
+        "median": 0.5308321249904111,
+        "iqr": 0.07069087501440663,
+        "q1": 0.5061592189886142,
+        "q3": 0.5768500940030208,
+        "iqr_outliers": 0,
+        "stddev_outliers": 2,
+        "outliers": "2;0",
+        "ld15iqr": 0.4611826249747537,
+        "hd15iqr": 0.6492638750059996,
+        "ops": 1.8415241689691644,
+        "total": 2.7151422089664266,
+        "iterations": 1
+      }
+    },
+    {
+      "group": null,
       "name": "test_benchmark_compare_datasets",
       "fullname": "tests/perf/test_apply_checks.py::test_benchmark_compare_datasets",
       "params": null,
