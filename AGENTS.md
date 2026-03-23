@@ -98,7 +98,6 @@ tests/
 - Provide **production-grade solutions**, not prototype or demo code.
 - Avoid speculative or unrequested changes.
 - Align with the project's coding conventions and testing standards above.
-- **Don't disable linting issues — fix the code.** Do not add `# pylint: disable`, `# type: ignore`, `# noqa`, or per-file ignores to silence warnings. Address the underlying issue instead.
 
 ## Critical Rules
 
