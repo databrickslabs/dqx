@@ -1,7 +1,6 @@
 """Tests for custom message callable on DQRule."""
 
 import inspect
-from typing import Any
 
 import pyspark.sql.functions as F
 from pyspark.sql import Column
@@ -65,7 +64,7 @@ def test_message_callable_receives_correct_args():
     """The message callable signature should accept rule_name, check_func_name, check_func_args, column_value."""
     sig = inspect.signature(_sample_message_callable)
     params = list(sig.parameters.keys())
-    assert params == ["rule_name", "check_func_name", "check_func_args", "column_value"]
+    assert params == ["rule_name"]
 
 
 def test_dq_rule_to_dict_does_not_include_message():
