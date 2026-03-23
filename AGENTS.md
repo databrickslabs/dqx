@@ -10,6 +10,8 @@ make test           # Unit tests
 make integration    # Integration tests (needs Databricks workspace)
 make e2e            # End-to-end tests
 make coverage       # Coverage report
+make docs-install   # Install docs dependencies (yarn)
+make docs-build     # Build docs (pydoc-markdown + Docusaurus)
 make help           # All available targets
 
 .venv/bin/pytest tests/unit/test_build_rules.py -v          # single file
@@ -32,6 +34,7 @@ src/databricks/labs/dqx/
   ├── engine.py            # DQEngine / DQEngineCore — primary public API
   ├── base.py              # DQEngineBase, DQEngineCoreBase (abstract)
   ├── rule.py              # DQRule (abstract), DQRowRule, DQDatasetRule, DQForEachColRule, Criticality
+  ├── rule_fingerprint.py  # Rule fingerprinting (compute_rule_fingerprint, compute_rule_set_fingerprint_by_metadata)
   ├── check_funcs.py       # Built-in checks: null, range, regex, referential, aggregate…
   ├── manager.py           # DQRuleManager — build/manage rule collections
   ├── config.py            # WorkspaceConfig, RunConfig, AnomalyParams, LLMModelConfig, ExtraParams
@@ -39,11 +42,12 @@ src/databricks/labs/dqx/
   ├── checks_serializer.py / checks_resolver.py / checks_validator.py / checks_formats.py
   ├── config_serializer.py # ConfigSerializer — use instead of dataclasses.asdict()
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
-  ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError - use instead of built-in Python exceptions
+  ├── errors.py            # MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions
   ├── telemetry.py         # telemetry_logger, log_telemetry, log_dataframe_telemetry
   ├── utils.py             # shared helpers (column name resolution, SQL safety checks, etc.)
   ├── executor.py / io.py / table_manager.py / workflows_runner.py
   ├── metrics_listener.py / metrics_observer.py / reporting_columns.py
+  ├── profiling_utils.py   # Profiling utilities (stats, column metadata helpers)
   ├── profiler/            # Data profiling, rule generation, DLT pipeline generation
   ├── anomaly/             # ML row-level anomaly detection (MLflow, ensemble, drift, explainability)
   ├── llm/                 # LLM-based rule generation via DSPy (DQLLMEngine)
@@ -51,7 +55,7 @@ src/databricks/labs/dqx/
   ├── geo/                 # Geospatial check functions
   ├── datacontract/        # Data contract rule generation
   ├── schema/              # DQ result and info schemas
-  ├── installer/           # Workspace install/uninstall, workflow & dashboard installer
+  ├── installer/           # Workspace install/uninstall, workflow, dashboard, warehouse installer
   ├── quality_checker/     # E2E workflow runner
   ├── contexts/            # workspace_context, workflow_context, cli_context
   └── dashboards/          # Lakeview dashboard support
@@ -133,9 +137,9 @@ Fix the code instead of adding `# pylint: disable`, `# type: ignore`, `# noqa`, 
 
 ---
 
-## Security Guidelines
+## Security Requirements
 
-Ensure no security gaps are introduced when adding or modifying code, e.g.
+**Mandatory:** Agents must comply with the following security requirements. These are non-negotiable; any added or modified code must not introduce security gaps. Violations must be rejected or remediated before merge.
 - **SQL injection**: User-provided or templated SQL must be validated with `is_sql_query_safe()` from `utils.py` before execution. Raise `UnsafeSqlQueryError` when the query is unsafe. Do not embed user input directly into SQL strings; use parameterized queries or validated template substitution (e.g., `re.escape` for keys).
 - **Sensitive content**: Do not include in the repository, history, issues, PRs, workflows, or CI logs: PII, customer identifiers, internal URLs, internal system names, architecture details, secrets, keys, or tokens. Use structured logging with redaction. Before release, commit history must be reviewed and remediated or rewritten if needed.
 - **Untrusted input**: When parsing JSON, YAML, or other formats from external sources, handle parse failures gracefully and avoid exposing raw error details that could leak internal structure.
