@@ -42,7 +42,7 @@ src/databricks/labs/dqx/
   ├── checks_serializer.py / checks_resolver.py / checks_validator.py / checks_formats.py
   ├── config_serializer.py # ConfigSerializer — use instead of dataclasses.asdict()
   ├── cli.py               # Databricks Labs CLI commands (@dqx.command)
-  ├── errors.py            # MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions
+  ├── errors.py            # For example: MissingParameterError, InvalidParameterError, UnsafeSqlQueryError — use instead of built-in exceptions
   ├── telemetry.py         # telemetry_logger, log_telemetry, log_dataframe_telemetry
   ├── utils.py             # shared helpers (column name resolution, SQL safety checks, etc.)
   ├── executor.py / io.py / table_manager.py / workflows_runner.py
