@@ -9,7 +9,7 @@ class DspyOptimizerConfig:
     """Configuration for DSPy optimizer."""
 
     max_bootstrapped_demos: int = 2
-    max_labeled_demos: int = 5
+    max_labeled_demos: int = 6
     teacher_settings: dict = field(default_factory=dict)
 
 
