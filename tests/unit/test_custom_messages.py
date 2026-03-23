@@ -10,12 +10,8 @@ from databricks.labs.dqx.check_funcs import is_not_null, is_not_null_and_not_emp
 from databricks.labs.dqx.rule import DQRowRule, DQForEachColRule
 
 
-def _sample_message_callable(
-    rule_name: str,
-    check_func_name: str,  # pylint: disable=unused-argument
-    check_func_args: dict[str, Any],  # pylint: disable=unused-argument
-    column_value: Column,  # pylint: disable=unused-argument
-) -> Column:
+def _sample_message_callable(rule_name: str) -> Column:
+    """Custom message function that returns a string-valued column."""
     return F.lit(f"Custom: {rule_name}")
 
 
