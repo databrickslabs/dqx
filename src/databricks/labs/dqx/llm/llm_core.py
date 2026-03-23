@@ -102,7 +102,7 @@ class DspyRuleSignature(dspy.Signature):
             "Criticality can be error or warn. "
             "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
-            "When using sql_query check, reference the input DataFrame as {{ input_view }} (use double curly braces). "
+            "When using sql_query, set input_placeholder in arguments (default input_view). In the query, use double curly braces around that value, e.g. input_placeholder=orders yields FROM {{ orders }}. The placeholder name in {{ }} must match the input_placeholder argument value. "
             "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
             "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
         )
@@ -228,7 +228,7 @@ class DspyRuleUsingDataStatsSignature(dspy.Signature):
             "Criticality can be error or warn. "
             "Filter may be used to apply the rule to the relevant records only. "
             "Check function name and doc to select the appropriate check function. "
-            "When using sql_query check, reference the input DataFrame as {{ input_view }} (use double curly braces). "
+            "When using sql_query, set input_placeholder in arguments (default input_view). In the query, use double curly braces around that value, e.g. input_placeholder=orders yields FROM {{ orders }}. The placeholder name in {{ }} must match the input_placeholder argument value. "
             "Format: [{\"criticality\":\"error\",\"check\":{\"function\":\"name\",\"arguments\":{\"column\":\"col\"}},\"filter\":\"expression\"}] "
             "Example: [{\"criticality\":\"error\",\"check\":{\"function\":\"is_not_null\",\"arguments\":{\"column\":\"customer_id\"}},\"filter\":\"customer_name is not null\"}]"
         )
