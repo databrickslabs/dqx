@@ -6,7 +6,6 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from collections.abc import Callable, Generator
 from typing import Any
 from fnmatch import fnmatch
 from pathlib import Path
@@ -33,8 +32,11 @@ logger = logging.getLogger(__name__)
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
 COLUMN_PATTERN = re.compile(r"Column<'(.*?)(?: AS (\w+))?'>$", re.DOTALL)
 INVALID_COLUMN_NAME_PATTERN = re.compile(r"[\s,;{}\(\)\n\t=]+")
-_UNRESOLVED_PLACEHOLDER_PATTERN = re.compile(r"\{\{.*?\}\}")
-_SCALAR_VARIABLE_TYPES = (str, int, float, bool, Decimal)
+_UNRESOLVED_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]*\}\}")
+_SCALAR_VARIABLE_TYPES = (str, int, float, bool, Decimal, datetime.date, datetime.datetime, datetime.time)
+
+VariableValue = str | int | float | bool | Decimal | datetime.date | datetime.datetime | datetime.time
+"""Supported scalar types for variable substitution values."""
 
 
 def get_column_name_or_alias(
@@ -544,36 +546,41 @@ def missing_required_packages(packages: list[str]) -> bool:
     return not all(find_spec(spec) for spec in packages)
 
 
-def _literal_replacer(val: str) -> Callable[[re.Match], str]:
-    """Return a ``re.sub`` replacer that always returns *val* literally."""
-
-    def replacer(_: re.Match) -> str:
-        return val
-
-    return replacer
-
-
 def _replace_template(text: str, variables: dict[str, str]) -> str:
-    """Replace ``{{ key }}`` placeholders in *text* with values from *variables*.
+    """Replace **{{ key }}** placeholders in *text* with values from *variables*.
 
-    Tolerates whitespace inside braces (e.g. ``{{ key }}``, ``{{key}}``).
-    Uses a lambda replacement to avoid backslash interpretation in values.
+    Uses a single-pass regex substitution.
+    Tolerates whitespace inside braces (e.g. **{{ key }}**, **{{key}}**).
+    Logs a warning if any unresolved **{{ ... }}** placeholders remain after substitution.
 
     Args:
-        text: Input string potentially containing ``{{ key }}`` placeholders.
+        text: Input string potentially containing **{{ key }}** placeholders.
         variables: Pre-stringified mapping of placeholder names to values.
 
     Returns:
         String with all matching placeholders replaced.
     """
-    for key, val in variables.items():
-        pattern = r"\{\{\s*" + re.escape(key) + r"\s*\}\}"
-        text = re.sub(pattern, _literal_replacer(val), text)
-    return text
+    if not variables:
+        if _UNRESOLVED_PLACEHOLDER_PATTERN.search(text):
+            logger.warning("Unresolved placeholder found: '%s'", text)  # pylint: disable=logging-too-many-args
+        return text
+
+    def _resolve(match_obj: re.Match[str]) -> str:
+        key = match_obj.group(0).strip("{} \t")
+        if key in variables:
+            return variables[key]
+        unresolved.append(key)
+        return match_obj.group(0)
+
+    unresolved: list[str] = []
+    output = _UNRESOLVED_PLACEHOLDER_PATTERN.sub(_resolve, text)
+    if unresolved:
+        logger.warning("Unresolved placeholders found: %s", unresolved)  # pylint: disable=logging-too-many-args
+    return output
 
 
-def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
-    """Recursively replace ``{{ key }}`` placeholders in all string values within *obj*.
+def _substitute_variables(obj: object, variables: dict[str, str]) -> object:
+    """Recursively replace **{{ key }}** placeholders in all string values within *obj*.
 
     Traverses dicts, lists, and strings. Non-string/non-collection values are
     returned unchanged. Dict keys are not substituted.
@@ -594,36 +601,41 @@ def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
     return obj
 
 
-def _validate_variable_types(variables: dict[str, Any]) -> None:
+def _validate_variable_types(variables: dict[str, VariableValue]) -> None:
     """Raise :class:`InvalidParameterError` if any variable value is not a supported scalar type."""
     for key, val in variables.items():
         if not isinstance(val, _SCALAR_VARIABLE_TYPES):
             raise InvalidParameterError(
                 f"Variable '{key}' has unsupported type '{type(val).__name__}'. "
-                f"Only scalar types are supported: str, int, float, bool, Decimal."
+                f"Only scalar types are supported: str, int, float, bool, Decimal, "
+                f"datetime.date, datetime.datetime, datetime.time."
             )
 
 
-def apply_variables(checks: list[dict], variables: dict[str, Any] | None) -> list[dict]:
-    """Apply variable substitution to check definitions.
+def resolve_variables(checks: list[dict], variables: dict[str, VariableValue] | None) -> list[dict]:
+    """Resolve variable substitution in check definitions.
 
-    Replaces ``{{ key }}`` placeholders in all string values of *checks* with the
+    Replaces **{{ key }}** placeholders in all string values of *checks* with the
     corresponding values from *variables*. The original *checks* list is never mutated.
 
-    Variable values must be scalar types (``str``, ``int``, ``float``, ``bool``,
-    ``Decimal``). Non-string scalars are converted via ``str()`` — for example,
-    ``{"threshold": 10}`` becomes ``"10"`` in the substituted string. Collection
-    types (``list``, ``dict``, ``set``, etc.) are rejected with
-    :class:`~databricks.labs.dqx.errors.InvalidParameterError` because their
-    ``str()`` representation is rarely meaningful in SQL or column expressions.
+    Variable values must be scalar types (**str**, **int**, **float**, **bool**,
+    **Decimal**, **datetime.date**, **datetime.datetime**, **datetime.time**).
+    Non-string scalars are converted via **str()** — for example, **{"threshold": 10}** becomes **"10"** in
+    the substituted string. Collection types (**list**, **dict**, **set**, etc.) are
+    rejected with :class:`~databricks.labs.dqx.errors.InvalidParameterError` because
+    their **str()** representation is rarely meaningful in SQL or column expressions.
 
-    Logs a warning for any ``{{ ... }}`` placeholders that remain unresolved after
+    Logs a warning for any **{{ ... }}** placeholders that remain unresolved after
     substitution (e.g. misspelled variable names).
+
+    **Security note:** variable values substituted into **sql_expression** checks are
+    not sanitized and are passed directly to **F.expr()**. Callers must ensure that
+    variable values come from trusted sources to prevent SQL injection.
 
     Args:
         checks: List of check definition dictionaries (metadata format).
         variables: Mapping of placeholder names to scalar replacement values.
-            If ``None`` or empty the checks are returned unchanged.
+            If **None** or empty the checks are returned unchanged.
 
     Returns:
         A new list of check dicts with placeholders resolved, or the original list
@@ -637,37 +649,7 @@ def apply_variables(checks: list[dict], variables: dict[str, Any] | None) -> lis
 
     _validate_variable_types(variables)
     str_variables = {k: str(v) for k, v in variables.items()}
-    resolved: list[dict] = _substitute_variables(checks, str_variables)
-
-    # Warn about any remaining unresolved placeholders
-    for check_def in resolved:
-        for value in _iter_strings(check_def):
-            if _UNRESOLVED_PLACEHOLDER_PATTERN.search(value):
-                logger.warning(f"Unresolved placeholder found after variable substitution: '{value}'")
-
-    return resolved
-
-
-def _iter_strings(obj: Any) -> Generator[str, None, None]:
-    """Yield all string values found recursively in *obj*.
-
-    Traverses dicts (values only) and lists. Non-string leaf values are skipped.
-    Used to scan resolved check definitions for unresolved ``{{ ... }}`` placeholders.
-
-    Args:
-        obj: A string, dict, list, or other value to traverse.
-
-    Yields:
-        Every string value found in the nested structure.
-    """
-    if isinstance(obj, str):
-        yield obj
-    elif isinstance(obj, dict):
-        for value in obj.values():
-            yield from _iter_strings(value)
-    elif isinstance(obj, list):
-        for item in obj:
-            yield from _iter_strings(item)
+    return _substitute_variables(checks, str_variables)  # type: ignore[return-value]
 
 
 def get_file_extension(file_path: str | os.PathLike) -> str:

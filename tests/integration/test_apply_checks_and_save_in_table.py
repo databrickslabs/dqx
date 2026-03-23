@@ -11,9 +11,8 @@ from databricks.labs.dqx.config import (
     WorkspaceFileChecksStorageConfig,
     TableChecksStorageConfig,
 )
-from databricks.labs.dqx.engine import DQEngine
+from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.errors import InvalidConfigError
-from databricks.labs.dqx.utils import apply_variables
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from tests.integration.conftest import (
     EXTRA_PARAMS,
@@ -2258,7 +2257,7 @@ def test_apply_checks_by_metadata_and_save_in_table_loads_checks_from_table(ws, 
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_and_save_in_table_with_variables(ws, spark, make_schema, make_random):
+def test_apply_checks_by_metadata_and_save_in_table_with_variables(ws, spark, make_schema, make_random, tmp_path):
     catalog_name = TEST_CATALOG
     schema = make_schema(catalog_name=catalog_name)
     input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
@@ -2268,14 +2267,17 @@ def test_apply_checks_by_metadata_and_save_in_table_with_variables(ws, spark, ma
     test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
     test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
 
-    checks = [
-        {
-            "name": "{{ col }}_is_null",
-            "criticality": "{{ crit }}",
-            "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}},
-        },
-    ]
-    checks = apply_variables(checks, {"col": "a", "crit": "error"})
+    checks_yaml = """
+        - name: "{{ col }}_is_null"
+          criticality: "{{ crit }}"
+          check:
+            function: is_not_null
+            arguments:
+              column: "{{ col }}"
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"col": "a", "crit": "error"})
 
     engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
     engine.apply_checks_by_metadata_and_save_in_table(

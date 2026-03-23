@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import create_autospec
 
 import pytest
@@ -8,7 +9,7 @@ from databricks.labs.dqx.checks_storage import (
     ChecksStorageHandler,
     VolumeFileChecksStorageHandler,
 )
-from databricks.labs.dqx.config import FileChecksStorageConfig, VolumeFileChecksStorageConfig
+from databricks.labs.dqx.config import FileChecksStorageConfig, VolumeFileChecksStorageConfig, ExtraParams
 from databricks.labs.dqx.engine import DQEngine, DQEngineCore
 from databricks.labs.dqx.errors import InvalidCheckError, CheckDownloadError, InvalidConfigError
 from databricks.sdk import WorkspaceClient
@@ -182,3 +183,68 @@ def test_load_checks_variables_none():
     checks = engine.load_checks(config, variables=None)
 
     assert checks == raw_checks
+
+
+def test_load_checks_from_local_file_unresolved_placeholder(tmp_path, caplog):
+    content = """- criticality: error
+  check:
+    function: is_not_null
+    arguments:
+      column: "{{ col }}"
+"""
+    file_path = tmp_path / "checks.yml"
+    file_path.write_text(content, encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING):
+        checks = DQEngineCore.load_checks_from_local_file(str(file_path), variables={"other": "value"})
+
+    assert checks[0]["check"]["arguments"]["column"] == "{{ col }}"
+    assert any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+
+def test_load_checks_with_engine_default_variables():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [
+        {"criticality": "{{ crit }}", "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}}}
+    ]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+    mock_handler.load.return_value = raw_checks
+
+    extra_params = ExtraParams(variables={"crit": "error", "col": "default_col"})
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory, extra_params=extra_params)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    checks = engine.load_checks(config)
+
+    assert checks == [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}},
+    ]
+
+
+def test_load_checks_per_call_overrides_engine_defaults():
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    raw_checks = [
+        {"criticality": "{{ crit }}", "check": {"function": "is_not_null", "arguments": {"column": "{{ col }}"}}}
+    ]
+
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+    mock_handler.load.return_value = raw_checks
+
+    extra_params = ExtraParams(variables={"crit": "warn", "col": "default_col"})
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory, extra_params=extra_params)
+    config = FileChecksStorageConfig(location="checks.yml")
+
+    checks = engine.load_checks(config, variables={"crit": "error"})
+
+    assert checks == [
+        {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}},
+    ]

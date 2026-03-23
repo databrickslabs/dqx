@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from enum import Enum
 from typing import Any
@@ -21,7 +21,7 @@ from databricks.labs.dqx.utils import (
     safe_strip_file_from_path,
     missing_required_packages,
     get_file_extension,
-    apply_variables,
+    resolve_variables,
 )
 from databricks.labs.dqx.rule import normalize_bound_args
 from databricks.labs.dqx.errors import InvalidParameterError, InvalidConfigError
@@ -524,7 +524,7 @@ def test_get_file_extension_with_path_object():
     assert get_file_extension(file_path) == ".json"
 
 
-def test_apply_variables_replaces_all_string_fields():
+def test_resolve_variables_replaces_all_string_fields():
     checks = [
         {
             "criticality": "error",
@@ -537,28 +537,28 @@ def test_apply_variables_replaces_all_string_fields():
         }
     ]
     variables = {"col": "email", "filter_col": "status"}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
 
     assert result[0]["name"] == "email_not_null"
     assert result[0]["check"]["arguments"]["column"] == "email"
     assert result[0]["filter"] == "status = 'active'"
 
 
-def test_apply_variables_none_variables():
+def test_resolve_variables_none_variables():
     checks = [{"name": "{{ x }}"}]
-    result = apply_variables(checks, None)
+    result = resolve_variables(checks, None)
     assert result is checks  # same object, no copy
     assert result[0]["name"] == "{{ x }}"
 
 
-def test_apply_variables_empty_variables():
+def test_resolve_variables_empty_variables():
     checks = [{"name": "{{ x }}"}]
-    result = apply_variables(checks, {})
+    result = resolve_variables(checks, {})
     assert result is checks  # same object, no copy
     assert result[0]["name"] == "{{ x }}"
 
 
-def test_apply_variables_non_string_values_converted():
+def test_resolve_variables_non_string_values_converted():
     checks = [
         {
             "check": {
@@ -568,11 +568,11 @@ def test_apply_variables_non_string_values_converted():
         }
     ]
     variables = {"col": "age", "threshold": 18}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
     assert result[0]["check"]["arguments"]["expression"] == "age > 18"
 
 
-def test_apply_variables_does_not_mutate_original():
+def test_resolve_variables_does_not_mutate_original():
     checks = [
         {
             "name": "{{ col }}_check",
@@ -583,14 +583,14 @@ def test_apply_variables_does_not_mutate_original():
         }
     ]
     variables = {"col": "name"}
-    apply_variables(checks, variables)
+    resolve_variables(checks, variables)
 
     # Original must be unchanged
     assert checks[0]["name"] == "{{ col }}_check"
     assert checks[0]["check"]["arguments"]["column"] == "{{ col }}"
 
 
-def test_apply_variables_nested_dicts():
+def test_resolve_variables_nested_dicts():
     checks = [
         {
             "check": {
@@ -603,41 +603,41 @@ def test_apply_variables_nested_dicts():
         }
     ]
     variables = {"col": "id", "team": "data-eng"}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
 
     assert result[0]["check"]["arguments"]["expression"] == "id IS NOT NULL"
     assert result[0]["user_metadata"]["owner"] == "data-eng"
 
 
-def test_apply_variables_partial_replacement():
+def test_resolve_variables_partial_replacement():
     checks = [{"name": "{{ p1 }}_greater_than_{{ threshold }}"}]
     variables = {"p1": "column1", "threshold": 10}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
     assert result[0]["name"] == "column1_greater_than_10"
 
 
-def test_apply_variables_unresolved_placeholder_warning(caplog):
+def test_resolve_variables_unresolved_placeholder_warning(caplog):
     checks = [{"name": "{{ resolved }}_{{ unresolved }}"}]
     variables = {"resolved": "ok"}
     with caplog.at_level(logging.WARNING, logger="databricks.labs.dqx.utils"):
-        result = apply_variables(checks, variables)
+        result = resolve_variables(checks, variables)
 
     assert result[0]["name"] == "ok_{{ unresolved }}"
     assert any("Unresolved placeholder" in msg for msg in caplog.messages)
 
 
-def test_apply_variables_whitespace_tolerance():
+def test_resolve_variables_whitespace_tolerance():
     checks = [
         {"a": "{{x}}", "b": "{{ x }}", "c": "{{  x  }}"},
     ]
     variables = {"x": "val"}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
     assert result[0]["a"] == "val"
     assert result[0]["b"] == "val"
     assert result[0]["c"] == "val"
 
 
-def test_apply_variables_non_string_dict_values_untouched():
+def test_resolve_variables_non_string_dict_values_untouched():
     checks = [
         {
             "criticality": "error",
@@ -648,13 +648,13 @@ def test_apply_variables_non_string_dict_values_untouched():
         }
     ]
     variables = {"col": "status"}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
     assert result[0]["check"]["arguments"]["column"] == "status"
     assert result[0]["check"]["arguments"]["allowed"] == [1, 2, 3]
     assert result[0]["criticality"] == "error"
 
 
-def test_apply_variables_for_each_column():
+def test_resolve_variables_for_each_column():
     checks = [
         {
             "criticality": "error",
@@ -665,11 +665,11 @@ def test_apply_variables_for_each_column():
         }
     ]
     variables = {"col1": "first_name", "col2": "last_name"}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
     assert result[0]["check"]["for_each_column"] == ["first_name", "last_name"]
 
 
-def test_apply_variables_multiple_checks():
+def test_resolve_variables_multiple_checks():
     checks = [
         {
             "name": "{{ col }}_not_null",
@@ -681,78 +681,168 @@ def test_apply_variables_multiple_checks():
         },
     ]
     variables = {"col": "a", "col2": "b"}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
     assert result[0]["name"] == "a_not_null"
     assert result[0]["check"]["arguments"]["column"] == "a"
     assert result[1]["name"] == "b_not_empty"
     assert result[1]["check"]["arguments"]["column"] == "b"
 
 
-def test_apply_variables_empty_checks_list():
-    result = apply_variables([], {"col": "x"})
+def test_resolve_variables_empty_checks_list():
+    result = resolve_variables([], {"col": "x"})
     assert result == []
 
 
-def test_apply_variables_empty_string_value():
+def test_resolve_variables_empty_string_value():
     checks = [{"name": "prefix_{{ col }}_suffix"}]
-    result = apply_variables(checks, {"col": ""})
+    result = resolve_variables(checks, {"col": ""})
     assert result[0]["name"] == "prefix__suffix"
 
 
-def test_apply_variables_value_contains_braces():
+def test_resolve_variables_value_contains_braces():
     """Variable value itself contains {{ }} — should NOT be re-expanded."""
     checks = [{"expr": "{{ col }}"}]
-    result = apply_variables(checks, {"col": "{{ other }}"})
+    result = resolve_variables(checks, {"col": "{{ other }}"})
     assert result[0]["expr"] == "{{ other }}"
 
 
-def test_apply_variables_key_with_regex_special_chars():
+def test_resolve_variables_key_with_regex_special_chars():
     """Variable keys with regex metacharacters must be escaped properly."""
     checks = [{"name": "{{ col.name }}_check", "filter": "{{ col+1 }} > 0"}]
     variables = {"col.name": "revenue", "col+1": "amount"}
-    result = apply_variables(checks, variables)
+    result = resolve_variables(checks, variables)
     assert result[0]["name"] == "revenue_check"
     assert result[0]["filter"] == "amount > 0"
 
 
-def test_apply_variables_same_placeholder_repeated_in_string():
+def test_resolve_variables_same_placeholder_repeated_in_string():
     checks = [{"expr": "{{ x }} + {{ x }}"}]
-    result = apply_variables(checks, {"x": "col"})
+    result = resolve_variables(checks, {"x": "col"})
     assert result[0]["expr"] == "col + col"
 
 
-def test_apply_variables_deeply_nested():
+def test_resolve_variables_deeply_nested():
     checks = [{"a": {"b": {"c": {"d": "{{ v }}"}}}}]
-    result = apply_variables(checks, {"v": "deep"})
+    result = resolve_variables(checks, {"v": "deep"})
     assert result[0]["a"]["b"]["c"]["d"] == "deep"
 
 
-def test_apply_variables_value_with_backslash():
+def test_resolve_variables_value_with_backslash():
     """Backslashes in values should be treated literally (no regex group refs)."""
     checks = [{"path": "{{ p }}"}]
-    result = apply_variables(checks, {"p": r"C:\Users\test"})
+    result = resolve_variables(checks, {"p": r"C:\Users\test"})
     assert result[0]["path"] == r"C:\Users\test"
 
 
-def test_apply_variables_rejects_list_value():
+def test_resolve_variables_rejects_list_value():
     checks = [{"check": {"arguments": {"column": "{{ col }}"}}}]
     with pytest.raises(InvalidParameterError, match="unsupported type 'list'"):
-        apply_variables(checks, {"col": ["a", "b"]})
+        resolve_variables(checks, {"col": ["a", "b"]})
 
 
-def test_apply_variables_rejects_dict_value():
+def test_resolve_variables_rejects_dict_value():
     checks = [{"check": {"arguments": {"column": "{{ col }}"}}}]
     with pytest.raises(InvalidParameterError, match="unsupported type 'dict'"):
-        apply_variables(checks, {"col": {"nested": "value"}})
+        resolve_variables(checks, {"col": {"nested": "value"}})
 
 
-def test_apply_variables_accepts_decimal_value():
+def test_resolve_variables_accepts_decimal_value():
     checks = [{"expr": "col > {{ threshold }}"}]
-    result = apply_variables(checks, {"threshold": Decimal("3.14")})
+    result = resolve_variables(checks, {"threshold": Decimal("3.14")})
     assert result[0]["expr"] == "col > 3.14"
 
 
-def test_apply_variables_accepts_bool_value():
+def test_resolve_variables_accepts_bool_value():
     checks = [{"expr": "{{ flag }}"}]
-    result = apply_variables(checks, {"flag": True})
+    result = resolve_variables(checks, {"flag": True})
     assert result[0]["expr"] == "True"
+
+
+def test_resolve_variables_false_bool():
+    checks = [{"expr": "{{ flag }}"}]
+    result = resolve_variables(checks, {"flag": False})
+    assert result[0]["expr"] == "False"
+
+
+def test_resolve_variables_rejects_none_value():
+    checks = [{"col": "{{ col }}"}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'NoneType'"):
+        resolve_variables(checks, {"col": None})
+
+
+def test_resolve_variables_rejects_set_value():
+    checks = [{"col": "{{ col }}"}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'set'"):
+        resolve_variables(checks, {"col": {1, 2}})
+
+
+def test_resolve_variables_rejects_tuple_value():
+    checks = [{"col": "{{ col }}"}]
+    with pytest.raises(InvalidParameterError, match="unsupported type 'tuple'"):
+        resolve_variables(checks, {"col": (1, 2)})
+
+
+def test_resolve_variables_dict_keys_not_substituted():
+    checks = [{"{{ col }}": "value", "other": "{{ col }}"}]
+    result = resolve_variables(checks, {"col": "replaced"})
+    assert "{{ col }}" in result[0]
+    assert result[0]["{{ col }}"] == "value"
+    assert result[0]["other"] == "replaced"
+
+
+def test_resolve_variables_nan():
+    checks = [{"expr": "{{ val }}"}]
+    result = resolve_variables(checks, {"val": float("nan")})
+    assert result[0]["expr"] == "nan"
+
+
+def test_resolve_variables_inf():
+    checks = [{"expr": "{{ val }}"}]
+    result = resolve_variables(checks, {"val": float("inf")})
+    assert result[0]["expr"] == "inf"
+
+
+def test_resolve_variables_multiple_unresolved_warns(caplog):
+    checks = [{"expr": "{{ a }} and {{ b }}"}]
+    with caplog.at_level(logging.WARNING):
+        result = resolve_variables(checks, {"a": "x"})
+    assert result[0]["expr"] == "x and {{ b }}"
+    assert any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+
+def test_resolve_variables_none_vars_no_warning(caplog):
+    checks = [{"col": "{{ x }}"}]
+    with caplog.at_level(logging.WARNING):
+        result = resolve_variables(checks, None)
+    assert result[0]["col"] == "{{ x }}"
+    assert not any("Unresolved placeholder" in msg for msg in caplog.messages)
+
+
+def test_resolve_variables_whitespace_in_key():
+    checks = [{"col": "{{col_a}}"}]
+    result = resolve_variables(checks, {"col_a": "replaced"})
+    assert result[0]["col"] == "replaced"
+
+
+def test_resolve_variables_unicode_values():
+    checks = [{"col": "{{ col }}"}]
+    result = resolve_variables(checks, {"col": "prénom"})
+    assert result[0]["col"] == "prénom"
+
+
+def test_resolve_variables_accepts_date():
+    checks = [{"expr": "date > '{{ d }}'"}]
+    result = resolve_variables(checks, {"d": date(2024, 1, 15)})
+    assert result[0]["expr"] == "date > '2024-01-15'"
+
+
+def test_resolve_variables_accepts_datetime():
+    checks = [{"expr": "ts > '{{ ts }}'"}]
+    result = resolve_variables(checks, {"ts": datetime(2024, 1, 15, 10, 30)})
+    assert "2024-01-15" in result[0]["expr"]
+
+
+def test_resolve_variables_accepts_time():
+    checks = [{"expr": "t > '{{ t }}'"}]
+    result = resolve_variables(checks, {"t": time(10, 30)})
+    assert result[0]["expr"] == "t > '10:30:00'"

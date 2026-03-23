@@ -4,6 +4,7 @@ from functools import cached_property
 
 from databricks.labs.dqx.checks_serializer import SerializerFactory
 from databricks.labs.dqx.errors import InvalidConfigError, InvalidParameterError
+from databricks.labs.dqx.utils import VariableValue
 
 __all__ = [
     "WorkspaceConfig",
@@ -215,6 +216,7 @@ class ExtraParams:
     user_metadata: dict[str, str] = field(default_factory=dict)
     run_time_overwrite: str | None = None
     run_id_overwrite: str | None = None
+    variables: dict[str, VariableValue] = field(default_factory=dict)
 
 
 @dataclass

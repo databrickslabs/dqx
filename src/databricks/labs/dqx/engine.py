@@ -51,7 +51,7 @@ from databricks.labs.dqx.io import read_input_data, save_dataframe_as_table, get
 from databricks.labs.dqx.telemetry import telemetry_logger, log_telemetry, log_dataframe_telemetry
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.errors import InvalidCheckError, InvalidConfigError, InvalidParameterError
-from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, apply_variables
+from databricks.labs.dqx.utils import list_tables, safe_strip_file_from_path, resolve_variables, VariableValue
 from databricks.labs.dqx.io import is_one_time_trigger
 
 logger = logging.getLogger(__name__)
@@ -337,22 +337,25 @@ class DQEngineCore(DQEngineCoreBase):
         )
 
     @staticmethod
-    def load_checks_from_local_file(filepath: str, variables: dict[str, Any] | None = None) -> list[dict]:
+    def load_checks_from_local_file(filepath: str, variables: dict[str, VariableValue] | None = None) -> list[dict]:
         """
         Load DQ rules (checks) from a local JSON or YAML file.
 
         The returned checks can be used as input to *apply_checks_by_metadata*.
 
+        **Security note:** variable values substituted into **sql_expression** checks are
+        not sanitized. Callers must ensure that variable values come from trusted sources.
+
         Args:
             filepath: Path to a file containing checks definitions.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
+            variables: Optional mapping of placeholder names to replacement values. Replaces **{{ key }}**
                 placeholders in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules.
         """
         checks = FileChecksStorageHandler().load(FileChecksStorageConfig(location=filepath))
-        return apply_variables(checks=checks, variables=variables)
+        return resolve_variables(checks=checks, variables=variables)
 
     @staticmethod
     def save_checks_in_local_file(checks: list[dict], filepath: str):
@@ -573,8 +576,9 @@ class DQEngine(DQEngineBase):
     ):
         super().__init__(workspace_client)
 
+        self._extra_params = extra_params or ExtraParams()
         self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-        self._engine = engine or DQEngineCore(workspace_client, spark, extra_params, observer)
+        self._engine = engine or DQEngineCore(workspace_client, spark, self._extra_params, observer)
         self._config_serializer = config_serializer or ConfigSerializer(workspace_client)
         self._checks_handler_factory: BaseChecksStorageHandlerFactory = (
             checks_handler_factory or ChecksStorageHandlerFactory(self.ws, self.spark)
@@ -1174,7 +1178,9 @@ class DQEngine(DQEngineBase):
             )
 
     @telemetry_logger("engine", "load_checks")
-    def load_checks(self, config: BaseChecksStorageConfig, variables: dict[str, Any] | None = None) -> list[dict]:
+    def load_checks(
+        self, config: BaseChecksStorageConfig, variables: dict[str, VariableValue] | None = None
+    ) -> list[dict]:
         """Load DQ rules (checks) from the storage backend described by *config*.
 
         This method delegates to a storage handler selected by the factory
@@ -1189,9 +1195,15 @@ class DQEngine(DQEngineBase):
         - *InstallationChecksStorageConfig* (installation directory);
         - *VolumeFileChecksStorageConfig* (Unity Catalog volume file);
 
+        Per-call *variables* are merged with engine-level defaults from
+        *ExtraParams.variables* (per-call values take precedence on conflict).
+
+        **Security note:** variable values substituted into **sql_expression** checks are
+        not sanitized. Callers must ensure that variable values come from trusted sources.
+
         Args:
             config: Configuration object describing the storage backend.
-            variables: Optional mapping of placeholder names to replacement values. Replaces ``{{ key }}``
+            variables: Optional mapping of placeholder names to replacement values. Replaces **{{ key }}**
                 placeholders in all string values of the check definitions before returning.
 
         Returns:
@@ -1202,7 +1214,22 @@ class DQEngine(DQEngineBase):
         """
         handler = self._checks_handler_factory.create(config)
         checks = handler.load(config)
-        return apply_variables(checks=checks, variables=variables)
+        merged = self._merge_variables(variables)
+        return resolve_variables(checks=checks, variables=merged)
+
+    def _merge_variables(self, per_call: dict[str, VariableValue] | None) -> dict[str, VariableValue] | None:
+        """Merge engine-level default variables with per-call overrides.
+
+        Per-call values take precedence over engine-level defaults.
+        """
+        defaults = self._extra_params.variables
+        if not defaults and not per_call:
+            return None
+        if not defaults:
+            return per_call
+        if not per_call:
+            return defaults
+        return {**defaults, **per_call}
 
     @telemetry_logger("engine", "save_checks")
     def save_checks(self, checks: list[dict], config: BaseChecksStorageConfig) -> None:
