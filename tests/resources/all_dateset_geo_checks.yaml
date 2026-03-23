@@ -1,0 +1,6 @@
+# are_polygons_mutually_disjoint check (geo, requires runtime 17.1+)
+- criticality: error
+  check:
+    function: are_polygons_mutually_disjoint
+    arguments:
+      column: geom

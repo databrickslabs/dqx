@@ -79,6 +79,13 @@ def all_dataset_checks():
 
 
 @pytest.fixture
+def all_dataset_geo_checks():
+    file_path = Path(__file__).parent.parent / "resources" / "all_dateset_geo_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+@pytest.fixture
 def table_name(make_schema, make_random):
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
