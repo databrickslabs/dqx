@@ -286,7 +286,8 @@ def _custom_message(
     column_value: Column,
 ) -> Column:
     """Custom message that includes the rule name and check function name."""
-    return F.concat(F.lit(f"Rule '{rule_name}' ({check_func_name}) failed for value: "), column_value.cast("string"))
+    value_str = F.coalesce(column_value.cast("string"), F.lit("null"))
+    return F.concat(F.lit(f"Rule '{rule_name}' ({check_func_name}) failed for value: "), value_str)
 
 
 def _static_custom_message(

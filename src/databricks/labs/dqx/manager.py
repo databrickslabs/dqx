@@ -189,7 +189,7 @@ class DQRuleManager:
         args, kwargs = self.check.prepare_check_func_args_and_kwargs()
         bound = check_func_signature.bind_partial(*args, **kwargs)
         check_func_args = dict(bound.arguments)
-        column_value = F.coalesce(F.col(self.check.column), F.lit("null")) if self.check.column else F.lit("null")
+        column_value = F.col(self.check.column).cast("string") if self.check.column else F.lit(None)
 
         default_message_func_args = {
             "rule_name": self.check.name,
