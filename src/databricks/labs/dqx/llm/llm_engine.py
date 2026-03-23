@@ -29,7 +29,6 @@ class DQLLMEngine:
         self,
         model_config: LLMModelConfig,
         spark: SparkSession | None = None,
-        table_manager: TableManager | None = None,
         custom_check_functions: dict[str, Callable] | None = None,
     ):
         """
@@ -37,17 +36,10 @@ class DQLLMEngine:
 
         Args:
             model_config: Configuration for the LLM model.
-            spark: Optional Spark session. Used to create a TableManager when table_manager is not provided.
-                   If neither spark nor table_manager is given, a new Spark session is created.
-            table_manager: Optional TableManager instance. When provided, spark is not used and no
-                           Spark session is created — enabling Spark-free operation via SDKTableDataProvider.
+            spark: Optional Spark session. If None, a new session is created.
             custom_check_functions: Optional custom check functions to include.
         """
-        if table_manager is not None:
-            _table_manager = table_manager
-        else:
-            self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
-            _table_manager = TableManager(spark=self.spark)
+        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
         self._available_check_functions = json.dumps(get_required_check_functions_definitions(custom_check_functions))
 
@@ -55,7 +47,7 @@ class DQLLMEngine:
         # We do NOT call configure() - each request uses context() with the current token
         self._configurator = LLMModelConfigurator(model_config)
         self._llm_rule_compiler = LLMRuleCompiler(custom_check_functions=custom_check_functions)
-        self._llm_pk_detector = LLMPrimaryKeyDetector(table_manager=_table_manager)
+        self._llm_pk_detector = LLMPrimaryKeyDetector(table_manager=TableManager(spark=self.spark))
 
     def detect_business_rules_with_llm(
         self, user_input: str = "", schema_info: str = "", summary_stats: dict[str, Any] | None = None

@@ -8,7 +8,7 @@ from typing import ClassVar
 
 import yaml
 from databricks.sdk import WorkspaceClient
-from databricks_langchain import ChatDatabricks
+from databricks_langchain import ChatDatabricks  # type: ignore[import-untyped]
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from databricks.labs.dqx.llm.llm_utils import get_required_check_functions_definitions
@@ -93,10 +93,7 @@ class AiRulesService:
 
     def _get_schema_info(self, table_fqn: str) -> str:
         table_info = self._obo_ws.tables.get(table_fqn)
-        columns = [
-            {"name": col.name or "", "type": col.type_text or ""}
-            for col in (table_info.columns or [])
-        ]
+        columns = [{"name": col.name or "", "type": col.type_text or ""} for col in (table_info.columns or [])]
         return json.dumps({"columns": columns})
 
     def _parse_response(self, content: str) -> list[dict]:
@@ -125,13 +122,9 @@ class AiRulesService:
         Returns:
             List of DQX rule dicts.
         """
-        system = SystemMessage(
-            content=_SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions())
-        )
+        system = SystemMessage(content=_SYSTEM_TEMPLATE.format(available_functions=self._get_available_functions()))
         schema_info = self._get_schema_info(table_fqn) if table_fqn else ""
-        human = HumanMessage(
-            content=f"schema_info: {schema_info}\nbusiness_description: {user_input}"
-        )
+        human = HumanMessage(content=f"schema_info: {schema_info}\nbusiness_description: {user_input}")
         messages: list[BaseMessage] = [system, *self._get_few_shot_messages(), human]
 
         llm = ChatDatabricks(endpoint=conf.llm_endpoint, workspace_client=self._sp_ws)

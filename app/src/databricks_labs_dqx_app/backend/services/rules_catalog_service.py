@@ -128,7 +128,7 @@ class RulesCatalogService:
         rows = self._query(sql)
         if not rows:
             return None
-        return self._row_to_entry(rows[0])
+        return self.row_to_entry(rows[0])
 
     def list_rules(self, status: str | None = None) -> list[RuleCatalogEntry]:
         """List all rule sets, optionally filtered by status."""
@@ -143,7 +143,7 @@ class RulesCatalogService:
         sql += " ORDER BY updated_at DESC"
 
         rows = self._query(sql)
-        return [self._row_to_entry(row) for row in rows]
+        return [self.row_to_entry(row) for row in rows]
 
     def delete(self, table_fqn: str, user_email: str) -> None:
         """Delete the rule set for a table."""
@@ -213,7 +213,7 @@ class RulesCatalogService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _row_to_entry(self, row: list[str]) -> RuleCatalogEntry:
+    def row_to_entry(self, row: list[str]) -> RuleCatalogEntry:
         """Convert a query result row to a RuleCatalogEntry."""
         checks = json.loads(row[1]) if row[1] else []
         return RuleCatalogEntry(

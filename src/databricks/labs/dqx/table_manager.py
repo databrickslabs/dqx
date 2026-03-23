@@ -1,14 +1,8 @@
-from __future__ import annotations
-
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Protocol
-
+from typing import Any, Protocol
 from pandas import DataFrame  # type: ignore
-from databricks.sdk import WorkspaceClient
-
-if TYPE_CHECKING:
-    from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +111,7 @@ class SparkTableDataProvider:
         Args:
             spark: SparkSession instance. If None, gets or creates a session.
         """
-        from pyspark.sql import SparkSession as _SparkSession  # pylint: disable=import-outside-toplevel
-
-        self.spark = _SparkSession.builder.getOrCreate() if spark is None else spark
+        self.spark = SparkSession.builder.getOrCreate() if spark is None else spark
 
     @staticmethod
     def _parse_fk_source_columns(fk_def: str) -> list[str]:
@@ -291,187 +283,6 @@ class SparkTableDataProvider:
             Exception: If query execution fails.
         """
         return self.spark.sql(query)
-
-
-class SDKTableDataProvider:
-    """
-    Databricks SDK implementation of TableDataProvider using Unity Catalog REST APIs.
-
-    Uses WorkspaceClient.tables.get() for metadata operations (no Spark required) and
-    StatementExecutionAPI for SQL execution. Caches TableInfo per table to avoid
-    redundant REST calls when multiple methods are invoked for the same table.
-
-    Attributes:
-        workspace_client: Databricks WorkspaceClient instance.
-        warehouse_id: Optional SQL warehouse ID required only for execute_query.
-    """
-
-    def __init__(self, workspace_client: WorkspaceClient, warehouse_id: str | None = None) -> None:
-        self._ws = workspace_client
-        self._warehouse_id = warehouse_id
-        self._table_info_cache: dict[str, Any] = {}
-
-    def _get_table_info(self, table: str) -> Any:
-        """Fetch and cache TableInfo to avoid redundant REST calls."""
-        if table not in self._table_info_cache:
-            logger.info(f"SDKTableDataProvider: fetching table info for '{table}' via Unity Catalog REST API")
-            self._table_info_cache[table] = self._ws.tables.get(table, include_delta_metadata=True)
-            logger.info(f"SDKTableDataProvider: cached table info for '{table}'")
-        else:
-            logger.info(f"SDKTableDataProvider: using cached table info for '{table}'")
-        return self._table_info_cache[table]
-
-    def get_table_columns(self, table: str) -> DataFrame:
-        """
-        Retrieve table column definitions using TablesAPI.
-
-        Args:
-            table: Fully qualified table name.
-
-        Returns:
-            Pandas DataFrame with columns: col_name, data_type, comment.
-        """
-        table_info = self._get_table_info(table)
-        rows = [
-            {
-                "col_name": col.name or "",
-                "data_type": col.type_text or "",
-                "comment": col.comment or "",
-            }
-            for col in (table_info.columns or [])
-        ]
-        logger.info(f"SDKTableDataProvider: retrieved {len(rows)} columns for '{table}'")
-        return DataFrame(rows, columns=["col_name", "data_type", "comment"])
-
-    def get_existing_primary_key(self, table: str) -> str | None:
-        """
-        Retrieve existing primary key from table constraints.
-
-        Args:
-            table: Fully qualified table name.
-
-        Returns:
-            Primary key constraint string if exists, None otherwise.
-        """
-        table_info = self._get_table_info(table)
-        for constraint in table_info.table_constraints or []:
-            pk = constraint.primary_key_constraint  # pylint: disable=invalid-name
-            if pk:
-                cols = pk.child_columns or []
-                result = f"PRIMARY KEY ({', '.join(cols)})"
-                logger.info(f"SDKTableDataProvider: found primary key for '{table}': {result}")
-                return result
-        logger.info(f"SDKTableDataProvider: no primary key found for '{table}'")
-        return None
-
-    def get_table_properties(self, table: str) -> DataFrame:
-        """
-        Retrieve table properties using TablesAPI.
-
-        Args:
-            table: Fully qualified table name.
-
-        Returns:
-            Pandas DataFrame with columns: key, value.
-        """
-        table_info = self._get_table_info(table)
-        props = table_info.properties or {}
-        rows = [{"key": k, "value": v} for k, v in props.items()]
-        logger.info(f"SDKTableDataProvider: retrieved {len(rows)} properties for '{table}'")
-        return DataFrame(rows, columns=["key", "value"])
-
-    def get_table_foreign_keys(self, table: str) -> dict[str, dict[str, Any]]:
-        """
-        Retrieve foreign key constraints from table constraints.
-
-        Args:
-            table: Fully qualified table name.
-
-        Returns:
-            Dictionary mapping foreign key names to their metadata.
-        """
-        table_info = self._get_table_info(table)
-        foreign_keys: dict[str, dict[str, Any]] = {}
-        for constraint in table_info.table_constraints or []:
-            fk = constraint.foreign_key_constraint  # pylint: disable=invalid-name
-            if fk:
-                name = fk.name or f"fk_{len(foreign_keys)}"
-                foreign_keys[name] = {
-                    "columns": [c.upper() for c in (fk.child_columns or [])],
-                    "referenced_table": (fk.parent_table or "").upper(),
-                    "referenced_columns": [c.upper() for c in (fk.parent_columns or [])],
-                }
-        logger.info(f"SDKTableDataProvider: found {len(foreign_keys)} foreign key(s) for '{table}'")
-        return foreign_keys
-
-    def get_column_statistics(self, table: str) -> DataFrame:
-        """
-        Retrieve column statistics — delegates to get_table_columns for SDK provider.
-
-        Args:
-            table: Fully qualified table name.
-
-        Returns:
-            Pandas DataFrame with column information.
-        """
-        logger.info(f"SDKTableDataProvider: get_column_statistics delegating to get_table_columns for '{table}'")
-        return self.get_table_columns(table)
-
-    def get_table_column_names(self, table: str) -> list[str]:
-        """
-        Get list of column names for a table.
-
-        Args:
-            table: Fully qualified table name.
-
-        Returns:
-            List of column names.
-        """
-        table_info = self._get_table_info(table)
-        names = [col.name for col in (table_info.columns or []) if col.name]
-        logger.info(f"SDKTableDataProvider: retrieved {len(names)} column names for '{table}'")
-        return names
-
-    def execute_query(self, query: str) -> DataFrame:
-        """
-        Execute a SQL query using StatementExecutionAPI.
-
-        Args:
-            query: SQL query string.
-
-        Returns:
-            Pandas DataFrame containing query results.
-
-        Raises:
-            ValueError: If warehouse_id is not set or query execution fails.
-        """
-        if not self._warehouse_id:
-            raise ValueError("warehouse_id is required for execute_query with SDKTableDataProvider")
-
-        from databricks.sdk.service.sql import StatementState  # type: ignore  # pylint: disable=import-outside-toplevel
-
-        logger.info(f"SDKTableDataProvider: executing query via warehouse '{self._warehouse_id}': {query}")
-        response = self._ws.statement_execution.execute_statement(
-            warehouse_id=self._warehouse_id,
-            statement=query,
-            wait_timeout="50s",
-        )
-
-        if not response.status or response.status.state != StatementState.SUCCEEDED:
-            error = response.status.error if response.status else None
-            msg = error.message if error else "Unknown error"
-            raise ValueError(f"Query execution failed: {msg}")
-
-        manifest = response.manifest
-        result = response.result
-        columns = [col.name for col in ((manifest.schema.columns if manifest and manifest.schema else None) or [])]
-
-        if not result or not result.data_array:
-            logger.info("SDKTableDataProvider: query returned no rows")
-            return DataFrame(columns=columns)
-
-        logger.info(f"SDKTableDataProvider: query returned {len(result.data_array)} rows")
-        return DataFrame(result.data_array, columns=columns)
 
 
 class TableDefinitionBuilder:

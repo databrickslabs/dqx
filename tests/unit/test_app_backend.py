@@ -9,7 +9,7 @@ from unittest.mock import create_autospec
 import pytest
 from databricks_labs_dqx_app.backend.cache import CacheFactory
 from databricks_labs_dqx_app.backend.config import AppConfig
-from databricks_labs_dqx_app.backend.dependencies import get_generator, get_obo_ws
+from databricks_labs_dqx_app.backend.dependencies import get_obo_ws
 from databricks_labs_dqx_app.backend.logger import CustomFormatter, get_logger, setup_logger
 from databricks_labs_dqx_app.backend.migrations import MIGRATIONS, MigrationRunner
 from databricks_labs_dqx_app.backend.models import (
@@ -725,20 +725,20 @@ class TestRulesCatalogServiceRowConversion:
     def test_row_to_entry_handles_missing_checks(self, svc):
         """Should return empty checks list when checks column is empty."""
         row = ["c.s.t", "", "1", "draft", None, None, None, None]
-        entry = svc._row_to_entry(row)  # pylint: disable=protected-access
+        entry = svc.row_to_entry(row)
         assert entry.checks == []
         assert entry.version == 1
 
     def test_row_to_entry_handles_missing_version(self, svc):
         """Should default to version 1 when version column is empty."""
         row = ["c.s.t", "[]", "", "draft", None, None, None, None]
-        entry = svc._row_to_entry(row)  # pylint: disable=protected-access
+        entry = svc.row_to_entry(row)
         assert entry.version == 1
 
     def test_row_to_entry_handles_missing_status(self, svc):
         """Should default to 'draft' when status column is None."""
         row = ["c.s.t", "[]", "1", None, None, None, None, None]
-        entry = svc._row_to_entry(row)  # pylint: disable=protected-access
+        entry = svc.row_to_entry(row)
         assert entry.status == "draft"
 
 
@@ -884,25 +884,6 @@ class TestRulesRoutesWrite:
         result = reject_rules(table_fqn="c.s.t", svc=mock_svc, obo_ws=mock_obo_ws, body=None)
         assert result.status == "rejected"
         mock_svc.set_status.assert_called_once_with("c.s.t", "rejected", "alice@example.com", None)
-
-
-# ============================================================================
-# Tests for dependency functions
-# ============================================================================
-
-
-class TestGetGenerator:
-    """Unit tests for get_generator dependency."""
-
-    def test_raises_when_no_token(self):
-        mock_ws = create_autospec(WorkspaceClient)
-
-        async def _() -> None:
-            with pytest.raises(HTTPException) as exc:
-                await get_generator(obo_ws=mock_ws, token=None)
-            assert exc.value.status_code == 401
-
-        asyncio.run(_())
 
 
 # ============================================================================
