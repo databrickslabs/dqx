@@ -7234,6 +7234,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 user_metadata,
                 get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null_or_empty", "error"),
                 get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                None,
             ],
             [
                 "a_is_null",
@@ -7246,6 +7247,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 user_metadata,
                 get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null", "error"),
                 get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                None,
             ],
         ],
         dq_result_schema.elementType,
@@ -7264,6 +7266,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 user_metadata,
                 get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null_or_empty", "warn"),
                 get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                None,
             ],
             [
                 "a_is_null",
@@ -7276,6 +7279,7 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 user_metadata,
                 get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null", "warn"),
                 get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                None,
             ],
         ],
         dq_result_schema.elementType,
@@ -9643,6 +9647,7 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
         "user_metadata": {},
+        "skipped": True,
     }
 
     expected_skip_permissive = {
@@ -9654,6 +9659,7 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
         "user_metadata": {},
+        "skipped": True,
     }
 
     expected = spark.createDataFrame(
@@ -9790,6 +9796,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_null",
@@ -9800,6 +9807,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_sql_expression",
@@ -9811,6 +9819,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_unique",
@@ -9822,6 +9831,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "invalid_col_sql_expression",
@@ -9832,6 +9842,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                 ],
                 [
@@ -9844,6 +9855,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                        "skipped": True,
                     },
                 ],
             ]
@@ -9968,6 +9980,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_null",
@@ -9978,6 +9991,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_sql_expression",
@@ -9989,6 +10003,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_unique",
@@ -10000,6 +10015,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "invalid_col_sql_expression",
@@ -10010,6 +10026,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                 ],
                 [
@@ -10022,6 +10039,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                        "skipped": True,
                     },
                 ],
             ]

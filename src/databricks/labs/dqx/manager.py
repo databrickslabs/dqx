@@ -49,6 +49,7 @@ class DQRuleManager:
     run_time_overwrite: datetime | None
     run_id: str
     ref_dfs: dict[str, DataFrame] | None = None
+    suppress_skipped: bool = False
     rule_fingerprint: str | None = None
     rule_set_fingerprint: str | None = None
 
@@ -127,8 +128,11 @@ class DQRuleManager:
         """
         invalid_cols_message = self._get_invalid_cols_message()
         if invalid_cols_message:
-            # overwrite message but preserve all other fields in the result
-            result_struct = self._build_result_struct(condition=F.lit(invalid_cols_message))
+            if self.suppress_skipped:
+                # return null condition so this check produces no entry in _errors/_warnings
+                return DQCheckResult(condition=F.lit(None).cast(dq_result_item_schema), check_df=self.df)
+            # overwrite message but preserve all other fields in the result, marking the check as skipped
+            result_struct = self._build_result_struct(condition=F.lit(invalid_cols_message), skipped=True)
             return DQCheckResult(condition=result_struct, check_df=self.df)
 
         executor = DQRuleExecutorFactory.create(self.check)
@@ -142,7 +146,7 @@ class DQRuleManager:
             condition=check_result, check_df=raw_result.check_df, info_column_name=raw_result.info_column_name
         )
 
-    def _build_result_struct(self, condition: Column) -> Column:
+    def _build_result_struct(self, condition: Column, skipped: bool = False) -> Column:
         # Use current_timestamp() to make sure streaming gets per-micro-batch timestamps,
         # or use literal run time if explicitly overridden
         run_time_expr = F.current_timestamp() if self.run_time_overwrite is None else F.lit(self.run_time_overwrite)
@@ -160,6 +164,7 @@ class DQRuleManager:
             ),
             F.lit(self.rule_fingerprint).alias("rule_fingerprint"),
             F.lit(self.rule_set_fingerprint).alias("rule_set_fingerprint"),
+            F.lit(skipped or None).alias("skipped"),
         ).cast(dq_result_item_schema)
 
     def _get_invalid_cols_message(self) -> str:
