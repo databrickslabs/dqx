@@ -9647,6 +9647,7 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
         "user_metadata": {},
+        "skipped": True,
     }
 
     expected_skip_permissive = {
@@ -9658,6 +9659,7 @@ def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
         "run_time": RUN_TIME,
         "run_id": RUN_ID,
         "user_metadata": {},
+        "skipped": True,
     }
 
     expected = spark.createDataFrame(
