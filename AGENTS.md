@@ -138,11 +138,15 @@ Fix the code instead of adding `# pylint: disable`, `# type: ignore`, `# noqa`, 
 
 Ensure no security gaps are introduced when adding or modifying code, e.g.
 - **SQL injection**: User-provided or templated SQL must be validated with `is_sql_query_safe()` from `utils.py` before execution. Raise `UnsafeSqlQueryError` when the query is unsafe. Do not embed user input directly into SQL strings; use parameterized queries or validated template substitution (e.g., `re.escape` for keys).
-- **Sensitive data**: Do not log credentials, tokens, PII, or other secrets. Use structured logging with redaction where needed.
+- **Sensitive content**: Do not include in the repository, history, issues, PRs, workflows, or CI logs: PII, customer identifiers, internal URLs, internal system names, architecture details, secrets, keys, or tokens. Use structured logging with redaction. Before release, commit history must be reviewed and remediated or rewritten if needed.
 - **Untrusted input**: When parsing JSON, YAML, or other formats from external sources, handle parse failures gracefully and avoid exposing raw error details that could leak internal structure.
 - **Path traversal**: Validate file and workspace paths; avoid constructing paths from unsanitized user input.
-- **Dependencies**: Do not add dependencies with known vulnerabilities. Prefer well-maintained, widely used packages.
-- **GitHub workflows**: Avoid `pull_request_target` unless strictly necessary. It runs in the base branch context with access to secrets, so untrusted PR code from forks can exfiltrate them. Prefer `pull_request` for CI. If `pull_request_target` is required (e.g., for label-based workflows), never checkout or run PR-provided code when secrets are available; use `workflow_run` or `workflow_dispatch` for sensitive operations instead.
+- **Regex (ReDoS)**: Be aware of Regular Expression Denial of Service—complex patterns with nested quantifiers, alternation, or backtracking (e.g. `(a+)+`, `(a|a)*`) can cause catastrophic backtracking on adversarial input and hang the process. Validate or limit regex inputs from users; prefer simple patterns or use libraries with ReDoS-safe engines when handling untrusted strings.
+- **Dependencies**: Do not add dependencies with known vulnerabilities. Prefer well-maintained, widely used packages. Ensure dependencies and their licenses are compliant for intended distribution (e.g., external or OSS).
+- **Documentation and metadata**: Ensure metadata and documentation are safe for public distribution. Documentation must clearly describe intended use, supported environments, and any restrictions.
+- **Open source hygiene**: Do not remove LICENSE, NOTICE, or attribution files. Maintainer contact should be identifiable.
+- **Security controls**: Do not disable or bypass secret scanning, software composition analysis, or vulnerability scanning. Releases process should use CI-built tagged artifacts.
+- **GitHub workflows**: Avoid `pull_request_target` unless strictly necessary. The danger arises when this trigger (which bypasses GitHub's approval gate and runs in the base-branch context with secrets) is *combined with* checkout of untrusted fork code (e.g. `refs/pull/.../merge`) — that PR code can then exfiltrate secrets. Prefer `pull_request` for CI. If `pull_request_target` is required (e.g., for label-based workflows), never checkout or run PR-provided code when secrets are available; use `workflow_run` or `workflow_dispatch` for sensitive operations instead.
 
 ---
 
