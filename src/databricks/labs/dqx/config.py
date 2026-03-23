@@ -215,6 +215,7 @@ class ExtraParams:
     user_metadata: dict[str, str] = field(default_factory=dict)
     run_time_overwrite: str | None = None
     run_id_overwrite: str | None = None
+    suppress_skipped: bool = False
 
 
 @dataclass
