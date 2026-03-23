@@ -169,5 +169,5 @@ checked_df = dq_engine.apply_checks(df, checks)
 # filter to only skipped entries in _errors
 from pyspark.sql import functions as F
 
-skipped = checked_df.select(F.explode("_errors").alias("e")).filter("e.skipped = true")
+skipped = checked_df.select(F.explode("_errors").alias("e")).filter(F.col("e.skipped") == True)
 ```
