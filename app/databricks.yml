@@ -1,5 +1,6 @@
 bundle:
   name: "databricks-labs-dqx-app"
+  
 
 variables:
   catalog_name:
@@ -8,6 +9,12 @@ variables:
   schema_name:
     description: "Name of the schema for DQX app storage"
     default: "dqx_app"
+  tmp_schema_name:
+    description: "Name of the schema for temporary views and intermediate processing"
+    default: "dqx_app_tmp"
+  dqx_service_principal_application_id:
+    description: "Application ID of the service principal for DQX tasks"
+    default: "00000000-0000-0000-0000-000000000000"
   app_config:
     type: complex
     description: "Configuration for dqx app"
@@ -26,6 +33,8 @@ variables:
           value: "${var.schema_name}"
         - name: "DQX_JOB_ID"
           value_from: "dqx-task-runner-job"
+        - name: "DQX_TMP_SCHEMA"
+          value: "${var.tmp_schema_name}"
 
 sync:
   include:
@@ -62,6 +71,7 @@ resources:
         - catalog.catalogs:read
         - catalog.schemas:read
         - catalog.tables:read
+        - serving.serving-endpoints
 
 
       resources:
@@ -96,11 +106,31 @@ resources:
       grants:
         - principal: ${resources.apps.databricks-labs-dqx-app.id}
           privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+
+    dqx_tmp_schema:
+      catalog_name: ${var.catalog_name}
+      name: ${var.tmp_schema_name}
+      grants:
+        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: "account users"
+          privileges:
+            - USE_SCHEMA
             - CREATE_TABLE
 
   jobs:
     dqx_task_runner:
       name: "dqx-app-task-runner"
+      run_as:
+        service_principal_name: ${var.dqx_service_principal_application_id}
       tags:
         app: "dqx"
       tasks:

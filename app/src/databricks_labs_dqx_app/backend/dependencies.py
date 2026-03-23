@@ -10,9 +10,6 @@ if TYPE_CHECKING:
     from .common.connectors.sql import SQLConnector
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
-from databricks.labs.dqx.config import LLMModelConfig
-from databricks.labs.dqx.profiler.generator import DQGenerator
-from databricks.labs.dqx.table_manager import SDKTableDataProvider, TableManager
 from databricks.sdk import WorkspaceClient
 from fastapi import Depends, Header, HTTPException, status
 
@@ -22,6 +19,7 @@ from .config import AppConfig, conf, get_sql_warehouse_path
 from .logger import logger
 from .migrations import MigrationRunner
 from .runtime import rt
+from .services.ai_rules_service import AiRulesService
 from .services.app_settings_service import AppSettingsService
 from .services.discovery import DiscoveryService
 from .services.job_service import JobService
@@ -113,38 +111,16 @@ async def get_app_settings_service(
     )
 
 
-async def get_generator(
+async def get_ai_rules_service(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
-    token: Annotated[str | None, Header(alias="X-Forwarded-Access-Token")] = None,
-) -> DQGenerator:
-    """Create a DQGenerator instance with OBO authentication (no Spark).
+    sp_ws: Annotated[WorkspaceClient, Depends(get_sp_ws)],
+) -> AiRulesService:
+    """Create an AiRulesService with split authentication.
 
-    Uses the workspace client for table metadata via SDK REST API.
-    The LLM model is configured to use the OBO token for authentication.
+    Schema lookups use the OBO client (user's UC permissions).
+    LLM calls use the SP client (service principal has the serving scope OBO tokens lack).
     """
-    if not token:
-        logger.warning("OBO token is not provided in the header X-Forwarded-Access-Token")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required. Please refresh the page or contact your administrator.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    host = os.environ.get("DATABRICKS_HOST", "")
-    if host:  # DBX App
-        llm_model_config = LLMModelConfig(
-            api_key=token,  # Configure LLM to use OBO token for authentication
-        )
-    else:  # Local development
-        logger.info("DATABRICKS_HOST not set, using default configuration for LLM")
-        llm_model_config = LLMModelConfig()
-
-    table_manager = TableManager(repository=SDKTableDataProvider(obo_ws))
-    return DQGenerator(
-        workspace_client=obo_ws,
-        llm_model_config=llm_model_config,
-        table_manager=table_manager,
-    )
+    return AiRulesService(obo_ws=obo_ws, sp_ws=sp_ws)
 
 
 async def get_rules_catalog_service(
@@ -179,7 +155,7 @@ async def get_view_service(
         ws=obo_ws,
         warehouse_id=_get_warehouse_id(),
         catalog=conf.catalog,
-        schema=conf.schema_name,
+        schema=conf.tmp_schema_name,
     )
 
 
@@ -240,7 +216,7 @@ __all__ = [
     "get_check_validator",
     "get_migration_runner",
     "get_app_settings_service",
-    "get_generator",
+    "get_ai_rules_service",
     "get_rules_catalog_service",
     "get_discovery_service",
     "get_view_service",
