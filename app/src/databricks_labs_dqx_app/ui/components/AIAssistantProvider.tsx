@@ -9,7 +9,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { AICheckGenerator } from "@/components/AICheckGenerator";
-import { aiAssistedChecksGeneration, type GenerateChecksOut } from "@/lib/api";
+import { aiAssistedChecksGeneration } from "@/lib/api";
 
 export interface RunContext {
   runName: string;

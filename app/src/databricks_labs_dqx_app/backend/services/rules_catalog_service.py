@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
+from typing import Any
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import Disposition, Format, StatementState
@@ -16,7 +17,7 @@ class RuleCatalogEntry:
     def __init__(
         self,
         table_fqn: str,
-        checks: list[dict],
+        checks: list[dict[str, Any]],
         version: int = 1,
         status: str = "draft",
         created_by: str | None = None,
@@ -79,7 +80,7 @@ class RulesCatalogService:
         self._execute(sql)
         logger.info(f"Ensured rules catalog table exists: {self._table}")
 
-    def save(self, table_fqn: str, checks: list[dict], user_email: str) -> RuleCatalogEntry:
+    def save(self, table_fqn: str, checks: list[dict[str, Any]], user_email: str) -> RuleCatalogEntry:
         """Upsert a rule set for a table. Inserts if new, increments version if existing."""
         checks_json = json.dumps(checks).replace("'", "\\'")
         now = datetime.utcnow().isoformat()

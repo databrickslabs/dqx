@@ -4,7 +4,7 @@ import json
 import logging
 from importlib.resources import files
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import yaml
 from databricks.sdk import WorkspaceClient
@@ -71,7 +71,7 @@ class AiRulesService:
     @classmethod
     def _build_few_shot_messages(cls) -> list[BaseMessage]:
         resource = Path(str(files("databricks.labs.dqx.llm.resources") / "training_examples.yml"))
-        examples: list[dict] = yaml.safe_load(resource.read_text(encoding="utf-8"))
+        examples: list[dict[str, Any]] = yaml.safe_load(resource.read_text(encoding="utf-8"))
         messages: list[BaseMessage] = []
         for ex in examples:
             human = HumanMessage(
@@ -96,7 +96,7 @@ class AiRulesService:
         columns = [{"name": col.name or "", "type": col.type_text or ""} for col in (table_info.columns or [])]
         return json.dumps({"columns": columns})
 
-    def _parse_response(self, content: str) -> list[dict]:
+    def _parse_response(self, content: str) -> list[dict[str, Any]]:
         try:
             parsed = json.loads(content)
             if isinstance(parsed, dict) and "quality_rules" in parsed:
@@ -112,7 +112,7 @@ class AiRulesService:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate(self, user_input: str, table_fqn: str | None = None) -> list[dict]:
+    def generate(self, user_input: str, table_fqn: str | None = None) -> list[dict[str, Any]]:
         """Generate DQX quality rules from natural language.
 
         Args:

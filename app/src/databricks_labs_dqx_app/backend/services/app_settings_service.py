@@ -53,7 +53,11 @@ class AppSettingsService:
 
         raw = rows[0][0]
         data = json.loads(raw)
-        return Installation._unmarshal_type(data, "dq_app_settings", WorkspaceConfig)
+        result = Installation._unmarshal_type(data, "dq_app_settings", WorkspaceConfig)
+        if not isinstance(result, WorkspaceConfig):
+            logger.warning("Config unmarshal returned unexpected type, using default")
+            return WorkspaceConfig(run_configs=[])
+        return result
 
     def save_config(self, config: WorkspaceConfig) -> WorkspaceConfig:
         """Save the workspace config to the settings table."""

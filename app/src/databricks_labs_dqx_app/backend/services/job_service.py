@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 from databricks.sdk import WorkspaceClient
 from pydantic import BaseModel
@@ -44,7 +45,7 @@ class JobService:
         self,
         task_type: str,
         view_fqn: str,
-        config: dict,
+        config: dict[str, Any],
         run_id: str,
         requesting_user: str,
     ) -> int:

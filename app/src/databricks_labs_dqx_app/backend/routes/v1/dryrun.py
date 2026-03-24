@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import uuid4
 
 from databricks.labs.dqx.checks_validator import ChecksValidationStatus
@@ -36,7 +36,7 @@ def submit_dry_run(
     obo_ws: Annotated[WorkspaceClient, Depends(get_obo_ws)],
     view_svc: Annotated[ViewService, Depends(get_view_service)],
     job_svc: Annotated[JobService, Depends(get_job_service)],
-    validate_checks_fn: Annotated[Callable[[list], ChecksValidationStatus], Depends(get_check_validator)],
+    validate_checks_fn: Annotated[Callable[[list[Any]], ChecksValidationStatus], Depends(get_check_validator)],
 ) -> DryRunSubmitOut:
     """Validate checks, create a temporary view (OBO), and submit a dry-run job (SP)."""
     try:

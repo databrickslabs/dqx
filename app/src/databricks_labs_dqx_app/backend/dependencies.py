@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
     from .common.connectors.sql import SQLConnector
@@ -164,7 +164,7 @@ def get_conf() -> AppConfig:
     return conf
 
 
-def get_check_validator() -> Callable[[list], ChecksValidationStatus]:
+def get_check_validator() -> Callable[[list[Any]], ChecksValidationStatus]:
     """Return DQEngine.validate_checks for injection into route handlers."""
     from databricks.labs.dqx.engine import DQEngine
 

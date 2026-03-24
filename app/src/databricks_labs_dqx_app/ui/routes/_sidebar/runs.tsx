@@ -10,6 +10,7 @@ import {
   useSaveRunConfig,
   useDeleteRunConfig,
   RunConfig,
+  type ConfigOut,
 } from "@/lib/api";
 import { useConfigSuspense } from "@/hooks/use-suspense-queries";
 import selector from "@/lib/selector";
@@ -350,7 +351,7 @@ function RunsSidebarList({
   currentRunName?: string;
   isDeleting?: boolean;
 }) {
-  const { data: configData } = useConfigSuspense(selector());
+  const { data: configData } = useConfigSuspense(selector<ConfigOut>());
 
   const runConfigs = configData.config.run_configs || [];
   const hasRuns = runConfigs.length > 0;
@@ -415,7 +416,7 @@ function RunEditorContainer({
   onAddRun: () => void;
   onDeletingChange: (isDeleting: boolean) => void;
 }) {
-  const { data: configData, refetch } = useConfigSuspense(selector());
+  const { data: configData, refetch } = useConfigSuspense(selector<ConfigOut>());
   const { mutateAsync: saveRun, isPending: isSaving } = useSaveRunConfig();
   const { mutateAsync: deleteRun, isPending: isDeleting } =
     useDeleteRunConfig();

@@ -22,7 +22,7 @@ import functools
 import inspect
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class CacheFactory:
         *,
         ttl: int | None = None,
         reliable: bool = False,
-    ) -> Callable:
+    ) -> Callable[..., Any]:
         """Cache-aside decorator for async functions and methods.
 
         ``key_template`` is a format string resolved against the function's
@@ -128,7 +128,7 @@ class CacheFactory:
             async def _create_obo_ws(token_hash: str, token: str) -> WorkspaceClient: ...
         """
 
-        def decorator(fn: Callable[..., T]) -> Callable[..., T]:
+        def decorator(fn: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
             sig = inspect.signature(fn)
 
             @functools.wraps(fn)
@@ -157,7 +157,7 @@ class CacheFactory:
                         return hit  # type: ignore[return-value]
 
                     logger.debug("Cache MISS %s", cache_key)
-                    result = await fn(*args, **kwargs)  # type: ignore[misc]
+                    result = await fn(*args, **kwargs)
 
                     if result is not None:
                         if reliable:
@@ -165,9 +165,9 @@ class CacheFactory:
                         else:
                             self.set_fire_and_forget(cache_key, result, ttl=ttl)
 
-                return result  # type: ignore[return-value]
+                return result
 
-            return wrapper  # type: ignore[return-value]
+            return wrapper
 
         return decorator
 
@@ -180,7 +180,7 @@ class CacheFactory:
     # -- internal -------------------------------------------------------
 
     @staticmethod
-    def _log_task_error(task: asyncio.Task) -> None:  # type: ignore[type-arg]
+    def _log_task_error(task: asyncio.Task[object]) -> None:
         if task.cancelled():
             return
         exc = task.exception()

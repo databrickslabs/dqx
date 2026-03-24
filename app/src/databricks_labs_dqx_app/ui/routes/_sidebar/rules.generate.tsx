@@ -226,7 +226,7 @@ function GenerateRulesPage() {
         data: { table_fqn: tableFqn, checks },
       });
       try {
-        await submitMutation.mutateAsync({ tableFqn });
+        await submitMutation.mutateAsync({ tableFqn, data: null });
         toast.success("Rules saved and submitted for approval");
       } catch {
         toast.warning(

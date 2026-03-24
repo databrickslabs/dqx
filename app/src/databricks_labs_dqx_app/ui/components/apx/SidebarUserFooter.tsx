@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import selector from "@/lib/selector";
+import { type User, type UserRoleOut } from "@/lib/api";
 import { Settings } from "lucide-react";
 
 function SidebarUserFooterSkeleton() {
@@ -26,11 +27,11 @@ function SidebarUserFooterSkeleton() {
 }
 
 function SidebarUserFooterContent() {
-  const { data: user } = useCurrentUserSuspense(selector());
-  const { data: roleResp } = useCurrentUserRoleSuspense(selector());
+  const { data: user } = useCurrentUserSuspense(selector<User>());
+  const { data: roleResp } = useCurrentUserRoleSuspense(selector<UserRoleOut>());
   const location = useLocation();
 
-  const role = (roleResp as { role?: string })?.role;
+  const role = roleResp?.role;
   const isAdmin = role === "admin";
 
   const firstLetters = useMemo(() => {

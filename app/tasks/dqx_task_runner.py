@@ -18,6 +18,7 @@ import logging
 import sys
 import time
 from datetime import datetime, timezone
+from typing import Any
 
 from databricks.sdk import WorkspaceClient
 from pyspark.sql import SparkSession
@@ -42,7 +43,7 @@ def _run_profile(
     spark: SparkSession,
     ws: WorkspaceClient,
     view_fqn: str,
-    config: dict,
+    config: dict[str, Any],
     result_catalog: str,
     result_schema: str,
     run_id: str,
@@ -109,7 +110,7 @@ def _run_dryrun(
     spark: SparkSession,
     ws: WorkspaceClient,
     view_fqn: str,
-    config: dict,
+    config: dict[str, Any],
     result_catalog: str,
     result_schema: str,
     run_id: str,
@@ -126,14 +127,15 @@ def _run_dryrun(
     df = spark.table(view_fqn).limit(sample_size)
 
     engine = DQEngine(workspace_client=ws, spark=spark)
-    valid_df, invalid_df = engine.apply_checks_by_metadata_and_split(df, checks)
+    result = engine.apply_checks_by_metadata_and_split(df, checks)
+    valid_df, invalid_df = result[0], result[1]
 
     total_rows = df.count()
     valid_rows = valid_df.count()
     invalid_rows = invalid_df.count()
 
     # Aggregate error summary
-    error_summary: list[dict] = []
+    error_summary: list[dict[str, Any]] = []
     if invalid_rows > 0:
         from pyspark.sql import functions as F
 
@@ -142,7 +144,7 @@ def _run_dryrun(
         error_summary = [{"error": str(row["error"]), "count": row["count"]} for row in summary_rows]
 
     # Collect sample invalid rows
-    sample_invalid: list[dict] = []
+    sample_invalid: list[dict[str, Any]] = []
     if invalid_rows > 0:
         sample_rows = invalid_df.limit(10).collect()
         sample_invalid = [row.asDict(recursive=True) for row in sample_rows]
