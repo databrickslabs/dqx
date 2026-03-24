@@ -16,6 +16,8 @@ DQX provides a collection of predefined built-in quality rules (checks). Additio
 All DQX rules are evaluated independently and in parallel. If one rule fails, the others are still processed.
 All rule types, including row-level and dataset-level rules, can be defined and applied simultaneously in a single execution.
 
+When you define checks **declaratively** (YAML, JSON, or list of dicts), check arguments must contain every required parameter of the check function, matching its Python signature (optional parameters may be omitted). If you use `for_each_column`, DQX merges `column` or `columns` into the arguments for each expansion. Use `DQEngine.validate_checks` to catch unknown keys, type mismatches, and missing required parameters before apply. See [Quality checks definition](/docs/guide/quality_checks_definition) for the declarative format and validation section.
+
 You can explore the implementation details of the check functions [here](https://github.com/databrickslabs/dqx/blob/v0.13.0/src/databricks/labs/dqx/check_funcs.py).
 
 ## Row-level checks reference

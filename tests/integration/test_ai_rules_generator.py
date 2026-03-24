@@ -49,6 +49,31 @@ def test_generate_dq_rules_ai_assisted_with_input_table(ws, spark, make_table, m
     assert actual_checks == EXPECTED_CHECKS
 
 
+def test_generate_dq_rules_ai_assisted_with_input_table_and_user_input(ws, spark, make_table, make_schema):
+    schema = make_schema(catalog_name=TEST_CATALOG)
+    input_table = make_table(
+        catalog_name=TEST_CATALOG,
+        schema_name=schema.name,
+        columns=[("id", "int"), ("name", "string")],
+    )
+
+    generator = DQGenerator(ws, spark)
+
+    actual_checks = generator.generate_dq_rules_ai_assisted(
+        user_input="name should not start with 'c'",
+        input_config=InputConfig(location=input_table.full_name),
+    )
+
+    assert len(actual_checks) == 1
+    assert actual_checks[0] == {
+        "check": {
+            "arguments": {"column": "name", "negate": False, "regex": "^[^cC].*"},
+            "function": "regex_match",
+        },
+        "criticality": "error",
+    }, "AI generated check should match profiler workflow example"
+
+
 def test_generate_dq_rules_ai_assisted_with_input_path(ws, spark, make_directory):
     folder = make_directory()
     workspace_file_path = str(folder.absolute()) + "/input_data.parquet"
