@@ -6,6 +6,9 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 from tempfile import TemporaryDirectory
+
+import yaml
+
 from databricks.sdk.service.workspace import ImportFormat
 from databricks.sdk.service.pipelines import NotebookLibrary, PipelinesEnvironment, PipelineLibrary
 from databricks.sdk.service.jobs import NotebookTask, PipelineTask, Task
@@ -434,41 +437,44 @@ def test_run_dqx_row_anomaly_detection_demo(ws, make_notebook, make_schema, make
 
 
 def test_dbt_demo(make_schema, make_random, library_ref, debug_env):
+    """Test the dbt demo project. dbt-databricks only supports token or M2M OAuth auth."""
     catalog = TEST_CATALOG
     schema = make_schema(catalog_name=catalog).name
     project_dir = Path(__file__).parent.parent.parent / "demos" / "dqx_demo_dbt"
 
-    # Create a temporary directory for DBT profiles
+    token = debug_env.get("DATABRICKS_TOKEN")
+    client_id = debug_env.get("TOOLS_CLIENT_ID")
+    client_secret = debug_env.get("TOOLS_DATABRICKS_SECRET")
+    # dbt expects just the hostname, not a full URL
+    host = debug_env.get("DATABRICKS_HOST", "").replace("https://", "").rstrip("/")
+    workspace_id = debug_env.get("TEST_DEFAULT_WAREHOUSE_HTTP_PATH")
+
+    # Build dbt profile: token auth or M2M OAuth
+    profile: dict[str, object] = {
+        "type": "databricks",
+        "host": host,
+        "http_path": workspace_id,
+        "catalog": catalog,
+        "schema": schema,
+        "threads": 1,
+        "connect_timeout": 30,
+    }
+    if client_id and client_secret:
+        profile["auth_type"] = "oauth"
+        profile["client_id"] = client_id
+        profile["client_secret"] = client_secret
+    else:
+        profile["token"] = token
+
+    # Create a temporary directory for dbt profiles
     with TemporaryDirectory() as temp_dir:
         dbt_profiles_dir = Path(temp_dir) / "dbt"
         dbt_profiles_dir.mkdir(parents=True, exist_ok=True)
 
-        client_id = debug_env.get("TOOLS_CLIENT_ID")
-        client_secret = debug_env.get("TOOLS_DATABRICKS_SECRET")
-        token = debug_env.get("DATABRICKS_TOKEN")  # for local execution
-        auth_type = "token"  # for local execution
-
-        if client_id and client_secret:  # for CI execution
-            auth_type = "oauth"
-
-        # Create the profiles.yml file
-        profiles_yml_content = f"""
-        dbt_demo:
-          target: ci
-          outputs:
-            ci:
-              type: databricks
-              host: "{debug_env.get("DATABRICKS_HOST")}"
-              http_path: "{debug_env.get("TEST_DEFAULT_WAREHOUSE_HTTP_PATH")}"
-              catalog: "{catalog}"
-              schema: "{schema}"
-              auth_type: {auth_type}
-              client_id: {client_id}
-              client_secret: {client_secret}
-              token: {token}
-              threads: 1
-              connect_timeout: 30
-        """
+        profiles_yml_content = yaml.dump(
+            {"dbt_demo": {"target": "ci", "outputs": {"ci": profile}}},
+            default_flow_style=False,
+        )
         profiles_yml_path = dbt_profiles_dir / "profiles.yml"
         profiles_yml_path.write_text(profiles_yml_content.strip())
 

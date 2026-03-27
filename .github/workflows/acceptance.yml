@@ -10,9 +10,9 @@ on:
       - main
 
 permissions:
-  id-token: write
+  id-token: write # required for Azure OIDC authentication and Codecov OIDC upload
   contents: read
-  pull-requests: write
+  pull-requests: write # required for acceptance action to post test results as PR comments
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -160,27 +160,16 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.16.5
 
+      # Required for dbt e2e tests
       - name: Install dbt
         run: |
           pip install dbt-core==1.10.9 dbt-databricks==1.10.9
 
+      # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
           databricks --version
-
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
@@ -216,27 +205,16 @@ jobs:
       - name: Install hatch
         run: pip install hatch==1.16.5
 
+      # Required for dbt e2e tests
       - name: Install dbt
         run: |
           pip install dbt-core==1.10.9 dbt-databricks==1.10.9
 
+      # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
           databricks --version
-
-      - name: Azure login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
-        with:
-          client-id: ${{ secrets.ARM_CLIENT_ID }}
-          tenant-id: ${{ secrets.ARM_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Set env vars for Azure CLI auth
-        run: |
-          val=$(az keyvault secret show --id "${{ secrets.VAULT_URI }}/secrets/DATABRICKS-HOST" --query value -o tsv)
-          echo "DATABRICKS_HOST=$val" >> $GITHUB_ENV
-          echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
       - name: Run e2e tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
