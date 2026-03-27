@@ -325,10 +325,12 @@ jobs:
           ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
           DATABRICKS_SERVERLESS_COMPUTE_ID: ${{ env.DATABRICKS_SERVERLESS_COMPUTE_ID }}
 
-  # Performance benchmarks: generate a new baseline, merge it with the existing one (preserving
-  # stable results), compare against it to detect regressions (>25% mean degradation fails),
-  # and open a PR if the baseline changed. The PR commit is unsigned — a maintainer must pull,
-  # sign, and push before merging to satisfy branch protection.
+  # Performance benchmarks:
+  # 1. run tests and generate a new perf baseline
+  # 2. merge it with the existing one
+  # 3. compare against it to detect regressions (>25% mean degradation)
+  # 4. if the baseline changed and new benchmarks are added or removed, open a PR in the repo
+  # 5. PR commit is unsigned — a maintainer must pull, sign, and push before merging
   benchmark:
     permissions:
       id-token: write
