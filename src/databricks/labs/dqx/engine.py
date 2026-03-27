@@ -165,6 +165,10 @@ class DQEngineCore(DQEngineCoreBase):
             ref_dfs,
             rule_set_fingerprint=rule_set_fingerprint,
         )
+
+        if self.observer:
+            self.observer.set_check_names([check.name for check in checks])
+
         observed_result = self._observe_metrics(result_df)
 
         if isinstance(observed_result, tuple):

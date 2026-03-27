@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
 from typing import Any
@@ -6,6 +7,23 @@ from uuid import uuid4
 
 from pyspark.sql import DataFrame, Observation, SparkSession
 import pyspark.sql.functions as F
+
+
+def _sanitize_metric_alias(name: str) -> str:
+    """Sanitize a check name to produce a valid Spark SQL column alias.
+
+    Replaces any non-alphanumeric character (except underscore) with an underscore
+    and collapses consecutive underscores.
+
+    Args:
+        name: The raw check name.
+
+    Returns:
+        A sanitized string safe for use as a Spark SQL alias.
+    """
+    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    sanitized = re.sub(r"_+", "_", sanitized)
+    return sanitized.strip("_")
 
 
 OBSERVATION_TABLE_SCHEMA = (
@@ -70,6 +88,7 @@ class DQMetricsObserver:
 
     _error_column_name: str = "_errors"
     _warning_column_name: str = "_warnings"
+    _check_names: list[str] = field(default_factory=list)
 
     @cached_property
     def id(self) -> str:
@@ -81,13 +100,13 @@ class DQMetricsObserver:
         """
         return self.id_overwrite or str(uuid4())
 
-    @cached_property
+    @property
     def metrics(self) -> list[str]:
         """
         Gets the observer metrics as Spark SQL expressions.
 
         Returns:
-            A list of Spark SQL expressions defining the observer metrics (both default and custom).
+            A list of Spark SQL expressions defining the observer metrics (both default, per-check, and custom).
         """
         default_metrics = [
             "count(1) as input_row_count",
@@ -95,9 +114,42 @@ class DQMetricsObserver:
             f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
             f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
+        default_metrics.extend(self._build_per_check_metrics())
         if self.custom_metrics:
             default_metrics.extend(self.custom_metrics)
         return default_metrics
+
+    def set_check_names(self, check_names: list[str]) -> None:
+        """
+        Sets the check names used to generate per-check summary metrics.
+
+        Args:
+            check_names: List of check names from the applied quality rules.
+        """
+        self._check_names = check_names
+
+    def _build_per_check_metrics(self) -> list[str]:
+        """
+        Builds per-check metric SQL expressions for each registered check name.
+
+        For each check name, generates a count of rows where that check appears in the errors or warnings array.
+
+        Returns:
+            A list of Spark SQL expressions for per-check metrics.
+        """
+        per_check_metrics: list[str] = []
+        for check_name in self._check_names:
+            safe_alias = _sanitize_metric_alias(check_name)
+            escaped_name = check_name.replace("'", "\\'")
+            per_check_metrics.append(
+                f"count(case when exists({self._error_column_name}, x -> x.name = '{escaped_name}') then 1 end) "
+                f"as {safe_alias}_error_count"
+            )
+            per_check_metrics.append(
+                f"count(case when exists({self._warning_column_name}, x -> x.name = '{escaped_name}') then 1 end) "
+                f"as {safe_alias}_warning_count"
+            )
+        return per_check_metrics
 
     @property
     def observation(self) -> Observation:
