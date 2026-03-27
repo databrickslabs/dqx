@@ -21,12 +21,12 @@ jobs:
     runs-on: larger
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
@@ -51,7 +51,7 @@ jobs:
       # Run tests from `tests/integration` as defined in .codegen.json
       # and generate code coverage for modules defined in .coveragerc
       - name: Run integration tests and generate test coverage report
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -69,7 +69,7 @@ jobs:
 
       # collects all coverage reports
       - name: Publish test coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
 
@@ -80,12 +80,12 @@ jobs:
       DATABRICKS_SERVERLESS_COMPUTE_ID: auto
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
@@ -105,7 +105,7 @@ jobs:
           EOF
 
       - name: Run integration tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -124,7 +124,7 @@ jobs:
 
       # collects all coverage reports
       - name: Publish test coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
 
@@ -133,12 +133,12 @@ jobs:
     runs-on: larger
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
@@ -159,7 +159,7 @@ jobs:
           EOF
 
       - name: Azure login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
@@ -206,7 +206,7 @@ jobs:
       # Recursively search the entire workspace directory for all coverage reports.
       # All uploaded test coverage reports will be used even if publish is done multiple time.
       - name: Publish test coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
 
@@ -215,12 +215,12 @@ jobs:
     runs-on: larger
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
@@ -241,7 +241,7 @@ jobs:
           EOF
 
       - name: Azure login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
@@ -285,7 +285,7 @@ jobs:
 
       # collects all coverage reports
       - name: Publish test coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           use_oidc: true
 
@@ -294,12 +294,12 @@ jobs:
     runs-on: larger
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
@@ -318,7 +318,7 @@ jobs:
           databricks --version
 
       - name: Azure login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
@@ -331,7 +331,7 @@ jobs:
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
       - name: Run e2e tests
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -349,12 +349,12 @@ jobs:
       DATABRICKS_SERVERLESS_COMPUTE_ID: auto
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
@@ -373,7 +373,7 @@ jobs:
           databricks --version
 
       - name: Azure login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
@@ -386,7 +386,7 @@ jobs:
           echo "DATABRICKS_AUTH_TYPE=azure-cli" >> $GITHUB_ENV
 
       - name: Run e2e tests on serverless cluster
-        uses: databrickslabs/sandbox/acceptance@acceptance/v0.4.4
+        uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
         with:
           vault_uri: ${{ secrets.VAULT_URI }}
           timeout: 2h
@@ -406,12 +406,12 @@ jobs:
       BENCHMARKS_DIR: tests/perf/.benchmarks
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Install Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           cache: 'pip'
           cache-dependency-path: '**/pyproject.toml'
@@ -421,7 +421,7 @@ jobs:
         run: pip install hatch==1.16.5
 
       - name: Login to Azure for azure-cli authentication
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
