@@ -144,8 +144,14 @@ class DQMetricsObserver:
             A list of Spark SQL expressions for per-check metrics.
         """
         per_check_metrics: list[str] = []
+        seen_aliases: set[str] = set()
         for check_name in self._check_names:
             safe_alias = _sanitize_metric_alias(check_name)
+            if safe_alias in seen_aliases:
+                raise DQXError(
+                    f"Check name '{check_name}' produces alias '{safe_alias}' which collides with another check"
+                )
+            seen_aliases.add(safe_alias)
             escaped_name = check_name.replace("'", "''")
             per_check_metrics.append(
                 f"count(case when exists({self._error_column_name}, x -> x.name = '{escaped_name}') then 1 end) "

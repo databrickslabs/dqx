@@ -196,3 +196,11 @@ def test_sanitize_metric_alias_empty_raises_error():
     """Test that _sanitize_metric_alias raises DQXError for names that produce empty aliases."""
     with pytest.raises(DQXError, match="Sanitizing check '!!!' produces an empty alias"):
         _sanitize_metric_alias("!!!")
+
+
+def test_dq_observer_duplicate_alias_collision_raises_error():
+    """Test that check names sanitizing to the same alias raise DQXError."""
+    observer = DQMetricsObserver(track_extended_metrics=True)
+    observer.set_check_names(["check-1", "check.1"])
+    with pytest.raises(DQXError, match="produces alias 'check_1' which collides"):
+        observer.metrics
