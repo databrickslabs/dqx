@@ -166,7 +166,7 @@ class DQEngineCore(DQEngineCoreBase):
             rule_set_fingerprint=rule_set_fingerprint,
         )
 
-        if self.observer:
+        if self.observer and self.observer.track_extended_metrics:
             self.observer.set_check_names([check.name for check in checks])
 
         observed_result = self._observe_metrics(result_df)

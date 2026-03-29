@@ -8,6 +8,8 @@ from uuid import uuid4
 from pyspark.sql import DataFrame, Observation, SparkSession
 import pyspark.sql.functions as F
 
+from databricks.labs.dqx.errors import DQXError
+
 
 def _sanitize_metric_alias(name: str) -> str:
     """Sanitize a check name to produce a valid Spark SQL column alias.
@@ -22,8 +24,10 @@ def _sanitize_metric_alias(name: str) -> str:
         A sanitized string safe for use as a Spark SQL alias.
     """
     sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    sanitized = re.sub(r"_+", "_", sanitized)
-    return sanitized.strip("_")
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+    if not sanitized:
+        raise DQXError(f"Sanitizing check '{name}' produces an empty alias")
+    return sanitized
 
 
 OBSERVATION_TABLE_SCHEMA = (
@@ -84,6 +88,7 @@ class DQMetricsObserver:
 
     name: str = "dqx"
     custom_metrics: list[str] | None = None
+    track_extended_metrics: bool = False
     id_overwrite: str | None = None
 
     _error_column_name: str = "_errors"
@@ -114,7 +119,8 @@ class DQMetricsObserver:
             f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
             f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
-        default_metrics.extend(self._build_per_check_metrics())
+        if self.track_extended_metrics:
+            default_metrics.extend(self._build_per_check_metrics())
         if self.custom_metrics:
             default_metrics.extend(self.custom_metrics)
         return default_metrics
@@ -140,7 +146,7 @@ class DQMetricsObserver:
         per_check_metrics: list[str] = []
         for check_name in self._check_names:
             safe_alias = _sanitize_metric_alias(check_name)
-            escaped_name = check_name.replace("'", "\\'")
+            escaped_name = check_name.replace("'", "''")
             per_check_metrics.append(
                 f"count(case when exists({self._error_column_name}, x -> x.name = '{escaped_name}') then 1 end) "
                 f"as {safe_alias}_error_count"
