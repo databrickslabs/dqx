@@ -82,7 +82,7 @@ def test_dq_observer_default_column_names():
 
 
 def test_dq_observer_custom_column_names():
-    """Test that DQMetricsObserver uses correct default column names."""
+    """Test that DQMetricsObserver uses custom column names in metrics."""
     observer = DQMetricsObserver()
     errors_column = "my_errors"
     warnings_column = "my_warnings"
