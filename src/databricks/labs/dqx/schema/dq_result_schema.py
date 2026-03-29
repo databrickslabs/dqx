@@ -1,4 +1,4 @@
-from pyspark.sql.types import StructType, StructField, ArrayType, StringType, TimestampType, MapType
+from pyspark.sql.types import StructType, StructField, ArrayType, BooleanType, StringType, TimestampType, MapType
 
 dq_result_item_schema = StructType(
     [
@@ -12,6 +12,7 @@ dq_result_item_schema = StructType(
         StructField("user_metadata", MapType(StringType(), StringType()), nullable=True),
         StructField("rule_fingerprint", StringType(), nullable=True),
         StructField("rule_set_fingerprint", StringType(), nullable=True),
+        StructField("skipped", BooleanType(), nullable=True),
     ]
 )
 

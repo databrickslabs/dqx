@@ -1,7 +1,8 @@
 from collections.abc import Callable
 import operator as py_operator
+import uuid
 
-from pyspark.sql import Column
+from pyspark.sql import Column, DataFrame
 import pyspark.sql.functions as F
 
 from databricks.labs.dqx.rule import register_rule
@@ -821,3 +822,99 @@ def _compare_spatial_sql_function_result(
         F.when(is_valid_cond, is_valid_message).otherwise(compare_message),
         f"{col_str_norm}_{spatial_quantity_name}_{compare_op_name}_limit",
     )
+
+
+@register_rule("dataset")
+def are_polygons_mutually_disjoint(
+    column: str | Column,
+    row_filter: str | None = None,
+) -> tuple[Column, Callable]:
+    """
+    Checks if the polygons in a geometry column are mutually disjoint. By default,
+    native Spark spatial intersections are used.
+
+    Args:
+        column: Column to check; can be a string column name or a column expression
+        row_filter: Optional SQL expression to filter rows before checking for intersections.
+
+    Returns:
+        A tuple of:
+            - A Spark Column representing the condition for mutual disjoint violations.
+            - A closure that applies the polygon intersection check and adds the condition column to the DataFrame.
+
+
+    Note:
+        This function requires Databricks runtime 17.1 or above.
+        This check performs a self-join over all valid polygons in the input DataFrame,
+        which is O(n²). Use ``row_filter`` to limit the rows evaluated on large tables.
+        Photon activation is suggested to use optimised spatial computation.
+    """
+
+    col_str_norm, col_expr_str, col_expr = get_normalized_column_and_expr(column)
+    unique_str = uuid.uuid4().hex
+    condition_col = f"__intersect_condition_{col_str_norm}_{unique_str}"
+    row_id_col = f"__row_hash_{unique_str}"
+    geom_temp_col = f"__geom_temp_{unique_str}"
+
+    def apply(df: DataFrame) -> DataFrame:
+        """Identify rows whose polygon intersects with at least one other polygon.
+
+        Computes a deterministic hash of each row. Exact duplicates (same hash)
+        are flagged directly. Unique rows undergo a spatial self-join to detect
+        intersections. The original DataFrame is returned with all rows preserved
+        and a boolean condition column indicating violations.
+
+        Args:
+            df: Input DataFrame containing the geometry column to check.
+
+        Returns:
+            DataFrame with an additional boolean column marking rows whose polygon
+            intersects with at least one other polygon in the dataset.
+        """
+        # Hash all rows first (needed for final join to preserve all rows)
+        df_with_hash = df.withColumn(row_id_col, F.xxhash64(F.struct("*")))
+
+        # Apply filter after hashing (so hash is available for final join to preserve all rows)
+        filtered_df = df_with_hash.filter(F.expr(row_filter)) if row_filter is not None else df_with_hash
+
+        duplicates_df = filtered_df.groupBy(row_id_col).count().filter("count > 1").select(row_id_col)
+
+        prep_df = (
+            filtered_df.dropDuplicates([row_id_col])
+            .filter(col_expr.isNotNull())
+            .withColumn(geom_temp_col, F.expr(f"try_to_geometry({col_expr_str})"))
+            .filter(F.col(geom_temp_col).isNotNull())
+            .filter(F.expr(f"st_geometrytype(`{geom_temp_col}`) IN ('{POLYGON_TYPE}', '{MULTIPOLYGON_TYPE}')"))
+        )
+
+        prep_a = prep_df.alias("a")
+        prep_b = prep_df.alias("b")
+
+        intersecting_ids_df = prep_a.join(
+            prep_b,
+            (F.col(f"b.{row_id_col}") > F.col(f"a.{row_id_col}"))
+            & F.expr(f"st_intersects(a.`{geom_temp_col}`, b.`{geom_temp_col}`)"),
+        ).select(F.explode(F.array(F.col(f"a.{row_id_col}"), F.col(f"b.{row_id_col}"))).alias(row_id_col))
+
+        all_violating_ids = duplicates_df.union(intersecting_ids_df).distinct().withColumn(condition_col, F.lit(True))
+
+        result_df = df_with_hash.join(
+            all_violating_ids,
+            on=row_id_col,
+            how="left",
+        ).drop(row_id_col)
+
+        return result_df.na.fill(False, subset=[condition_col])
+
+    condition = make_condition(
+        condition=F.col(condition_col),
+        message=F.concat_ws(
+            "",
+            F.lit("value `"),
+            col_expr.cast("string"),
+            F.lit(f"` in column `{col_expr_str}` intersects with at least one other polygon"),
+        ),
+        alias=f"{col_str_norm}_not_mutually_disjoint",
+    )
+
+    return condition, apply
