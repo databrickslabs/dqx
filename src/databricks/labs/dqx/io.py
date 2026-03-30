@@ -125,7 +125,7 @@ def save_dataframe_as_table(df: DataFrame, output_config: OutputConfig) -> Strea
 
         if output_config.cluster_by:
             if _supports_streaming_cluster_on_write(df.sparkSession):
-                stream_writer = stream_writer.clusterBy(*output_config.cluster_by)  # type: ignore[attr-defined]
+                stream_writer = stream_writer.clusterBy(*output_config.cluster_by)
 
         if output_config.partition_by:
             stream_writer = stream_writer.partitionBy(*output_config.partition_by)
