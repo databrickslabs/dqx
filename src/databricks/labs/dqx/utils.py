@@ -562,7 +562,7 @@ def _replace_template(text: str, variables: dict[str, str]) -> str:
     """
     if not variables:
         if _UNRESOLVED_PLACEHOLDER_PATTERN.search(text):
-            logger.warning("Unresolved placeholder found: '%s'", text)  # pylint: disable=logging-too-many-args
+            logger.warning(f"Unresolved placeholder found: '{text}'")
         return text
 
     def _resolve(match_obj: re.Match[str]) -> str:
@@ -575,7 +575,7 @@ def _replace_template(text: str, variables: dict[str, str]) -> str:
     unresolved: list[str] = []
     output = _UNRESOLVED_PLACEHOLDER_PATTERN.sub(_resolve, text)
     if unresolved:
-        logger.warning("Unresolved placeholders found: %s", unresolved)  # pylint: disable=logging-too-many-args
+        logger.warning(f"Unresolved placeholders found: {unresolved}")
     return output
 
 

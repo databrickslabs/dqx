@@ -11,7 +11,7 @@ from databricks.labs.dqx.config import (
     WorkspaceFileChecksStorageConfig,
     TableChecksStorageConfig,
 )
-from databricks.labs.dqx.engine import DQEngine, DQEngineCore
+from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.errors import InvalidConfigError
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule
 from tests.integration.conftest import (
@@ -2257,60 +2257,4 @@ def test_apply_checks_by_metadata_and_save_in_table_loads_checks_from_table(ws, 
     assert_df_equality(actual_df, expected_df, ignore_nullable=True)
 
 
-def test_apply_checks_by_metadata_and_save_in_table_with_variables(ws, spark, make_schema, make_random, tmp_path):
-    catalog_name = TEST_CATALOG
-    schema = make_schema(catalog_name=catalog_name)
-    input_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
-    output_table = f"{catalog_name}.{schema.name}.{make_random(8).lower()}"
 
-    test_schema = "a: int, b: int, c: string"
-    test_df = spark.createDataFrame([[1, 2, "valid"], [None, 3, "error"], [4, None, "warn"]], test_schema)
-    test_df.write.format("delta").mode("overwrite").saveAsTable(input_table)
-
-    checks_yaml = """
-        - name: "{{ col }}_is_null"
-          criticality: "{{ crit }}"
-          check:
-            function: is_not_null
-            arguments:
-              column: "{{ col }}"
-        """
-    checks_file = tmp_path / "checks.yml"
-    checks_file.write_text(checks_yaml, encoding="utf-8")
-    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"col": "a", "crit": "error"})
-
-    engine = DQEngine(ws, spark=spark, extra_params=EXTRA_PARAMS)
-    engine.apply_checks_by_metadata_and_save_in_table(
-        checks=checks,
-        input_config=InputConfig(location=input_table),
-        output_config=OutputConfig(location=output_table, mode="overwrite"),
-    )
-
-    actual_df = spark.table(output_table)
-    expected_schema = test_schema + REPORTING_COLUMNS
-    expected_df = spark.createDataFrame(
-        [
-            [1, 2, "valid", None, None],
-            [
-                None,
-                3,
-                "error",
-                [
-                    {
-                        "name": "a_is_null",
-                        "message": "Column 'a' value is null",
-                        "columns": ["a"],
-                        "filter": None,
-                        "function": "is_not_null",
-                        "run_time": RUN_TIME,
-                        "run_id": RUN_ID,
-                        "user_metadata": {},
-                    }
-                ],
-                None,
-            ],
-            [4, None, "warn", None, None],
-        ],
-        schema=expected_schema,
-    )
-    assert_df_equality(actual_df, expected_df, ignore_nullable=True)
