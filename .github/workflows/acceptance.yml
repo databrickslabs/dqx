@@ -168,7 +168,7 @@ jobs:
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
         run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/e0f69d54c90e95ccad22d5ff17751da665e599a9/install.sh | sh
           databricks --version
 
       - name: Run e2e tests
@@ -213,7 +213,7 @@ jobs:
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
         run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/e0f69d54c90e95ccad22d5ff17751da665e599a9/install.sh | sh
           databricks --version
 
       - name: Run e2e tests on serverless cluster
