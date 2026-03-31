@@ -72,6 +72,16 @@ Geospatial checks validate geometry and geography columns. Use `column` in `argu
 
 `value` can be a number, column name, or SQL expression.
 
+### Polygon Overlap (Dataset-Level)
+
+| Function | Required | Optional |
+|----------|----------|----------|
+| `are_polygons_mutually_disjoint` | `column` | `row_filter` |
+
+Flags rows whose polygon or multipolygon intersects with at least one other polygon in the dataset. Exact duplicate rows are also flagged. This is a **dataset-level** check (the only one in the geospatial module) and requires batch processing.
+
+**Performance:** This check performs a self-join over all valid polygons, which is O(n^2). Use `row_filter` to limit evaluated rows on large tables. Photon activation is suggested for optimised spatial computation.
+
 ---
 
 ## Examples
@@ -222,6 +232,25 @@ Geospatial checks validate geometry and geography columns. Use `column` in `argu
       value: 10000
 ```
 
+### Polygon Overlap (Dataset-Level)
+
+```yaml
+# Polygons must not overlap each other
+- criticality: error
+  check:
+    function: are_polygons_mutually_disjoint
+    arguments:
+      column: boundary
+
+# With row filter to limit the self-join to a subset
+- criticality: error
+  check:
+    function: are_polygons_mutually_disjoint
+    arguments:
+      column: boundary
+      row_filter: "region = 'EMEA'"
+```
+
 ## Runnable Examples
 
 | Example | File |
@@ -230,5 +259,6 @@ Geospatial checks validate geometry and geography columns. Use `column` in `argu
 | Geometry type checks | `examples/23_geo_type_validation.py` |
 | Geometry validation (OGC, empty, null island) | `examples/24_geo_quality.py` |
 | Measurements (coordinates, area, point count) | `examples/25_geo_measurements.py` |
+| Polygon overlap (dataset-level) | `examples/26_geo_dataset.py` |
 
 Full reference: https://databrickslabs.github.io/dqx/docs/reference/quality_checks/#geospatial-checks-reference

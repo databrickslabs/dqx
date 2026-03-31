@@ -36,6 +36,23 @@ good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(df, checks)
 - `error` -- row goes to bad/quarantine DataFrame only
 - `warn` -- row goes to both good and bad DataFrames (flagged but not quarantined)
 
+## User Metadata
+
+Attach custom key-value pairs to check results for traceability:
+
+```yaml
+- criticality: error
+  user_metadata:
+    owner: data-team
+    ticket: JIRA-123
+  check:
+    function: is_not_null
+    arguments:
+      column: id
+```
+
+The `user_metadata` dict is included in each result struct element in `_errors`/`_warnings`.
+
 ## Filtering Checks
 
 Apply a check only to rows matching a SQL condition:
@@ -113,6 +130,30 @@ Or reference a table directly (no ref_dfs needed):
       ref_table: catalog.schema.country_codes
 ```
 
+## Output Columns
+
+DQX adds these array columns to the result DataFrame:
+
+- `_errors` -- error-level violations (row should be quarantined)
+- `_warnings` -- warning-level violations (row flagged for review)
+- `_dq_info` -- additional info from dataset-level checks (e.g. anomaly detection metadata)
+
+Each element in `_errors` / `_warnings` is a struct with these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Check name (auto-generated or user-provided) |
+| `message` | string | Failure detail message |
+| `columns` | array\<string\> | Columns involved in the check |
+| `filter` | string | Filter expression (if the check uses one) |
+| `function` | string | Check function name |
+| `run_time` | timestamp | When the check was executed |
+| `run_id` | string | Unique run identifier |
+| `user_metadata` | map\<string, string\> | User-defined key-value pairs (from check or engine) |
+| `rule_fingerprint` | string | Hash identifying this specific rule definition |
+| `rule_set_fingerprint` | string | Hash identifying the full set of rules applied |
+| `skipped` | boolean | True if the check was skipped (e.g. column not found) |
+
 ## Extracting Results
 
 ```python
@@ -141,4 +182,4 @@ The `examples/` directory contains runnable scripts for every check category:
 | Dataset-level (unique, aggregation, FK, compare, freshness, schema, SQL query) | `examples/10_dataset_unique.py` .. `examples/16_dataset_sql_query.py` |
 | Custom checks (SQL window, Python row, Python dataset) | `examples/17_custom_sql_window.py` .. `examples/19_custom_python_dataset.py` |
 | Profiling | `examples/20_profiling_dataframe.py` .. `examples/21_profiling_specific_columns.py` |
-| Geospatial (coordinates, geometry type/validation, measurements) | `examples/22_geo_coordinates.py` .. `examples/25_geo_measurements.py` |
+| Geospatial (coordinates, type/validation, measurements, overlap) | `examples/22_geo_coordinates.py` .. `examples/26_geo_dataset.py` |

@@ -35,6 +35,10 @@ summary_stats, profiles = profiler.profile_table(InputConfig(location="catalog.s
 results = profiler.profile_tables_for_patterns(
     patterns=["catalog.schema.*"],
     exclude_patterns=["catalog.schema.tmp_*"],
+    exclude_matched=False,           # if True, exclude tables matching patterns instead of including
+    columns={"catalog.schema.orders": ["id", "price"]},  # per-table column selection
+    options=[{"table": "catalog.schema.orders", "options": {"limit": 500}}],  # per-table options
+    max_parallelism=4,               # max parallel profiling threads (default: os.cpu_count())
 )
 # results is dict: {table_name: (summary_stats, profiles)}
 ```
@@ -48,14 +52,14 @@ results = profiler.profile_tables_for_patterns(
 #               'min': 0.5, 'max': 99.9, 'mean': 45.2, 'stddev': 12.3}, ...}
 ```
 
-`profiles` is a list of `DQProfile` objects (candidate rules):
+`profiles` is a list of `DQProfile` objects (candidate rules). Each `DQProfile` has fields: `name`, `column`, `description`, `parameters`, and `filter`.
 
 ```python
 for p in profiles:
-    print(f"{p.column}: {p.name} {p.parameters or ''}")
-# id: is_not_null
-# status: is_in {'allowed': ['active', 'inactive', 'pending']}
-# price: min_max {'min': 0.5, 'max': 99.9}
+    print(f"{p.column}: {p.name} params={p.parameters or ''} filter={p.filter or ''}")
+# id: is_not_null params= filter=
+# status: is_in params={'allowed': ['active', 'inactive', 'pending']} filter=
+# price: min_max params={'min': 0.5, 'max': 99.9} filter=
 ```
 
 ### Profiler Options
@@ -63,14 +67,19 @@ for p in profiles:
 ```python
 summary_stats, profiles = profiler.profile(df, options={
     "sample_fraction": 0.3,    # sample 30% of data (default)
+    "sample_seed": None,       # seed for reproducible sampling (default: None)
     "limit": 1000,             # max rows to sample (default)
+    "filter": None,            # SQL filter applied before profiling (default: None)
+    "round": True,             # round min/max values (default)
     "max_null_ratio": 0.01,    # generate is_not_null if nulls < 1%
     "max_empty_ratio": 0.01,   # generate is_not_null_or_empty if empties < 1%
     "max_in_count": 10,        # generate is_in if distinct values < 10
     "distinct_ratio": 0.05,    # generate is_in if distinct ratio < 5%
     "remove_outliers": True,   # remove outliers from min/max ranges
+    "outlier_columns": [],     # limit outlier removal to specific columns (default: all)
     "num_sigmas": 3,           # sigma threshold for outlier removal
     "trim_strings": True,      # trim whitespace before profiling strings
+    "llm_primary_key_detection": True,  # auto-detect primary keys with LLM (default)
 })
 ```
 
@@ -88,6 +97,30 @@ from databricks.labs.dqx.config import InputConfig
 result = profiler.detect_primary_keys_with_llm(InputConfig(location="catalog.schema.my_table"))
 # result is a dict with keys: table, success, primary_key_columns, confidence, reasoning,
 #                              has_duplicates, duplicate_count, error
+```
+
+Requires the LLM extra: `pip install 'databricks-labs-dqx[llm]'`
+
+## Convert Profiles to Check Rules
+
+Use `DQGenerator` to convert profiler output into check metadata (YAML-compatible dicts):
+
+```python
+from databricks.sdk import WorkspaceClient
+from databricks.labs.dqx.profiler.generator import DQGenerator
+
+generator = DQGenerator(WorkspaceClient())
+checks = generator.generate_dq_rules(profiles, criticality="error")
+# checks is a list[dict] ready for DQEngine.apply_checks_by_metadata or YAML export
+```
+
+For LLM-assisted rule generation from summary statistics:
+
+```python
+checks = generator.generate_dq_rules_ai_assisted(
+    summary_stats=summary_stats,
+    input_config=InputConfig(location="catalog.schema.my_table"),
+)
 ```
 
 Requires the LLM extra: `pip install 'databricks-labs-dqx[llm]'`

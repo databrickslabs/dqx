@@ -5,7 +5,7 @@ description: Data quality checks with DQX (databricks-labs-dqx). Use when the us
 
 # DQX - Data Quality Checks
 
-DQX applies quality rules to PySpark DataFrames and returns results as additional columns (`_errors`, `_warnings`).
+DQX applies quality rules to PySpark DataFrames and returns results as additional columns (`_errors`, `_warnings`, `_dq_info`).
 
 ## Installation
 
@@ -54,6 +54,9 @@ good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(df, checks)
 - criticality: error|warn         # error = quarantine, warn = flag only
   name: optional_name             # auto-generated if omitted
   filter: "SQL WHERE expression"  # optional: check only matching rows
+  user_metadata:                  # optional: custom key-value pairs in results
+    owner: data-team
+    ticket: JIRA-123
   check:
     function: function_name
     arguments:
@@ -67,12 +70,27 @@ good_df, bad_df = dq_engine.apply_checks_by_metadata_and_split(df, checks)
 
 ## Output Columns
 
-DQX adds two array columns:
+DQX adds array columns to the result DataFrame:
 
 - `_errors` -- error-level violations (row should be quarantined)
 - `_warnings` -- warning-level violations (row flagged for review)
+- `_dq_info` -- additional info from dataset-level checks (e.g. anomaly detection metadata)
 
-Each element is a struct with `name` (check name) and `message` (failure detail).
+Each element in `_errors` / `_warnings` is a struct with these fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Check name (auto-generated or user-provided) |
+| `message` | string | Failure detail message |
+| `columns` | array\<string\> | Columns involved in the check |
+| `filter` | string | Filter expression (if the check uses one) |
+| `function` | string | Check function name |
+| `run_time` | timestamp | When the check was executed |
+| `run_id` | string | Unique run identifier |
+| `user_metadata` | map\<string, string\> | User-defined key-value pairs (from check or engine) |
+| `rule_fingerprint` | string | Hash identifying this specific rule definition |
+| `rule_set_fingerprint` | string | Hash identifying the full set of rules applied |
+| `skipped` | boolean | True if the check was skipped (e.g. column not found) |
 
 ## for_each_column Shortcut
 
@@ -106,6 +124,30 @@ status = DQEngine.validate_checks(checks)
 if status.has_errors:
     print(status.errors)
 ```
+
+## Customizing Engine Behavior (ExtraParams)
+
+Use `ExtraParams` to customize how the engine runs checks:
+
+```python
+from databricks.labs.dqx.config import ExtraParams
+from databricks.labs.dqx.engine import DQEngine
+
+extra = ExtraParams(
+    suppress_skipped=True,                      # skip checks when columns/filters can't be resolved
+    result_column_names={"errors": "my_errors", "warnings": "my_warnings"},  # custom output column names
+    user_metadata={"pipeline": "nightly_etl"},  # metadata attached to all check results
+)
+dq_engine = DQEngine(WorkspaceClient(), extra_params=extra)
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `suppress_skipped` | `False` | When True, checks that can't resolve their columns or filter produce no entry in `_errors`/`_warnings`. When False (default), they appear with `skipped: true`. |
+| `result_column_names` | `{}` | Override default column names (`errors`, `warnings`, `info` keys). |
+| `user_metadata` | `{}` | Key-value pairs included in every result struct's `user_metadata` field. |
+| `run_time_overwrite` | `None` | ISO timestamp string to override `run_time` in results. |
+| `run_id_overwrite` | `None` | Custom run ID string to override the auto-generated `run_id`. |
 
 ## Sub-Skills Reference
 
