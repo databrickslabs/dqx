@@ -8,8 +8,6 @@ import yaml
 import pyspark.sql.functions as F
 import pytest
 from pyspark.sql import Column, DataFrame, SparkSession
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
-
 import databricks.labs.dqx.geo.check_funcs as geo_check_funcs
 from databricks.labs.dqx.errors import MissingParameterError, InvalidCheckError, InvalidParameterError
 from databricks.labs.dqx.check_funcs import sql_query
@@ -24,9 +22,18 @@ from databricks.labs.dqx.rule import (
 from databricks.labs.dqx.reporting_columns import ColumnArguments
 from databricks.labs.dqx.schema import dq_result_schema
 from databricks.labs.dqx import check_funcs
-
+from tests.integration.conftest import (
+    REPORTING_COLUMNS,
+    RUN_TIME,
+    EXTRA_PARAMS,
+    RUN_ID,
+    build_quality_violation,
+    assert_df_equality_ignore_fingerprints as assert_df_equality,
+    generate_checks_with_rule_and_set_fingerprint_from_rules,
+    get_rule_fingerprint_from_checks,
+    get_rule_set_fingerprint_from_checks,
+)
 from tests.constants import TEST_CATALOG
-from tests.integration.conftest import REPORTING_COLUMNS, RUN_TIME, EXTRA_PARAMS, RUN_ID, build_quality_violation
 
 
 SCHEMA = "a: int, b: int, c: int"
@@ -2716,6 +2723,18 @@ def custom_row_check_func_custom_args(column_custom_arg: str) -> Column:
     )
 
 
+def custom_check_with_dict_arg(column: str, range_config: dict) -> Column:
+    """Check that column value is within range_config['min'] and range_config['max']."""
+    min_val = range_config.get("min", 0)
+    max_val = range_config.get("max", 100)
+    col_expr = F.col(column)
+    return check_funcs.make_condition(
+        col_expr.isNull() | (col_expr < min_val) | (col_expr > max_val),
+        f"Column '{column}' value is null or outside range [{min_val}, {max_val}]",
+        f"{column}_in_range",
+    )
+
+
 def custom_row_check_func_global_a_column_no_args() -> Column:
     col_expr = F.col("a")
     return check_funcs.make_condition(col_expr.isNull(), "custom check without args failed", "a_is_null_custom")
@@ -4164,6 +4183,68 @@ def test_apply_checks_with_custom_check(ws, spark):
         EXPECTED_SCHEMA,
     )
 
+    assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
+
+
+def test_apply_checks_with_custom_check_dict_arg(ws, spark):
+    """Custom check with dict argument works with versioning (normalize_bound_args handles dict)."""
+    dq_engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+    test_df = spark.createDataFrame([[1, 3, 3], [2, None, 4], [11, 4, None], [None, None, None]], SCHEMA)
+
+    checks = [
+        DQRowRule(
+            criticality="warn",
+            check_func=custom_check_with_dict_arg,
+            column="a",
+            check_func_kwargs={"range_config": {"min": 1, "max": 10}},
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 3, 3, None, None],
+            [2, None, 4, None, None],
+            [
+                11,
+                4,
+                None,
+                None,
+                [
+                    {
+                        "name": "a_in_range",
+                        "message": "Column 'a' value is null or outside range [1, 10]",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_check_with_dict_arg",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+            [
+                None,
+                None,
+                None,
+                None,
+                [
+                    {
+                        "name": "a_in_range",
+                        "message": "Column 'a' value is null or outside range [1, 10]",
+                        "columns": ["a"],
+                        "filter": None,
+                        "function": "custom_check_with_dict_arg",
+                        "run_time": RUN_TIME,
+                        "run_id": RUN_ID,
+                        "user_metadata": {},
+                    },
+                ],
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
     assert_df_equality(checked, expected, ignore_nullable=True, ignore_column_order=True)
 
 
@@ -5965,6 +6046,45 @@ def test_apply_checks_all_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible,
     assert_df_equality(checked, expected, ignore_nullable=True)
 
 
+def test_apply_checks_all_dataset_geo_checks_as_yaml(skip_if_runtime_not_geo_compatible, ws, spark):
+    """Test applying all dataset geo checks from a yaml file."""
+    file_path = Path(__file__).parent.parent / "resources" / "all_dateset_geo_checks.yaml"
+    with open(file_path, "r", encoding="utf-8") as f:
+        checks = yaml.safe_load(f)
+
+    dq_engine = DQEngine(ws)
+    status = dq_engine.validate_checks(checks)
+    assert not status.has_errors
+
+    schema = "id: int, geom: string"
+    # Three mutually disjoint polygons (pass case)
+    test_df = spark.createDataFrame(
+        [
+            [1, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))"],
+            [2, "POLYGON((2 0, 3 0, 3 1, 2 1, 2 0))"],
+            [3, "POLYGON((0 2, 1 2, 1 3, 0 3, 0 2))"],
+        ],
+        schema,
+    )
+
+    checked = dq_engine.apply_checks_by_metadata(test_df, checks)
+
+    assert "_errors" in checked.columns
+    error_rows = checked.filter("_errors is not null").collect()
+    assert len(error_rows) == 0
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [1, "POLYGON((0 0, 1 0, 1 1, 0 1, 0 0))", None, None],
+            [2, "POLYGON((2 0, 3 0, 3 1, 2 1, 2 0))", None, None],
+            [3, "POLYGON((0 2, 1 2, 1 3, 0 3, 0 2))", None, None],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked, expected, ignore_nullable=True)
+
+
 @pytest.mark.timeout(3600)
 def test_apply_checks_all_checks_using_classes(ws, spark):
     """Test applying all checks using DQX classes.
@@ -7100,10 +7220,8 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
 
     checked = dq_engine.apply_checks(test_df, checks)
 
-    result_errors = checked.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
-    result_warnings = checked.select(F.explode(F.col("_warnings")).alias("dq")).select(F.expr("dq.*"))
-
-    expected = spark.createDataFrame(
+    versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint_from_rules(checks)
+    expected_errors = spark.createDataFrame(
         [
             [
                 "a_is_null_or_empty",
@@ -7114,6 +7232,9 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 RUN_TIME,
                 RUN_ID,
                 user_metadata,
+                get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null_or_empty", "error"),
+                get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                None,
             ],
             [
                 "a_is_null",
@@ -7124,13 +7245,51 @@ def test_define_user_metadata_and_extract_dq_results(ws, spark):
                 RUN_TIME,
                 RUN_ID,
                 user_metadata,
+                get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null", "error"),
+                get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                None,
             ],
         ],
         dq_result_schema.elementType,
     )
 
-    assert_df_equality(result_errors, expected, ignore_nullable=True)
-    assert_df_equality(result_warnings, expected, ignore_nullable=True)
+    expected_warnings = spark.createDataFrame(
+        [
+            [
+                "a_is_null_or_empty",
+                "Column 'a' value is null or empty",
+                ["a"],
+                None,
+                "is_not_null_and_not_empty",
+                RUN_TIME,
+                RUN_ID,
+                user_metadata,
+                get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null_or_empty", "warn"),
+                get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                None,
+            ],
+            [
+                "a_is_null",
+                "Column 'a' value is null",
+                ["a"],
+                "b = 1",
+                "is_not_null",
+                RUN_TIME,
+                RUN_ID,
+                user_metadata,
+                get_rule_fingerprint_from_checks(versioning_rules_checks, "a_is_null", "warn"),
+                get_rule_set_fingerprint_from_checks(versioning_rules_checks),
+                None,
+            ],
+        ],
+        dq_result_schema.elementType,
+    )
+
+    result_errors = checked.select(F.explode(F.col("_errors")).alias("dq")).select(F.expr("dq.*"))
+    result_warnings = checked.select(F.explode(F.col("_warnings")).alias("dq")).select(F.expr("dq.*"))
+
+    assert_df_equality(result_errors, expected_errors, ignore_nullable=True)
+    assert_df_equality(result_warnings, expected_warnings, ignore_nullable=True)
 
 
 def test_apply_checks_with_sql_expression_for_map_and_array(ws, spark):
@@ -9072,6 +9231,41 @@ def test_apply_checks_with_has_valid_schema_ignores_result_columns(ws, spark):
     assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
 
 
+def test_apply_checks_with_has_valid_schema_struct_type(ws, spark):
+    """has_valid_schema with expected_schema as StructType (df.schema) works with versioning."""
+    dq_engine = DQEngine(ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, v1 int, v2 string"
+    test_df = spark.createDataFrame(
+        [
+            [1, 10, "x"],
+            [2, 20, "y"],
+        ],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={"expected_schema": test_df.schema, "strict": True},
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected = spark.createDataFrame(
+        [
+            [1, 10, "x", None, None],
+            [2, 20, "y", None, None],
+        ],
+        expected_schema,
+    )
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
 def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark, set_utc_timezone):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
 
@@ -9186,6 +9380,292 @@ def test_apply_checks_with_has_valid_schema_ignores_generated_columns(ws, spark,
                 ],
                 None,
             ],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_missing_columns(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, v1 int"
+    test_df = spark.createDataFrame(
+        [
+            [1, 10],
+            [2, 20],
+        ],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "strict": True,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected_error = [
+        {
+            "name": "has_valid_schema",
+            "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
+            "columns": ["id", "v1"],
+            "filter": None,
+            "function": "has_valid_schema",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {},
+        }
+    ]
+
+    expected = spark.createDataFrame(
+        [
+            [1, 10, None, expected_error],
+            [2, 20, None, expected_error],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_permissive_missing_columns(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, v1 int"
+    test_df = spark.createDataFrame(
+        [
+            [1, 10, "foo"],
+            [2, 20, "bar"],
+        ],
+        schema + ", extra_col string",
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "strict": False,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + ", extra_col string" + REPORTING_COLUMNS
+    expected_error = [
+        {
+            "name": "has_valid_schema",
+            "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
+            "columns": ["id", "v1", "extra_col"],
+            "filter": None,
+            "function": "has_valid_schema",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {},
+        }
+    ]
+
+    expected = spark.createDataFrame(
+        [
+            [1, 10, "foo", None, expected_error],
+            [2, 20, "bar", None, expected_error],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_custom_result_columns(ws, spark):
+    custom_extra_params = ExtraParams(
+        run_time_overwrite=EXTRA_PARAMS.run_time_overwrite,
+        run_id_overwrite=EXTRA_PARAMS.run_id_overwrite,
+        result_column_names={"errors": "my_errors", "warnings": "my_warnings"},
+    )
+    dq_engine = DQEngine(workspace_client=ws, extra_params=custom_extra_params)
+
+    schema = "id int, v1 int"
+    test_df = spark.createDataFrame(
+        [
+            [1, 10],
+            [2, 20],
+        ],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int",
+                "strict": True,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    custom_reporting = f", my_errors: {dq_result_schema.simpleString()}, my_warnings: {dq_result_schema.simpleString()}"
+    expected_schema = schema + custom_reporting
+    expected = spark.createDataFrame(
+        [
+            [1, 10, None, None],
+            [2, 20, None, None],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_columns_not_in_df(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, v1 int"
+    test_df = spark.createDataFrame(
+        [[1, 10], [2, 20]],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema_strict_fails",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "columns": ["id", "v1"],
+                "strict": True,
+            },
+        ),
+        DQDatasetRule(
+            name="has_valid_schema_non_strict_fails",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "columns": ["id", "v1"],
+                "strict": False,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+    expected_errors = [
+        {
+            "name": "has_valid_schema_strict_fails",
+            "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
+            "columns": ["id", "v1"],
+            "filter": None,
+            "function": "has_valid_schema",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {},
+        },
+        {
+            "name": "has_valid_schema_non_strict_fails",
+            "message": "Schema validation failed: Column 'missing_col' in expected schema not present in checked data",
+            "columns": ["id", "v1"],
+            "filter": None,
+            "function": "has_valid_schema",
+            "run_time": RUN_TIME,
+            "run_id": RUN_ID,
+            "user_metadata": {},
+        },
+    ]
+
+    expected = spark.createDataFrame(
+        [
+            [1, 10, None, expected_errors],
+            [2, 20, None, expected_errors],
+        ],
+        expected_schema,
+    )
+
+    assert_df_equality(checked.sort("id"), expected.sort("id"), ignore_nullable=True)
+
+
+def test_apply_checks_with_has_valid_schema_extra_columns_in_params(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+
+    schema = "id int, v1 int"
+    test_df = spark.createDataFrame(
+        [[1, 10], [2, 20]],
+        schema,
+    )
+
+    checks = [
+        DQDatasetRule(
+            name="has_valid_schema_strict",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "columns": ["id", "v1", "missing_col"],
+                "strict": True,
+            },
+        ),
+        DQDatasetRule(
+            name="has_valid_schema_permissive",
+            criticality="warn",
+            check_func=check_funcs.has_valid_schema,
+            check_func_kwargs={
+                "expected_schema": "id int, v1 int, missing_col string",
+                "columns": ["id", "v1", "missing_col"],
+                "strict": False,
+            },
+        ),
+    ]
+
+    checked = dq_engine.apply_checks(test_df, checks)
+
+    expected_schema = schema + REPORTING_COLUMNS
+
+    expected_skip_strict = {
+        "name": "has_valid_schema_strict",
+        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+        "columns": ["id", "v1", "missing_col"],
+        "filter": None,
+        "function": "has_valid_schema",
+        "run_time": RUN_TIME,
+        "run_id": RUN_ID,
+        "user_metadata": {},
+        "skipped": True,
+    }
+
+    expected_skip_permissive = {
+        "name": "has_valid_schema_permissive",
+        "message": "Check evaluation skipped due to invalid check columns: ['missing_col']",
+        "columns": ["id", "v1", "missing_col"],
+        "filter": None,
+        "function": "has_valid_schema",
+        "run_time": RUN_TIME,
+        "run_id": RUN_ID,
+        "user_metadata": {},
+        "skipped": True,
+    }
+
+    expected = spark.createDataFrame(
+        [
+            [1, 10, None, [expected_skip_strict, expected_skip_permissive]],
+            [2, 20, None, [expected_skip_strict, expected_skip_permissive]],
         ],
         expected_schema,
     )
@@ -9316,6 +9796,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_null",
@@ -9326,6 +9807,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_sql_expression",
@@ -9337,6 +9819,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_unique",
@@ -9348,6 +9831,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "invalid_col_sql_expression",
@@ -9358,6 +9842,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                 ],
                 [
@@ -9370,6 +9855,7 @@ def test_apply_checks_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                        "skipped": True,
                     },
                 ],
             ]
@@ -9494,6 +9980,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_null",
@@ -9504,6 +9991,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_sql_expression",
@@ -9515,6 +10003,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "missing_col_is_unique",
@@ -9526,6 +10015,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                     {
                         "name": "invalid_col_sql_expression",
@@ -9536,6 +10026,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {},
+                        "skipped": True,
                     },
                 ],
                 [
@@ -9548,6 +10039,7 @@ def test_apply_checks_by_metadata_skip_checks_with_missing_columns(ws, spark):
                         "run_time": RUN_TIME,
                         "run_id": RUN_ID,
                         "user_metadata": {"tag1": "value1", "tag2": "value2"},
+                        "skipped": True,
                     },
                 ],
             ]

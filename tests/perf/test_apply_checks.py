@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from databricks.labs.dqx.rule import DQRowRule, DQDatasetRule, DQForEachColRule
 from databricks.labs.dqx.config import ExtraParams
 import pytest
+import pyspark.sql.functions as F
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.geo import check_funcs as geo_check_funcs
 from tests.perf.conftest import DEFAULT_ROWS
@@ -1884,6 +1885,21 @@ def test_benchmark_is_num_points_not_equal_to(skip_if_runtime_not_geo_compatible
         )
     ]
     checked = dq_engine.apply_checks(generated_geo_df, checks)
+    actual_count = benchmark(lambda: checked.count())
+    assert actual_count == EXPECTED_ROWS
+
+
+def test_benchmark_are_polygons_mutually_disjoint(skip_if_runtime_not_geo_compatible, benchmark, ws, generated_geo_df):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    geo_df_with_geom = generated_geo_df.withColumn("geom", F.col("polygon_geom"))
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=geo_check_funcs.are_polygons_mutually_disjoint,
+            column="geom",
+        )
+    ]
+    checked = dq_engine.apply_checks(geo_df_with_geom, checks)
     actual_count = benchmark(lambda: checked.count())
     assert actual_count == EXPECTED_ROWS
 

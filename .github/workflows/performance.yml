@@ -15,7 +15,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -31,12 +31,12 @@ jobs:
       NEW_BASELINE: tests/perf/.benchmarks/baseline_new.json
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.12'
           cache: pip
@@ -46,7 +46,7 @@ jobs:
         run: pip install hatch==1.16.5
 
       - name: Login to Azure for azure-cli authentication
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
         with:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
@@ -155,9 +155,9 @@ jobs:
           echo "Benchmark report updated at $OUT"
           echo "BENCHMARK_REPORT=$OUT" >> $GITHUB_ENV
 
-      # for troubleshooting issues only
+      # For troubleshooting only
       - name: Upload baseline artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: baseline-artifacts
           path: |

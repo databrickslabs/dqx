@@ -372,9 +372,10 @@ display(spark.sql(f"SELECT * FROM {run_config.quarantine_config.location}"))
 
 from databricks.labs.dqx.config import InputConfig, OutputConfig
 
-
+# By default, apply_checks_and_save_in_table method apply checks to the entire input table.
+# Incremental processing is supported using streaming with the AvailableNow trigger for batch-style execution, along with checkpointing to ensure consistency across runs.
 dq_engine.apply_checks_by_metadata_and_save_in_table(
-    checks=checks,
+    checks=checks,  # or provide checks_location and run_config_name to auto-load from checks storage
     input_config=run_config.input_config,
     output_config=run_config.output_config,
     quarantine_config=run_config.quarantine_config,

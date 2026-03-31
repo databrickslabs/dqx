@@ -5,6 +5,7 @@ from databricks.labs.dqx.config import InputConfig
 from databricks.labs.dqx.errors import MissingParameterError, InvalidConfigError
 from databricks.labs.dqx.profiler.profiler import DQProfiler
 import databricks.labs.dqx.profiler.profiler as profiler_module
+from databricks.labs.dqx.profiler.profile_builder import PROFILE_BUILDER_REGISTRY
 
 
 def test_get_columns_or_fields():
@@ -61,3 +62,9 @@ def test_input_location_missing_when_detecting_primary_keys(mock_workspace_clien
     with pytest.raises(InvalidConfigError, match="Input location not configured"):
         profiler = DQProfiler(workspace_client=mock_workspace_client, spark=mock_spark)
         profiler.detect_primary_keys_with_llm(input_config=input_config)
+
+
+def test_profile_builder_registry_has_expected_builders():
+    assert "null_or_empty" in PROFILE_BUILDER_REGISTRY
+    assert "is_in" in PROFILE_BUILDER_REGISTRY
+    assert "min_max" in PROFILE_BUILDER_REGISTRY
