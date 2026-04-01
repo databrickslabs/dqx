@@ -395,6 +395,8 @@ class DQProfiler(DQEngineBase):
             metrics["count"] = total_count
             metrics["count_null"] = total_count - count_non_null
             metrics["count_non_null"] = count_non_null
+            distinct_row = column_df.select(F.countDistinct(F.col(column_label))).first()
+            metrics["count_distinct"] = distinct_row[0] if distinct_row else 0
             if is_text:
                 metrics["empty_count"] = column_df.filter(F.col(column_label) == "").count()
             else:
@@ -539,7 +541,9 @@ class DQProfiler(DQEngineBase):
         """
         typ = field_types[metric_name]
         if metric_value is not None:
-            if metric in {"stddev", "mean"}:
+            if isinstance(typ, TEXT_TYPES) and metric in {"min", "max"}:
+                sm_dict[metric_name][metric] = None
+            elif metric in {"stddev", "mean"}:
                 sm_dict[metric_name][metric] = float(metric_value)
             else:
                 sm_dict[metric_name][metric] = self._do_cast(metric_value, typ)
