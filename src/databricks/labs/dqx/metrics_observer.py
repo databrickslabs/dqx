@@ -1,4 +1,3 @@
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
@@ -7,27 +6,6 @@ from uuid import uuid4
 
 from pyspark.sql import DataFrame, Observation, SparkSession
 import pyspark.sql.functions as F
-
-from databricks.labs.dqx.errors import DQXError
-
-
-def _sanitize_metric_alias(name: str) -> str:
-    """Sanitize a check name to produce a valid Spark SQL column alias.
-
-    Replaces any non-alphanumeric character (except underscore) with an underscore
-    and collapses consecutive underscores.
-
-    Args:
-        name: The raw check name.
-
-    Returns:
-        A sanitized string safe for use as a Spark SQL alias.
-    """
-    sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", name)
-    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
-    if not sanitized:
-        raise DQXError(f"Sanitizing check '{name}' produces an empty alias")
-    return sanitized
 
 
 OBSERVATION_TABLE_SCHEMA = (
@@ -119,8 +97,8 @@ class DQMetricsObserver:
             f"count(case when {self._warning_column_name} is not null then 1 end) as warning_row_count",
             f"count(case when {self._error_column_name} is null and {self._warning_column_name} is null then 1 end) as valid_row_count",
         ]
-        if self.track_extended_metrics:
-            all_metrics.extend(self._build_per_check_metrics())
+        if self.track_extended_metrics and self._check_names:
+            all_metrics.append(self._build_check_metrics_expr())
         if self.custom_metrics:
             all_metrics.extend(self.custom_metrics)
         return all_metrics
@@ -134,34 +112,30 @@ class DQMetricsObserver:
         """
         self._check_names = check_names
 
-    def _build_per_check_metrics(self) -> list[str]:
-        """
-        Builds per-check metric SQL expressions for each registered check name.
+    def _build_check_metrics_expr(self) -> str:
+        """Build a single SQL expression that produces a JSON-serialized check_metrics value.
 
-        For each check name, generates a count of rows where that check appears in the errors or warnings array.
+        The metric is stored as one row with metric_name ``check_metrics`` and
+        metric_value containing a JSON array of structs::
+
+            [{"check_name": "my_check", "error_count": 5, "warning_count": 2}, ...]
 
         Returns:
-            A list of Spark SQL expressions for per-check metrics.
+            A Spark SQL expression string aliased as ``check_metrics``.
         """
-        per_check_metrics: list[str] = []
-        seen_aliases: set[str] = set()
+        elements: list[str] = []
         for check_name in self._check_names:
-            safe_alias = _sanitize_metric_alias(check_name)
-            if safe_alias in seen_aliases:
-                raise DQXError(
-                    f"Check name '{check_name}' produces alias '{safe_alias}' which collides with another check"
-                )
-            seen_aliases.add(safe_alias)
-            escaped_name = check_name.replace("'", "''")
-            per_check_metrics.append(
-                f"count(case when exists({self._error_column_name}, x -> x.name = '{escaped_name}') then 1 end) "
-                f"as {safe_alias}_error_count"
+            escaped = check_name.replace("'", "''")
+            err = self._error_column_name
+            warn = self._warning_column_name
+            elements.append(
+                f"named_struct("
+                f"'check_name', '{escaped}', "
+                f"'error_count', count(case when exists({err}, x -> x.name = '{escaped}') then 1 end), "
+                f"'warning_count', count(case when exists({warn}, x -> x.name = '{escaped}') then 1 end)"
+                f")"
             )
-            per_check_metrics.append(
-                f"count(case when exists({self._warning_column_name}, x -> x.name = '{escaped_name}') then 1 end) "
-                f"as {safe_alias}_warning_count"
-            )
-        return per_check_metrics
+        return f"to_json(array({', '.join(elements)})) as check_metrics"
 
     @property
     def observation(self) -> Observation:
