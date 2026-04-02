@@ -45,12 +45,16 @@
 
 # COMMAND ----------
 
-# Install DQX
-%pip install databricks-labs-dqx
+# DBTITLE 1,Install DQX Library
 
-# COMMAND ----------
+dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
 
-dbutils.library.restartPython()
+if dbutils.widgets.get("test_library_ref") != "":
+    %pip install '{dbutils.widgets.get("test_library_ref")}'
+else:
+    %pip install databricks-labs-dqx
+
+%restart_python
 
 # COMMAND ----------
 
@@ -163,11 +167,16 @@ from databricks.labs.dqx.check_funcs import make_condition, get_normalized_colum
 from databricks.labs.dqx.rule import register_rule
 
 @register_rule("row")
-def is_suspicious_amount_pattern(column: str | Column, threshold: float = 5000.0) -> Column:
+def is_suspicious_amount_pattern(
+    column: str | Column, 
+    threshold: float = 5000.0,
+    reporting_thresholds: float | list[float] = 10000.0,
+    margin: float = 50.0
+) -> Column:
     """
     Detects suspicious amount patterns commonly associated with structuring or financial crime:
-    1. Perfectly round amounts above threshold (e.g., 5000.00, 10000.00)
-    2. Amounts just below the $5K reporting threshold (e.g., 4950-4999)
+    1. Perfectly round amounts above threshold (e.g., exactly 5000.00, 10000.00)
+    2. Amounts just below configurable reporting thresholds (e.g., 9950-9999 for a 10K threshold)
     3. Repeated digit patterns (e.g., 7777.77, 3333.33)
     
     These patterns may indicate attempts to avoid regulatory reporting requirements.
@@ -185,9 +194,13 @@ def is_suspicious_amount_pattern(column: str | Column, threshold: float = 5000.0
         ((abs_amount % 1000 == 0) | (abs_amount % 5000 == 0))
     )
     
-    # Check 2: Just below the $10K reporting threshold
-    # Within $50 below $10,000 (e.g., $9,950 - $9,999.99)
-    near_threshold = (abs_amount >= 9950) & (abs_amount < 10000)
+    # Check 2: Just below the reporting thresholds
+    if isinstance(reporting_thresholds, (int, float)):
+        reporting_thresholds = [float(reporting_thresholds)]
+    
+    near_threshold = F.lit(False)
+    for t in reporting_thresholds:
+        near_threshold = near_threshold | ((abs_amount >= t - margin) & (abs_amount < t))
     
     # Check 3: Repeated digit patterns (e.g., 7777.77, 3333.33)
     amount_str = F.format_number(abs_amount, 2)
@@ -237,6 +250,8 @@ banking_checks_yaml = f"""
     arguments:
       column: amount
       threshold: 5000.0
+      reporting_thresholds: [10000.0, 5000.0, 3000.0]
+      margin: 50.0
   user_metadata:
     version: v1
     location: {catalog}.{schema}.banking_quality_rules
