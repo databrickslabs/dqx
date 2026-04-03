@@ -6,9 +6,10 @@ import re
 from decimal import Decimal
 from enum import Enum
 from importlib.util import find_spec
-from typing import Any
+from typing import Any, TypeVar, overload
 from fnmatch import fnmatch
 from pathlib import Path
+
 
 from pyspark.sql import Column
 from pyspark.sql.types import StructType
@@ -27,6 +28,9 @@ from databricks.labs.dqx.table_manager import SparkTableDataProvider
 from databricks.sdk.errors import NotFound
 
 logger = logging.getLogger(__name__)
+
+
+T = TypeVar("T")
 
 
 COLUMN_NORMALIZE_EXPRESSION = re.compile("[^a-zA-Z0-9]+")
@@ -579,7 +583,23 @@ def _replace_template(text: str, variables: dict[str, str]) -> str:
     return output
 
 
-def _substitute_variables(obj: object, variables: dict[str, str]) -> object:
+@overload
+def _substitute_variables(obj: str, variables: dict[str, str]) -> str: ...
+
+
+@overload
+def _substitute_variables(obj: list[T], variables: dict[str, str]) -> list[T]: ...
+
+
+@overload
+def _substitute_variables(obj: dict[str, T], variables: dict[str, str]) -> dict[str, T]: ...
+
+
+@overload
+def _substitute_variables(obj: T, variables: dict[str, str]) -> T: ...
+
+
+def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
     """Recursively replace **{{ key }}** placeholders in all string values within *obj*.
 
     Traverses dicts, lists, and strings. Non-string/non-collection values are
@@ -649,7 +669,7 @@ def resolve_variables(checks: list[dict], variables: dict[str, VariableValue] | 
 
     _validate_variable_types(variables)
     str_variables = {k: str(v) for k, v in variables.items()}
-    return _substitute_variables(checks, str_variables)  # type: ignore[return-value]
+    return _substitute_variables(checks, str_variables)
 
 
 def get_file_extension(file_path: str | os.PathLike) -> str:

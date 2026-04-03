@@ -248,3 +248,92 @@ def test_load_checks_per_call_overrides_engine_defaults():
     assert checks == [
         {"criticality": "error", "check": {"function": "is_not_null", "arguments": {"column": "default_col"}}},
     ]
+
+
+def test_load_checks_by_metadata_and_split_with_variables(tmp_path):
+
+    checks_yaml = """
+        - criticality: error
+          name: "{{ col }}_null_check"
+          check:
+            function: is_not_null_and_not_empty
+            arguments:
+              column: "{{ col }}"
+        - criticality: warn
+          check:
+            function: sql_expression
+            arguments:
+              expression: "{{ expr_col }} > {{ threshold }}"
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(
+        str(checks_file), variables={"col": "b", "expr_col": "a", "threshold": 1}
+    )
+
+    assert checks == [
+        {
+            "criticality": "error",
+            "name": "b_null_check",
+            "check": {
+                "function": "is_not_null_and_not_empty",
+                "arguments": {"column": "b"},
+            },
+        },
+        {
+            "criticality": "warn",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "a > 1"},
+            },
+        },
+    ]
+
+
+def test_load_checks_by_metadata_with_variables_name_and_filter(tmp_path):
+
+    checks_yaml = """
+        - criticality: error
+          name: "{{ col }}_greater_than_{{ threshold }}"
+          check:
+            function: sql_expression
+            arguments:
+              expression: "{{ col }} > {{ threshold }}"
+          filter: "{{ filter_col }} IS NOT NULL"
+        """
+    checks_file = tmp_path / "checks.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+    checks = DQEngineCore.load_checks_from_local_file(
+        str(checks_file), variables={"col": "a", "threshold": 1, "filter_col": "a"}
+    )
+
+    assert checks == [
+        {
+            "criticality": "error",
+            "name": "a_greater_than_1",
+            "check": {
+                "function": "sql_expression",
+                "arguments": {"expression": "a > 1"},
+            },
+            "filter": "a IS NOT NULL",
+        }
+    ]
+
+
+def test_load_checks_with_missing_variable(tmp_path):
+
+    checks_yaml = """
+        - criticality: error
+          check:
+            function: is_not_null
+            arguments:
+              column: "{{ missing_col }}"
+        """
+    checks_file = tmp_path / "checks_missing.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+
+    # Load file, which will warn and leave the placeholder
+    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"different_var": "val"})
+
+    # Assert that the placeholder was left in the metadata (unresolved variable)
+    assert checks[0]["check"]["arguments"]["column"] == "{{ missing_col }}"

@@ -125,6 +125,24 @@ status = DQEngine.validate_checks(checks_from_yaml)
 print(f"Checks from YAML: {status}")
 
 # COMMAND ----------
+ 
+# MAGIC %md
+# MAGIC ### Variable Substitution
+# MAGIC
+# MAGIC You can parameterize your YAML checks using `{{ variable }}` syntax and resolve them at load time.
+# MAGIC
+# MAGIC ```python
+# MAGIC # Example: Load checks with a dynamic age limit
+# MAGIC #
+# MAGIC # from databricks.labs.dqx.config import FileChecksStorageConfig
+# MAGIC #
+# MAGIC # resolved_checks = dq_engine.load_checks(
+# MAGIC #     config=FileChecksStorageConfig(location="checks.yml"),
+# MAGIC #     variables={"max_age": 120}
+# MAGIC # )
+# MAGIC ```
+# MAGIC
+# COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### Setup `DQEngine`
