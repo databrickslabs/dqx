@@ -2077,3 +2077,43 @@ def test_profiler_detect_pk_from_path_with_llm(ws, spark, make_schema, make_rand
     assert result["primary_key_columns"] == ["id"]
     assert result["confidence"]
     assert result["reasoning"]
+
+
+def test_profiler_string_columns_have_null_min_max(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("name", T.StringType()),
+            T.StructField("age", T.IntegerType()),
+        ]
+    )
+    input_df = spark.createDataFrame(
+        [["Alice", 30], ["Bob", 25], ["Charlie", 35]],
+        schema=schema,
+    )
+
+    profiler = DQProfiler(ws)
+    stats, _ = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+
+    assert stats["name"]["min"] is None
+    assert stats["name"]["max"] is None
+    assert stats["age"]["min"] is not None
+    assert stats["age"]["max"] is not None
+
+
+def test_profiler_count_distinct_computed(spark, ws):
+    schema = T.StructType(
+        [
+            T.StructField("color", T.StringType()),
+            T.StructField("value", T.IntegerType()),
+        ]
+    )
+    input_df = spark.createDataFrame(
+        [["red", 1], ["blue", 2], ["red", 3], ["blue", 1]],
+        schema=schema,
+    )
+
+    profiler = DQProfiler(ws)
+    stats, _ = profiler.profile(input_df, options={"sample_fraction": None, "llm_primary_key_detection": False})
+
+    assert stats["color"]["count_distinct"] == 2
+    assert stats["value"]["count_distinct"] == 3
