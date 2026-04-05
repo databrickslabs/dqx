@@ -774,6 +774,12 @@ Variable substitution is only available when defining checks declaratively (as d
   </TabItem>
 </Tabs>
 
+## Default Variables
+
+In addition to specifying variables during the load process, you can define engine-level defaults using the `ExtraParams` class. These constants are automatically applied to all checks unless explicitly overridden.
+
+For technical details and configuration examples, see [Default Variables](/docs/guide/additional_configuration#defining-default-variables-for-substitution) in the Additional Configuration guide.
+
 ## Validating syntax of quality checks
 
 You can validate the syntax of checks loaded from a storage system or checks defined programmatically before applying them.
