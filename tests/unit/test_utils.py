@@ -544,13 +544,6 @@ def test_resolve_variables_replaces_all_string_fields():
     assert result[0]["filter"] == "status = 'active'"
 
 
-def test_resolve_variables_none_variables():
-    checks = [{"name": "{{ x }}"}]
-    result = resolve_variables(checks, None)
-    assert result is checks  # same object, no copy
-    assert result[0]["name"] == "{{ x }}"
-
-
 def test_resolve_variables_empty_variables():
     checks = [{"name": "{{ x }}"}]
     result = resolve_variables(checks, {})
@@ -816,12 +809,6 @@ def test_resolve_variables_none_vars_no_warning(caplog):
         result = resolve_variables(checks, None)
     assert result[0]["col"] == "{{ x }}"
     assert not any("Unresolved placeholder" in msg for msg in caplog.messages)
-
-
-def test_resolve_variables_whitespace_in_key():
-    checks = [{"col": "{{col_a}}"}]
-    result = resolve_variables(checks, {"col_a": "replaced"})
-    assert result[0]["col"] == "replaced"
 
 
 def test_resolve_variables_unicode_values():

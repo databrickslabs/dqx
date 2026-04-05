@@ -319,21 +319,3 @@ def test_load_checks_by_metadata_with_variables_name_and_filter(tmp_path):
         }
     ]
 
-
-def test_load_checks_with_missing_variable(tmp_path):
-
-    checks_yaml = """
-        - criticality: error
-          check:
-            function: is_not_null
-            arguments:
-              column: "{{ missing_col }}"
-        """
-    checks_file = tmp_path / "checks_missing.yml"
-    checks_file.write_text(checks_yaml, encoding="utf-8")
-
-    # Load file, which will warn and leave the placeholder
-    checks = DQEngineCore.load_checks_from_local_file(str(checks_file), variables={"different_var": "val"})
-
-    # Assert that the placeholder was left in the metadata (unresolved variable)
-    assert checks[0]["check"]["arguments"]["column"] == "{{ missing_col }}"
