@@ -250,6 +250,41 @@ def test_load_checks_per_call_overrides_engine_defaults():
     ]
 
 
+def test_extra_params_variables_substitution_and_overrides(tmp_path):
+    ws = create_autospec(WorkspaceClient)
+    mock_spark = create_autospec(SparkSession)
+
+    checks_yaml = """
+        - criticality: error
+          name: "id_check"
+          check:
+            function: is_not_null
+            arguments:
+              column: "{{ target_col }}"
+          user_metadata:
+            env: "{{ environment }}"
+            rule_id: "{{ nested_var }}"
+        """
+    checks_file = tmp_path / "checks_extra.yml"
+    checks_file.write_text(checks_yaml, encoding="utf-8")
+
+    raw_checks = DQEngineCore.load_checks_from_local_file(str(checks_file))
+    mock_factory = create_autospec(BaseChecksStorageHandlerFactory)
+    mock_handler = create_autospec(ChecksStorageHandler)
+    mock_factory.create.return_value = mock_handler
+    mock_handler.load.return_value = raw_checks
+
+    extra_params = ExtraParams(variables={"target_col": "id", "environment": "dev", "nested_var": "old"})
+    engine = DQEngine(ws, spark=mock_spark, checks_handler_factory=mock_factory, extra_params=extra_params)
+    config = FileChecksStorageConfig(location=str(checks_file))
+
+    checks = engine.load_checks(config, variables={"environment": "prod", "nested_var": "new"})
+
+    assert checks[0]["check"]["arguments"]["column"] == "id"
+    assert checks[0]["user_metadata"]["env"] == "prod"
+    assert checks[0]["user_metadata"]["rule_id"] == "new"
+
+
 def test_load_checks_by_metadata_and_split_with_variables(tmp_path):
 
     checks_yaml = """
