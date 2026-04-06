@@ -1339,6 +1339,7 @@ def foreign_key(
     ref_table: str | None = None,  # or reference table name
     negate: bool = False,
     row_filter: str | None = None,
+    null_safe: bool = False,
 ) -> tuple[Column, Callable]:
     """
     Build a foreign key check condition and closure for dataset-level validation.
@@ -1354,9 +1355,13 @@ def foreign_key(
         ref_columns: List of column names (str) or Column expressions in the reference dataset.
         ref_df_name: Name of the reference DataFrame (used when passing DataFrames directly).
         ref_table: Name of the reference table (used when reading from catalog).
-        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
         negate: If True, the condition is negated (i.e., the check fails when the foreign key values exist in the
             reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
+        row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
+        null_safe: If True use null safe comparison in join (`eqNullSafe` or `<=>`), hence NULL foreign key values
+            match NULL references values. If False, skips NULL values both foreign key, which is default ANSI behavior.
+            False is a default. Does not work in combination with `negate` since the former relies on null value
+            for joined column which could be in that case also valid match conditiion.
 
     Returns:
         A tuple of:
@@ -1370,8 +1375,12 @@ def foreign_key(
             - if both *ref_df_name* and *ref_table* are provided.
             - if the number of *columns* and *ref_columns* do not match.
             - if *ref_df_name* is not found in the provided *ref_dfs* dictionary.
+            - if both *negate* and *null_safe* are enabled.
     """
     _validate_ref_params(columns, ref_columns, ref_df_name, ref_table)
+
+    if negate and null_safe:
+        raise InvalidParameterError("Either `negate` or `null_safe` can be used")
 
     not_null_condition = F.lit(True)
     if len(columns) == 1:
@@ -1407,9 +1416,12 @@ def foreign_key(
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
 
-        joined = df.join(
-            ref_df_distinct, on=(col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
-        )
+        join_cond_expr_not_nullable = (col_expr == F.col(ref_alias)) & col_expr.isNotNull()
+        join_cond_expr_nullable = col_expr.eqNullSafe(F.col(ref_alias))
+        join_cond_expr = join_cond_expr_nullable if null_safe else join_cond_expr_not_nullable
+        join_cond = join_cond_expr & filter_expr
+
+        joined = df.join(ref_df_distinct, on=join_cond, how="left")
 
         base_condition = not_null_condition & col_expr.isNotNull()
         match_failed = F.col(ref_alias).isNull()
