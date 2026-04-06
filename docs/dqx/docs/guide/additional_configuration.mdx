@@ -203,6 +203,9 @@ DQX allows you to define engine-level defaults for variables used in declarative
     ```
   </TabItem>
   <TabItem value="Workflows" label="Workflows">
+    :::warning
+    Variable substitution is not currently supported in DQX installable workflows. Variables defined in the configuration file will be stored but not applied during workflow execution.
+    :::
     You can set the following fields in the [configuration file](/docs/installation/#configuration-file) to define default variables for substitution when using DQX workflows:
     ```yaml
     extra_params:

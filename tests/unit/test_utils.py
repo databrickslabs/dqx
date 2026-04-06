@@ -810,6 +810,11 @@ def test_resolve_variables_none_vars_no_warning(caplog):
     assert result[0]["col"] == "{{ x }}"
     assert not any("Unresolved placeholder" in msg for msg in caplog.messages)
 
+    with caplog.at_level(logging.WARNING):
+        result = resolve_variables(checks, {})
+    assert result[0]["col"] == "{{ x }}"
+    assert not any("Unresolved placeholder" in msg for msg in caplog.messages)
+
 
 def test_resolve_variables_unicode_values():
     checks = [{"col": "{{ col }}"}]
