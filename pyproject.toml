@@ -140,7 +140,7 @@ docs = [
     "pydoc-markdown>=4.8.2,<5.0",
 ]
 yq = [
-    "yq",
+    "yq~=3.4.3",
 ]
 
 [tool.uv]
