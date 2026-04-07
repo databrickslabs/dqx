@@ -10,9 +10,7 @@ on:
       - main
 
 permissions:
-  id-token: write # required for Azure OIDC authentication and Codecov OIDC upload
   contents: read
-  pull-requests: write # required for acceptance action to post test results as PR comments
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -23,21 +21,20 @@ jobs:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
-
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
@@ -66,8 +63,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
 
       - name: Merge coverage reports and convert them to XML
-        run: |
-          hatch run combine_coverage
+        run: make combine-coverage
 
       # Recursively search the entire workspace directory for all coverage reports.
       # All uploaded test coverage reports will be used even if publish is done multiple time.
@@ -80,21 +76,20 @@ jobs:
     if: github.event_name == 'pull_request' && !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork
     environment: tool
     runs-on: larger
+    permissions:
+      id-token: write
+      pull-requests: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098  # v7.3.1
         with:
-          cache: 'pip'
-          cache-dependency-path: '**/pyproject.toml'
-          python-version: '3.12'
-
-      - name: Install hatch
-        run: pip install hatch==1.16.5
+          version: "0.11.2"
+          checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
@@ -124,8 +119,7 @@ jobs:
           MLFLOW_HTTP_REQUEST_MAX_RETRIES: "10"
 
       - name: Merge coverage reports and convert them to XML
-        run: |
-          hatch run combine_coverage
+        run: make combine-coverage
 
       # collects all coverage reports
       - name: Publish test coverage
