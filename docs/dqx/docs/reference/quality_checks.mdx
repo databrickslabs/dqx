@@ -2087,6 +2087,18 @@ Complex data types are supported as well.
       ref_df_name: ref_df_key
       negate: true
 
+# foreign_key null safe  (use `eqNullSafe` for join condition)
+- criticality: error
+  check:
+    function: foreign_key
+    arguments:
+      columns:
+      - col1
+      ref_columns:
+      - ref_col1
+      ref_df_name: ref_df_key
+      null_safe: true
+
 # sql_query check with merge_columns (row-level validation)
 - criticality: error
   check:
@@ -2540,6 +2552,17 @@ checks = [
         "ref_columns": ["ref_col1"],
         "ref_df_name": "ref_df_key",
         "negate": True
+    },
+
+    # foreign_key null safe  (use `eqNullSafe` for join condition)
+    DQDatasetRule(
+      criticality="error",
+      check_func=check_funcs.foreign_key,
+      columns=["col1"],
+      check_func_kwargs={
+        "ref_columns": ["ref_col1"],
+        "ref_df_name": "ref_df_key",
+        "null_safe": True
     },
 
     # sql_query check with merge_columns (row-level validation)
