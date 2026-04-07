@@ -1359,9 +1359,9 @@ def foreign_key(
             reference DataFrame/Table). If False, the check fails when the foreign key values do not exist in the reference.
         row_filter: Optional SQL expression for filtering rows before checking the foreign key. Auto-injected from the check filter.
         null_safe: If True use null safe comparison in join (`eqNullSafe` or `<=>`), hence NULL foreign key values
-            match NULL references values. If False, skips NULL values both foreign key, which is default ANSI behavior.
+            match NULL references values. If False, skips NULL values in the foreign key columns.
             False is a default. Does not work in combination with `negate` since the former relies on null value
-            for joined column which could be in that case also valid match conditiion.
+            for joined column which could be in that case also valid match condition.
 
     Returns:
         A tuple of:

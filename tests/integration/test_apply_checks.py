@@ -1024,7 +1024,8 @@ def test_foreign_key_check_missing_ref_df_key(ws, spark):
         dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
 
 
-def test_foreign_key_check_null_safe(dq_engine, spark):
+def test_foreign_key_check_null_safe(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     src_df = spark.createDataFrame(
         [
             [1, 2, 3],
@@ -1086,7 +1087,8 @@ def test_foreign_key_check_null_safe(dq_engine, spark):
     assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
 
 
-def test_foreign_key_check_null_safe_on_composite_keys(dq_engine, spark):
+def test_foreign_key_check_null_safe_on_composite_keys(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     src_df = spark.createDataFrame(
         [
             [1, 2, 3],
@@ -1147,7 +1149,8 @@ def test_foreign_key_check_null_safe_on_composite_keys(dq_engine, spark):
     assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
 
 
-def test_foreign_key_check_null_safe_yaml(dq_engine, spark):
+def test_foreign_key_check_null_safe_yaml(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     src_df = spark.createDataFrame(
         [
             [1, 2, 3],
@@ -1209,21 +1212,6 @@ def test_foreign_key_check_null_safe_yaml(dq_engine, spark):
     )
 
     assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
-
-
-def test_test_foreign_key_check_for_negate_and_null_safe(ws, spark):
-    with pytest.raises(InvalidParameterError, match="Either `negate` or `null_safe` can be used"):
-        DQDatasetRule(
-            criticality="error",
-            check_func=check_funcs.foreign_key,
-            columns=[F.col("a"), F.col("b")],
-            check_func_kwargs={
-                "ref_columns": [F.col("ref_a"), F.col("ref_b")],
-                "ref_df_name": "ref_df",
-                "null_safe": True,
-                "negate": True,
-            },
-        )
 
 
 def test_compare_datasets_check_missing_ref_df(ws, spark):

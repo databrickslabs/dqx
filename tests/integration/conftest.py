@@ -136,11 +136,6 @@ def assert_check_and_split_results(
     )
 
 
-@pytest.fixture
-def dq_engine(ws):
-    return DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
-
-
 class SparkKeepAlive:
     """
     Utility to keep Spark Connect session alive during long-running operations.
