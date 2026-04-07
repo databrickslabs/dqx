@@ -1,9 +1,10 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+' # Must match semantic version tags like 'v1.2.3'
+# Disabled for now, pending further work.
+#  push:
+#    tags:
+#      - 'v[0-9]+.[0-9]+.[0-9]+' # Must match semantic version tags like 'v1.2.3'
 
 jobs:
   publish:
