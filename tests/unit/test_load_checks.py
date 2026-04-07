@@ -353,4 +353,3 @@ def test_load_checks_by_metadata_with_variables_name_and_filter(tmp_path):
             "filter": "a IS NOT NULL",
         }
     ]
-

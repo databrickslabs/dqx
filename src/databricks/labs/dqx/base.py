@@ -189,8 +189,8 @@ class DQEngineCoreBase(DQEngineBase):
 
         Args:
             filepath: Path to a file containing checks definitions.
-            variables: Optional mapping of placeholder names to replacement values. Replaces **{{ key }}**
-                placeholders in all string values of the check definitions before returning.
+            variables: Optional mapping of placeholder names to replacement values. Replaces placeholders
+                in all string values of the check definitions before returning.
 
         Returns:
             List of DQ rules (checks).

@@ -635,27 +635,28 @@ def _validate_variable_types(variables: dict[str, VariableValue]) -> None:
 def resolve_variables(checks: list[dict], variables: dict[str, VariableValue] | None) -> list[dict]:
     """Resolve variable substitution in check definitions.
 
-    Replaces **{{ key }}** placeholders in all string values of *checks* with the
-    corresponding values from *variables*. The original *checks* list is never mutated.
+    Replaces placeholders in all string values of *checks* with the corresponding values
+    from *variables*.
 
-    Variable values must be scalar types (**str**, **int**, **float**, **bool**,
-    **Decimal**, **datetime.date**, **datetime.datetime**, **datetime.time**).
-    Non-string scalars are converted via **str()** — for example, **{"threshold": 10}** becomes **"10"** in
-    the substituted string. Collection types (**list**, **dict**, **set**, etc.) are
-    rejected with :class:`~databricks.labs.dqx.errors.InvalidParameterError` because
-    their **str()** representation is rarely meaningful in SQL or column expressions.
+    Variable values must be scalar types (e.g. *str*, *int*, *float*, *bool*, *Decimal*,
+    *datetime.date*, *datetime.datetime*, *datetime.time*). Non-string scalars are
+    converted to strings via *str()* in the substituted string. Collection type
+    variables (e.g. *list*, *dict*, *set*, etc.) are rejected with
+    *databricks.labs.dqx.errors.InvalidParameterError* because their string representation
+    is rarely meaningful in SQL or column expressions.
 
-    Logs a warning for any **{{ ... }}** placeholders that remain unresolved after
-    substitution (e.g. misspelled variable names).
+    Logs a warning for any placeholders that remain unresolved after substitution
+    (e.g. misspelled variable names).
 
-    **Security note:** variable values substituted into **sql_expression** checks are
-    not sanitized and are passed directly to **F.expr()**. Callers must ensure that
-    variable values come from trusted sources to prevent SQL injection.
+    Note:
+    Variable values substituted into *sql_expression* checks are not sanitized and are
+    passed directly to *F.expr()*. Callers must **ensure variable values come from trusted
+    sources** to prevent SQL injection.
 
     Args:
         checks: List of check definition dictionaries (metadata format).
         variables: Mapping of placeholder names to scalar replacement values.
-            If **None** or empty the checks are returned unchanged.
+            If *None* or empty the checks are returned unchanged.
 
     Returns:
         A new list of check dicts with placeholders resolved, or the original list
