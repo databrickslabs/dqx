@@ -67,23 +67,30 @@ def _strip_fingerprints_from_result_column(df: DataFrame, col_name: str) -> Data
     )
 
 
+_FINGERPRINT_COLUMNS = ("_errors", "dq_errors", "_warnings", "dq_warnings")
+
+
+def _strip_all_fingerprints(df: DataFrame) -> DataFrame:
+    """Remove fingerprint fields from all known result columns."""
+    for col in _FINGERPRINT_COLUMNS:
+        df = _strip_fingerprints_from_result_column(df, col)
+    return df
+
+
 def assert_df_equality_ignore_fingerprints(
     df1: DataFrame,
     df2: DataFrame,
     **kwargs,
 ):
-    """Assert DataFrame equality after stripping fingerprint fields from result columns."""
-    df1_clean = df1
-    for col in ("_errors", "dq_errors"):
-        df1_clean = _strip_fingerprints_from_result_column(df1_clean, col)
-    for col in ("_warnings", "dq_warnings"):
-        df1_clean = _strip_fingerprints_from_result_column(df1_clean, col)
+    """Assert DataFrame equality after stripping fingerprint fields from result columns.
 
-    df2_clean = df2
-    for col in ("_errors", "dq_errors"):
-        df2_clean = _strip_fingerprints_from_result_column(df2_clean, col)
-    for col in ("_warnings", "dq_warnings"):
-        df2_clean = _strip_fingerprints_from_result_column(df2_clean, col)
+    Translates legacy chispa-style kwargs to PySpark's assertDataFrameEqual:
+      - ignore_row_order  -> checkRowOrder (inverted)
+      - ignore_nullable   -> dropped (not supported by assertDataFrameEqual)
+      - ignore_column_order -> dropped (not supported by assertDataFrameEqual)
+    """
+    df1_clean = _strip_all_fingerprints(df1)
+    df2_clean = _strip_all_fingerprints(df2)
 
     check_row_order = not kwargs.pop("ignore_row_order", False)
     kwargs.pop("ignore_nullable", None)
