@@ -1024,12 +1024,10 @@ def test_foreign_key_check_missing_ref_df_key(ws, spark):
         dq_engine.apply_checks(src_df, checks, ref_dfs=ref_dfs)
 
 
-def test_foreign_key_check_null_safe(ws, spark):
+def test_foreign_key_check_null_safe_foreign_key_present(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     src_df = spark.createDataFrame(
         [
-            [1, 2, 3],
-            [4, 5, 6],
             [None, 2, 7],
         ],
         SCHEMA,
@@ -1037,9 +1035,49 @@ def test_foreign_key_check_null_safe(ws, spark):
 
     ref_df = spark.createDataFrame(
         [
-            [1, 1, 3],
-            [5, 5, 7],
-            [None, None, None],
+            [1, None, 1],
+        ],
+        SCHEMA,
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="warn",
+            check_func=check_funcs.foreign_key,
+            columns=["a"],
+            check_func_kwargs={
+                "ref_columns": ["b"],
+                "ref_df_name": "ref_df",
+                "null_safe": True,
+            },
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+    good_df, bad_df = dq_engine.apply_checks_and_split(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [[None, 2, 7, None, None]],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
+
+
+def test_foreign_key_check_null_safe_foreign_key_missing(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    src_df = spark.createDataFrame(
+        [
+            [None, 2, 7],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 1, 1],
         ],
         SCHEMA,
     )
@@ -1064,22 +1102,20 @@ def test_foreign_key_check_null_safe(ws, spark):
 
     expected = spark.createDataFrame(
         [
-            [1, 2, 3, None, None],
             [
-                4,
-                5,
-                6,
+                None,
+                2,
+                7,
                 None,
                 [
                     build_quality_violation(
-                        "a_not_exists_in_ref_b",
-                        "Value '4' in column 'a' not found in reference column 'b'",
+                        "struct_a_as_a_not_exists_in_ref_struct_b_as_a",
+                        "Value '{null}' in column 'struct(a AS a)' not found in reference column 'struct(b AS a)'",
                         ["a"],
                         function="foreign_key",
                     )
                 ],
             ],
-            [None, 2, 7, None, None],
         ],
         EXPECTED_SCHEMA,
     )
@@ -1149,6 +1185,65 @@ def test_foreign_key_check_null_safe_on_composite_keys(ws, spark):
     assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
 
 
+def test_foreign_key_check_null_safe_on_composite_keys_not_found(ws, spark):
+    dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
+    src_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+            [None, None, 7],
+        ],
+        SCHEMA,
+    )
+
+    ref_df = spark.createDataFrame(
+        [
+            [1, 2, 3],
+        ],
+        "ref_a: int, ref_b: int, e: int",
+    )
+
+    checks = [
+        DQDatasetRule(
+            criticality="error",
+            check_func=check_funcs.foreign_key,
+            columns=[F.col("a"), F.col("b")],
+            check_func_kwargs={
+                "ref_columns": [F.col("ref_a"), F.col("ref_b")],
+                "ref_df_name": "ref_df",
+                "null_safe": True,
+            },
+        ),
+    ]
+
+    refs_df = {"ref_df": ref_df}
+
+    checked = dq_engine.apply_checks(src_df, checks, refs_df)
+    good_df, bad_df = dq_engine.apply_checks_and_split(src_df, checks, refs_df)
+
+    expected = spark.createDataFrame(
+        [
+            [1, 2, 3, None, None],
+            [
+                None,
+                None,
+                7,
+                [
+                    build_quality_violation(
+                        "struct_a_as_a_b_as_b_not_exists_in_ref_struct_ref_a_as_a_ref_b_as_b",
+                        "Value '{null, null}' in column 'struct(a AS a, b AS b)' not found in reference column 'struct(ref_a AS a, ref_b AS b)'",
+                        ["a", "b"],
+                        function="foreign_key",
+                    ),
+                ],
+                None,
+            ],
+        ],
+        EXPECTED_SCHEMA,
+    )
+
+    assert_check_and_split_results(checked, good_df, bad_df, expected, ["a", "b", "c"], ignore_column_order=True)
+
+
 def test_foreign_key_check_null_safe_yaml(ws, spark):
     dq_engine = DQEngine(workspace_client=ws, extra_params=EXTRA_PARAMS)
     src_df = spark.createDataFrame(
@@ -1199,8 +1294,8 @@ def test_foreign_key_check_null_safe_yaml(ws, spark):
                 None,
                 [
                     build_quality_violation(
-                        "a_not_exists_in_ref_b",
-                        "Value '4' in column 'a' not found in reference column 'b'",
+                        "struct_a_as_a_not_exists_in_ref_struct_b_as_a",
+                        "Value '{4}' in column 'struct(a AS a)' not found in reference column 'struct(b AS a)'",
                         ["a"],
                         function="foreign_key",
                     )

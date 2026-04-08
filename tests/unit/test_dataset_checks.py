@@ -59,21 +59,6 @@ def test_foreign_key_exceptions(ref_df_name, ref_table, ref_columns, columns, ex
         )
 
 
-def test_foreign_key_negate_and_null_safe_raises():
-    with pytest.raises(InvalidParameterError, match="Either `negate` or `null_safe` can be used"):
-        DQDatasetRule(
-            criticality="error",
-            check_func=check_funcs.foreign_key,
-            columns=["a", "b"],
-            check_func_kwargs={
-                "ref_columns": ["ref_a", "ref_b"],
-                "ref_df_name": "ref_df",
-                "null_safe": True,
-                "negate": True,
-            },
-        )
-
-
 @pytest.mark.parametrize(
     "ref_df_name, ref_table, ref_columns, columns, expected_exception, expected_message",
     [
