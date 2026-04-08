@@ -135,6 +135,8 @@ test = [
     "jmespath~=1.0.1",
     "psycopg2-binary~=2.9.10",
     "fastapi>=0.119.0,<1.0",
+    "dbt-core~=1.11.6",
+    "dbt-databricks~=1.11.6",
 ]
 docs = [
     "pydoc-markdown>=4.8.2,<5.0",
