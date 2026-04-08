@@ -14,7 +14,7 @@ Testing applications that use DQEngine requires proper initialization of the Dat
 
 For testing, we recommend:
 * [pytester fixtures](https://github.com/databrickslabs/pytester) is used to set up Databricks remote Spark session and workspace client. For pytester to be able to authenticate to a workspace, you need to use [debug_env_name fixture](https://github.com/databrickslabs/pytester?tab=readme-ov-file#debug_env_name-fixture). We recommend using the `~/.databricks/debug-env.json` file to store different sets of environment variables (see more details below).
-* [chispa](https://github.com/MrPowers/chispa) for asserting Spark DataFrames.
+* [PySpark testing utilities](https://spark.apache.org/docs/latest/api/python/reference/pyspark.testing.html) for asserting Spark DataFrames.
 
 These libraries are also used internally to test DQX.
 
@@ -24,7 +24,7 @@ Below is an example test.
   <TabItem value="Python" label="Python" default>
     ```python
     import pytest
-    from chispa.dataframe_comparer import assert_df_equality
+    from pyspark.testing.utils import assertDataFrameEqual
     from databricks.labs.dqx.check_funcs import is_not_null_and_not_empty
     from databricks.labs.dqx.engine import DQEngine
     from databricks.labs.dqx.rule import DQRowRule
@@ -50,7 +50,7 @@ Below is an example test.
         df = dq_engine.apply_checks(test_df, checks)
 
         expected_df = spark.createDataFrame([[1, 3, 3, None, None]], expected_schema)
-        assert_df_equality(df, expected_df)
+        assertDataFrameEqual(df, expected_df)
     ```
   </TabItem>
 </Tabs>
