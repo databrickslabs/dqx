@@ -247,14 +247,12 @@ jobs:
           checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
       # Required for dbt e2e tests
-      - name: Install dbt
-        run: uv pip install --system dbt-core==1.10.9 dbt-databricks==1.10.9
+      # - name: Install dbt
+      #   run: uv pip install --system dbt-core==1.10.9 dbt-databricks==1.10.9
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/e0f69d54c90e95ccad22d5ff17751da665e599a9/install.sh | sh
-          databricks --version
+        run: databricks/setup-cli@acd0e77a1ed7f15f528faca1e1f7f5590bcfdff8 # setup-cli/v0.296.0
 
       - name: Run e2e tests
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
@@ -289,8 +287,8 @@ jobs:
           checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
       # Required for dbt e2e tests
-      - name: Install dbt
-        run: uv pip install --system dbt-core==1.10.9 dbt-databricks==1.10.9
+      # - name: Install dbt
+      #   run: uv pip install --system dbt-core==1.10.9 dbt-databricks==1.10.9
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI

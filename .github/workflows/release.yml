@@ -1,6 +1,6 @@
 name: Release
 
-on:
+on: {}
 # Disabled for now, pending further work.
 #  push:
 #    tags:
