@@ -2087,7 +2087,7 @@ Complex data types are supported as well.
       ref_df_name: ref_df_key
       negate: true
 
-# foreign_key null safe  (use `eqNullSafe` for join condition)
+# foreign_key null safe to match `null` values
 - criticality: error
   check:
     function: foreign_key
@@ -2554,7 +2554,7 @@ checks = [
         "negate": True
     },
 
-    # foreign_key null safe  (use `eqNullSafe` for join condition)
+    # foreign_key null safe to match `null` values
     DQDatasetRule(
       criticality="error",
       check_func=check_funcs.foreign_key,
