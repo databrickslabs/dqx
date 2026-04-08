@@ -1415,10 +1415,9 @@ def foreign_key(
 
         filter_expr = F.expr(row_filter) if row_filter else F.lit(True)
 
-        join_cond_expr = (col_expr == F.col(ref_alias)) & col_expr.isNotNull()
-        join_cond = join_cond_expr & filter_expr
-
-        joined = df.join(ref_df_distinct, on=join_cond, how="left")
+        joined = df.join(
+            ref_df_distinct, on=(col_expr == F.col(ref_alias)) & col_expr.isNotNull() & filter_expr, how="left"
+        )
 
         base_condition = not_null_condition & col_expr.isNotNull()
         match_failed = F.col(ref_alias).isNull()
