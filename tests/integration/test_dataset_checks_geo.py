@@ -1,4 +1,4 @@
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 from databricks.sdk import WorkspaceClient
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.geo.check_funcs import are_polygons_mutually_disjoint
@@ -36,7 +36,7 @@ def test_are_polygons_mutually_disjoint_pass(skip_if_runtime_not_geo_compatible,
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_fail(skip_if_runtime_not_geo_compatible, spark):
@@ -73,7 +73,7 @@ def test_are_polygons_mutually_disjoint_fail(skip_if_runtime_not_geo_compatible,
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_touching(skip_if_runtime_not_geo_compatible, spark):
@@ -112,7 +112,7 @@ def test_are_polygons_mutually_disjoint_touching(skip_if_runtime_not_geo_compati
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_with_row_filter(skip_if_runtime_not_geo_compatible, spark):
@@ -150,7 +150,7 @@ def test_are_polygons_mutually_disjoint_with_row_filter(skip_if_runtime_not_geo_
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_single_polygon(skip_if_runtime_not_geo_compatible, spark):
@@ -176,7 +176,7 @@ def test_are_polygons_mutually_disjoint_single_polygon(skip_if_runtime_not_geo_c
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_empty_df(skip_if_runtime_not_geo_compatible, spark):
@@ -192,7 +192,7 @@ def test_are_polygons_mutually_disjoint_empty_df(skip_if_runtime_not_geo_compati
     checked_schema = "geom: string, geom_not_mutually_disjoint: string"
     expected = spark.createDataFrame([], checked_schema)
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_all_overlap(skip_if_runtime_not_geo_compatible, spark):
@@ -231,7 +231,7 @@ def test_are_polygons_mutually_disjoint_all_overlap(skip_if_runtime_not_geo_comp
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_duplicates(skip_if_runtime_not_geo_compatible, spark):
@@ -265,7 +265,7 @@ def test_are_polygons_mutually_disjoint_duplicates(skip_if_runtime_not_geo_compa
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_row_filter_no_violations(skip_if_runtime_not_geo_compatible, spark):
@@ -296,7 +296,7 @@ def test_are_polygons_mutually_disjoint_row_filter_no_violations(skip_if_runtime
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_row_filter_complex(skip_if_runtime_not_geo_compatible, spark):
@@ -327,7 +327,7 @@ def test_are_polygons_mutually_disjoint_row_filter_complex(skip_if_runtime_not_g
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_row_filter_numeric(skip_if_runtime_not_geo_compatible, spark):
@@ -366,7 +366,7 @@ def test_are_polygons_mutually_disjoint_row_filter_numeric(skip_if_runtime_not_g
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)
 
 
 def test_are_polygons_mutually_disjoint_via_engine_api(skip_if_runtime_not_geo_compatible, spark, ws: WorkspaceClient):
@@ -525,4 +525,4 @@ def test_are_polygons_mutually_disjoint_row_filter_with_duplicates(skip_if_runti
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True, ignore_row_order=True)
+    assertDataFrameEqual(actual, expected, checkRowOrder=False)

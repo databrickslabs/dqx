@@ -1,5 +1,5 @@
 import pyspark.sql.functions as F
-from chispa import assert_df_equality  # type: ignore [import-untyped]
+from pyspark.testing.utils import assertDataFrameEqual
 from databricks.labs.dqx.checks_serializer import deserialize_checks
 from databricks.labs.dqx.engine import DQEngine
 from databricks.labs.dqx.rule import DQRowRule
@@ -168,7 +168,7 @@ def test_apply_checks_with_fingerprints(ws, spark):
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(checked, expected, ignore_nullable=True)
+    assertDataFrameEqual(checked, expected)
 
 
 def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
@@ -205,7 +205,7 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
     good, bad = dq_engine.apply_checks_by_metadata_and_split(test_df, checks)
 
     expected_good = spark.createDataFrame([[1, 3, 3]], SCHEMA)
-    assert_df_equality(good, expected_good)
+    assertDataFrameEqual(good, expected_good)
 
     versioning_rules_checks = generate_checks_with_rule_and_set_fingerprint_from_dicts(checks)
     expected_bad = spark.createDataFrame(
@@ -339,7 +339,7 @@ def test_apply_checks_and_split_by_metadata_with_fingerprints(ws, spark):
         EXPECTED_SCHEMA,
     )
 
-    assert_df_equality(bad, expected_bad, ignore_nullable=True)
+    assertDataFrameEqual(bad, expected_bad)
 
 
 def test_apply_checks_by_metadata_for_each_column_fingerprint_consistency(ws, spark):

@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import patch
 from pyspark.sql import DataFrame, functions as F
 from pyspark.sql.types import ArrayType, StructType
-from chispa import assert_df_equality as _chispa_assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 
 import pytest
 from databricks.sdk.service.workspace import ImportFormat
@@ -85,7 +85,10 @@ def assert_df_equality_ignore_fingerprints(
     for col in ("_warnings", "dq_warnings"):
         df2_clean = _strip_fingerprints_from_result_column(df2_clean, col)
 
-    _chispa_assert_df_equality(df1_clean, df2_clean, **kwargs)
+    check_row_order = not kwargs.pop("ignore_row_order", False)
+    kwargs.pop("ignore_nullable", None)
+    kwargs.pop("ignore_column_order", None)
+    assertDataFrameEqual(df1_clean, df2_clean, checkRowOrder=check_row_order, **kwargs)
 
 
 def build_quality_violation(

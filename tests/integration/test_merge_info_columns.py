@@ -1,9 +1,9 @@
 """Integration tests for merge_info_columns to verify that info struct columns are merged into a single 
-destination column and source columns are dropped. Uses assert_df_equality for result comparison.
+destination column and source columns are dropped. Uses assertDataFrameEqual for result comparison.
 """
 
 import pyspark.sql.functions as F
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 from databricks.labs.dqx.reporting_columns import DefaultColumnNames, merge_info_columns
 
 
@@ -31,7 +31,7 @@ def test_merge_info_columns_single_column(ws, spark):
             )
         ),
     )
-    assert_df_equality(result, expected, ignore_nullable=True)
+    assertDataFrameEqual(result, expected)
     row = result.select(DefaultColumnNames.INFO.value).first()
     assert row is not None and row[0][0].anomaly.score == 0.75
 
@@ -43,8 +43,8 @@ def test_merge_info_columns_no_names_returns_unchanged(ws, spark):
     result_none = merge_info_columns("_dq_info", df, info_col_names=None)
     result_empty = merge_info_columns("_dq_info", df, info_col_names=[])
 
-    assert_df_equality(result_none, df)
-    assert_df_equality(result_empty, df)
+    assertDataFrameEqual(result_none, df)
+    assertDataFrameEqual(result_empty, df)
 
 
 def test_merge_info_columns_skips_missing_columns(ws, spark):
@@ -64,7 +64,7 @@ def test_merge_info_columns_skips_missing_columns(ws, spark):
         "_dq_info",
         F.array(F.struct(F.struct(F.lit(0.5).alias("score")).alias("anomaly"))),
     )
-    assert_df_equality(result, expected, ignore_nullable=True)
+    assertDataFrameEqual(result, expected)
 
 
 def test_merge_info_columns_called_twice_preserves_both(ws, spark):

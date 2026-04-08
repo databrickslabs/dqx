@@ -1,7 +1,7 @@
 # Databricks notebook source
 
 dbutils.widgets.text("test_library_ref", "", "Test Library Ref")
-%pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}' chispa==0.10.1
+%pip install 'databricks-labs-dqx @ {dbutils.widgets.get("test_library_ref")}'
 
 # COMMAND ----------
 
@@ -13,7 +13,7 @@ dbutils.library.restartPython()
 from unittest.mock import MagicMock
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import lit
-from chispa import assert_df_equality
+from pyspark.testing.utils import assertDataFrameEqual
 
 from databricks.labs.dqx import check_funcs
 from databricks.labs.dqx.engine import DQEngine
@@ -41,7 +41,7 @@ def test_apply_checks_foreachbatch():
             lit(None).cast(dq_result_schema.simpleString()).alias("_warnings"),
         )
         actual = engine.apply_checks(batch_df, checks)
-        assert_df_equality(actual, expected)
+        assertDataFrameEqual(actual, expected)
 
     input_df.writeStream.trigger(availableNow=True).foreachBatch(batch_handler_function).start().awaitTermination()
 

@@ -1,4 +1,4 @@
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 from databricks.labs.dqx.geo.check_funcs import (
     is_area_equal_to,
     is_area_not_equal_to,
@@ -55,7 +55,7 @@ def test_is_geometry(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_geography(skip_if_runtime_not_geo_compatible, spark):
@@ -87,7 +87,7 @@ def test_is_geography(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_point(skip_if_runtime_not_geo_compatible, spark):
@@ -110,7 +110,7 @@ def test_is_point(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_linestring(skip_if_runtime_not_geo_compatible, spark):
@@ -132,7 +132,7 @@ def test_is_linestring(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_polygon(skip_if_runtime_not_geo_compatible, spark):
@@ -154,7 +154,7 @@ def test_is_polygon(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_multipoint(skip_if_runtime_not_geo_compatible, spark):
@@ -176,7 +176,7 @@ def test_is_multipoint(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_multilinestring(skip_if_runtime_not_geo_compatible, spark):
@@ -198,7 +198,7 @@ def test_is_multilinestring(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_multipolygon(skip_if_runtime_not_geo_compatible, spark):
@@ -220,7 +220,7 @@ def test_is_multipolygon(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_geometrycollection(skip_if_runtime_not_geo_compatible, spark):
@@ -247,7 +247,7 @@ def test_is_geometrycollection(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_ogc_valid(skip_if_runtime_not_geo_compatible, spark):
@@ -269,7 +269,7 @@ def test_is_ogc_valid(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_longitude(spark):
@@ -293,7 +293,7 @@ def test_is_longitude(spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_latitude(spark):
@@ -317,7 +317,7 @@ def test_is_latitude(spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_non_empty_geometry(skip_if_runtime_not_geo_compatible, spark):
@@ -339,7 +339,7 @@ def test_is_non_empty_geometry(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_not_null_island(skip_if_runtime_not_geo_compatible, spark):
@@ -374,7 +374,7 @@ def test_is_not_null_island(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_dimension(skip_if_runtime_not_geo_compatible, spark):
@@ -395,7 +395,7 @@ def test_has_dimension(skip_if_runtime_not_geo_compatible, spark):
         ],
         checked_schema,
     )
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_x_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
@@ -418,7 +418,7 @@ def test_has_x_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_has_y_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
@@ -441,7 +441,7 @@ def test_has_y_coordinate_between(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_area_equal_to(skip_if_runtime_not_geo_compatible, spark):
@@ -487,7 +487,7 @@ def test_is_area_equal_to(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
@@ -537,7 +537,7 @@ def test_is_area_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_area_not_greater_than(skip_if_runtime_not_geo_compatible, spark):
@@ -583,7 +583,7 @@ def test_is_area_not_greater_than(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_area_not_less_than(skip_if_runtime_not_geo_compatible, spark):
@@ -633,7 +633,7 @@ def test_is_area_not_less_than(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_num_points_equal_to(skip_if_runtime_not_geo_compatible, spark):
@@ -665,7 +665,7 @@ def test_is_num_points_equal_to(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_num_points_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
@@ -697,7 +697,7 @@ def test_is_num_points_not_equal_to(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_num_points_not_greater_than(skip_if_runtime_not_geo_compatible, spark):
@@ -731,7 +731,7 @@ def test_is_num_points_not_greater_than(skip_if_runtime_not_geo_compatible, spar
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)
 
 
 def test_is_num_points_not_less_than(skip_if_runtime_not_geo_compatible, spark):
@@ -763,4 +763,4 @@ def test_is_num_points_not_less_than(skip_if_runtime_not_geo_compatible, spark):
         checked_schema,
     )
 
-    assert_df_equality(actual, expected, ignore_nullable=True)
+    assertDataFrameEqual(actual, expected)

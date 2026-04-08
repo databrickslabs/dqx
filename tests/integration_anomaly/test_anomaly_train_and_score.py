@@ -1,7 +1,7 @@
 """Integration tests for row anomaly detection end-to-end flow."""
 
 import pyspark.sql.functions as F
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 from pyspark.sql import SparkSession
 
 from databricks.labs.dqx.engine import DQEngine
@@ -63,7 +63,7 @@ def test_basic_train_and_score(ws, spark: SparkSession, make_schema, make_random
         "transaction_id", "amount", "quantity", "has_errors"
     )
     expected_compare = test_df.withColumn("has_errors", F.when(F.col("transaction_id") == 2, True).otherwise(False))
-    assert_df_equality(result_compare, expected_compare, ignore_row_order=True)
+    assertDataFrameEqual(result_compare, expected_compare, checkRowOrder=False)
 
 
 def test_anomaly_scores_are_added(ws, spark: SparkSession, make_schema, make_random, anomaly_engine):

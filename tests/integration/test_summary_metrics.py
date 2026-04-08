@@ -4,7 +4,7 @@ from datetime import datetime
 from pyspark.sql.types import StructType, StructField, IntegerType, StringType
 import pytest
 
-from chispa.dataframe_comparer import assert_df_equality  # type: ignore
+from pyspark.testing.utils import assertDataFrameEqual
 from databricks.labs.dqx.config import InputConfig, OutputConfig, ExtraParams
 from databricks.sdk.errors import NotFound
 from databricks.labs.dqx.checks_serializer import deserialize_checks
@@ -349,7 +349,7 @@ def test_save_summary_metrics(ws, spark, make_schema, make_random):
         "metric_name"
     )
 
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
 
 def test_save_summary_metrics_custom_metrics_and_params(ws, spark_keep_alive, make_schema, make_random):
@@ -503,7 +503,7 @@ def test_save_summary_metrics_custom_metrics_and_params(ws, spark_keep_alive, ma
         "metric_name"
     )
     actual_metrics_df = spark.table(metrics_config.location).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
 
 def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_schema, make_volume, make_random):
@@ -683,7 +683,7 @@ def test_save_summary_metrics_with_streaming_and_custom_params(ws, spark, make_s
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
     actual_metrics_df = spark.table(metrics_config.location).drop("run_time").orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
 
 
 @pytest.mark.parametrize(
@@ -831,7 +831,7 @@ def test_observer_metrics_output_with_empty_checks(
     )
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
 
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 4
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
@@ -992,7 +992,7 @@ def test_observer_metrics_output_with_quarantine_with_empty_checks(
     )
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
 
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert spark.table(output_config.location).count() == 4
     assert spark.table(quarantine_config.location).count() == 0
 
@@ -1150,7 +1150,7 @@ def test_observer_metrics_output(skip_if_classic_compute, apply_checks_method, s
     )
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
 
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 4
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
@@ -1313,7 +1313,7 @@ def test_observer_metrics_output_with_quarantine(
         "metric_name"
     )
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 3
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
@@ -1438,7 +1438,7 @@ def test_save_results_in_table_batch_with_metrics(
         "metric_name"
     )
     actual_metrics_df = spark.table(metrics_table_name).orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 3
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
@@ -1708,7 +1708,7 @@ def test_save_results_in_table_streaming_with_metrics(
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
     actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 3
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
@@ -1882,7 +1882,7 @@ def test_streaming_observer_metrics_output(apply_checks_method, spark, ws, make_
         "metric_name"
     )
 
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 4
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
@@ -2057,7 +2057,7 @@ def test_streaming_observer_metrics_output_and_quarantine(
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
     actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 3
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
@@ -2221,7 +2221,7 @@ def test_streaming_observer_metrics_output_with_empty_checks(
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA).drop("run_time").orderBy("metric_name")
     )
     actual_metrics_df = spark.table(metrics_table_name).drop("run_time").orderBy("metric_name")
-    assert_df_equality(expected_metrics_df, actual_metrics_df)
+    assertDataFrameEqual(expected_metrics_df, actual_metrics_df)
     assert (
         spark.table(output_config.location).count() == 4
     ), f"Output table {output_config.location} has {spark.table(output_config.location).count()} rows"
@@ -2396,7 +2396,7 @@ def test_streaming_observer_metrics_output_and_quarantine_with_empty_checks(
         },
     ]
 
-    assert_df_equality(
+    assertDataFrameEqual(
         spark.createDataFrame(expected_metrics, schema=OBSERVATION_TABLE_SCHEMA)
         .drop("run_time")
         .orderBy("metric_name"),

@@ -119,7 +119,7 @@ lint = [
     "types-requests~=2.31.0",
 ]
 test = [
-    "chispa~=0.10.1",
+
     "coverage[toml]~=7.4.4",
     "databricks-labs-pytester~=0.7.4",
     "pytest~=8.3.3",
