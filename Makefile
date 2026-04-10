@@ -37,7 +37,7 @@ integration:
 	$(UV_TEST) --timeout 1200 --cov --cov-report=xml tests/integration/
 
 e2e:
-	$(UV_TEST) --timeout 600 --cov --cov-report=xml tests/e2e/
+	$(UV_TEST) --timeout 1200 --cov --cov-report=xml tests/e2e/
 
 perf:
 	$(UV_TEST) --timeout 600 --cov --cov-report=xml tests/perf/

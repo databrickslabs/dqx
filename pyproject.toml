@@ -119,6 +119,7 @@ lint = [
     "types-requests~=2.31.0",
 ]
 test = [
+    "pip~=26.0",  # required by databricks-labs-blueprint WheelsV2 which calls `pip wheel`; remove after blueprint migrates to uv
     "chispa~=0.10.1",
     "coverage[toml]~=7.4.4",
     "databricks-labs-pytester~=0.7.4",
