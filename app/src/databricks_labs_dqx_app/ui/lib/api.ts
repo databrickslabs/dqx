@@ -135,6 +135,7 @@ export interface ExtraParams {
   user_metadata?: ExtraParamsUserMetadata;
   run_time_overwrite?: ExtraParamsRunTimeOverwrite;
   run_id_overwrite?: ExtraParamsRunIdOverwrite;
+  suppress_skipped?: boolean;
 }
 
 /**

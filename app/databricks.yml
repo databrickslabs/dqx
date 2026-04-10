@@ -1,6 +1,6 @@
 bundle:
   name: "databricks-labs-dqx-app"
-  
+
 
 variables:
   catalog_name:
@@ -12,6 +12,9 @@ variables:
   tmp_schema_name:
     description: "Name of the schema for temporary views and intermediate processing"
     default: "dqx_app_tmp"
+  wheels_volume_name:
+    description: "Name of the UC volume for storing DQX wheel files"
+    default: "wheels"
   dqx_service_principal_application_id:
     description: "Application ID of the service principal for DQX tasks"
     default: "00000000-0000-0000-0000-000000000000"
@@ -35,17 +38,19 @@ variables:
           value_from: "dqx-task-runner-job"
         - name: "DQX_TMP_SCHEMA"
           value: "${var.tmp_schema_name}"
+        - name: "DQX_WHEELS_VOLUME"
+          value: "/Volumes/${var.catalog_name}/${var.schema_name}/${var.wheels_volume_name}"
 
 sync:
   include:
     - .build
-    - tasks
 
 artifacts:
   default:
     build: >
       uv run apx build &&
       uv build ../ --wheel --out-dir .build/ &&
+      uv build tasks/ --wheel --out-dir .build/tasks/ &&
       dqx_whl=$(ls -1 .build/databricks_labs_dqx-*.whl | head -1 | xargs basename) &&
       echo "$dqx_whl" | cat - .build/requirements.txt > .build/requirements.txt.tmp &&
       mv .build/requirements.txt.tmp .build/requirements.txt
@@ -84,7 +89,7 @@ resources:
           description: "Job for async profiler and dry-run tasks"
           job:
             id: ${resources.jobs.dqx_task_runner.id}
-            permission: "CAN_MANAGE_RUN"
+            permission: "CAN_MANAGE"
 
       permissions:
         - user_name: "*"
@@ -98,6 +103,20 @@ resources:
       max_num_clusters: 1
       min_num_clusters: 1
       auto_stop_mins: 10
+
+  volumes:
+    dqx_wheels:
+      catalog_name: ${var.catalog_name}
+      schema_name: ${var.schema_name}
+      name: ${var.wheels_volume_name}
+      volume_type: MANAGED
+      grants:
+        - principal: ${resources.apps.databricks-labs-dqx-app.id}
+          privileges:
+            - ALL_PRIVILEGES
+        - principal: ${var.dqx_service_principal_application_id}
+          privileges:
+            - ALL_PRIVILEGES
 
   schemas:
     dqx_schema:
@@ -118,9 +137,11 @@ resources:
         - principal: ${resources.apps.databricks-labs-dqx-app.id}
           privileges:
             - ALL_PRIVILEGES
+            - MANAGE
         - principal: ${var.dqx_service_principal_application_id}
           privileges:
             - ALL_PRIVILEGES
+            - MANAGE
         - principal: "account users"
           privileges:
             - USE_SCHEMA
@@ -129,14 +150,16 @@ resources:
   jobs:
     dqx_task_runner:
       name: "dqx-app-task-runner"
-      run_as:
-        service_principal_name: ${var.dqx_service_principal_application_id}
+      max_concurrent_runs: 10
       tags:
         app: "dqx"
+      run_as:
+        service_principal_name: ${var.dqx_service_principal_application_id}
       tasks:
         - task_key: "run_task"
-          spark_python_task:
-            python_file: "./tasks/dqx_task_runner.py"
+          python_wheel_task:
+            package_name: databricks_labs_dqx_task_runner
+            entry_point: dqx-task-runner
             parameters:
               - "--task_type"
               - "{{job.parameters.task_type}}"
@@ -156,9 +179,10 @@ resources:
       environments:
         - environment_key: "default"
           spec:
-            client: "1"
+            client: "5"
             dependencies:
-              - "databricks-labs-dqx"
+              - ./.build/tasks/databricks_labs_dqx_task_runner-*.whl
+              - ./.build/databricks_labs_dqx-*.whl
       parameters:
         - name: "task_type"
           default: "profile"
@@ -179,4 +203,4 @@ targets:
   dev:
     presets:
       trigger_pause_status: PAUSED
-   
+

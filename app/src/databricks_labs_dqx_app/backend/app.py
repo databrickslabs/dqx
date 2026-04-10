@@ -1,5 +1,10 @@
+import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.compute import Environment
+from databricks.sdk.service.jobs import JobEnvironment, JobSettings
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -10,10 +15,81 @@ from .routes import api_router
 from .utils import add_not_found_handler
 
 
+def _find_wheels() -> list[Path]:
+    """Return wheel files found in candidate directories.
+
+    Databricks Apps sets the working directory to the source code directory, but
+    we also walk up from this file's location as a fallback (handles the case
+    where the package is installed in a venv inside the source tree).
+    """
+    search_roots: list[Path] = [Path.cwd()]
+    for parent in Path(__file__).resolve().parents:
+        if parent not in search_roots and (parent / "requirements.txt").exists():
+            search_roots.append(parent)
+            break
+
+    logger.info("Searching for wheel files in: %s", [str(p) for p in search_roots])
+
+    seen: set[Path] = set()
+    wheels: list[Path] = []
+    for root in search_roots:
+        for wheel in sorted(root.glob("databricks_labs_dqx-*.whl")):
+            if wheel not in seen:
+                seen.add(wheel)
+                wheels.append(wheel)
+        for wheel in sorted(root.glob("tasks/databricks_labs_dqx_task_runner-*.whl")):
+            if wheel not in seen:
+                seen.add(wheel)
+                wheels.append(wheel)
+    return wheels
+
+
+async def _upload_wheels_to_volume(sp_ws: WorkspaceClient, volume_path: str) -> list[str]:
+    """Upload DQX wheel files to a UC Volume using their real versioned filenames.
+
+    Returns the list of uploaded volume paths so the caller can update the job
+    environment to reference the exact files.
+    """
+    wheels = _find_wheels()
+    if not wheels:
+        logger.warning("No wheel files found — skipping volume upload (cwd: %s)", Path.cwd())
+        return []
+
+    uploaded: list[str] = []
+    for wheel_path in wheels:
+        dest = f"{volume_path}/{wheel_path.name}"
+        logger.info("Uploading %s → %s", wheel_path.name, dest)
+        with open(wheel_path, "rb") as f:
+            await asyncio.to_thread(sp_ws.files.upload, dest, f, overwrite=True)
+        logger.info("Uploaded %s", dest)
+        uploaded.append(dest)
+
+    return uploaded
+
+
+async def _update_job_wheels(sp_ws: WorkspaceClient, job_id: str, wheel_paths: list[str]) -> None:
+    """Update the task-runner job environment to install wheels from the volume.
+
+    Called after every successful wheel upload so the job always references the
+    version that matches the running app.
+    """
+    env = JobEnvironment(
+        environment_key="default",
+        spec=Environment(client="5", dependencies=wheel_paths),
+    )
+    await asyncio.to_thread(
+        sp_ws.jobs.update,
+        job_id=int(job_id),
+        new_settings=JobSettings(environments=[env]),
+    )
+    logger.info("Updated job %s environment with wheels: %s", job_id, wheel_paths)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting app with configuration:\n{conf.model_dump_json(indent=2)}")
 
+    sp_ws: WorkspaceClient | None = None
     try:
         sp_ws = await get_sp_ws()
         runner = await get_migration_runner(sp_ws=sp_ws)
@@ -24,6 +100,30 @@ async def lifespan(app: FastAPI):
             logger.info("Database schema is up to date")
     except Exception as e:
         logger.warning("Could not run database migrations (will retry on first request): %s", e)
+
+    if not (conf.wheels_volume and conf.job_id):
+        logger.warning("DQX_WHEELS_VOLUME or DQX_JOB_ID not set — task-runner job wheels will not be synced")
+    else:
+        if sp_ws is None:
+            try:
+                sp_ws = await get_sp_ws()
+            except Exception as e:
+                logger.warning("Could not authenticate service principal — skipping wheel sync: %s", e, exc_info=True)
+
+        uploaded: list[str] = []
+        if sp_ws is not None:
+            try:
+                uploaded = await _upload_wheels_to_volume(sp_ws, conf.wheels_volume)
+            except Exception as e:
+                logger.warning(
+                    "Could not upload wheels to volume — job environment will not be updated: %s", e, exc_info=True
+                )
+
+        if uploaded:
+            try:
+                await _update_job_wheels(sp_ws, conf.job_id, uploaded)
+            except Exception as e:
+                logger.warning("Could not update job environment with uploaded wheels: %s", e, exc_info=True)
 
     yield
 

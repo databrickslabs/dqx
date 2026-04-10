@@ -26,10 +26,10 @@ This app uses several tools for local development:
   - Built with Vite and TanStack Router
   - Compiled into `__dist__` directory during build
   - Static files (HTML, JS, CSS) are hosted by FastAPI at the root path `/`
-- **Task Runner**: Serverless Databricks Job (`tasks/dqx_task_runner.py`)
+- **Task Runner**: Serverless Databricks Job (`tasks/src/`)
   - Runs profiler and dry-run operations asynchronously
   - Uses Spark (PySpark) — the only place Spark is used in this project
-  - Deployed as a workspace file via DABs alongside the app
+  - Packaged as a Python wheel and deployed via DABs alongside the app
 - **Production**: Deployed as a Databricks App using `databricks bundle deploy`
   - Only the built artifacts are deployed, not the development tools
   - FastAPI serves both the API (`/api/*`) and the static UI (`/*`)
@@ -319,37 +319,74 @@ make integration
 
 > **Note**: Production deployment uses the **Databricks CLI**, not `apx`. The `apx` tool is only for local development.
 
-Deploying a Databricks App requires **three steps**:
+Deploying the DQX App is a two-step process: create a service principal, then run a single `bundle deploy` command.
 
-### Step 1: Deploy the Bundle
+### Step 1: Create a Service Principal
 
-Deploy the app infrastructure using Databricks Asset Bundles (DAB):
+The bundle requires a **Databricks service principal** to run the task runner job (`dqx-app-task-runner`). The SP runs profiler and dry-run tasks on serverless compute using its own identity, keeping job execution separate from the app process.
+
+**Create the service principal** (if you don't have one):
+
+1. Go to **Settings → Identity and Access → Service Principals** in your Databricks workspace
+2. Click **Add service principal** → **Create new**
+3. Give it a name (e.g., `dqx-app-runner`)
+4. Note the **Application ID** — you'll need it in the next step
+
+**Find the Application ID of an existing SP:**
+
 ```bash
-cd app
-databricks bundle deploy -p <your-profile>
+databricks service-principals list -p <your-profile>
 ```
 
-This command:
-- Builds the project using `uv run apx build` (compiles frontend, generates OpenAPI schema, creates wheel)
-- Uploads the `.build/` and `tasks/` directories to workspace
-- Creates/updates the following resources:
-  - **App** (`databricks-labs-dqx-app`)
+Look for the `application_id` field in the output.
+
+**What permissions does the SP need?**
+
+DAB grants the SP the following permissions automatically during `bundle deploy` — you don't need to configure these manually:
+
+| Resource | Permission | Why |
+|---|---|---|
+| `<catalog>.dqx_app` schema | `ALL_PRIVILEGES` | Read/write profiling results and dry-run results |
+| `<catalog>.dqx_app_tmp` schema | `ALL_PRIVILEGES` | Create temporary views for job isolation |
+| `<catalog>.dqx_app.wheels` volume | `ALL_PRIVILEGES` | Install wheels at job startup |
+| Task runner job | `run_as` identity | Job tasks execute as this SP |
+
+### Step 2: Deploy the Bundle
+
+Deploy everything with a single command from the `app/` directory:
+
+```bash
+cd app
+databricks bundle deploy -p <your-profile> \
+  --var="dqx_service_principal_application_id=<your-sp-application-id>"
+```
+
+This single command:
+- Builds the project (`uv run apx build`) — compiles frontend, generates OpenAPI schema, creates wheels
+- Uploads the `.build/` directory to the workspace
+- Provisions all resources:
+  - **App** (`databricks-labs-dqx-app`) with source code deployed from `.build/`
   - **SQL Warehouse** (`dqx-sql-warehouse`) — used for metadata queries
   - **Schema** (`<catalog>.dqx_app`) — Delta tables for rules, results, settings
+  - **Schema** (`<catalog>.dqx_app_tmp`) — temporary views for job isolation
+  - **Volume** (`<catalog>.dqx_app.wheels`) — UC volume for wheel storage
   - **Job** (`dqx-app-task-runner`) — serverless job for profiler and dry-run tasks
-- Configures app environment variables including `DQX_JOB_ID` (wired to the task runner job)
+- Wires environment variables: `DQX_JOB_ID`, `DQX_WHEELS_VOLUME`, warehouse ID
 
-This does not:
-- Start the app
-- Deploy the actual source code to the app runtime
-- Configure the OAuth scopes (you need to do this manually after the initial deployment)
-- Grant users access to the app (you need to do this manually after deployment)
+To pin your SP ID for a target instead of passing it every time, add it to `databricks.yml`:
 
-### Step 2: Configure OAuth Scopes (⚠️ Critical)
+```yaml
+targets:
+  dev:
+    variables:
+      dqx_service_principal_application_id: "<your-sp-application-id>"
+```
 
-**Important**: After the initial deployment, you **must** enable additional OAuth scopes for the app to function properly. The default scopes configured in `databricks.yml` are not sufficient for all app features.
+> **Wheel uploads on startup**: When the app starts, it automatically uploads the DQX and task runner wheels from `.build/` to the `wheels` volume (versioned filenames, e.g. `databricks_labs_dqx-0.13.0-py3-none-any.whl`). The task runner job reads its dependencies from these volume paths. If the job runs before the app has started at least once after a fresh deploy, it will fail to install wheels — this is expected; start the app first.
 
-Run the following commands:
+### Step 3: Configure OAuth Scopes (⚠️ One-time, critical)
+
+After the initial deployment, you **must** enable additional OAuth scopes for the app to function properly. The default scopes in `databricks.yml` are not sufficient for all app features.
 
 ```bash
 # 1. Login to your Databricks account (not workspace)
@@ -360,85 +397,36 @@ databricks account custom-app-integration update '<oauth2-app-client-id>' --json
 ```
 
 **Where to find the OAuth2 App Client ID:**
-- **Option A - UI**: Navigate to Apps → Your App → User authorization section
-- **Option B - CLI**: Run `databricks account custom-app-integration list`
+- **UI**: Navigate to Apps → Your App → User authorization section
+- **CLI**: `databricks account custom-app-integration list`
 
-**Why is this needed?**
-The default scopes available in `databricks.yml` are limited. The `all-apis` scope grants the necessary permissions for the app to browse Unity Catalog and create temporary views on behalf of the user.
-
-To confirm the scope has been added run:
+To confirm the scope was added:
 ```bash
 databricks account custom-app-integration get '<oauth2-app-client-id>'
 ```
 
-**Note**: This is a one-time configuration per app. You only need to do this after the initial deployment or when changing the app's OAuth integration.
+This is a one-time step per app — only needed after the initial deployment or when changing the OAuth integration.
 
-### Step 3: Start the App Compute
+### Step 4: Start the App
 
-**Using CLI:**
 ```bash
 databricks apps start databricks-labs-dqx-app -p <your-profile>
 ```
 
-**Using UI:**
-1. Navigate to **Apps** in the sidebar
-2. Find the **databricks-labs-dqx-app** app
-3. Click **Start**
+Or via the UI: **Apps** → **databricks-labs-dqx-app** → **Start**.
 
-### Step 4: Deploy the Source Code
+### Step 5: Grant User Permissions
 
-After the bundle is deployed, you need to deploy the actual source code to the app.
-
-**Option A: Using Databricks CLI**
-```bash
-databricks apps deploy databricks-labs-dqx-app \
-  --source-code-path /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
-  -p <your-profile>
-```
-
-**Option B: Using Databricks UI**
-1. Navigate to **Apps** in the sidebar
-2. Find and click on **databricks-labs-dqx-app**
-3. Click the **Deploy** button
-4. Enter the source code path: `/Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build`
-5. Click **Deploy**
-
-### Step 5: Configure Permissions in the app
-
-After deployment, you need to grant users permissions to access the app.
-This is done through the Databricks UI or API by assigning users/groups to the app with `Can Use` permission.
+Grant users access to the app through the Databricks UI or API by assigning the `Can Use` permission to users or groups.
 
 ### Step 6: Access the App
 
-Once the app is deployed and started, you can access it at:
 ```
 https://<your-workspace-url>/apps/databricks-labs-dqx-app
 ```
 
-**Finding the App URL:**
-- **In Databricks UI**: Navigate to **Apps** in the sidebar → Click on **databricks-labs-dqx-app** → Copy the URL from the address bar
-- **Via CLI**: Run `databricks apps get databricks-labs-dqx-app -p <your-profile>` and look for the `url` field
-
-### Complete Deployment Script
-
-Here's a complete script that performs all deployment steps:
-
-```bash
-cd app
-
-# Step 1: Deploy bundle (builds wheel, provisions job + warehouse + schema)
-databricks bundle deploy -p <your-profile>
-
-# Step 2: Deploy source code
-databricks apps deploy databricks-labs-dqx-app \
-  --source-code-path /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
-  -p <your-profile>
-
-# Step 3: Start the app
-databricks apps start databricks-labs-dqx-app -p <your-profile>
-```
-
-After deployment, continue with [Step 5: Configure Permissions](#step-5-configure-permissions-in-the-app).
+- **UI**: Apps → databricks-labs-dqx-app → copy URL from address bar
+- **CLI**: `databricks apps get databricks-labs-dqx-app -p <your-profile>` → look for the `url` field
 
 ### Monitor and Manage
 
@@ -459,20 +447,15 @@ databricks apps stop databricks-labs-dqx-app -p <your-profile>
 
 **Redeploy after code changes:**
 ```bash
-# Deploy bundle
+# Single command rebuilds and redeploys everything
 databricks bundle deploy -p <your-profile>
-
-# Deploy updated source code
-databricks apps deploy databricks-labs-dqx-app \
-  /Workspace/Users/<your-username>/.bundle/databricks-labs-dqx-app/dev/files/.build \
-  -p <your-profile>
 
 # The app will automatically restart after deployment
 ```
 
 **Update OAuth scopes (after changing `databricks.yml` or initial deployment):**
 
-⚠️ **Important**: After the initial deployment, you must configure the `all-apis` scope. See [Step 2: Configure OAuth Scopes](#step-2-configure-oauth-scopes--critical) for details.
+⚠️ **Important**: After the initial deployment, you must configure the `all-apis` scope. See [Step 3: Configure OAuth Scopes](#step-3-configure-oauth-scopes--one-time-critical) for details.
 
 If you're updating scopes in `databricks.yml`:
 ```bash
@@ -521,7 +504,20 @@ If submitting a profiler or dry-run returns an error about the job:
 
 1. Verify `DQX_JOB_ID` is set in the app's environment (check `databricks.yml` and app config in the UI)
 2. Confirm the `dqx-app-task-runner` job was created: `databricks jobs list -p <your-profile>`
-3. Confirm the app's service principal has `CAN_MANAGE_RUN` on the job (set automatically by DABs)
+3. Confirm the app's service principal has `CAN_MANAGE` on the job (set automatically by DABs)
+
+### Job fails with "file not found" on wheel
+
+The task runner job installs its wheels from the UC volume (`<catalog>.dqx_app.wheels`). If the wheels haven't been uploaded yet the job will fail with an installation error.
+
+**Cause**: The app uploads wheels on startup. If the job ran before the app was started at least once after a fresh deploy, the volume will be empty.
+
+**Fix**: Start the app and wait for it to become active (check logs for "Uploaded ... → /Volumes/..."), then retry the job.
+
+```bash
+databricks apps logs databricks-labs-dqx-app -p <your-profile>
+# Look for: "Uploaded databricks_labs_dqx-<version>-py3-none-any.whl"
+```
 
 ### uv hangs
 

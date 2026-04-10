@@ -1,6 +1,6 @@
 """DQX Task Runner — executed inside a serverless Databricks Job.
 
-This script is deployed as a workspace file via DABs and runs profiler
+This module is deployed as a wheel on a Unity Catalog Volume and runs profiler
 or dry-run operations on behalf of the DQX App.  The app creates a
 temporary VIEW (using the user's OBO token) and then submits this job
 (using SP credentials).  The job reads from the view, performs the
