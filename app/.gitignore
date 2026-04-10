@@ -35,6 +35,3 @@ node_modules/
 
 # apx
 .apx/
-
-# lock files
-uv.lock

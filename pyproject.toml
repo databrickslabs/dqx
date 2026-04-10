@@ -97,7 +97,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build]
 sources = ["src"]
-include = ["src"]
+include = ["src", "README.md", "LICENSE", "NOTICE"]
 
 [tool.hatch.version]
 path = "src/databricks/labs/dqx/__about__.py"

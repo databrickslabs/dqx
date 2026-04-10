@@ -38,6 +38,14 @@ from databricks.sdk.service.workspace import ImportFormat
 logger = logging.getLogger(__name__)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _mlflow_env():
+    """Ensure MLflow points at Databricks Unity Catalog when running against a workspace.
+    Uses setdefault so explicit env vars (e.g. in CI) take precedence."""
+    os.environ.setdefault("MLFLOW_TRACKING_URI", "databricks")
+    os.environ.setdefault("MLFLOW_REGISTRY_URI", "databricks-uc")
+
+
 def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return rules that are has_valid_schema schema_validation rules (for data contract tests)."""
     return [
@@ -50,7 +58,7 @@ def get_schema_validation_rules(rules: list[dict[str, Any]]) -> list[dict[str, A
 
 @pytest.fixture(scope="session")
 def debug_env_name():
-    return "ws"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
+    return "ws2"  # Specify the name of the debug environment from ~/.databricks/debug-env.json
 
 
 @pytest.fixture

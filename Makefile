@@ -1,11 +1,9 @@
 all: clean lint fmt test coverage
 
-# Ensure that all uv commands don't automatically update the lock file. If UV_FROZEN=1 (from the environment)
-# then UV_LOCKED should _not_ be set, but otherwise it needs to be set to ensure the lock-file is only ever
-# deliberately updated.
-ifneq ($(UV_FROZEN),1)
-export UV_LOCKED := 1
-endif
+# Prevent uv from modifying the lock file. UV_FROZEN skips resolution entirely,
+# which is required because the lock file uses public PyPI URLs while the actual
+# index may be an internal proxy. Use `make lock-dependencies` to update the lock file.
+export UV_FROZEN := 1
 # Ensure that hatchling is pinned when builds are needed.
 export UV_BUILD_CONSTRAINT := .build-constraints.txt
 
@@ -84,12 +82,13 @@ fork-sync:
 build:
 	uv build --require-hashes --build-constraints=.build-constraints.txt
 
-lock-dependencies: UV_LOCKED := 0
+lock-dependencies: export UV_FROZEN := 0
 lock-dependencies:
 	uv lock
 	$(UV_RUN) --group yq tomlq -r '.["build-system"].requires[]' pyproject.toml | \
 	  uv pip compile --generate-hashes --universal --no-header - > build-constraints-new.txt
 	mv build-constraints-new.txt .build-constraints.txt
+	perl -pi -e 's|registry = "https://[^"]*"|registry = "https://pypi.org/simple"|g' uv.lock
 
 .DEFAULT: all
 .PHONY: all clean dev lint fmt test integration e2e perf anomaly coverage combine-coverage docs-build docs-serve-dev docs-install docs-serve docs-clean fork-sync build lock-dependencies
