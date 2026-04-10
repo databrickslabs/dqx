@@ -156,10 +156,6 @@ jobs:
           version: "0.11.2"
           checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
-      # Required for dbt e2e tests
-      # - name: Install dbt
-      #   run: uv pip install --system dbt-core==1.10.9 dbt-databricks==1.10.9
-
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
         run: |
@@ -198,10 +194,6 @@ jobs:
         with:
           version: "0.11.2"
           checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
-
-      # Required for dbt e2e tests
-      # - name: Install dbt
-      #   run: uv pip install --system dbt-core==1.10.9 dbt-databricks==1.10.9
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
