@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
     sp_ws: WorkspaceClient | None = None
     try:
         sp_ws = await get_sp_ws()
+        assert sp_ws is not None
         runner = await get_migration_runner(sp_ws=sp_ws)
         applied = runner.run_all()
         if applied:
@@ -110,8 +111,8 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("Could not authenticate service principal — skipping wheel sync: %s", e, exc_info=True)
 
-        uploaded: list[str] = []
         if sp_ws is not None:
+            uploaded: list[str] = []
             try:
                 uploaded = await _upload_wheels_to_volume(sp_ws, conf.wheels_volume)
             except Exception as e:
@@ -119,11 +120,11 @@ async def lifespan(app: FastAPI):
                     "Could not upload wheels to volume — job environment will not be updated: %s", e, exc_info=True
                 )
 
-        if uploaded:
-            try:
-                await _update_job_wheels(sp_ws, conf.job_id, uploaded)
-            except Exception as e:
-                logger.warning("Could not update job environment with uploaded wheels: %s", e, exc_info=True)
+            if uploaded:
+                try:
+                    await _update_job_wheels(sp_ws, conf.job_id, uploaded)
+                except Exception as e:
+                    logger.warning("Could not update job environment with uploaded wheels: %s", e, exc_info=True)
 
     yield
 
