@@ -36,6 +36,9 @@ jobs:
           version: "0.11.2"
           checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
 
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
+
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
         run: |
@@ -90,6 +93,9 @@ jobs:
         with:
           version: "0.11.2"
           checksum: "7ac2ca0449c8d68dae9b99e635cd3bc9b22a4cb1de64b7c43716398447d42981"
+
+      - name: Setup for JFrog
+        uses: ./.github/actions/jfrog-auth
 
       # Create .coveragerc with correct relative path to source code.
       - name: Prepare code coverage configuration for anomaly tests
