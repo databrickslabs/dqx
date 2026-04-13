@@ -77,7 +77,11 @@ def debug_env(monkeypatch, debug_env_name):
             conf = json.load(f)
             if debug_env_name in conf:
                 for env_key, value in conf[debug_env_name].items():
-                    monkeypatch.setenv(env_key, str(value))
+                    value = str(value)
+                    # Ensure DATABRICKS_HOST always has the https:// scheme
+                    if env_key == "DATABRICKS_HOST" and value and not value.startswith("https://"):
+                        value = f"https://{value}"
+                    monkeypatch.setenv(env_key, value)
     return os.environ
 
 
