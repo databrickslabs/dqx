@@ -284,9 +284,7 @@ jobs:
 
       # Required for DAB (Databricks Asset Bundle) e2e tests
       - name: Install Databricks CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/e0f69d54c90e95ccad22d5ff17751da665e599a9/install.sh | sh
-          databricks --version
+        uses: databricks/setup-cli@acd0e77a1ed7f15f528faca1e1f7f5590bcfdff8 # v0.296.0
 
       - name: Run e2e tests on serverless cluster
         uses: databrickslabs/sandbox/acceptance@3313d06ce86227537b3f37f5974f7eecb2a8e59a # acceptance/v0.4.4
@@ -350,7 +348,7 @@ jobs:
           # Tests are run sequentially to reduce variability.
           # Create baseline benchmarks under: $BENCHMARKS_DIR/<machine-specific-folder>/*_baseline.json
           # Do at least 5 rounds to get more stable results.
-          UV_LOCKED=1 uv run --all-extras pytest tests/perf -v -n 1 \
+          UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-save=baseline \
             --benchmark-min-rounds=5
@@ -436,7 +434,7 @@ jobs:
           find $BENCHMARKS_DIR
 
           echo "Updating performance benchmark report"
-          OUT=$(UV_LOCKED=1 uv run --all-extras python tests/perf/generate_md_report.py | grep REPORT_PATH | cut -d '=' -f2)
+          OUT=$(UV_FROZEN=1 uv run --all-extras python tests/perf/generate_md_report.py | grep REPORT_PATH | cut -d '=' -f2)
           echo "Benchmark report updated at $OUT"
           echo "BENCHMARK_REPORT=$OUT" >> $GITHUB_ENV
 
@@ -521,7 +519,7 @@ jobs:
           # The run fails if performance degrades by more than 25%.
           # Tests are run sequentially to reduce variability.
           # Do at least 5 rounds to get more stable results.
-          UV_LOCKED=1 uv run --all-extras pytest tests/perf -v -n 1 \
+          UV_FROZEN=1 uv run --all-extras pytest tests/perf -v -n 1 \
             --benchmark-storage=$BENCHMARKS_DIR \
             --benchmark-compare=baseline \
             --benchmark-compare-fail=mean:25% \

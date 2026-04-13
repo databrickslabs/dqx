@@ -23,7 +23,9 @@ jobs:
       fail-fast: false
       matrix:
         pyVersion: [ '3.10', '3.11', '3.12' ]
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     env:
       UV_PYTHON: ${{ matrix.pyVersion }}
     steps:
@@ -40,7 +42,9 @@ jobs:
         run: make test
 
   fmt:
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -59,7 +63,9 @@ jobs:
 
   docs:
     name: Build Docusaurus
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -85,7 +91,9 @@ jobs:
 
   app:
     name: Build and Check App
-    runs-on: ubuntu-latest
+    runs-on:
+      group: databrickslabs-protected-runner-group
+      labels: linux-ubuntu-latest
     defaults:
       run:
         working-directory: app
@@ -108,6 +116,10 @@ jobs:
 
       - name: Build app
         run: uv run apx build
+        env:
+          UV_FROZEN: "1"
 
       - name: Run TypeScript and Python checks
         run: uv run apx dev check
+        env:
+          UV_FROZEN: "1"
